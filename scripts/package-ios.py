@@ -102,17 +102,61 @@ require(native_files == native_files_evidence and native_files.get('swiftImportE
 native_documents = native_files.get('documents', [])
 require(len(native_documents) == 2 and any(d.get('document', {}).get('size', 0) > 2 * 1024**3 for d in native_documents),
         'Falta la lectura real del fixture PDF de más de 2 GiB.')
+native_build = json.loads((ROOT / 'test-results/ios/mupdf-ios-build.json').read_text())
+require(native_build.get('passed') is True and native_build.get('version') == '1.28.1' and
+        native_build.get('sourceHash') == MUPDF_SHA and native_build.get('sourceModified') is False and
+        native_build.get('minimumIOS') == '17.0' and
+        native_build.get('buildScriptSha256') == sha(ROOT / 'scripts/build-mupdf-ios.mjs'),
+        'El escritor nativo no corresponde a la fuente MuPDF y al builder fijados.')
+wrapper = native_build.get('wrapper', {})
+for name in ['NativeExport/FolioMuPDF.c', 'NativeExport/include/FolioMuPDF.h', 'NativeExport/include/module.modulemap']:
+    require(wrapper.get(name) == sha(ROOT / 'src-tauri/plugins/folio-ios/ios' / name),
+            'El ABI/escritor C compilado no coincide con la fuente entregada.')
+libraries = native_build.get('libraries', [])
+require(len(libraries) == 2 and {(v.get('sdk'), v.get('triple')) for v in libraries} ==
+        {('iphoneos', 'arm64-apple-ios17.0'), ('iphonesimulator', 'arm64-apple-ios17.0-simulator')},
+        'Faltan las bibliotecas MuPDF arm64 separadas de dispositivo y simulador.')
+for library in libraries:
+    path = Path(library['path'])
+    require(path.is_file() and library.get('bytes') == path.stat().st_size and
+            library.get('sha256') == sha(path) and run('lipo', '-archs', str(path)).split() == ['arm64'],
+            'Una biblioteca MuPDF no conserva su arquitectura, tamaño y SHA-256 verificados.')
+outputs = native_build.get('outputs', [])
+require(outputs and all(Path(v['path']).is_file() and v.get('bytes') == Path(v['path']).stat().st_size and
+        v.get('sha256') == sha(Path(v['path'])) for v in outputs), 'El XCFramework/tool compilado no conserva sus hashes.')
+framework_info = plistlib.loads((Path(native_build['framework']) / 'Info.plist').read_bytes())
+slices = framework_info.get('AvailableLibraries', [])
+require(len(slices) == 2 and all(s.get('SupportedPlatform') == 'ios' and s.get('SupportedArchitectures') == ['arm64'] for s in slices) and
+        {s.get('SupportedPlatformVariant', 'device') for s in slices} == {'device', 'simulator'},
+        'El XCFramework no distingue las slices iPhone y simulador arm64.')
+host_mutool = Path(native_build['hostMutool'])
+require(host_mutool.is_file() and sha(host_mutool) == native_build.get('hostMutoolSha256') and
+        '1.28.1' in run(str(host_mutool), '-v'), 'El validador independiente no corresponde al mutool fijado.')
 for document in native_documents:
-    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'addedHighlightDefaultOpacity', 'unseenHighlightPreserved', 'unseenNonOverlayPreserved', 'originalOpacityAndNamePreserved', 'sourceUnchanged']) and
+    require(document.get('annotationWriter') == 'MuPDF 1.28.1' and document.get('incremental') is True and
+            all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'addedHighlightDefaultOpacity', 'unseenHighlightPreserved', 'unseenNonOverlayPreserved', 'originalOpacityAndNamePreserved', 'sourceUnchanged']) and
             document.get('independentExportVerification', {}).get('passed') is True and
+            document.get('independentExportVerification', {}).get('nativeHostVerifier') is True and
+            document.get('independentExportVerification', {}).get('engine') == 'MuPDF 1.28.1 native mutool' and
+            document.get('independentExportVerification', {}).get('fileBacked') is True and
+            document.get('independentExportVerification', {}).get('incrementalVersions', 0) >= 2 and
+            document.get('independentExportVerification', {}).get('hostMutoolSha256') == native_build['hostMutoolSha256'] and
+            document.get('independentExportVerification', {}).get('hostArchitectures') and
+            set(document['independentExportVerification']['hostArchitectures']) <= {'arm64','x86_64'} and
             document.get('independentExportVerification', {}).get('unseenNonOverlayPreserved') is True and
             document.get('independentExportVerification', {}).get('addedHighlightDefaultOpacity') is True and
+            document.get('independentExportVerification', {}).get('originalAppearanceAndWidgetPreserved') is True and
+            document.get('originalPrefixPreserved') is True and document.get('originalPrefixSha256') == document.get('document', {}).get('id') and
             document.get('metadata', {}).get('numPages') == 2 and
             len(document.get('text', {}).get('lines', [])) > 1 and
             {r.get('rotation') for r in document.get('rasters', [])} == {0, 90, 180, 270} and
             {r.get('rotation') for r in document.get('rasters', []) if r.get('page') == 2 and r.get('intrinsicRotationVerified') == 90 and r.get('nonOverlayAnnotationVisible') is True} == {90,270} and
             all(r.get('geometryVerified') is True and (ROOT / 'test-results/ios' / r.get('inspectionFile', '')).is_file() for r in document.get('rasters', [])),
             'La evidencia PDFKit no demuestra texto, rotación, exportación y conservación del original.')
+    if document['document']['size'] > 2*1024**3:
+        require(document['independentExportVerification'].get('previousXrefOffset', 0) > 2147483647 and
+                document['independentExportVerification'].get('xrefBeyond2GiB') is True,
+                'El inspector nativo no validó una xref situada después de 2 GiB.')
 memory = native_files.get('memory', {})
 require(type(memory.get('peakBytes')) is int and 0 < memory['peakBytes'] < 768*1024**2 and
         type(memory.get('samples')) is int and memory['samples'] > 0 and memory.get('physicalDeviceMeasured') is False,
@@ -197,7 +241,7 @@ manifest = {'product': 'Folio', 'version': version, 'platform': 'iOS', 'device':
             'physicalDeviceTested': False, 'FeatherInstallationTested': False,
             'UIKitDialogInteractionTested': ui_imports['UIKitDialogInteractionTested'],
             'OSOpenInInteractionTested': ui_imports['OSOpenInInteractionTested'], 'AirPrintJobTested': False,
-            'nativeFileBackedPDFKitVerified': True, 'nativeTwoGiBFixtureVerified': True,
+            'nativeFileBackedPDFKitVerified': True, 'nativeTwoGiBFixtureVerified': True, 'nativeIncrementalWriterVerified': True,
             'nativeSimulatorQA': qa['passed'], 'nativeSimulatorProduction': production['passed'],
             'gitCommit': run('git', 'rev-parse', 'HEAD'), 'sourceFiles': count,
             'correspondingMuPDFSourceSha256': MUPDF_SHA,

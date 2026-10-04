@@ -12,6 +12,7 @@ parser.add_argument('--app', required=True, type=Path)
 parser.add_argument('--qa', action='store_true')
 args = parser.parse_args()
 if sys.platform != 'darwin': raise SystemExit('La prueba iOS nativa requiere macOS y un simulador iPhone real.')
+if args.qa: os.environ['SIMCTL_CHILD_PDFKIT_LOG_ANNOTATIONS'] = '1'
 out = root / 'test-results/ios'
 out.mkdir(parents=True, exist_ok=True)
 version = json.loads((root / 'package.json').read_text())['version']
@@ -34,8 +35,8 @@ def observe_memory():
     sample = subprocess.run(['ps', '-p', str(process_id), '-o', 'rss='], capture_output=True, text=True)
     if sample.returncode == 0 and sample.stdout.strip().isdigit(): rss_samples.append(int(sample.stdout.strip()) * 1024)
 
-def run(*cmd):
-    return subprocess.run(cmd, cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+def run(*cmd, timeout=None):
+    return subprocess.run(cmd, cwd=root, check=True, capture_output=True, text=True, timeout=timeout).stdout.strip()
 
 def wait_file(folder, filename, condition, timeout=80):
     deadline = time.monotonic() + timeout
@@ -52,8 +53,34 @@ def wait_file(folder, filename, condition, timeout=80):
 def validate_pdfkit_rasters(result):
     sys.path.insert(0, str(root / 'scripts'))
     from ios_icon_audit import decode_png
+    native_build = json.loads((root / 'test-results/ios/mupdf-ios-build.json').read_text())
+    host_mutool = Path(native_build['hostMutool'])
+    assert host_mutool.is_file() and native_build['version'] == '1.28.1' and native_build['passed'] is True
+    assert hashlib.sha256(host_mutool.read_bytes()).hexdigest() == native_build['hostMutoolSha256']
+    host_architectures = run('lipo', '-archs', str(host_mutool)).split()
+    assert host_architectures and set(host_architectures) <= {'arm64', 'x86_64'}, 'El validador no es un proceso nativo de 64 bits.'
     for item in result['documents']:
-        item['independentExportVerification'] = json.loads(run('node', 'scripts/tests/verify-pdfkit-export.mjs', item['exportedPath']))
+        # A native 64-bit process inspects the actual incremental export. The
+        # WASM verifier's address space cannot seek this >2 GiB fixture safely.
+        item['independentExportVerification'] = json.loads(run(str(host_mutool), 'run', 'scripts/tests/verify-native-export.js', item['exportedPath'], timeout=90))
+        verification = item['independentExportVerification']
+        assert verification.get('passed') is True and verification.get('engine') == 'MuPDF 1.28.1 native mutool' and verification.get('fileBacked') is True
+        assert verification.get('incrementalVersions', 0) >= 2, 'El inspector no encontró la versión original y su actualización incremental.'
+        if item['document']['size'] > 2*1024**3:
+            assert verification.get('previousXrefOffset', 0) > 2147483647 and verification.get('xrefBeyond2GiB') is True, 'El inspector no validó la xref con desplazamiento mayor de 2 GiB.'
+        verification.update({'nativeHostVerifier':True, 'hostArchitectures':host_architectures,
+                                                     'hostMutoolSha256':native_build['hostMutoolSha256']})
+        digest = hashlib.sha256()
+        source = Path(item['sourcePath'])
+        remaining = source.stat().st_size
+        with source.open('rb') as original, Path(item['exportedPath']).open('rb') as exported:
+            while remaining:
+                chunk = original.read(min(64*1024, remaining))
+                assert chunk and exported.read(len(chunk)) == chunk, 'La exportación incremental alteró los bytes originales.'
+                digest.update(chunk); remaining -= len(chunk)
+        assert digest.hexdigest() == item['document']['id']
+        item['originalPrefixPreserved'] = True
+        item['originalPrefixSha256'] = digest.hexdigest()
         for raster in item['rasters']:
             page = raster.get('page', 1)
             view = item['pageInfo' if page == 1 else 'secondPageInfo']['view']
@@ -275,6 +302,10 @@ finally:
                 except OSError: pass
         screenshot = out / ('folio-iphone-qa-failure.png' if args.qa else 'folio-iphone-failure.png')
         subprocess.run(['xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot)], capture_output=True)
+        if args.qa:
+            logs = subprocess.run(['xcrun', 'simctl', 'spawn', device, 'log', 'show', '--last', '10m', '--style', 'syslog',
+                                   '--predicate', 'process == "Folio"'], capture_output=True, text=True)
+            (out / 'native-pdfkit-failure.log').write_text(logs.stdout + logs.stderr)
     (out / ('native-smoke-ios-qa.json' if args.qa else 'native-smoke-ios.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2))
     if device:
         subprocess.run(['xcrun', 'simctl', 'shutdown', device], capture_output=True)

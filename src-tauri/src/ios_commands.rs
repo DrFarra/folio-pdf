@@ -50,7 +50,8 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         // Including an unchanged original overlay must preserve its appearance,
         // original name and opacity rather than unnecessarily recreating it.
         additions.push(first["annotations"][1].clone());
-        mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":info.token,"path":output,"annotations":additions,"removedSourceRefs":[reference]})).await?;
+        let writer = mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":info.token,"path":output,"annotations":additions,"removedSourceRefs":[reference]})).await?;
+        if writer["annotationWriter"] != "MuPDF 1.28.1" || writer["incremental"] != true { return Err(format!("La copia no confirmó el escritor incremental fijado: {writer}")); }
         let exported = register(&desktop, output.clone())?;
         mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":exported.token,"path":output,"id":exported.id,"revision":exported.revision,"size":exported.size,"password":""})).await?;
         let modified = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":exported.token,"page":1})).await?;
@@ -74,7 +75,7 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         if source.digest != info.id { return Err("La exportación nativa modificó el original.".into()); }
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":exported.token})).await?;
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":info.token})).await?;
-        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"addedHighlightDefaultOpacity":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output}));
+        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"addedHighlightDefaultOpacity":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output,"annotationWriter":writer["annotationWriter"],"incremental":writer["incremental"]}));
     }
     Ok(serde_json::json!({"swiftImportExecuted":true,"pdfKitExecuted":true,"wholeDocumentIPC":false,"UIKitInteractionTested":false,"documents":reports}))
 }
