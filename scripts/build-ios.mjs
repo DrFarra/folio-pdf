@@ -95,6 +95,7 @@ if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try 
   // Feather signs the final IPA on the user's device. No developer identity,
   // provision, private key or paid distribution account is used in this build.
   for (const name of ['APPLE_DEVELOPMENT_TEAM', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH', 'APPLE_PROVISIONING_PROFILE']) delete env[name];
+  run(process.execPath, [path.join(root, 'scripts/build-mupdf-ios.mjs')], true, env);
   run('rustup', ['target', 'add', 'aarch64-apple-ios', 'aarch64-apple-ios-sim'], true, env);
   // Tauri builds its Swift API as an independent package before our plugin.
   // Seed its SwiftPM resolution too, so neither package silently follows a

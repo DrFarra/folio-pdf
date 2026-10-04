@@ -40,7 +40,9 @@ solo el texto y la imagen de las páginas visibles, con imágenes de hasta cuatr
 megapíxeles. No hay un límite de 100 MB para importar; la disponibilidad de
 espacio en el dispositivo y el contenido de cada página condicionan la apertura.
 Ese modo permite leer, buscar, copiar, usar marcadores y añadir o eliminar
-resaltados y notas. La edición estructural, los formularios y el OCR completo
+resaltados y notas. Al guardar, MuPDF nativo añade los cambios a una copia del
+original para conservar las propiedades y apariencias de sus anotaciones,
+formularios y páginas no modificadas. La edición estructural, los formularios y el OCR completo
 siguen disponibles en el motor de documentos pequeños; el lector de archivos
 grandes no expone esas operaciones.
 
@@ -50,11 +52,21 @@ tracking. Los accesos a Archivos se conceden por documento mediante iOS.
 ## Compilar
 
 Necesitas un Mac con Xcode completo, su SDK de iOS y al menos un runtime de
-iPhone Simulator instalado, Node.js 22 o posterior y Rust estable. Usa una
+iPhone Simulator instalado, Node.js 22 o posterior, Python 3.12 o posterior,
+make y Rust estable. Usa una
 copia limpia de la fuente y ejecuta:
 
 ```sh
 npm ci
+node scripts/build-ios.mjs
+```
+
+El script verifica y compila el código correspondiente MuPDF 1.28.1 para
+dispositivo y simulador antes de resolver el paquete Swift local. Para usar
+el archivo fuente incluido en la entrega sin descargarlo:
+
+```sh
+node scripts/build-mupdf-ios.mjs --source /ruta/mupdf-1.28.1-source.tar.gz
 node scripts/build-ios.mjs
 ```
 

@@ -112,6 +112,18 @@ def main():
             (OUT / 'iphone-native-import-ui.log').write_text(process.stdout + '\n' + process.stderr)
             report['xcodebuildExitCode'] = process.returncode
             report['resultBundle'] = result_path.name
+            host_app = directory / 'DerivedData/Build/Products/Debug-iphonesimulator/FolioImportHost.app'
+            if host_app.is_dir():
+                host_info = plistlib.loads((host_app / 'Info.plist').read_bytes())
+                report['hostProviderConfiguration'] = {key: host_info.get(key) for key in (
+                    'CFBundleIdentifier', 'CFBundleName', 'CFBundleDisplayName',
+                    'UIFileSharingEnabled', 'LSSupportsOpeningDocumentsInPlace', 'UISupportsDocumentBrowser')}
+                bundled = list(host_app.iterdir())
+                report['hostBundledFixtures'] = []
+                for fixture in fixtures:
+                    same = [p for p in bundled if p.is_file() and unicodedata.normalize('NFC', p.name) == unicodedata.normalize('NFC', fixture['name'])]
+                    report['hostBundledFixtures'].append({'name': fixture['name'], 'present': len(same) == 1,
+                        'originalBytesVerified': len(same) == 1 and hashlib.sha256(same[0].read_bytes()).hexdigest() == fixture['sha256']})
             if result_path.exists():
                 try:
                     summary = json.loads(run('xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', str(result_path)))
@@ -119,8 +131,22 @@ def main():
                     report['xctest'] = {'passed': summary.get('passedTests'), 'failed': summary.get('failedTests'), 'skipped': summary.get('skippedTests'), 'status': summary.get('result')}
                     attachments = directory / 'Attachments'
                     run('xcrun', 'xcresulttool', 'export', 'attachments', '--path', str(result_path), '--output-path', str(attachments))
-                    for p in attachments.rglob('*.png'):
-                        target = OUT / ('import-ui-' + p.parent.name + '-' + p.name); shutil.copy2(p, target)
+                    exported = []
+                    for p in attachments.rglob('*'):
+                        if not p.is_file(): continue
+                        if p.suffix.lower() == '.png':
+                            target = OUT / ('import-ui-' + p.parent.name + '-' + p.name); shutil.copy2(p, target)
+                        elif p.stat().st_size < 5 * 1024 * 1024:
+                            try: text = p.read_text(encoding='utf-8')
+                            except (UnicodeDecodeError, OSError): continue
+                            # The existing evidence upload includes .log/.json;
+                            # retain actual AX text instead of only screenshots.
+                            suffix = '.json' if p.suffix.lower() == '.json' else '.log'
+                            target = OUT / ('import-ui-' + p.parent.name + '-' + p.name + suffix)
+                            target.write_text(text, encoding='utf-8')
+                        else: continue
+                        exported.append(target.name)
+                    report['exportedUIKitAttachments'] = exported
                 except Exception as error: report['resultExtractionError'] = str(error)
             assert process.returncode == 0, 'The actual UIKit tests failed; see iphone-native-import-ui.log and xcresult.'
             metrics = report.get('xctest', {})

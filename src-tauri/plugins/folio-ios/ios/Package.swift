@@ -8,5 +8,8 @@ let package = Package(
         .package(name: "Tauri", path: "../.tauri/tauri-api"),
         .package(url: "https://github.com/Brendonovich/swift-rs", exact: "1.0.7")
     ],
-    targets: [.target(name: "tauri-plugin-folio-ios", dependencies: [.byName(name: "Tauri"), .product(name: "SwiftRs", package: "swift-rs")], path: "Sources", linkerSettings: [.linkedFramework("PDFKit")])]
+    targets: [
+        .binaryTarget(name: "FolioMuPDF", path: "Frameworks/FolioMuPDF.xcframework"),
+        .target(name: "tauri-plugin-folio-ios", dependencies: [.byName(name: "Tauri"), .product(name: "SwiftRs", package: "swift-rs"), .byName(name: "FolioMuPDF")], path: "Sources", linkerSettings: [.linkedFramework("PDFKit")])
+    ]
 )

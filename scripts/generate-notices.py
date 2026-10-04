@@ -18,7 +18,10 @@ metadata = json.loads(args.cargo_metadata.read_text(encoding='utf-8-sig'))
 lock = json.loads((root/'package-lock.json').read_text(encoding='utf-8'))
 app_version = json.loads((root/'package.json').read_text(encoding='utf-8'))['version']
 platform_name = {'windows': 'Windows', 'macos': 'macOS', 'ios': 'iOS'}[args.platform]
-runtime_notice = ("iOS uses Apple\'s system WKWebView and UIKit file import/export.\n"
+runtime_notice = ("iOS uses Apple\'s system WKWebView, PDFKit file-backed reading and UIKit file import/export.\n"
+                  "MuPDF C 1.28.1 from the corresponding source archive exports large PDFs\n"
+                  "incrementally without regenerating existing annotations. The local C shim\n"
+                  "and exact native build flags are in scripts/build-mupdf-ios.mjs and the source ZIP.\n"
                   "The device IPA is unsigned; Feather must sign it with a valid certificate\n"
                   "and provisioning profile before installation. Folio does not upload PDF documents.\n"
                   if args.platform == 'ios' else "macOS uses Apple's system WKWebView. This development build has ad-hoc\n"
@@ -128,7 +131,7 @@ and the SwiftRs license files included with the iOS delivery.
 
 Build iPhone/iPad: npm ci; node scripts/build-ios.mjs.
 Required host: macOS with full Xcode, iOS SDK, an iPhone Simulator runtime,
-Node 22+ and Rust stable. Minimum device OS: iOS 17.0.
+Node 22+, Python 3.12+, make and Rust stable. Minimum device OS: iOS 17.0.
 The CLI invocation uses npm run tauri -- ios init/build so the generated
 XcodeBuildRustScript invokes the same locked Tauri project CLI.
 Device target: aarch64-apple-ios, platform IOS, arm64 unsigned IPA.
@@ -141,6 +144,16 @@ Read docs/ios.md and the native simulator and mobile WebKit release evidence.
 No physical-device or Feather-installation test is claimed by simulator tests.
 
 MuPDF.js 1.28.1 is used without modification from its published npm package.
+MuPDF C 1.28.1 exports large PDFs by file with incremental writes to a copy.
+scripts/build-mupdf-ios.mjs verifies the source SHA-256 and builds separate
+arm64 device and simulator static libraries with the local NativeExport shim.
+It creates the generated FolioMuPDF.xcframework before SwiftPM resolves the
+local UIKit plugin, and records flags, SDKs and hashes in mupdf-ios-build.json.
+The same source builds a host mutool verifier; it is not bundled in the IPA.
+To use the supplied archive without downloading it, first run:
+  node scripts/build-mupdf-ios.mjs --source /path/to/mupdf-1.28.1-source.tar.gz
+Then run node scripts/build-ios.mjs as above. Native C sources are compiled
+from the verified archive; the distributed archive itself is never changed.
 Complete official C/TypeScript/WASM build source, including thirdparty sources:
   mupdf-1.28.1-source.tar.gz, provided beside the application source archive
   https://mupdf.com/downloads/archive/mupdf-1.28.1-source.tar.gz

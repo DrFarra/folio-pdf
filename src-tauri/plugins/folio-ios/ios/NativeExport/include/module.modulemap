@@ -1,0 +1,4 @@
+module FolioMuPDF {
+    header "FolioMuPDF.h"
+    export *
+}

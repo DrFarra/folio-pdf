@@ -14,3 +14,4 @@ entrega-original/
 release/
 
 src-tauri/gen/apple/
+src-tauri/plugins/folio-ios/ios/Frameworks/

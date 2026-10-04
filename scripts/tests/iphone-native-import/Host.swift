@@ -21,6 +21,21 @@ final class ImportHostController: UIViewController, UIDocumentInteractionControl
         ("openin-cold", "Folio envío frío.PDF", "Enviar PDF frío"),
         ("openin-warm", "Folio envío caliente.pdf", "Enviar PDF caliente")
     ]
+    private func bundledFixture(_ filename: String) throws -> URL {
+        guard let root = Bundle.main.resourceURL else {
+            throw NSError(domain: "FolioImportHost", code: 1, userInfo: [NSLocalizedDescriptionKey: "No bundle resource directory"])
+        }
+        // Xcode's copied resource names can use decomposed Unicode on APFS.
+        // Compare the real directory entries canonically instead of relying on
+        // Bundle's cached name/extension lookup for accented uppercase .PDFs.
+        let resources = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        let expected = filename.precomposedStringWithCanonicalMapping
+        guard let file = resources.first(where: { $0.lastPathComponent.precomposedStringWithCanonicalMapping == expected }) else {
+            let available = resources.filter { $0.pathExtension.lowercased() == "pdf" }.map { $0.lastPathComponent }.joined(separator: ", ")
+            throw NSError(domain: "FolioImportHost", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing fixture " + filename + "; bundled PDFs: " + available])
+        }
+        return file
+    }
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Folio Import Host"
@@ -31,12 +46,11 @@ final class ImportHostController: UIViewController, UIDocumentInteractionControl
             let manager = FileManager.default
             let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             for filename in ["Folio selección uno.PDF", "Folio selección dos.pdf", "Folio envío frío.PDF", "Folio envío caliente.pdf"] {
-                guard let bundled = Bundle.main.url(forResource: (filename as NSString).deletingPathExtension, withExtension: (filename as NSString).pathExtension) else {
-                    throw NSError(domain: "FolioImportHost", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing fixture " + filename])
-                }
+                let bundled = try bundledFixture(filename)
                 let destination = documents.appendingPathComponent(filename)
                 if !manager.fileExists(atPath: destination.path) { try manager.copyItem(at: bundled, to: destination) }
             }
+            status.text = "4 PDFs prepared"
         } catch { status.text = "Import host setup error: " + error.localizedDescription }
         let stack = UIStackView()
         stack.axis = .vertical; stack.spacing = 24
@@ -64,9 +78,7 @@ final class ImportHostController: UIViewController, UIDocumentInteractionControl
         do {
             let manager = FileManager.default
             let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            guard let bundled = Bundle.main.url(forResource: (filename as NSString).deletingPathExtension, withExtension: (filename as NSString).pathExtension) else {
-                throw NSError(domain: "FolioImportHost", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing fixture " + filename])
-            }
+            let bundled = try bundledFixture(filename)
             let file = documents.appendingPathComponent(filename)
             if !manager.fileExists(atPath: file.path) { try manager.copyItem(at: bundled, to: file) }
             let controller = UIDocumentInteractionController(url: file)

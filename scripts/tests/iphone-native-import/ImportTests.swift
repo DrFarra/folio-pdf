@@ -8,6 +8,13 @@ final class ImportTests: XCTestCase {
         let screen = XCTAttachment(screenshot: app.screenshot()); screen.name = name; screen.lifetime = .keepAlways; add(screen)
         let tree = XCTAttachment(string: app.debugDescription); tree.name = name + "-accessibility"; tree.lifetime = .keepAlways; add(tree)
     }
+    private func prepareHost() {
+        host.launch()
+        let status = host.staticTexts["host-status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10), "The import host did not publish fixture preparation status")
+        attach("host-fixtures-status", app: host)
+        XCTAssertEqual(status.label, "4 PDFs prepared", "The real file provider must contain all four original PDFs before UIKit interaction")
+    }
     private func reading(_ text: String, screenshot: String) {
         XCTAssertTrue(folio.wait(for: .runningForeground, timeout: 45), "iOS did not foreground Folio")
         let rendered = folio.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
@@ -34,7 +41,7 @@ final class ImportTests: XCTestCase {
             if browse.exists && browse.isHittable { browse.tap() }
             let local = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone' OR label == 'On My iPad'")).firstMatch
             XCTAssertTrue(local.waitForExistence(timeout: 8)); local.tap()
-            let folder = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Folio Import Host' OR label BEGINSWITH 'Folio Import Host,'")).firstMatch
+            let folder = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Folio Import Host' OR label == 'FolioImportHost' OR label BEGINSWITH 'Folio Import Host,' OR label BEGINSWITH 'FolioImportHost,'")).firstMatch
             XCTAssertTrue(folder.waitForExistence(timeout: 8)); folder.tap()
         }
         let file = fixture(); XCTAssertTrue(file.waitForExistence(timeout: 15), "The actual picker did not show " + filename)
@@ -44,7 +51,7 @@ final class ImportTests: XCTestCase {
         if confirm.waitForExistence(timeout: 2) && confirm.isHittable { XCTAssertTrue(confirm.isEnabled); confirm.tap() }
     }
     func test01CancelThenSelectTwoActualProviderDocuments() {
-        host.launch()
+        prepareHost()
         XCTAssertTrue(host.buttons["openin-cold"].firstMatch.waitForExistence(timeout: 10))
         folio.launchArguments = ["--folio-ui-test-picker", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         folio.launch()
@@ -64,7 +71,7 @@ final class ImportTests: XCTestCase {
         folio.buttons["Cerrar diálogo"].firstMatch.tap()
     }
     private func send(_ identifier: String) {
-        host.launch(); let button = host.buttons[identifier].firstMatch
+        prepareHost(); let button = host.buttons[identifier].firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 10)); button.tap()
         let folioAction = host.buttons.matching(NSPredicate(format: "label == 'Folio' OR label == 'Copy to Folio' OR label == 'Open in Folio'")).firstMatch
         XCTAssertTrue(folioAction.waitForExistence(timeout: 15), "iOS Open In menu did not offer Folio")
