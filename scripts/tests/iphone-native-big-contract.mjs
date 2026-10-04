@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { stripVTControlCharacters } from 'node:util';
 import { webkit } from 'playwright-core';
 
 // Exercises the actual App and its native-PDF adapter with explicit mocked IPC.
@@ -13,14 +14,14 @@ assert(!/\.getData\s*\(/.test(fs.readFileSync(path.join(root, 'src/App.tsx'), 'u
 const port = process.env.FOLIO_IPHONE_BIG_CONTRACT_PORT || '4202', origin = `http://127.0.0.1:${port}`;
 const snapshotRoot = path.join(root, '.tools'), snapshot = process.env.FOLIO_IPHONE_BIG_DEV ? null : path.join(snapshotRoot, `iphone-big-preview-${process.pid}`);
 if (snapshot) { fs.mkdirSync(snapshot, { recursive: true }); fs.cpSync(path.join(root, 'dist'), snapshot, { recursive: true }); }
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });
 let log = '', browser, page; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
 try {
   let ready = false;
   for (let i = 0; i < 100; i++) {
     if (server.exitCode !== null) throw new Error(log || 'The isolated contract server exited.');
-    try { if (log.includes(origin) && (await fetch(origin)).ok) { ready = true; break; } } catch {}
+    try { if (stripVTControlCharacters(log).includes(origin) && (await fetch(origin)).ok) { ready = true; break; } } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert(ready, log || 'The contract server did not start.');

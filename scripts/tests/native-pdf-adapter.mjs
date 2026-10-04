@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { stripVTControlCharacters } from 'node:util';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { webkit } from 'playwright-core';
 import assert from 'node:assert/strict';
@@ -15,14 +16,14 @@ fixturePage.setMediaBox(-25, -40, 470, 640); fixturePage.setCropBox(25, 40, 420,
 fixturePage.drawText('Native selected words', { x: 30, y: 455, size: 18 });
 const bytes = [...await fixture.save()];
 const port = process.env.FOLIO_NATIVE_PDF_TEST_PORT || '4201', origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe', windowsHide: true });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe', windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });
 let serverLog = '', browser, page, report;
 server.stdout.on('data', data => { serverLog += data; }); server.stderr.on('data', data => { serverLog += data; });
 try {
   let ready = false;
   for (let i = 0; i < 100; i++) {
     if (server.exitCode !== null) throw new Error(serverLog || 'The isolated fixture server exited.');
-    try { if (serverLog.includes(origin) && (await fetch(origin + '/package.json')).ok) { ready = true; break; } } catch {}
+    try { if (stripVTControlCharacters(serverLog).includes(origin) && (await fetch(origin + '/package.json')).ok) { ready = true; break; } } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert(ready, serverLog || 'The isolated fixture server did not start.');
