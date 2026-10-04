@@ -108,6 +108,7 @@ export default function App() {
   const [, setHistoryTick] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const viewer = useRef<HTMLDivElement>(null);
+  const pageInputDirty = useRef(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const loadRequest = useRef(0);
   const tabsRef = useRef<DocumentTab[]>([]);
@@ -152,6 +153,7 @@ export default function App() {
   }
   function publishTabs() { setTabs([...tabsRef.current]); }
   function activateTab(tab: DocumentTab, focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab') {
+    pageInputDirty.current = false;
     activeTabRef.current = tab.key; setActiveTabKey(tab.key);
     docRef.current = tab.doc; annotationRef.current = tab.annotations; readingState.current = { page: tab.page, bookmarks: tab.bookmarks };
     undoStack.current = tab.undo; redoStack.current = tab.redo;
@@ -194,6 +196,7 @@ export default function App() {
         const next = tabsRef.current[Math.min(index, tabsRef.current.length - 1)];
         if (next) activateTab(next);
         else {
+          pageInputDirty.current = false; setPageInput('1'); setPage(1);
           activeTabRef.current = null; setActiveTabKey(null); docRef.current = null; annotationRef.current = []; undoStack.current = []; redoStack.current = [];
           setDoc(null); setAnnotations([]); setBookmarks([]); setOutline([]); setTextIndex([]); setQuery(''); setSearchOpen(false); setNotesOpen(false); setSidebar(false); setTool('select'); setRedactions([]); setEditArea(null); setWorkBenchClosed();
         }
@@ -274,10 +277,12 @@ export default function App() {
       const previous = replacing ? docRef.current : null;
       const key = replacing && activeTabRef.current ? activeTabRef.current : uid();
       activeTabRef.current = key; setActiveTabKey(key);
+      pageInputDirty.current = false;
       docRef.current = loaded;
       setDoc(loaded);
       setDimensions({ width: view.width, height: view.height, rotation: first.rotate });
-      setPage(Math.max(1, Math.min(pdf.numPages, session.lastPage)));
+      const initialPage = Math.max(1, Math.min(pdf.numPages, session.lastPage));
+      setPage(initialPage); setPageInput(String(initialPage));
       const sessionMatches = session.documentRevision === revision || (!session.documentRevision && !modified) || context?.useSession === false;
       const restored = !sessionMatches ? inspection.annotations : (session.version || 0) >= 2 ? session.annotations : [...inspection.annotations, ...session.annotations.filter(a => !inspection.annotations.some(b => b.id === a.id))];
       annotationRef.current = restored.filter(a => a.page <= pdf.numPages);
@@ -358,7 +363,7 @@ export default function App() {
     try { localStorage.setItem('folio.readingPreferences', JSON.stringify(readingPreferences)); } catch { /* Preferences remain active for this session. */ }
   }, [readingPreferences]);
   useEffect(() => { try { localStorage.setItem('folio.highlightColor', color); } catch { /* The selected color still works for this session. */ } }, [color]);
-  useEffect(() => { setPageInput(String(page)); }, [page]);
+  useEffect(() => { if (!pageInputDirty.current) setPageInput(String(page)); }, [page]);
   useEffect(() => {
     const selected = document.querySelector<HTMLElement>('.document-tab.selected'), strip = selected?.parentElement;
     if (!selected || !strip) return;
@@ -612,6 +617,7 @@ export default function App() {
   const goToPage = useCallback((number: number, smooth = true) => {
     const pdf = docRef.current?.pdf;
     if (!pdf || !viewer.current) return;
+    pageInputDirty.current = false;
     const next = Math.max(1, Math.min(pdf.numPages, number));
     setPage(next); setPageInput(String(next));
     const node = viewer.current.querySelector<HTMLElement>(`[data-page-number="${next}"]`);
@@ -620,6 +626,13 @@ export default function App() {
       viewer.current.scrollTo({ top: viewer.current.scrollTop + distance, behavior: smooth && readingPreferencesRef.current.smoothScroll && Math.abs(distance) < viewer.current.clientHeight * 4 && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' });
     }
   }, []);
+
+  function commitPageInput() {
+    pageInputDirty.current = false;
+    const next = Number(pageInput);
+    if (Number.isInteger(next) && next > 0) goToPage(next);
+    else setPageInput(String(page));
+  }
 
   useLayoutEffect(() => {
     if (readingPreferences.mode === 'single' && viewer.current) viewer.current.scrollTop = 0;
@@ -1004,7 +1017,7 @@ export default function App() {
       <main className={`reader${phone && mobileAnnotating ? ' mobile-annotating' : ''}`} id="document-reader" inert={phone && (sidebar || notesOpen)}>
         {!phone && <div className="reader-toolbar">
           <div className="toolbar-left"><button className="tools-button" disabled={!doc || !!busy} onClick={() => { setWorkbench('home'); setTool('select'); }} title="Herramientas"><Wrench size={17} /><span>Herramientas</span></button><span className="toolbar-divider" /><div className="tool-group"><IconButton label="Seleccionar texto (V)" active={tool === 'select'} disabled={!doc} onClick={() => setTool('select')}><MousePointer2 size={17} /></IconButton><IconButton label="Resaltado automático (H)" toggle active={tool === 'highlight'} disabled={!doc?.canAnnotate || !doc.canCopy || !!busy || loading} onMouseDown={e => e.preventDefault()} onClick={activateHighlight}><Highlighter size={18} /></IconButton><HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /><IconButton label="Añadir nota (N)" active={tool === 'note'} disabled={!doc?.canAnnotate} onClick={() => setTool('note')}><StickyNote size={17} /></IconButton></div><div className="undo-group"><span className="toolbar-divider" /><IconButton label={`Deshacer (${shortcutLabel('Z')})`} onClick={undo} disabled={!!busy || !undoStack.current.length}><Undo2 size={17} /></IconButton><IconButton label={`Rehacer (${shortcutLabel(isMac ? '⇧+Z' : 'Y')})`} onClick={redo} disabled={!!busy || !redoStack.current.length}><Redo2 size={17} /></IconButton></div></div>
-          <div className="page-controls"><IconButton label="Página anterior" onClick={() => goToPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton><form onSubmit={e => { e.preventDefault(); const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={pageInput} onChange={e => setPageInput(e.target.value.replace(/\D/g, ''))} onBlur={() => { const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }} /><span>/ {doc?.pdf.numPages || '—'}</span></form><IconButton label="Página siguiente" onClick={() => goToPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton></div>
+          <div className="page-controls"><IconButton label="Página anterior" onClick={() => goToPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton><form onSubmit={e => { e.preventDefault(); commitPageInput(); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={pageInput} onChange={e => { pageInputDirty.current = true; setPageInput(e.target.value.replace(/\D/g, '')); }} onBlur={() => { if (pageInputDirty.current) commitPageInput(); }} /><span>/ {doc?.pdf.numPages || '—'}</span></form><IconButton label="Página siguiente" onClick={() => goToPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton></div>
           <div className="toolbar-right"><div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} onChange={e => { if (['page', 'width'].includes(e.target.value)) setZoomMode(e.target.value); else { setCustomScale(Number(e.target.value) / 100); setZoomMode('custom'); } }} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300].map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= 3}><Plus size={16} /></IconButton></div><span className="toolbar-divider" /><IconButton label="Rotar vista 90 grados" disabled={!doc} onClick={() => setRotation(v => (v + 90) % 360)}><RotateCw size={17} /></IconButton><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!doc} onClick={toggleBookmark} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={17} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton><IconButton label="Pantalla completa" onClick={() => void fullscreen()} className="fullscreen-button"><Maximize size={17} /></IconButton><span className="toolbar-divider" /><IconButton label="Imprimir PDF" disabled={!doc?.canPrint || !!busy} onClick={() => void printDocument()} className="print-button">{busy === 'print' ? <LoaderCircle size={17} className="spin" /> : <Printer size={17} />}</IconButton><button className="download-button" onClick={() => void download()} disabled={!doc || !!busy}><ArrowDownToLine size={16} /><span>{isDesktop ? 'Guardar' : 'Descargar'}</span></button></div>
         </div>}
 
@@ -1013,7 +1026,7 @@ export default function App() {
           {loading && <div className="loading-overlay"><LoaderCircle size={28} className="spin" /><span>Abriendo PDF…</span></div>}
         </div>
 
-        {phone && doc && <div className="mobile-reading-status"><div className="page-controls"><form onSubmit={event => { event.preventDefault(); const next = Number(pageInput); if (Number.isInteger(next) && next > 0) goToPage(next); else setPageInput(String(page)); }}><input aria-label="Número de página" type="text" inputMode="numeric" disabled={!!busy || loading} value={pageInput} onChange={event => setPageInput(event.target.value.replace(/\D/g, ''))} onBlur={() => { const next = Number(pageInput); if (Number.isInteger(next) && next > 0) goToPage(next); else setPageInput(String(page)); }} /><span>/ {doc.pdf.numPages}</span></form></div><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!!busy || loading} onClick={() => { setNotesOpen(false); toggleBookmark(); }} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={21} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton></div>}
+        {phone && doc && <div className="mobile-reading-status"><div className="page-controls"><form onSubmit={event => { event.preventDefault(); commitPageInput(); }}><input aria-label="Número de página" type="text" inputMode="numeric" disabled={!!busy || loading} value={pageInput} onChange={event => { pageInputDirty.current = true; setPageInput(event.target.value.replace(/\D/g, '')); }} onBlur={() => { if (pageInputDirty.current) commitPageInput(); }} /><span>/ {doc.pdf.numPages}</span></form></div><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!!busy || loading} onClick={() => { setNotesOpen(false); toggleBookmark(); }} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={21} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton></div>}
         {phone && doc && mobileAnnotating && <div className="mobile-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
           <IconButton label="Resaltado automático" toggle active={tool === 'highlight'} disabled={!doc.canAnnotate || !doc.canCopy || !!busy || loading} onMouseDown={event => event.preventDefault()} onClick={activateHighlight}><Highlighter size={21} /></IconButton>
           <HighlightColorPicker color={color} onChange={setColor} disabled={!doc.canAnnotate || !doc.canCopy || !!busy || loading} />

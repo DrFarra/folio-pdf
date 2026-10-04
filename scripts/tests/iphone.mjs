@@ -88,7 +88,29 @@ async function open(page, files = source) {
 }
 async function goToPage(page, number) {
   const input = page.getByLabel('Número de página', { exact: true }); await input.fill(String(number)); await input.press('Enter');
-  await page.waitForFunction(number => document.querySelector('[aria-label="Número de página"]')?.value === String(number), number);
+  await waitForReadingPage(page, number);
+  assert.equal(await input.inputValue(), String(number));
+}
+async function waitForReadingPage(page, requested = null) {
+  await page.evaluate(() => { window.__iphoneNavigation = { number: null, scrollTop: null, stableFrames: 0 }; });
+  await page.waitForFunction(requested => {
+    const sample = window.__iphoneNavigation, viewer = document.querySelector('.reading-area');
+    const number = Number(document.querySelector('[aria-label="Número de página"]')?.value);
+    const wrap = viewer?.querySelector(`.pdf-page-wrap[data-page-number="${number}"]`);
+    const canvas = wrap?.querySelector('.page-content > canvas');
+    const bounds = wrap?.getBoundingClientRect(), visible = viewer?.getBoundingClientRect();
+    const inView = bounds && visible && bounds.bottom > visible.top && bounds.top < visible.bottom;
+    const atBottom = viewer && viewer.scrollTop + viewer.clientHeight >= viewer.scrollHeight - 1;
+    const atReadingStart = inView && bounds.top >= visible.top - 1 && (bounds.top <= visible.top + 20 || atBottom);
+    const published = canvas && canvas.width > 0 && canvas.height > 0 && !!canvas.dataset.renderScale
+      && canvas.dataset.rendering === 'false' && !wrap.querySelector('.page-loading');
+    const ready = inView && published && (requested === null || (number === requested && atReadingStart));
+    const stationary = viewer && sample.number === number && Math.abs(viewer.scrollTop - sample.scrollTop) < .2;
+    sample.stableFrames = ready && stationary ? sample.stableFrames + 1 : 0;
+    sample.number = number; sample.scrollTop = viewer?.scrollTop;
+    sample.pageTop = bounds?.top; sample.viewerTop = visible?.top; sample.published = !!published;
+    return sample.stableFrames >= 3;
+  }, requested, { polling: 'raf' });
 }
 async function actions(page) {
   await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
@@ -114,8 +136,10 @@ async function save(page, name) {
   await page.getByRole('button', { name: 'Guardar PDF', exact: true }).tap();
   const downloaded = await pending, file = path.join(output, name); await downloaded.saveAs(file);
   await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
-  await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
-  await page.locator('.pdf-page-wrap[data-page-number="1"] canvas[data-render-scale]').waitFor();
+  // Offscreen pages deliberately release their rendered content on iOS. Wait
+  // for the current reading page to publish its bitmap instead of loading an
+  // unrelated first page that may be outside the lazy-rendering margin.
+  await waitForReadingPage(page);
   const bytes = new Uint8Array(fs.readFileSync(file));
   return { file, bytes, inspection: inspectDocument(bytes) };
 }
@@ -204,6 +228,7 @@ async function check(id, action, options = {}) {
     process.exitCode = 1; results.push({ id, status: 'failed', error: error.stack, diagnostics, uiState: await page.evaluate(() => ({
       selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed, highlightTapEvents: window.__iphoneHighlightTapEvents,
       draftSummaries: window.__iphoneDraftSummaries,
+      navigation: window.__iphoneNavigation,
       activeElement: document.activeElement?.outerHTML?.slice(0, 500), alerts: [...document.querySelectorAll('[role=alert], .toast')].map(node => node.textContent),
     })).catch(() => null) });
     await page.screenshot({ path: path.join(output, `failure-${id}.png`), animations: 'disabled' }).catch(() => {});
@@ -255,15 +280,27 @@ try {
     assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-documents.png'), animations: 'disabled' }); await closeDialog(page);
     await open(page, another); await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2); await closeDialog(page);
     await switchTo(page, source); assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '2');
-    await goToPage(page, 1); await highlights(page).waitFor();
+    await waitForReadingPage(page, 2);
+    const pageInput = page.getByLabel('Número de página', { exact: true });
+    await pageInput.fill('1'); await pageInput.press('Enter');
+    // A user can open actions while the smooth scroll is still running. Do
+    // not wait between Enter and this tap: leaving the field must not submit
+    // the observer's intermediate page number and cancel the requested jump.
+    await actions(page);
+    await waitForReadingPage(page, 1); assert.equal(await pageInput.inputValue(), '1');
+    await closeDialog(page); await highlights(page).waitFor();
+    const firstPageNavigation = await page.evaluate(() => window.__iphoneNavigation);
+    await page.screenshot({ path: path.join(output, 'iphone-restored-page-one.png'), animations: 'disabled' });
     const first = await save(page, 'iphone-first-export.pdf'); assert.equal(first.inspection.annotations.length, 1); assert.equal(first.inspection.annotations[0].text, copiedPhrase);
-    await switchTo(page, another); const second = await save(page, 'iphone-second-export.pdf'); assert.equal(second.inspection.annotations.length, 0);
+    await switchTo(page, another); await goToPage(page, 2);
+    const second = await save(page, 'iphone-second-export.pdf'); assert.equal(second.inspection.annotations.length, 0);
+    assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '2');
     assert(operateDocument(second.bytes, { operation: 'text' })[0].includes('ORIGINAL SECOND'));
     await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
     await page.getByRole('button', { name: `Cerrar ${path.basename(source)}`, exact: true }).tap();
     await page.locator('dialog[open]').waitFor({ state: 'detached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 1); await closeDialog(page); await heading(page, another).waitFor({ state: 'attached' });
-    return { openedDocuments: 2, duplicateFocusesExistingDocument: true, pageRestored: 2, exportedAnnotationIsolation: true, inactiveCloseKeepsCurrentDocument: true };
+    return { openedDocuments: 2, duplicateFocusesExistingDocument: true, pageRestored: 2, rapidActionTapPreservesRequestedPage: true, firstPageNavigation, secondExportFromPage: 2, exportedAnnotationIsolation: true, inactiveCloseKeepsCurrentDocument: true };
   });
 
   await check('native-text-range-copy-highlight-and-comment-standard-pdf', async page => {
