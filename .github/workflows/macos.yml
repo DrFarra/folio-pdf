@@ -77,19 +77,20 @@ jobs:
           npm run desktop:macos -- --bundle-only 2>&1 | tee -a test-results/mac-build.log
       - name: Package the installer, application, licenses and corresponding source
         run: |
-          python3 scripts/package-macos.py --out release/Folio-0.4.1-macos --build-dir src-tauri/target/universal-apple-darwin/release --build-logs test-results --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+          python3 scripts/package-macos.py --out release/Folio-macos --build-dir src-tauri/target/universal-apple-darwin/release --build-logs test-results --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
       - name: Upload the completed Mac delivery
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Folio-0.4.1-macos
-          path: release/Folio-0.4.1-macos/
+          name: Folio-macos
+          path: release/Folio-macos/
           if-no-files-found: error
           retention-days: 1
       - name: Preserve verified bundles if packaging fails
         if: failure() && steps.production_smoke.outcome == 'success'
         run: |
-          if [ -f src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_0.4.1_universal.dmg ]; then
-            cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_0.4.1_universal.dmg test-results/recovery/
+          version="$(node -p 'require("./package.json").version')"
+          if [ -f "src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_${version}_universal.dmg" ]; then
+            cp "src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_${version}_universal.dmg" test-results/recovery/
           fi
       - name: Upload verified bundles for recovery
         if: failure() && steps.production_smoke.outcome == 'success'

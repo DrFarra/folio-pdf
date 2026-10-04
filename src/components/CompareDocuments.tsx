@@ -8,7 +8,7 @@ import { extractText } from '../engine/client';
 import { compareText, visualDifference } from '../comparison';
 
 type Pair = { before: PDFDocumentProxy; after: PDFDocumentProxy; beforeText: string[]; afterText: string[]; name: string };
-export default function CompareDocuments({ doc, getBytes }: { doc: LoadedDocument; getBytes: () => Promise<Uint8Array> }) {
+export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc: LoadedDocument; getBytes: () => Promise<Uint8Array>; onBusyChange?: (busy: boolean) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState('');
   const [pair, setPair] = useState<Pair | null>(null);
@@ -20,6 +20,8 @@ export default function CompareDocuments({ doc, getBytes }: { doc: LoadedDocumen
   const [images, setImages] = useState<string[]>([]);
   const tasks = useRef<PDFDocumentLoadingTask[]>([]);
   const controller = useRef<AbortController | null>(null);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   useEffect(() => () => { controller.current?.abort(); tasks.current.forEach(task => { void task.destroy(); }); }, []);
   async function compare() {
     if (!file) return; setBusy(true); setError(''); setPair(null); setImages([]);

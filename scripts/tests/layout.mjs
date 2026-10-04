@@ -44,7 +44,8 @@ function assertFrame(value) {
   assert.equal(value.documentHeight, value.height, 'La ventana completa no debe desplazarse.');
   assert.equal(value.documentWidth, value.width, 'La ventana completa no debe desbordarse horizontalmente.');
   assert(value.reader.height > 0, 'El PDF debe conservar espacio visible.');
-  assert(value.reader.y <= 96, 'Las barras superiores deben dejar espacio para el documento.');
+  assert(value.toolbar && Math.abs(value.reader.y - value.toolbar.bottom) <= 1, `El PDF debe comenzar inmediatamente debajo de la barra: ${JSON.stringify(value)}`);
+  assert(value.reader.height >= value.height * .5, `La lectura debe conservar al menos la mitad de la ventana: ${JSON.stringify(value)}`);
   assert(value.reader.bottom <= value.height, 'El PDF debe permanecer dentro de la ventana.');
 }
 function assertStationary(before, after) {
@@ -73,7 +74,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1360, height: 690 } });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin);
-  await page.getByRole('heading', { name: 'Abrir PDF', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
   await page.locator('input[type=file]').setInputFiles(path.join(root, 'public/sample.pdf'));
   await page.locator('.textLayer').first().waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
@@ -175,7 +176,7 @@ try {
         if (command === 'plugin:window|inner_position') return state.position;
         if (command === 'plugin:window|inner_size') return state.size;
         if (command === 'plugin:window|is_fullscreen') return state.fullscreen;
-        if (command === 'startup_documents' || command === 'recent_documents' || command === 'pick_documents') return [];
+        if (command === 'startup_documents' || command === 'recent_documents' || command === 'list_library' || command === 'pick_documents') return [];
         if (command === 'load_session' || command === 'load_draft') return null;
         return undefined;
       },

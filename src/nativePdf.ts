@@ -12,6 +12,8 @@ export type NativePdfPageInfo = {
   view: [number, number, number, number];
   rotation: number;
   annotations?: Annotation[];
+  label?: string;
+  links?: { rect: [number, number, number, number]; url?: string; page?: number; left?: number; top?: number }[];
 };
 export type NativePdfMetadata = {
   id: string;
@@ -233,11 +235,23 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
     const existing = pages.get(page); if (existing) return cache(pages, page, existing);
     const info = await pageInfo(page);
     const proxy = {
-      pageNumber: page, rotate: info.rotation, view: info.view, userUnit: 1, ref: { num: page, gen: 0 },
+      pageNumber: page, rotate: info.rotation, view: info.view, userUnit: 1, ref: { num: page, gen: 0 }, label: info.label,
       getViewport: (parameters: GetViewportParameters) => new NativeViewport(info.view, { rotation: info.rotation, ...parameters }),
       render: (parameters: RenderParameters) => render(page, parameters),
       getTextContent: () => pageText(page),
-      getAnnotations: async () => (await pageInfo(page)).annotations || [],
+      getAnnotations: async () => {
+        const current = await pageInfo(page);
+        const links = (current.links || []).flatMap<{ id: string; annotationType: number; subtype: string; rect: number[]; url?: string; dest?: unknown[] }>((link, index) => {
+          if (!Array.isArray(link.rect) || link.rect.length !== 4 || !link.rect.every(Number.isFinite)) return [];
+          const annotation = { id: `native-link:${page}:${index}`, annotationType: 2, subtype: 'Link', rect: link.rect };
+          if (link.url) return [{ ...annotation, url: link.url }];
+          if (!Number.isInteger(link.page) || link.page! < 1 || link.page! > metadata.numPages) return [];
+          return [{ ...annotation, dest: [link.page! - 1, { name: 'XYZ' }, Number.isFinite(link.left) ? link.left : null, Number.isFinite(link.top) ? link.top : null, null] }];
+        });
+        // Source highlights/notes retain their migration identity. Navigation
+        // links never enter the editable annotation subscribers or exports.
+        return [...(current.annotations || []), ...links];
+      },
       cleanup: () => { textCache.delete(page); return true; },
     } as unknown as PDFPageProxy;
     return cache(pages, page, proxy);
@@ -246,11 +260,12 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
   let outlinePromise: Promise<Outline | null> | undefined;
   async function getOutline(): Promise<Outline | null> {
     checkAlive();
-    return outlinePromise ||= bridge<{ title: string; page: number; depth: number }[]>('native_pdf_outline', { token: source.token }).then(entries => {
+    return outlinePromise ||= bridge<{ title: string; page?: number | null; depth: number }[]>('native_pdf_outline', { token: source.token }).then(entries => {
       checkAlive(); const outline: Outline = [], parents: Outline[number][] = [];
       for (const entry of entries) {
-        if (!Number.isInteger(entry.page) || entry.page < 1 || entry.page > metadata.numPages) continue;
-        const item = { title: entry.title, dest: [entry.page - 1, { name: 'Fit' }], url: null, unsafeUrl: undefined, newWindow: false, color: new Uint8ClampedArray([0, 0, 0]), count: undefined, bold: false, italic: false, items: [] } as unknown as Outline[number];
+        const number = entry.page;
+        const validPage = typeof number === 'number' && Number.isInteger(number) && number >= 1 && number <= metadata.numPages;
+        const item = { title: entry.title, dest: validPage ? [number - 1, { name: 'Fit' }] : null, url: null, unsafeUrl: undefined, newWindow: false, color: new Uint8ClampedArray([0, 0, 0]), count: undefined, bold: false, italic: false, items: [] } as unknown as Outline[number];
         const depth = Math.max(0, Math.min(parents.length, Math.floor(entry.depth) || 0));
         (depth && parents[depth - 1] ? parents[depth - 1].items : outline).push(item); parents.length = depth; parents.push(item);
       }
@@ -268,6 +283,7 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
   const pdf = {
     numPages: metadata.numPages, fingerprints: [metadata.id, null], isPureXfa: false,
     getPage, getOutline, destroy,
+    getPageLabels: async () => null,
     getDestination: async () => null,
     getPageIndex: async (ref: { num: number }) => { checkPage(ref.num); return ref.num - 1; },
     getDownloadInfo: async () => ({ length: metadata.size }),

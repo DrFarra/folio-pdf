@@ -45,7 +45,7 @@ try {
         calls.push({ command, args: args instanceof Uint8Array ? { binaryLength: args.byteLength } : args, options });
         if (command === 'plugin:event|listen') return ++callback;
         if (command === 'startup_documents') return [source];
-        if (command === 'recent_documents' || command === 'pick_documents') return [];
+        if (command === 'recent_documents' || command === 'list_library' || command === 'pick_documents') return [];
         if (command === 'read_document') return new Uint8Array(args.token === source.token ? bytes : writes.at(-1).bytes).buffer;
         if (command === 'load_draft') return new ArrayBuffer(0);
         if (command === 'load_session') return sessions.get(args.id) || null;
@@ -79,21 +79,22 @@ try {
   await page.getByRole('toolbar', { name: 'Herramientas del texto seleccionado', exact: true }).getByRole('button', { name: 'Resaltar', exact: true }).tap();
   await page.locator('.highlight-annotation').waitFor();
   const action = async name => { await page.getByRole('button', { name: 'Más acciones', exact: true }).tap(); await page.getByRole('button', { name, exact: true }).tap(); };
-  await action('Guardar PDF');
+  const idle = async () => { await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Volver a biblioteca', exact: true }).waitFor(); await page.waitForFunction(() => !document.querySelector('button[aria-label="Volver a biblioteca"]')?.disabled); };
+  await action('Guardar una copia del PDF');
   await page.waitForFunction(() => window.__iphoneNativeContract.writes.filter(write => write.command === 'write_pdf_copy').length === 1);
-  await page.waitForFunction(() => !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
+  await idle();
   assert.equal(await page.locator('.highlight-annotation').count(), 1);
   assert.match(await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).textContent(), /iphone-native-source/);
   assert.equal(await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).count(), 0, 'A canceled native export must not claim it was saved.');
   results.push({ id: 'native-files-cancel-keeps-current-document-and-unsaved-highlight', passed: true, bridgeMocked: true, uiKitPickerExercised: false });
 
-  await action('Guardar PDF'); await page.getByRole('heading', { name: 'iphone-native-saved.pdf', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
+  await action('Guardar una copia del PDF'); await page.getByRole('heading', { name: 'iphone-native-saved.pdf', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-  await page.waitForFunction(() => !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
-  await action('Compartir PDF'); await page.waitForFunction(() => window.__iphoneNativeContract.writes.some(write => write.command === 'share_pdf_copy'));
-  await page.waitForFunction(() => !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
+  await idle();
+  await page.getByRole('button', { name: 'Compartir', exact: true }).tap(); await page.waitForFunction(() => window.__iphoneNativeContract.writes.some(write => write.command === 'share_pdf_copy'));
+  await idle();
   await action('Imprimir PDF'); await page.waitForFunction(() => window.__iphoneNativeContract.writes.some(write => write.command === 'print_pdf_copy'));
-  await page.waitForFunction(() => !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
+  await idle();
   const captured = await page.evaluate(() => ({ writes: window.__iphoneNativeContract.writes, calls: window.__iphoneNativeContract.calls,
     sessions: [...window.__iphoneNativeContract.sessions.values()], browserSessions: Object.keys(localStorage).filter(key => key.startsWith('folio.session.')) }));
   const reserved = captured.calls.filter(call => call.command === 'choose_output'); assert.equal(reserved.length, 4);

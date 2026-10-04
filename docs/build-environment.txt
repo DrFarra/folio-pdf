@@ -1,4 +1,4 @@
-Build environment used for Folio 0.4.0, 2026-10-04
+Build environment used for Folio 0.6.0, 2026-10-04
 
 Host: Windows x64; Node 24.19.0, npm 11.17.0, Rust 1.99.0 MSVC.
 A project-local toolchain was used without changing the system PATH:
@@ -17,10 +17,12 @@ The .tools directory is local build tooling and is excluded from the source
 archive. A standard Visual Studio C++/SDK installation can build the project
 with npm ci followed by npm run desktop:build, without this adapter.
 
-Native file tests: four passing tests in Windows.
-UI layout tests: Windows/Chrome, five viewport sizes, independent scroll panes,
-Ctrl+wheel zoom and cursor anchoring. Reports are in the evidence directory.
-Runtime acceptance scope is recorded in docs/acceptance-windows.md.
+The release build uses the default production identifier org.folio.pdf and
+does not enable native-qa or a WebView2 remote-debugging port. The current
+delivery's evidence records actual build hashes, frontend asset hashes and
+the scope/version of each test. The installer was built without executing it.
+Historical runtime acceptance is recorded in docs/acceptance-windows.md;
+those reports establish acceptance only for their recorded versions.
 
 Original 0.2.0 build record follows:
 

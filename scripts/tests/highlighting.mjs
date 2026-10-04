@@ -8,6 +8,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
+import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
 
 // These tests use actual mouse drags through the PDF.js text layer. They do not
 // construct a Selection programmatically or call the annotation implementation.
@@ -81,6 +82,7 @@ async function open(page, file) {
   await page.locator('.app-header input[type=file]').setInputFiles(file);
   await page.getByRole('heading', { name: path.basename(file), exact: true }).waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+  await enterAnnotationMode(page);
   await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).selectOption('100');
   await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
   await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').first().waitFor();
@@ -153,7 +155,7 @@ async function dragText(page, first, from, last, to, reverse = false, options) {
   await drag(page, reverse ? b : a, reverse ? a : b, options);
 }
 
-async function highlight(page) { await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click(); }
+async function highlight(page) { await enterAnnotationMode(page); await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click(); }
 
 async function save(page, id, { original = originalText } = {}) {
   await page.locator('.highlight-annotation').first().waitFor();
@@ -313,7 +315,7 @@ try {
   });
 
   for (const angle of [90, 180, 270]) await check(`rotated-${angle}-view-and-zoom-keep-text-quad-coordinates`, async page => {
-    for (let i = 0; i < angle / 90; i++) await page.getByRole('button', { name: 'Rotar vista 90 grados', exact: true }).click();
+    for (let i = 0; i < angle / 90; i++) await desktopDocumentAction(page, 'Rotar vista 90 grados');
     await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).selectOption('150');
     await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
     await page.waitForFunction(angle => {

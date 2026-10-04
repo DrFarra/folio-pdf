@@ -1,0 +1,96 @@
+.document-library{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;background:var(--bg);color:var(--text);font-size:1rem;line-height:1.4;text-align:left}
+.document-library button,.document-library input{font:inherit}
+.document-library button{min-height:44px;min-width:44px}
+.document-library button:focus-visible,.document-library input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.document-library-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;flex-shrink:0;border-bottom:1px solid var(--line)}
+.document-library-brand{font-size:.875rem;font-weight:600;color:var(--muted)}
+.document-library-header h1{font-size:1.75rem;font-weight:650;line-height:1.2;letter-spacing:-.035em;margin:3px 0 0}
+.document-library-header-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.document-library-header-actions button{display:flex;align-items:center;justify-content:center;width:44px;padding:0;border-radius:10px;color:var(--muted)}
+.document-library-header-actions button:hover{color:var(--text);background:var(--hover)}
+.document-library-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px 20px calc(20px + env(safe-area-inset-bottom,0px));flex:1}
+.document-library-continue{display:flex;align-items:center;gap:14px;width:100%;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);margin-bottom:18px;text-align:left}
+.document-library-continue>svg:first-child{color:var(--accent);flex-shrink:0}
+.document-library-continue>svg:last-child{margin-left:auto;flex-shrink:0;color:var(--muted)}
+.document-library-continue>span{display:flex;flex-direction:column;gap:4px;min-width:0}
+.document-library-continue strong{font-size:1rem;font-weight:600;overflow-wrap:anywhere}
+.document-library-eyebrow{font-size:.8125rem;color:var(--accent);font-weight:600}
+.document-library-secondary{color:var(--muted);font-size:.875rem}
+.document-library-create-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
+.document-library-create-actions button{display:flex;align-items:center;justify-content:center;gap:9px;min-height:50px;border-radius:11px;padding:12px 10px;font-size:.9375rem;font-weight:600}
+.document-library-import{background:var(--accent);color:#fff}
+[data-theme=dark] .document-library-import{background:#bd5945}
+.document-library-create{border:1px solid var(--line);background:var(--surface)}
+.document-library-create:hover,.document-library-continue:hover{background:var(--hover)}
+.document-library-search{display:flex;align-items:center;gap:10px;min-height:48px;border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:0 12px;margin-bottom:16px;color:var(--muted)}
+.document-library-search>svg{flex-shrink:0}
+.document-library-search input{min-width:0;width:100%;flex:1;min-height:46px;border:0;background:transparent;color:var(--text);font-size:1rem;padding:8px 0;outline-offset:0}
+.document-library-search input::-webkit-search-cancel-button{-webkit-appearance:none}
+.document-library-search input::placeholder{color:var(--muted);opacity:1}
+.document-library-search button{display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;margin-right:-10px}
+.document-library-tabs{display:flex;gap:4px;padding:4px;border-radius:11px;background:var(--hover);margin-bottom:12px}
+.document-library-tabs button{display:flex;flex:1;align-items:center;justify-content:center;gap:9px;min-width:0;border-radius:8px;padding:10px 8px;font-size:.9375rem;color:var(--muted)}
+.document-library-tabs button[aria-selected=true]{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 3px #0000000d}
+.document-library-tabs button>span{font-size:.8125rem;min-width:20px;padding:1px 4px;border-radius:5px;background:var(--hover);font-weight:500}
+.document-library-list{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.document-library-row{display:flex;align-items:center;gap:4px;position:relative;min-width:0;padding:4px 6px 4px 0;border-bottom:1px solid var(--line)}
+.document-library-row:last-child{border-bottom:0}
+.document-library-open{display:flex;align-items:center;gap:12px;flex:1;min-width:0;width:100%;padding:12px;text-align:left;border-radius:9px}
+.document-library-open:hover{background:var(--hover)}
+.document-library-file-icon{display:flex;align-items:center;justify-content:center;min-width:42px;min-height:48px;border-radius:9px;background:var(--accent-soft);color:var(--accent);flex-shrink:0}
+.document-library-file-text{display:flex;flex-direction:column;gap:3px;min-width:0}
+.document-library-file-text strong{font-size:1rem;font-weight:550;overflow-wrap:anywhere;line-height:1.35}
+.document-library-file-text>span{font-size:.8125rem;color:var(--muted)}
+.document-library-date{font-size:.75rem!important}
+.document-library-menu-container{flex-shrink:0;position:relative}
+.document-library-more{display:flex;align-items:center;justify-content:center;padding:0;width:44px;border-radius:9px;color:var(--muted)}
+.document-library-more:hover,.document-library-more[aria-expanded=true]{background:var(--hover);color:var(--text)}
+.document-library-menu{position:absolute;z-index:25;top:calc(100% + 3px);right:0;width:max-content;max-width:min(280px,calc(100vw - 42px));padding:5px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 8px 32px #00000024}
+.document-library-row:nth-last-child(-n+2) .document-library-menu{top:auto;bottom:calc(100% + 3px)}
+.document-library-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-radius:8px;font-size:.9375rem}
+.document-library-menu button:hover{background:var(--hover)}
+.document-library-delete{color:#b72c32}
+[data-theme=dark] .document-library-delete{color:#ff9b9b}
+.document-library-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:200px;gap:12px;padding:26px 16px;text-align:center;color:var(--muted)}
+.document-library-empty h2{font-size:1.0625rem;font-weight:600;color:var(--text)}
+.document-library-empty p{font-size:.9375rem;max-width:32ch}
+.document-library-demo{display:flex;align-items:center;gap:12px;width:100%;margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:13px 14px;text-align:left;background:var(--surface);font-size:.9375rem}
+.document-library-demo>svg:first-child{color:var(--accent)}
+.document-library-demo>svg:last-child{margin-left:auto;color:var(--muted)}
+.document-library-demo:hover{background:var(--hover)}
+@media(max-width:480px){.document-library-header{padding:14px 16px}.document-library-content{padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}.document-library-header h1{font-size:1.625rem}.document-library-header-actions{gap:0}.document-library-open{gap:10px;padding:12px 10px}.document-library-create-actions{gap:8px}.document-library-create-actions button{gap:7px}}
+@media(prefers-reduced-motion:reduce){.document-library button{transition:none}}
+
+/* A desktop library is a document list in the main window. The phone retains
+ * its full-width rows, touch targets and safe-area spacing above. */
+html:not([data-phone]) .app-shell .library-screen .document-library{max-width:1048px;margin:0 auto;background:var(--bg)}
+html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:24px 24px 18px;border-bottom:0}
+html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:28px;letter-spacing:-.8px}
+html:not([data-phone]) .app-shell .library-screen .document-library-brand{display:none}
+html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:0 24px 28px}
+html:not([data-phone]) .app-shell .library-screen .document-library-continue{padding:16px 18px;border-radius:10px;margin-bottom:18px}
+html:not([data-phone]) .app-shell .library-screen .document-library-continue strong{font-size:15px}
+html:not([data-phone]) .app-shell .library-screen .document-library-secondary{font-size:13px}
+html:not([data-phone]) .app-shell .library-screen .document-library-create-actions{display:flex;gap:10px}
+html:not([data-phone]) .app-shell .library-screen .document-library-create-actions button{min-height:44px;padding:10px 16px;font-size:13px;border-radius:8px}
+html:not([data-phone]) .app-shell .library-screen .document-library-search{min-height:44px;border-radius:8px;margin-bottom:14px;max-width:480px}
+html:not([data-phone]) .app-shell .library-screen .document-library-search input{min-height:42px;font-size:14px}
+html:not([data-phone]) .app-shell .library-screen .document-library-tabs{display:inline-flex;padding:3px;border-radius:8px;gap:3px;margin-bottom:16px}
+html:not([data-phone]) .app-shell .library-screen .document-library-tabs button{flex:0 0 auto;min-height:36px;padding:7px 16px;font-size:13px;border-radius:5px}
+html:not([data-phone]) .app-shell .library-screen .document-library-tabs button>span{font-size:11px}
+html:not([data-phone]) .app-shell .library-screen .document-library-list{border-radius:10px}
+html:not([data-phone]) .app-shell .library-screen .document-library-row{padding:4px 8px 4px 4px}
+html:not([data-phone]) .app-shell .library-screen .document-library-open{gap:14px;padding:9px 12px;min-height:66px}
+html:not([data-phone]) .app-shell .library-screen .document-library-file-icon{min-width:36px;min-height:42px;border-radius:7px}
+html:not([data-phone]) .app-shell .library-screen .document-library-file-text{display:grid;grid-template-columns:minmax(0,1fr) 150px 106px;align-items:center;gap:20px;width:100%}
+html:not([data-phone]) .app-shell .library-screen .document-library-file-text strong{font-size:14px;font-weight:550;line-height:1.4}
+html:not([data-phone]) .app-shell .library-screen .document-library-file-text>span{font-size:12px}
+html:not([data-phone]) .app-shell .library-screen .document-library-date{font-size:12px!important;text-align:right}
+html:not([data-phone]) .app-shell .library-screen .document-library-menu button{font-size:13px}
+html:not([data-phone]) .app-shell .library-screen .document-library-empty{min-height:240px;gap:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+html:not([data-phone]) .app-shell .library-screen .document-library-empty h2{font-size:18px}
+html:not([data-phone]) .app-shell .library-screen .document-library-empty p{font-size:14px}
+html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:auto;min-width:260px;gap:12px;margin-top:18px;padding:10px 12px;font-size:13px;border-radius:8px}
+@media(max-width:800px){html:not([data-phone]) .app-shell .library-screen .document-library-file-text{display:flex;flex-direction:column;align-items:flex-start;gap:3px}html:not([data-phone]) .app-shell .library-screen .document-library-date{text-align:left}html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:20px 18px 16px}html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:0 18px 22px}}
+@media(max-width:480px){html:not([data-phone]) .app-shell .library-screen .document-library-create-actions{display:grid;grid-template-columns:1fr 1fr}html:not([data-phone]) .app-shell .library-screen .document-library-create-actions button{padding:10px 8px}html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:24px}html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:100%;min-width:0}}
+@media(max-height:400px){html:not([data-phone]) .app-shell .library-screen .document-library-header{padding-top:12px;padding-bottom:12px}html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:24px}html:not([data-phone]) .app-shell .library-screen .document-library-empty{min-height:160px}}

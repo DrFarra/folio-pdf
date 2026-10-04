@@ -92,6 +92,14 @@ pub async fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String
     mobile_call(app, "copyText", serde_json::json!({"text":text})).await.map(|_| ())
 }
 
+#[tauri::command]
+pub async fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
+    if url.len() > 8192 || url.chars().any(char::is_control) { return Err("El enlace no es válido.".into()); }
+    let scheme = url.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase()).unwrap_or_default();
+    if !["http", "https", "mailto", "tel"].contains(&scheme.as_str()) { return Err("El enlace no es compatible.".into()); }
+    mobile_call(app, "openExternalUrl", serde_json::json!({"url":url})).await.map(|_| ())
+}
+
 async fn mobile_call(app: tauri::AppHandle, command: &'static str, args: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || app.folio_ios().call(command, args))
         .await.map_err(|_| "No se pudo completar la operación de iOS.".to_string())?

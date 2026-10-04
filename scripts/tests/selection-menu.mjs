@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -159,7 +160,7 @@ try {
   await check('copy-protected-document-has-no-selection-menu', async page => {
     const a = await point(page, first, 6), b = await point(page, first, first.length - 1, true);
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
-    assert.equal(await toolbar(page).count(), 0); assert(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).isDisabled());
+    assert.equal(await toolbar(page).count(), 0); await enterAnnotationMode(page); assert(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).isDisabled());
     return { forbiddenCopyActionAbsent: true };
   }, noCopy);
   await check('contextual-menu-fits-narrow-viewport-near-page-bottom', async page => {

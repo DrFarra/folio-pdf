@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -133,6 +134,7 @@ async function point(page, text, offset, end = false) {
   }, { offset, end });
 }
 async function highlight(page, first = 0, last = first) {
+  await enterAnnotationMode(page);
   if (await automatic(page).getAttribute('aria-pressed') !== 'true') await automatic(page).click();
   const from = await point(page, lines[first], 0), to = await point(page, lines[last], lines[last].length, true);
   await page.mouse.move(from.x, from.y); await page.mouse.down();
@@ -256,7 +258,12 @@ try {
     const first = await point(page, lines[0], Math.floor(lines[0].length / 2));
     await page.mouse.click(first.x, first.y);
     assert.equal(await page.getByRole('menuitem', { name: 'Eliminar resaltado', exact: true }).count(), 0, 'A PDF without annotation permission must not expose removal.');
-    assert(await automatic(page).isDisabled());
+    assert.equal(await automatic(page).count(), 0, 'Read-only documents keep annotation tools out of reading mode.');
+    await page.getByRole('button', { name: 'Anotar documento', exact: true }).click();
+    const explanation = page.getByRole('dialog', { name: 'Herramientas disponibles', exact: true });
+    await explanation.waitFor();
+    assert.match(await explanation.innerText(), /permisos|anotaciones/i);
+    await explanation.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
     const saved = await download(page, 'readonly-preserved');
     assert.deepEqual(saved.annotations, pdfAnnotations(new Uint8Array(fs.readFileSync(readOnly))));
     return { annotationPermissionRespected: true, removalActionAbsent: true, standardHighlightsAndNotePreserved: true };

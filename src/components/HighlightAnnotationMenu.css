@@ -2,4 +2,6 @@
 .highlight-annotation-menu button{display:flex;align-items:center;gap:7px;min-height:32px;padding:0 9px;border-radius:5px;font-size:11px;color:var(--text);white-space:nowrap}
 .highlight-annotation-menu button:hover,.highlight-annotation-menu button:focus-visible{background:var(--hover)}
 .highlight-annotation-menu button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.highlight-annotation-menu{display:flex;align-items:center;gap:2px;max-width:calc(100vw - 16px)}
+.highlight-annotation-menu .highlight-color-trigger{flex-shrink:0}
 .highlight-annotation[data-selected=true],.highlight-annotation[role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}

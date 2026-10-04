@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -14,6 +15,9 @@ assert(executable && pdf, 'FOLIO_NATIVE_EXE y FOLIO_LAYOUT_PDF son necesarios.')
 const endpoint = process.env.FOLIO_NATIVE_CDP || 'http://127.0.0.1:9367';
 const output = path.resolve('test-results');
 const version = JSON.parse(await readFile('package.json', 'utf8')).version;
+const frontendHTML = await readFile('dist/index.html', 'utf8');
+const frontendModule = frontendHTML.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/)?.[1];
+assert(frontendModule, 'El frontend final compilado debe incluir su módulo de entrada.');
 await mkdir(output, { recursive: true });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const original = hash(await readFile(pdf));
@@ -36,6 +40,8 @@ try {
   const invoke = (command, args = {}) => page.evaluate(({command, args}) => window.__TAURI_INTERNALS__.invoke(command, args), {command, args});
   assert.equal(await invoke('plugin:app|identifier'), 'org.folio.pdf.qa', 'Solo se permite automatizar la instancia QA.');
   assert.equal(await invoke('plugin:app|version'), version);
+  const loadedModule = await page.locator('script[type="module"][src]').first().getAttribute('src');
+  assert.equal(new URL(loadedModule, page.url()).pathname, frontendModule, 'El binario QA debe incluir el frontend final actual.');
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   // Each run starts from clean QA sessions. Existing sticky-note icons from a
   // previous run may occupy the exact character where the mouse drag starts.
@@ -105,10 +111,11 @@ try {
   const selectedSpan = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'Dos guías' }).first();
   await selectedSpan.waitFor(); await selectedSpan.scrollIntoViewIfNeeded();
   const annotationsBeforeSelection = (await invoke('load_session', { id: original }))?.annotations?.length || 0;
+  await enterAnnotationMode(page);
+  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
   await page.getByRole('button', { name: 'Color del resaltador', exact: true }).click();
   assert.equal(await page.locator('.highlight-color-presets button').count(), 12);
   await page.getByRole('button', { name: 'Color Azul', exact: true }).click();
-  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).getAttribute('aria-pressed'), 'true');
   const spanBounds = await selectedSpan.boundingBox();
   await page.mouse.move(spanBounds.x + 1, spanBounds.y + spanBounds.height / 2); await page.mouse.down();
@@ -136,7 +143,7 @@ try {
   assert.equal(await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).inputValue(), '100');
   assert((await invoke('load_session', { id: original })).bookmarks.some(node => node.title === 'QA nombre de página'));
   nativeModules.tabSwitchPreservesViewAndBookmarks = true;
-  await page.getByRole('button', { name: 'Seleccionar texto (V)', exact: true }).click();
+  await enterAnnotationMode(page); await page.getByRole('button', { name: 'Seleccionar texto (V)', exact: true }).click();
   async function selectForMenu() {
     await selectedSpan.scrollIntoViewIfNeeded();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -168,7 +175,7 @@ try {
   await page.getByRole('button', { name: 'Guardar nota', exact: true }).click();
   await page.waitForFunction(async id => (await window.__TAURI_INTERNALS__.invoke('load_session', { id }))?.annotations.some(note => note.kind === 'note' && note.page === 1 && note.text === 'QA comentario del texto seleccionado'), original);
   nativeModules.floatingSelectionHighlightsAndComments = true;
-  await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).click();
+  if (await page.locator('.notes-panel').isVisible()) await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).click();
   async function openFixture(filename) {
     const file = path.join(output, filename), id = hash(await readFile(file));
     await invoke('forget_document', { id });
@@ -210,7 +217,7 @@ try {
   await writeFile(path.join(output,'native-ocr.pdf'),recognized); nativeModules.localOCR = true;
   const recent=await invoke('recent_documents'); assert(recent.some(r=>r.id===scanId && r.draft)); nativeModules.unsavedDraftInLibrary = true;
   await page.reload(); await page.locator('.loading-overlay').waitFor({state:'detached'});
-  await page.getByRole('button',{name:'Mis documentos',exact:true}).click(); await page.locator('.recent-row').filter({hasText:'scan.pdf'}).locator('button').first().click();
+  await page.getByRole('button',{name:'Mis documentos',exact:true}).click(); await page.locator('.document-library-row').filter({hasText:'scan.pdf'}).getByRole('button', { name: 'Abrir scan.pdf', exact: true }).click();
   await page.getByRole('heading',{name:'scan.pdf',exact:true}).waitFor(); await page.locator('.loading-overlay').waitFor({state:'detached'});
   await page.waitForFunction(() => document.querySelector('.textLayer')?.textContent?.includes('FOLIO OCR TEST'));
   nativeModules.draftReopenedAfterReload = true;
@@ -223,7 +230,7 @@ try {
     const timer = setTimeout(() => reject(new Error('La instancia QA no cerró.')), 10000);
     child.once('exit', () => {clearTimeout(timer); resolve()});
   });
-  const result = {platform:process.platform, identifier:'org.folio.pdf.qa', version,
+  const result = {platform:process.platform, identifier:'org.folio.pdf.qa', version, frontendModule,
     nativePdfOpen:true, ctrlWheelZoom:true, wheelScrollOnlyContent:true, foldingPanels:true,
     maximizeRestore:true, minimize:true, gracefulClose:true, originalUnchanged:true,
     nativeModules, uncaughtErrors:errors, pdfSha256:original};

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -62,7 +63,7 @@ async function prepare(context, { mac = true, native = false, missingModernApis 
       invoke: async (command, arguments_) => {
         globalThis.__folioNativeCalls.push({ command, arguments: arguments_ });
         if (command === 'plugin:event|listen') return ++id;
-        if (command === 'startup_documents' || command === 'recent_documents' || command === 'pick_documents') return [];
+        if (command === 'startup_documents' || command === 'recent_documents' || command === 'list_library' || command === 'pick_documents') return [];
         if (command === 'load_session' || command === 'choose_output') return null;
         return undefined;
       },
@@ -95,7 +96,7 @@ async function check(browser, id, action, options = {}) {
 }
 async function nativeTitlebar(page, mac) {
   assert.equal(await page.locator('.window-actions').count(), mac ? 0 : 1);
-  assert.equal(await page.locator('.app-header').evaluate(el => parseInt(getComputedStyle(el).paddingLeft)), mac ? 78 : 8);
+  assert.equal(await page.locator('.app-header').evaluate(el => parseInt(getComputedStyle(el).paddingLeft)), mac ? 78 : 10);
   const calls = await page.evaluate(() => globalThis.__folioNativeCalls);
   const startup = calls.findIndex(call => call.command === 'startup_documents');
   assert(startup > calls.findIndex(call => call.arguments?.event === 'folio-open-documents'));
@@ -103,12 +104,13 @@ async function nativeTitlebar(page, mac) {
   return { nativeTrafficLightsSpace: mac, customWindowsControls: !mac, listenersReadyBeforeStartup: true };
 }
 async function desktopActions(page, label) {
-  await open(page); assert.equal(await page.getByRole('button', { name: 'Deshacer (⌘+Z)', exact: true }).count(), 1);
+  await open(page); await enterAnnotationMode(page); assert.equal(await page.getByRole('button', { name: 'Deshacer (⌘+Z)', exact: true }).count(), 1);
   await page.keyboard.press('Meta+f'); await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).fill('Mac'); await page.locator('.search-result').first().waitFor();
   await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).click();
   await page.locator('.pdf-page').first().hover(); await page.keyboard.down('Meta'); await page.mouse.wheel(0, -180); await page.keyboard.up('Meta');
   await page.waitForFunction(() => Number(document.querySelector('select[aria-label="Nivel de zoom"]').value) > 100);
   await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100'); await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
+  await enterAnnotationMode(page);
   await page.getByRole('button', { name: 'Añadir nota (N)', exact: true }).click();
   const bounds = await page.locator('.pdf-page').first().boundingBox(); await page.mouse.click(bounds.x + 250, bounds.y + 190);
   await page.getByRole('textbox', { name: 'Texto de la nota', exact: true }).fill('Mac note'); await page.getByRole('button', { name: 'Guardar nota', exact: true }).click();
@@ -130,7 +132,7 @@ async function desktopActions(page, label) {
 }
 async function tabLayout(page, mac) {
   await page.setViewportSize({ width: mac ? 1024 : 1360, height: 760 });
-  assert.equal(await page.locator('.app-header').evaluate(el => parseInt(getComputedStyle(el).paddingLeft)), mac ? 78 : 8);
+  assert.equal(await page.locator('.app-header').evaluate(el => parseInt(getComputedStyle(el).paddingLeft)), mac ? 78 : 10);
   assert.equal(await page.locator('.window-actions').count(), mac ? 0 : 1);
   await page.locator('.app-header input[type=file]').setInputFiles([path.join(root, 'public/sample.pdf'), source, another]);
   await page.getByRole('heading', { name: path.basename(another), exact: true }).waitFor();
@@ -199,12 +201,13 @@ try {
         new MutationObserver(capture).observe(document.body, { childList: true, subtree: true, characterData: true });
       });
       const sample = path.join(root, 'public/sample.pdf');
+      const sampleOccurrenceCount = operateDocument(new Uint8Array(fs.readFileSync(sample)), { operation: 'text' }).reduce((count, text) => count + (text.match(/folio/gi)?.length || 0), 0);
       // One file-choice event queues three opens without waiting for any index.
       await page.locator('.app-header input[type=file]').setInputFiles([sample, source, another].map(file => ({ name: path.basename(file), mimeType: 'application/pdf', buffer: fs.readFileSync(file) })));
       await page.getByRole('heading', { name: path.basename(another), exact: true }).waitFor();
       await page.waitForFunction(() => !document.querySelector('button.new-document-tab')?.disabled);
       assert.equal(await page.getByRole('tab').count(), 3);
-      for (let cycle = 0; cycle < 3; cycle++) for (const [file, query, count] of [[sample, 'FOLIO', 6], [source, 'MAC PAGE', 3], [another, 'OTHER PAGE', 3]]) {
+      for (let cycle = 0; cycle < 3; cycle++) for (const [file, query, count] of [[sample, 'FOLIO', sampleOccurrenceCount], [source, 'MAC PAGE', 3], [another, 'OTHER PAGE', 3]]) {
         await page.getByRole('tab', { name: path.basename(file), exact: true }).click();
         await page.getByRole('tab', { name: path.basename(file), exact: true, selected: true }).waitFor();
         await page.getByRole('heading', { name: path.basename(file), exact: true }).waitFor();

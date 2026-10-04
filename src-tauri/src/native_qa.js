@@ -86,13 +86,11 @@
   const search = async query => {
     let input = document.querySelector('[aria-label="Buscar texto en el PDF"]');
     if (!input && document.querySelector('.phone-layout')) {
-      if (!document.querySelector('.mobile-drawer')) document.querySelector('.app-header button[aria-label="Explorar documento"]')?.click();
-      let searchTab;
-      for (let n = 0; n < 30 && !searchTab; n++) {
-        await pause(100);
-        searchTab = Array.from(document.querySelectorAll('.mobile-panel-tabs [role="tab"]')).find(tab => tab.textContent?.trim() === 'Buscar');
-      }
-      searchTab?.click();
+      // Reading search is a direct toolbar action; the page explorer now
+      // contains thumbnails, outline, bookmarks and annotations only.
+      const results = document.querySelector('button[aria-label="Ver resultados"]');
+      if (results) results.click();
+      else document.querySelector('.mobile-reading-toolbar button[aria-label="Buscar"]')?.click();
     } else if (!input) document.querySelector('button[aria-label="Buscar en el PDF"]')?.click();
     for (let n = 0; n < 30 && !input; n++) { await pause(100); input = document.querySelector('[aria-label="Buscar texto en el PDF"]'); }
     if (!input) return { query, found: false, error: 'Search input was not mounted.' };

@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
+import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
 fs.mkdirSync(output, { recursive: true });
@@ -61,6 +62,7 @@ async function go(page, number) {
 }
 async function annotate(page, source) {
   await zoom(page).selectOption('100'); await go(page, 1);
+  await enterAnnotationMode(page);
   await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
   const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: `TAB ${source.letter} PAGE 1` }).first(); await span.waitFor();
   const rect = await span.boundingBox();
@@ -128,12 +130,12 @@ try {
     await annotate(page, a); await open(page, b);
     await page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true }).click(); await tab(page, a).waitFor({ state: 'detached' }); await active(page, b);
     await open(page, a); await page.locator('.highlight-annotation').first().waitFor();
-    await page.getByRole('button', { name: 'Seleccionar texto (V)', exact: true }).click();
+    await enterAnnotationMode(page); await page.getByRole('button', { name: 'Seleccionar texto (V)', exact: true }).click();
     await page.keyboard.press('Control+Tab'); await active(page, b);
     await page.keyboard.press('Control+Shift+Tab'); await active(page, a);
     await page.keyboard.press('Control+w'); await tab(page, a).waitFor({ state: 'detached' }); await active(page, b);
     await page.getByRole('button', { name: `Cerrar ${b.name}`, exact: true }).click(); await tab(page, b).waitFor({ state: 'detached' });
-    await page.getByRole('heading', { name: 'Abrir PDF', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
     return { inactiveCloseKeepsCurrentDocument: true, reopenRestoresAnnotation: true, keyboardSwitchAndClose: true, lastCloseReturnsToWelcome: true };
   });
 
@@ -235,7 +237,7 @@ try {
       assert.equal(await page.getByRole('tab').count(), 1, 'Saving a copy must keep one tab for this open document.');
     }
     await zoom(page).selectOption('150');
-    await page.getByRole('button', { name: 'Rotar vista 90 grados', exact: true }).click();
+    await desktopDocumentAction(page, 'Rotar vista 90 grados');
     await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
     await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'TAB A PAGE 1' }).first().waitFor();
     assert.equal(await page.getByText('No se pudo renderizar la página.', { exact: true }).count(), 0);

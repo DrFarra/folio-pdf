@@ -1,26 +1,37 @@
-Folio 0.5.0 — iOS source and build information
+Folio 0.6.0 — Windows source and build information
 
-Application source: folio-0.5.0-fuente.zip, provided beside the IPA.
-License: AGPL-3.0-or-later, full text in LICENSE.
-Locked dependency versions/integrities: package-lock.json and both Cargo.lock files.
-Local UIKit bridge source: src-tauri/plugins/folio-ios, AGPL-3.0-or-later.
-Swift Tauri API source: the locked tauri Cargo crate's mobile/ios-api directory.
-SwiftRs Swift package revision and licenses: scripts/ios-swift-dependencies.json
-and the SwiftRs license files included with the iOS delivery.
+Application source: folio-0.6.0-fuente.zip, provided with this release.
+License: AGPL-3.0-or-later; the complete license is included in LICENSE.
+Locked dependency versions and integrity: package-lock.json,
+src-tauri/Cargo.lock, and src-tauri/plugins/folio-ios/Cargo.lock.
+Native PDF operations are implemented in the local crates/folio-core source.
+The complete application source includes the Windows, macOS and iOS adapters.
 
-Build iPhone/iPad: npm ci; node scripts/build-ios.mjs.
-Required host: macOS with full Xcode, iOS SDK, an iPhone Simulator runtime,
-Node 22+ and Rust stable. Minimum device OS: iOS 17.0.
-The CLI invocation uses npm run tauri -- ios init/build so the generated
-XcodeBuildRustScript invokes the same locked Tauri project CLI.
-Device target: aarch64-apple-ios, platform IOS, arm64 unsigned IPA.
-Simulator target: aarch64-apple-ios-sim, platform IOSSIMULATOR, separate .app.
-Device build uses --no-sign --ci with Cargo --locked. No Apple certificate,
-provisioning profile, account credential or private signing key is included.
-Feather must sign the device IPA with the user's valid certificate/profile
-before installation. A simulator .app cannot be installed on a physical iPhone.
-Read docs/ios.md and the native simulator and mobile WebKit release evidence.
-No physical-device or Feather-installation test is claimed by simulator tests.
+Build Windows x64 on Windows with Node, Rust stable and the Microsoft C++/SDK
+build tools installed:
+  npm ci
+  npm run desktop:windows -- --ci -- --locked
+The default production configuration uses identifier org.folio.pdf, release
+optimization, the custom-protocol feature and the NSIS per-user installer.
+Do not enable the native-qa feature or use .tools/qa-config.json for delivery.
+The installer and a portable executable are provided. Keep the portable
+executable beside LICENSE.txt, THIRD-PARTY-NOTICES.txt, SOURCE-BUILD.txt and
+pdf-file.ico. Microsoft WebView2 must be available on the computer. The
+installer downloads Microsoft's bootstrapper when that runtime is absent.
+This release is unsigned; no Windows signing certificate is included.
+
+This workstation's optional portable build environment is configured by
+scripts/windows-env.ps1. It changes only the current PowerShell process.
+The local .tools directory is excluded from the application source archive.
+The production build uses the same locked project and dependency versions
+as the standard build command above. See docs/build-environment.txt for the
+actual local compiler, SDK and bundler versions.
+
+Build macOS on a Mac: npm ci; node scripts/build-macos.mjs.
+Build iPhone/iPad on a Mac with full Xcode: npm ci; node scripts/build-ios.mjs.
+See docs/macos.md and docs/ios.md for target-specific requirements. Apple
+packages include their own platform notices and actual build/test evidence.
+Windows compilation does not establish acceptance on an Apple platform.
 
 MuPDF.js 1.28.1 is used without modification from its published npm package.
 Complete official C/TypeScript/WASM build source, including thirdparty sources:
@@ -38,15 +49,23 @@ Rebuild MuPDF.js independently from that source archive:
 The upstream script installs/activates Emscripten 4.0.8, uses BUILD=small and
 default feature/define settings. It creates dist/mupdf.js, mupdf-wasm.js,
 mupdf-wasm.wasm and TypeScript declarations. See tools/build.sh for details.
-For a source build of Folio, use the rebuilt package through npm/local packaging,
-then run npm run build and node scripts/build-ios.mjs.
-Rebuilding that upstream source is documented but was not executed for this
-release; tested WASM is the unmodified npm package pinned by package-lock integrity.
-No byte-for-byte reproducibility claim is made for a build on another machine.
+For a source build of Folio, use the rebuilt package through npm/local
+packaging, then run the platform build command above.
+The tested WASM is the unmodified npm package pinned by package-lock integrity.
+The independent upstream WASM rebuild was not executed for this release.
+No byte-for-byte reproducibility claim is made for another machine's build.
 
 Exact npm registry URLs and Cargo crate source-download URLs are recorded in
-dependency-licenses.json. Keep the corresponding source, build instructions and
-license notices available with redistributed binaries under their licenses.
+dependency-licenses.json. Regenerate Windows dependency notices with:
+  cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform
+    x86_64-pc-windows-msvc --format-version 1 --features custom-protocol > metadata.json
+  python scripts/generate-notices.py --platform windows --cargo-metadata metadata.json
+    --mupdf-source /path/to/mupdf-1.28.1-source.tar.gz
+The wrapped commands above should be entered as single lines in the shell.
+Keep corresponding source, build instructions and notices available when
+redistributing binaries under their licenses.
 
-Existing desktop build instructions remain in README.md and docs/acceptance-windows.md.
-Desktop acceptance does not establish iOS runtime acceptance, and vice versa.
+Read the delivery manifest and verification reports for the actual acceptance
+scope of this version. Historical installation reports establish only their
+own recorded version. This build does not claim a fresh installer execution,
+Windows SmartScreen approval, or physical iPhone installation test.

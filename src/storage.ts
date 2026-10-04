@@ -1,13 +1,15 @@
 import type { RecentDocument, Session } from './types';
 import { invoke } from '@tauri-apps/api/core';
 import { isNative } from './platform';
+import type { NativeDocument } from './platform';
 import { normalizeBookmarks } from './bookmarks';
 
 const PREFIX = 'folio.session.';
 const EMPTY: Session = { annotations: [], bookmarks: [], lastPage: 1 };
 
 const revisions = new Map<string, number>();
-type StoredRecent = Omit<RecentDocument, 'data'> & { data?: Blob | ArrayBuffer };
+type StoredRecent = Omit<RecentDocument, 'data'> & { data?: Blob | ArrayBuffer; hidden?: boolean };
+const RECENT_LIMIT = 20;
 function recentDocument(value: StoredRecent): RecentDocument {
   return { ...value, data: value.data instanceof ArrayBuffer ? new Blob([value.data], { type: 'application/pdf' }) : value.data };
 }
@@ -102,15 +104,48 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function listRecent(): Promise<RecentDocument[]> {
-  if (isNative) return invoke<RecentDocument[]>('recent_documents');
+async function storedDocuments(): Promise<StoredRecent[]> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readonly');
     const request = tx.objectStore('documents').getAll();
-    request.onsuccess = () => resolve((request.result as StoredRecent[]).map(recentDocument).sort((a, b) => b.openedAt - a.openedAt));
+    request.onsuccess = () => resolve((request.result as StoredRecent[]).sort((a, b) => b.openedAt - a.openedAt));
     request.onerror = () => reject(request.error);
     tx.oncomplete = () => db.close();
+    tx.onabort = () => { db.close(); reject(tx.error); };
+  });
+}
+
+// The catalog owns document bytes. Recent history is only a filtered view of it.
+// Existing IndexedDB rows remain valid: an absent hidden flag means visible.
+export async function listLibrary(): Promise<RecentDocument[]> {
+  if (isNative) return invoke<RecentDocument[]>('list_library');
+  return (await storedDocuments()).map(recentDocument);
+}
+
+// Native catalog listing reads metadata only. Validate and register the PDF
+// selected by the user when it is opened, rather than hashing the whole library.
+export async function readLibrarySource(id: string): Promise<NativeDocument> {
+  return invoke<NativeDocument>('open_library_document', { id });
+}
+
+export async function listRecent(): Promise<RecentDocument[]> {
+  if (isNative) return invoke<RecentDocument[]>('recent_documents');
+  return (await storedDocuments()).filter(doc => !doc.hidden).slice(0, RECENT_LIMIT).map(recentDocument);
+}
+
+export async function hideRecent(id: string): Promise<void> {
+  if (isNative) { await invoke('hide_recent', { id }); return; }
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('documents', 'readwrite'), store = tx.objectStore('documents');
+    const request = store.get(id);
+    request.onsuccess = () => {
+      if (request.result) store.put({ ...request.result, hidden: true });
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 
@@ -120,16 +155,18 @@ export async function rememberDocument(doc: RecentDocument): Promise<void> {
     else if (doc.draft) await invoke('remember_draft', { id: doc.id, name: doc.name, pages: doc.pages, openedAt: doc.openedAt });
     return;
   }
-  const recents = await listRecent();
   // WebKit can fail when cloning file-backed Blobs to IndexedDB. Keep the
   // original PDF as binary bytes, then expose a Blob when the library reads it.
-  const stored: StoredRecent = { ...doc, data: doc.data ? await doc.data.arrayBuffer() : undefined };
+  const data = doc.data ? await doc.data.arrayBuffer() : undefined;
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readwrite');
     const store = tx.objectStore('documents');
-    store.put(stored);
-    recents.filter(d => d.id !== doc.id).slice(4).forEach(d => store.delete(d.id));
+    const request = store.get(doc.id);
+    request.onsuccess = () => {
+      const previous = request.result as StoredRecent | undefined;
+      store.put({ ...previous, ...doc, data: data ?? previous?.data, hidden: false } satisfies StoredRecent);
+    };
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
     tx.onabort = () => { db.close(); reject(tx.error); };
@@ -140,15 +177,17 @@ export async function forgetDocument(id: string): Promise<void> {
   if (isNative) { await invoke('forget_document', { id }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('documents', 'readwrite');
+    const tx = db.transaction(['documents', 'drafts'], 'readwrite');
     tx.objectStore('documents').delete(id);
-    tx.oncomplete = () => { db.close(); localStorage.removeItem(PREFIX + id); void discardDraft(id).then(resolve, reject); };
+    tx.objectStore('drafts').delete(id);
+    tx.oncomplete = () => { db.close(); localStorage.removeItem(PREFIX + id); revisions.delete(id); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 export async function clearSavedState(): Promise<void> {
   if (isNative) { await invoke('clear_saved_state'); return; }
-  for (const recent of await listRecent()) await forgetDocument(recent.id);
+  for (const document of await listLibrary()) await forgetDocument(document.id);
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').clear();

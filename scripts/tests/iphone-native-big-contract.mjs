@@ -78,6 +78,12 @@ try {
         if (command === 'store_session') { sessions[args.id] = structuredClone(args.session); persist(); return null; }
         if (command === 'remember_document') { recents[args.id] = { id: args.id, name: sources[args.token].name, size: sources[args.token].size, nativeSource: args.token, pages: args.pages, openedAt: args.openedAt }; persist(); return null; }
         if (command === 'recent_documents') return Object.values(recents);
+        if (command === 'list_library') return Object.values(recents).map(({ nativeSource, ...metadata }) => metadata);
+        if (command === 'open_library_document') {
+          const source = sources[recents[args.id]?.nativeSource];
+          if (!source) throw new Error('The selected library source is unavailable.');
+          return sourceInfo(source);
+        }
         if (command === 'native_pdf_open') {
           const source = sources[args.token]; if (!source) throw new Error('Unknown source token.');
           const locked = args.token === 'locked' && args.password !== 'correct-pass';
@@ -124,6 +130,7 @@ try {
   const current = name => page.getByRole('heading', { name, exact: true, includeHidden: true });
   const readyDocument = async name => { await current(name).waitFor({ state: 'attached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.locator('.pdf-page-wrap[data-page-number="1"] canvas[data-rendering=false]').waitFor(); };
   const action = async name => { await page.getByRole('button', { name: 'Más acciones', exact: true }).tap(); await page.getByRole('dialog', { name: 'Acciones del documento', exact: true }).getByRole('button', { name, exact: true }).tap(); };
+  const annotations = async () => { await page.getByRole('button', { name: 'Páginas', exact: true }).tap(); await page.getByRole('tab', { name: 'Anotaciones', exact: true }).tap(); };
   const capture = () => page.evaluate(() => ({ calls: window.__nativeBigContract.calls, outputs: window.__nativeBigContract.outputs, workers: window.__nativeBigContract.workers, sessions: window.__nativeBigContract.sessions }));
   const mark = id => results.push({ id, passed: true, bridgeMocked: true });
   await page.goto(origin); await readyDocument('Large first.pdf');
@@ -132,16 +139,16 @@ try {
   let state = await capture(); assert(!state.calls.some(call => call.command === 'native_pdf_page_info' && call.args.page >= 10)); assert.deepEqual(state.workers, []);
   mark('native-2gib-metadata-opens-with-page-pixels-and-no-whole-file-read-or-js-worker');
 
-  await action('Anotaciones (1)');
+  await annotations();
   const importedCard = page.locator('.annotation-card').filter({ hasText: 'Imported highlight A' }); await importedCard.getByRole('button', { name: 'Eliminar anotación', exact: true }).tap();
   await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).tap();
+  await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
   const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'Original native text page 1.' }).first();
   await span.evaluate(span => { const range = document.createRange(); range.selectNodeContents(span); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); });
   await page.getByRole('toolbar', { name: 'Herramientas del texto seleccionado', exact: true }).getByRole('button', { name: 'Resaltar', exact: true }).tap();
   await page.locator('.pdf-page-wrap[data-page-number="1"] .highlight-annotation').waitFor();
   await page.waitForFunction(() => window.__nativeBigContract.sessions['a'.repeat(64)]?.annotations.some(annotation => annotation.kind === 'highlight' && !annotation.nativeSourceRef));
-  await action('Guardar PDF'); await page.waitForFunction(() => window.__nativeBigContract.outputs.length === 1);
+  await action('Guardar una copia del PDF'); await page.waitForFunction(() => window.__nativeBigContract.outputs.length === 1);
   state = await capture(); assert.deepEqual(state.outputs[0].removedSourceRefs, ['pdfkit:1:0']); assert(state.outputs[0].annotations.some(annotation => annotation.quads?.length && !annotation.nativeSourceRef));
   assert(!state.outputs[0].removedSourceRefs.includes('pdfkit:20:0')); assert.equal(await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).count(), 0);
   await readyDocument('Large first.pdf');
@@ -162,17 +169,17 @@ try {
   assert.equal(await page.locator('.pdf-page-wrap[data-page-number="1"] .highlight-annotation').count(), 1);
   mark('native-session-reload-restores-added-highlight-and-keeps-imported-original-deleted');
 
-  await page.getByRole('button', { name: 'Explorar documento', exact: true }).tap(); await page.getByRole('tab', { name: 'Buscar', exact: true }).tap();
+  await page.getByRole('button', { name: 'Buscar', exact: true }).tap();
   await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).waitFor(); await page.waitForTimeout(300);
   state = await capture(); assert(!state.calls.some(call => call.command === 'native_pdf_text' && call.args.page >= 10), 'Opening the empty search panel must not index distant pages.');
   await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).fill('Needle');
   await page.locator('.search-result').filter({ hasText: 'Página 20' }).waitFor();
   await page.waitForFunction(() => window.__nativeBigContract.calls.some(call => call.command === 'native_pdf_text' && call.args.page === 40));
-  await page.getByRole('button', { name: 'Borrar búsqueda', exact: true }).tap(); await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
+  await page.getByRole('button', { name: 'Borrar búsqueda', exact: true }).tap(); await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).tap();
   mark('native-text-search-starts-only-after-a-query-and-finds-lazy-page20');
 
   await page.evaluate(() => { window.__nativeBigContract.cancelNextSave = false; });
-  await action('Guardar PDF'); await readyDocument('Large first — copia.pdf');
+  await action('Guardar una copia del PDF'); await readyDocument('Large first — copia.pdf');
   state = await capture(); const exported = state.outputs.at(-1); assert.equal(exported.action, 'save'); assert.deepEqual(exported.removedSourceRefs, ['pdfkit:1:0']);
   assert(exported.annotations.some(annotation => annotation.nativeSourceRef === 'pdfkit:20:0'));
   assert.equal(await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').count(), 0);
@@ -180,7 +187,7 @@ try {
   await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).waitFor();
   mark('native-save-uses-removal-refs-preserves-other-originals-and-reopens-file-backed-copy');
 
-  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Abrir PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
+  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }).getByRole('button', { name: 'Importar otro PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
   await chooseLocked(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).getByRole('button', { name: 'Cancelar', exact: true }).tap();
   await readyDocument('Large first — copia.pdf'); assert.equal(await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).count(), 0);
   await chooseLocked(); let password = page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true });
@@ -197,8 +204,8 @@ try {
   assert(state.calls.some(call => call.command === 'native_pdf_open' && call.args.token === 'migration'));
   const recent = await page.evaluate(() => JSON.parse(localStorage.getItem('__bigRecents'))['a'.repeat(64)]);
   assert.equal(recent.nativeSource, 'first', 'Recovering a native draft must keep the original source in recents.');
-  await action('Anotaciones (1)'); await page.locator('.annotation-card').filter({ hasText: 'Recovered native draft note' }).waitFor();
-  await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).tap();
+  await annotations(); await page.locator('.annotation-card').filter({ hasText: 'Recovered native draft note' }).waitFor();
+  await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
   mark('legacy-large-draft-recovers-as-native-file-and-keeps-original-recent-without-reading-or-storing-full-bytes');
 
   await page.evaluate(() => {
@@ -224,7 +231,7 @@ try {
   await page.reload(); await readyDocument('Legacy.pdf');
   await page.waitForFunction(() => window.__nativeBigContract.sessions['f'.repeat(64)]?.nativeLegacySession === true);
   await page.evaluate(() => { window.__nativeBigContract.cancelNextSave = false; });
-  await action('Guardar PDF'); await readyDocument('Legacy — copia.pdf');
+  await action('Guardar una copia del PDF'); await readyDocument('Legacy — copia.pdf');
   state = await capture(); const legacyExport = state.outputs.at(-1);
   assert.deepEqual(legacyExport.removedSourceRefs, ['pdfkit:20:0']);
   assert.equal(legacyExport.annotations.length, 3, 'Migrating a legacy session must not append deleted or duplicate originals.');
@@ -245,7 +252,7 @@ try {
   await page.reload(); await readyDocument('Ambiguous.pdf');
   await page.getByRole('alert').filter({ hasText: 'varias anotaciones originales' }).waitFor();
   await page.waitForFunction(() => window.__nativeBigContract.sessions['0'.repeat(64)]?.nativeLegacySession === true);
-  await action('Guardar PDF');
+  await action('Guardar una copia del PDF');
   await page.getByRole('alert').filter({ hasText: 'La copia no se ha guardado.' }).waitFor();
   await readyDocument('Ambiguous.pdf');
   state = await capture(); assert.equal(state.outputs.length, 0, 'Ambiguous migration must be rejected before native export.');

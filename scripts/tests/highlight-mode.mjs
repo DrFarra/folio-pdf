@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -34,6 +35,7 @@ async function open(page, file = source) {
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).selectOption('100');
   await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').first().waitFor();
+  await enterAnnotationMode(page);
 }
 async function check(id, action) {
   const context = await browser.newContext({ viewport: { width: 1360, height: 1050 }, acceptDownloads: true }), page = await context.newPage(); page.setDefaultTimeout(20000);
@@ -77,9 +79,11 @@ try {
   assert(ready, log || 'Preview did not start.'); browser = await chromium.launch({ executablePath: chrome, headless: true });
 
   await check('continuous-highlight-toggle-colors-standard-export-and-reopen', async page => {
-    assert.equal(await picker(page).count(), 1); assert.equal(await mode(page).count(), 1);
+    assert.equal(await picker(page).count(), 0, 'The highlight palette appears when the highlighter is selected.'); assert.equal(await mode(page).count(), 1);
+    await mode(page).click();
+    assert.equal(await picker(page).count(), 1);
     await selectPreset(page, 'Azul');
-    await mode(page).click(); assert((await mode(page).getAttribute('class')).includes('active'));
+    assert((await mode(page).getAttribute('class')).includes('active'));
     await selectLine(page, 0); await waitCount(page, sourceHash, 1);
     await selectLine(page, 1); await waitCount(page, sourceHash, 2);
     assert((await mode(page).getAttribute('class')).includes('active'), 'Automatic highlighting remains enabled across separate selections.');
@@ -88,13 +92,14 @@ try {
     await selectLine(page, 2); await page.getByRole('toolbar', { name: 'Herramientas del texto seleccionado', exact: true }).waitFor();
     assert.equal((await annotations(page)).length, 2, 'Selection with automatic mode disabled only offers the manual actions.');
     const selected = await page.evaluate(() => window.getSelection()?.toString()); assert(selected?.includes('THIRD:'));
+    const box = await page.locator('.pdf-page-wrap[data-page-number="1"] .page-content').boundingBox(); await page.mouse.click(box.x + 12, box.y + 12);
+    await mode(page).click();
     await picker(page).click(); await page.getByLabel('Color personalizado del resaltador', { exact: true }).fill('#123abc');
     await page.waitForFunction(() => localStorage.getItem('folio.highlightColor') === '#123abc');
-    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), selected, 'Changing color must retain the selected words.');
+    assert.equal((await annotations(page)).length, 2, 'Choosing a highlighter color does not change existing annotations.');
     await page.screenshot({ path: path.join(output, 'highlight-color-palette.png'), animations: 'disabled' });
     await page.keyboard.press('Escape'); await palette(page).waitFor({ state: 'detached' });
-    const box = await page.locator('.pdf-page-wrap[data-page-number="1"] .page-content').boundingBox(); await page.mouse.click(box.x + 12, box.y + 12);
-    await mode(page).click(); await selectLine(page, 3); await waitCount(page, sourceHash, 3);
+    await selectLine(page, 3); await waitCount(page, sourceHash, 3);
     await page.screenshot({ path: path.join(output, 'highlight-automatic-colors.png'), animations: 'disabled' });
     const { target, bytes } = await save(page, 'highlight-mode-colors.pdf');
     const highlights = standardAnnotations(bytes, ['#8bbaf0', '#8bbaf0', '#123abc']);
@@ -105,6 +110,7 @@ try {
     await page.keyboard.press('Control+z'); await waitCount(page, savedHash, 3);
     assert.equal(await mode(page).getAttribute('aria-pressed'), 'true');
     await page.reload(); await open(page, target);
+    await mode(page).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('folio.highlightColor')), '#123abc');
     assert.equal(await picker(page).locator('.highlight-color-current').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(18, 58, 188)');
     await waitCount(page, savedHash, 3);
@@ -112,13 +118,12 @@ try {
     return { automaticSelections: 2, toggleOffAddsNoAnnotation: true, customColor: '#123abc', standardQuads: true, originalUnchanged: true, colorAndAnnotationsPersist: true, automaticModeSurvivesSave: true };
   });
 
-  await check('palette-presets-keyboard-outside-and-selection-preservation', async page => {
-    await selectLine(page, 0); await page.getByRole('toolbar', { name: 'Herramientas del texto seleccionado', exact: true }).waitFor();
-    const text = await page.evaluate(() => window.getSelection()?.toString());
+  await check('palette-presets-keyboard-outside-and-contextual-visibility', async page => {
+    assert.equal(await picker(page).count(), 0);
+    await mode(page).click();
     await picker(page).click(); assert.equal(await page.locator('.highlight-color-presets button').count(), 12);
     for (const name of ['Amarillo', 'Verde', 'Rosa', 'Violeta', 'Azul', 'Naranja', 'Rojo', 'Menta', 'Cian', 'Índigo', 'Lima', 'Gris']) assert.equal(await page.getByRole('button', { name: `Color ${name}`, exact: true }).count(), 1);
     await page.getByRole('button', { name: 'Color Naranja', exact: true }).click();
-    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), text);
     assert.equal((await annotations(page)).length, 0);
     await picker(page).focus(); await picker(page).press('ArrowDown'); await palette(page).waitFor();
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Color Naranja');
@@ -129,7 +134,7 @@ try {
     await page.setViewportSize({ width: 800, height: 600 }); await picker(page).click();
     const box = await palette(page).boundingBox(); assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= 800 && box.y + box.height <= 600);
     await page.getByRole('textbox', { name: 'Número de página', exact: true }).click(); await palette(page).waitFor({ state: 'detached' });
-    return { namedPresets: 12, mouseSelectionPreserved: true, keyboardNavigation: true, escapeAndOutsideDismiss: true, compactViewportClamped: true };
+    return { namedPresets: 12, contextualVisibility: true, choosingColorAddsNoAnnotation: true, keyboardNavigation: true, escapeAndOutsideDismiss: true, compactViewportClamped: true };
   });
   assert.equal(errors.length, 0, JSON.stringify(errors));
 } finally {

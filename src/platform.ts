@@ -11,6 +11,13 @@ export const isMac = !isIOS && /mac/i.test((navigator as Navigator & { userAgent
 export const shortcutLabel = (key: string) => `${isMac || isIOS ? '⌘' : 'Ctrl'}+${key}`;
 export type NativeDocument = { token: string; name: string; size: number; id?: string; revision?: string };
 
+export async function openExternalUrl(value: string): Promise<void> {
+  const url = new URL(value);
+  if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) throw new Error('Enlace no compatible.');
+  if (isNative) await invoke('open_external_url', { url: url.href });
+  else window.open(url.href, '_blank', 'noopener,noreferrer');
+}
+
 export async function presentNativePdf(token: string, name: string, action: 'save' | 'share' | 'print', annotations: Annotation[], removedSourceRefs: string[]): Promise<NativeDocument | boolean | null> {
   return invoke('native_pdf_present', { token, name, action, annotations, removedSourceRefs });
 }

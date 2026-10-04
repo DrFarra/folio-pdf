@@ -10,3 +10,19 @@
 .settings-modal .settings-toggle{padding:7px 0;font-size:12px}
 .settings-modal .modal-actions{margin-top:15px}
 @media(max-width:480px){.reading-setting{gap:10px;font-size:11px}.reading-setting select,.reading-range{width:140px}.settings-theme button{font-size:10px}}
+
+html:not([data-phone]) .app-shell .settings-modal{width:min(560px,calc(100vw - 28px));font-size:13px}
+html:not([data-phone]) .app-shell .settings-modal h3{margin:20px 0 10px;font-size:14px;font-weight:600}
+html:not([data-phone]) .app-shell .settings-theme{gap:8px}
+html:not([data-phone]) .app-shell .settings-theme button{padding:12px;gap:8px;font-size:13px;min-height:44px}
+html:not([data-phone]) .app-shell .reading-setting{min-height:46px;font-size:13px;gap:18px;line-height:1.5}
+html:not([data-phone]) .app-shell .reading-setting select{width:190px;min-height:36px;font-size:13px;padding:7px 9px}
+html:not([data-phone]) .app-shell .reading-range{width:190px}
+html:not([data-phone]) .app-shell .reading-range output{font-size:12px;min-width:44px}
+html:not([data-phone]) .app-shell .settings-modal .settings-toggle{font-size:13px;min-height:42px;padding:9px 0;gap:18px}
+html:not([data-phone]) .app-shell .settings-advanced{margin-top:12px;padding:12px 0;border-top:1px solid var(--line)}
+html:not([data-phone]) .app-shell .settings-advanced>summary{cursor:pointer;font-size:13px;font-weight:550;min-height:30px;color:var(--text)}
+html:not([data-phone]) .app-shell .settings-advanced .modal-description{margin-top:8px;margin-bottom:12px;font-size:12px;line-height:1.6}
+html:not([data-phone]) .app-shell .settings-modal .clear-library{font-size:13px;line-height:1.5;min-height:42px;border-top:0;padding:9px 0}
+html:not([data-phone]) .app-shell .settings-modal .modal-actions{margin-top:18px}
+@media(max-width:480px){html:not([data-phone]) .app-shell .reading-setting{gap:12px;font-size:13px}html:not([data-phone]) .app-shell .reading-setting select,html:not([data-phone]) .app-shell .reading-range{width:145px}html:not([data-phone]) .app-shell .settings-theme button{padding:10px 8px;gap:6px;font-size:12px}}

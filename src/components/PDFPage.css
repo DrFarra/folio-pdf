@@ -6,3 +6,8 @@
 .highlight-layer .highlight-annotation{opacity:1}
 .highlight-layer .highlight-annotation:is([data-selected=true],[role=button]:focus-visible){outline-offset:-2px}
 .page-content>.annotation-layer{z-index:4}
+.textLayer mark[data-search-active=true]{background:#ff9c3a;outline:2px solid #c36a00;outline-offset:1px;border-radius:1px}
+.pdf-link-layer{position:absolute;inset:0;z-index:2;pointer-events:none}
+.pdf-document-link{position:absolute;display:block;pointer-events:none;border-radius:2px}
+.page-content[data-over-link=true] :is(.textLayer,.textLayer span){cursor:pointer}
+.pdf-document-link:focus-visible{outline:2px solid var(--accent,#2763b8);outline-offset:2px;background:rgba(60,120,230,.12)}

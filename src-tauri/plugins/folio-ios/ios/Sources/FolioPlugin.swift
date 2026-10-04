@@ -8,6 +8,7 @@ private struct PathsArgs: Decodable { let paths: [String] }
 private struct FileArgs: Decodable { let path: String }
 private struct ThemeArgs: Decodable { let theme: String }
 private struct TextArgs: Decodable { let text: String }
+private struct URLArgs: Decodable { let url: String }
 
 private final class PickerDelegate: NSObject, UIDocumentPickerDelegate {
     let picked: ([URL]) -> Void
@@ -73,6 +74,19 @@ final class FolioPlugin: Plugin {
     @objc public func copyText(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(TextArgs.self)
         DispatchQueue.main.async { UIPasteboard.general.string = args.text; invoke.resolve() }
+    }
+
+    @objc public func openExternalUrl(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(URLArgs.self)
+        guard let url = URL(string: args.url), let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto", "tel"].contains(scheme) else {
+            invoke.reject("El enlace no es compatible."); return
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                if opened { invoke.resolve() } else { invoke.reject("No se pudo abrir este enlace.") }
+            }
+        }
     }
 
     private func importURLs(_ urls: [URL]) throws -> [String] {

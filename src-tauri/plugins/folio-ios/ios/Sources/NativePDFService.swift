@@ -149,7 +149,27 @@ final class NativePDFService {
         let value = try entry(token), page = try page(value, number)
         let annotations = value.canAnnotate ? try sourceAnnotations(value, number) : []
         return ["view": bounds(page.bounds(for: .cropBox)), "rotation": ((page.rotation % 360) + 360) % 360, "annotations": annotations,
+                "label": page.label ?? String(number), "links": links(page, in: value.document),
                 "sourceAnnotationTypes": page.annotations.map { ($0.type ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")) }]
+    }
+    private func links(_ page: PDFPage, in document: PDFDocument) -> [[String: Any]] {
+        page.annotations.compactMap { annotation in
+            guard annotation.shouldDisplay, (annotation.type ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() == "link" else { return nil }
+            let rect = bounds(annotation.bounds)
+            guard rect.allSatisfy({ $0.isFinite }) else { return nil }
+            if let url = annotation.url ?? (annotation.action as? PDFActionURL)?.url,
+               let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "tel"].contains(scheme) {
+                return ["rect": rect, "url": url.absoluteString]
+            }
+            guard let destination = annotation.destination ?? (annotation.action as? PDFActionGoTo)?.destination,
+                  let destinationPage = destination.page else { return nil }
+            let index = document.index(for: destinationPage)
+            guard index != NSNotFound, index >= 0, index < document.pageCount else { return nil }
+            var result: [String: Any] = ["rect": rect, "page": index + 1]
+            if destination.point.x.isFinite, destination.point.x != kPDFDestinationUnspecifiedValue { result["left"] = Double(destination.point.x) }
+            if destination.point.y.isFinite, destination.point.y != kPDFDestinationUnspecifiedValue { result["top"] = Double(destination.point.y) }
+            return result
+        }
     }
     func render(_ args: PDFRenderArgs) throws -> [String: Any] {
         guard args.width > 0, args.height > 0, args.width <= 4096, args.height <= 4096,
@@ -204,10 +224,12 @@ final class NativePDFService {
         var result = [[String: Any]]()
         func visit(_ item: PDFOutline, _ depth: Int) {
             if result.count >= 20_000 || depth > 64 { return }
-            if let destination = item.destination, let page = destination.page {
+            var heading: [String: Any] = ["title": item.label ?? "", "page": NSNull(), "depth": depth]
+            if let destination = item.destination ?? (item.action as? PDFActionGoTo)?.destination, let page = destination.page {
                 let index = value.document.index(for: page)
-                if index != NSNotFound { result.append(["title": item.label ?? "", "page": index + 1, "depth": depth]) }
+                if index != NSNotFound, index >= 0, index < value.document.pageCount { heading["page"] = index + 1 }
             }
+            result.append(heading)
             for index in 0..<item.numberOfChildren { if let child = item.child(at: index) { visit(child, depth + 1) } }
         }
         for index in 0..<root.numberOfChildren { if let child = root.child(at: index) { visit(child, 0) } }

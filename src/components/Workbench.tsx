@@ -1,6 +1,6 @@
 import { assetUrl } from '../assets';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows } from 'lucide-react';
 import Modal from './Modal';
 import { Thumbnail } from './PDFPage';
 import { inspectPdf, readFields } from '../engine/client';
@@ -23,8 +23,10 @@ const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, 
 export default function Workbench(props: Props) {
   const { doc, onApply, onSelectTool } = props;
   const [section, setSection] = useState(props.section);
+  const [compareVisited, setCompareVisited] = useState(props.section === 'compare');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [compareBusy, setCompareBusy] = useState(false);
   const [plan, setPlan] = useState<PlannedPage[]>(() => Array.from({ length: doc.pdf.numPages }, (_, i) => entry(i + 1)));
   const [selected, setSelected] = useState<string[]>([]);
   const pageDrag = usePagePlanDrag(plan, selected, busy, setPlan);
@@ -33,6 +35,7 @@ export default function Workbench(props: Props) {
   const [sourcePassword, setSourcePassword] = useState('');
   const [range, setRange] = useState('');
   const [fields, setFields] = useState<Field[] | null>(null);
+  const fieldsSource = useRef<Uint8Array | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [flatten, setFlatten] = useState(false);
   const [text, setText] = useState('');
@@ -61,9 +64,11 @@ export default function Workbench(props: Props) {
   useEffect(() => () => { pfx?.fill(0); }, [pfx]);
 
   useEffect(() => {
-    if (section !== 'forms') return;
+    if (section !== 'forms' || fieldsSource.current === doc.bytes) return;
     const controller = new AbortController(); setError('');
     void readFields(doc.bytes, doc.password, controller.signal).then(items => {
+      if (controller.signal.aborted) return;
+      fieldsSource.current = doc.bytes;
       setFields(items); setValues(Object.fromEntries(items.map(f => [f.id, ['checkbox', 'radiobutton'].includes(f.type) ? f.checked : f.value])));
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => controller.abort();
@@ -159,12 +164,39 @@ export default function Workbench(props: Props) {
     ['compress', 'Comprimir PDF', Files, doc.canEdit], ['security', 'Proteger PDF', LockKeyhole, doc.canEdit],
     ['sanitize', 'Eliminar datos ocultos', ShieldCheck, doc.canEdit],
   ] as const;
-  return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}`}>
+  const categories = [
+    { id: 'pages', title: 'Páginas', actions: ['pages', 'crop'] },
+    { id: 'content', title: 'Contenido', actions: ['add-text', 'replace-text', 'add-image', 'remove-image'] },
+    { id: 'forms', title: 'Formularios', actions: ['forms', 'create-field'] },
+    { id: 'review', title: 'Revisión y firmas', actions: ['compare', 'signatures'] },
+    { id: 'export', title: 'Exportación y OCR', actions: ['convert', 'ocr', 'compress'] },
+    { id: 'protection', title: 'Protección', actions: ['redact', 'security', 'sanitize'] },
+  ];
+  const chooseAction = (key: string) => {
+    if (busy || compareBusy) return;
+    setError('');
+    if (['add-text', 'replace-text', 'add-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) {
+      // Revisit the already selected area without remounting this form or
+      // clearing its text/image/field draft. A different tool needs a new area.
+      if (props.section === key && (props.area || key === 'redact')) setSection(key);
+      else tool(key as Tool);
+    }
+    else { if (key === 'compare') setCompareVisited(true); setSection(key); }
+  };
+  const returnToTools = () => {
+    if (busy || compareBusy) return;
+    const previous = section;
+    setError(''); setSection('home');
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.workbench [data-tool-key="${CSS.escape(previous)}"]`)?.focus());
+  };
+  return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}`}>
+    {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button></div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
-    {section === 'home' && <div className="operation-grid">{actions.map(([key, label, Icon, enabled]) => <button key={key} disabled={!enabled} onClick={() => {
-      if (['add-text', 'replace-text', 'add-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) tool(key as Tool);
-      else setSection(key);
-    }}><Icon size={24} /><span>{label}</span></button>)}</div>}
+    {section === 'home' && <div className="tool-categories">{categories.map(category => <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}><h3 className="tool-category-heading" id={`tool-category-${category.id}`}>{category.title}</h3><div className="operation-grid">{category.actions.map(key => {
+      const action = actions.find(action => action[0] === key)!;
+      const [, label, Icon, enabled] = action;
+      return <button type="button" key={key} data-tool-key={key} disabled={!enabled || busy || compareBusy} onClick={() => chooseAction(key)}><Icon size={24} aria-hidden="true" /><span>{label}</span></button>;
+    })}</div></section>)}</div>}
     {section === 'pages' && <>
       <div className="page-plan-actions">
         <label className="secondary-button"><Plus size={16} />Insertar PDF<input type="file" accept="application/pdf,.pdf" className="sr-only" disabled={busy} onChange={e => { void appendFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
@@ -239,7 +271,7 @@ export default function Workbench(props: Props) {
         }
       })}>{section === 'ocr' ? 'Reconocer texto' : 'Exportar'}</button></div>
     </>}
-    {section === 'compare' && <CompareDocuments doc={doc} getBytes={props.getBytes} />}
+    {compareVisited && <div hidden={section !== 'compare'}><CompareDocuments doc={doc} getBytes={props.getBytes} onBusyChange={setCompareBusy} /></div>}
     {section === 'signatures' && <>
       <div className="signature-results">{signatures?.length === 0 && <p className="modal-description">Este PDF no contiene firmas digitales.</p>}{signatures?.map((signature, index) => <article key={index}>
         <strong>{signature.signer || signature.field}</strong><dl><div><dt>Integridad</dt><dd>{signature.integrity ? 'Válida' : 'No válida'}</dd></div><div><dt>Documento cubierto</dt><dd>{signature.coversWholeDocument ? 'Completo' : 'Hay datos posteriores a la firma'}</dd></div><div><dt>Certificado vigente</dt><dd>{signature.certificateCurrent ? 'Sí' : 'No'}</dd></div><div><dt>Cadena de confianza</dt><dd>{signature.trustChecked ? signature.trusted ? 'Verificada con la raíz elegida' : 'No válida para la raíz elegida' : 'Sin raíz de confianza elegida'}</dd></div><div><dt>Revocación y sello de tiempo</dt><dd>No comprobados</dd></div></dl>{signature.error && <p className="operation-error">{signature.error}</p>}

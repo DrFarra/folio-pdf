@@ -72,6 +72,9 @@ export type RecentDocument = {
   data?: Blob;
   nativeSource?: string;
   draft?: boolean;
+  hidden?: boolean;
 };
-export type SearchResult = { page: number; text: string; count: number };
-export type OutlineEntry = { title: string; page: number; depth: number };
+/** offset is a UTF-16 position in pageText(), before search normalization. */
+export type SearchResult = { page: number; text: string; count: 1; offset: number; index?: number };
+export type PDFNavigationTarget = { page: number; left?: number; top?: number } | { url: string };
+export type OutlineEntry = { title: string; page: number | null; depth: number };

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -146,6 +147,7 @@ try {
     await page.reload(); await open(page, source); assert.equal(await page.locator('.pdf-page-wrap').count(), 2); const bytes = await save(page, 'ui-restored-draft.pdf'); assert(operateDocument(bytes, { operation: 'text' })[0].includes('PAGE 2')); return { realBytesRecovered: true };
   });
   await check('horizontal-text-highlight-and-direct-ctrl-save', async page => {
+    await enterAnnotationMode(page);
     await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
     await page.locator('.textLayer span').filter({ hasText: 'PRESERVE THIS TEXT' }).first().waitFor();
     await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();

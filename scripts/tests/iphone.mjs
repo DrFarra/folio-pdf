@@ -14,7 +14,7 @@ import { operateDocument } from '../../src/engine/operations.mjs';
 // rendering and browser downloads. It does not automate UIKit selection handles,
 // Files/Share sheets, a device notch or a physical two-finger gesture. Those
 // limitations are retained in the machine-readable report, including on CI.
-const root = process.cwd(), output = path.join(root, 'test-results', 'iphone');
+const root = process.cwd(), output = path.join(root, 'test-results', 'iphone', process.env.FOLIO_IPHONE_OUTPUT || '');
 fs.mkdirSync(output, { recursive: true });
 const phrase = 'Select these words on iPhone.';
 const automaticPhrase = 'Automatically highlight this text.';
@@ -79,7 +79,7 @@ const reader = page => page.locator('.reading-area');
 const heading = (page, file) => page.getByRole('heading', { name: path.basename(file), exact: true, includeHidden: true });
 
 async function open(page, files = source) {
-  await page.waitForFunction(() => !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a biblioteca"]')?.disabled);
   await page.locator('.app-header input[type=file]').setInputFiles(files);
   await heading(page, Array.isArray(files) ? files.at(-1) : files).waitFor({ state: 'attached' });
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
@@ -87,21 +87,24 @@ async function open(page, files = source) {
   await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').first().waitFor();
 }
 async function goToPage(page, number) {
+  await page.getByRole('button', { name: 'Ir a página', exact: true }).tap();
   const input = page.getByLabel('Número de página', { exact: true }); await input.fill(String(number)); await input.press('Enter');
   await waitForReadingPage(page, number);
-  assert.equal(await input.inputValue(), String(number));
+  assert.equal(await readingPage(page), number);
 }
+async function readingPage(page) { return page.locator('.mobile-page-jump').evaluate(button => Number(button.title.match(/^Página (\d+) de /)?.[1] || button.textContent.trim().split('/')[0])); }
 async function waitForReadingPage(page, requested = null) {
   await page.evaluate(() => { window.__iphoneNavigation = { number: null, scrollTop: null, stableFrames: 0 }; });
   await page.waitForFunction(requested => {
     const sample = window.__iphoneNavigation, viewer = document.querySelector('.reading-area');
-    const number = Number(document.querySelector('[aria-label="Número de página"]')?.value);
+    const counter = document.querySelector('.mobile-page-jump');
+    const number = Number(counter?.title.match(/^Página (\d+) de /)?.[1] || counter?.textContent.trim().split('/')[0]);
     const wrap = viewer?.querySelector(`.pdf-page-wrap[data-page-number="${number}"]`);
     const canvas = wrap?.querySelector('.page-content > canvas');
     const bounds = wrap?.getBoundingClientRect(), visible = viewer?.getBoundingClientRect();
     const inView = bounds && visible && bounds.bottom > visible.top && bounds.top < visible.bottom;
     const atBottom = viewer && viewer.scrollTop + viewer.clientHeight >= viewer.scrollHeight - 1;
-    const atReadingStart = inView && bounds.top >= visible.top - 1 && (bounds.top <= visible.top + 20 || atBottom);
+    const atReadingStart = inView && bounds.top >= visible.top - 1 && (bounds.top <= visible.top + 72 || atBottom);
     const published = canvas && canvas.width > 0 && canvas.height > 0 && !!canvas.dataset.renderScale
       && canvas.dataset.rendering === 'false' && !wrap.querySelector('.page-loading');
     const ready = inView && published && (requested === null || (number === requested && atReadingStart));
@@ -113,15 +116,25 @@ async function waitForReadingPage(page, requested = null) {
   }, requested, { polling: 'raf' });
 }
 async function actions(page) {
+  if (await page.getByRole('button', { name: 'Terminar anotación', exact: true }).isVisible()) await page.getByRole('button', { name: 'Terminar anotación', exact: true }).tap();
   await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
   return page.getByRole('dialog', { name: 'Acciones del documento', exact: true });
 }
 async function settings(page) {
-  await actions(page); await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).tap();
-  await page.getByRole('dialog', { name: 'Preferencias de lectura', exact: true }).waitFor();
+  await library(page); await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).tap();
+  await page.getByRole('dialog', { name: 'Ajustes de Folio', exact: true }).waitFor();
+}
+async function library(page) {
+  if (!await page.locator('.library-screen').isVisible()) await page.getByRole('button', { name: 'Volver a biblioteca', exact: true }).tap();
+  await page.locator('.library-screen').waitFor();
+}
+async function continueReading(page) { await page.locator('.document-library-continue').tap(); await page.locator('.library-screen').waitFor({state:'detached'}); }
+async function viewSettings(page) {
+  await actions(page); await page.getByRole('button', {name:'Vista del documento',exact:true}).tap();
+  await page.getByRole('dialog', {name:'Vista del documento',exact:true}).waitFor();
 }
 async function annotateMode(page) {
-  await actions(page); await page.getByRole('button', { name: 'Anotar documento', exact: true }).tap();
+  await page.getByRole('button', { name: 'Anotar', exact: true }).tap();
   await page.getByRole('button', { name: 'Resaltado automático', exact: true }).waitFor();
 }
 async function noteMode(page) {
@@ -133,9 +146,9 @@ async function closeDialog(page) {
 }
 async function save(page, name) {
   await actions(page); const pending = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Guardar PDF', exact: true }).tap();
+  await page.getByRole('button', { name: 'Guardar una copia del PDF', exact: true }).tap();
   const downloaded = await pending, file = path.join(output, name); await downloaded.saveAs(file);
-  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a biblioteca"]')?.disabled);
   // Offscreen pages deliberately release their rendered content on iOS. Wait
   // for the current reading page to publish its bitmap instead of loading an
   // unrelated first page that may be outside the lazy-rendering margin.
@@ -152,7 +165,7 @@ async function switchTo(page, file) {
   await heading(page, file).waitFor({ state: 'attached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
 }
 async function panel(page, tab = 'Marcadores') {
-  if (!await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).isVisible()) await page.getByRole('button', { name: 'Explorar documento', exact: true }).tap();
+  if (!await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).isVisible()) await page.getByRole('button', { name: 'Páginas', exact: true }).tap();
   await page.getByRole('tab', { name: tab, exact: true }).tap();
 }
 async function closePanel(page) {
@@ -190,6 +203,10 @@ async function removeHighlight(page, index = 0) {
   await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('menu', { name: 'Resaltado', exact: true }).waitFor();
   await page.getByRole('menuitem', { name: 'Eliminar resaltado', exact: true }).tap();
+  // Opening/removing an annotation must cancel the PDF's pending short tap,
+  // even when its menu closes before the double-tap recognition timer expires.
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator('.app-shell').evaluate(shell=>shell.classList.contains('reader-chrome-hidden')),false,'Annotation interactions cancel the deferred reader chrome toggle.');
 }
 async function geometry(page) {
   return page.evaluate(() => ({ width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth,
@@ -254,8 +271,8 @@ try {
     await check(`reading-layout-${viewport.width}x${viewport.height}`, async page => {
       assert.equal(await page.locator('.app-shell.phone-layout').count(), 1);
       assert.equal(await page.locator('.window-actions').count(), 0);
-      assert.equal(await page.locator('.document-tab-strip').isVisible(), false);
-      assert.equal(await page.getByRole('button', { name: 'Abrir PDF', exact: true }).count(), 1);
+      assert.equal(await page.locator('.document-tab-strip').count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).count(), 1);
       const before = await geometry(page); assertScreen(before);
       assert(before.reader.height >= viewport.height * .62, `Reader wastes space: ${JSON.stringify(before.reader)}`);
       await page.screenshot({ path: path.join(output, `iphone-reading-${viewport.width}x${viewport.height}.png`), animations: 'disabled' });
@@ -275,27 +292,28 @@ try {
     const range = await selection(page); assert.equal(range.text, copiedPhrase); await selectionMenu(page).waitFor();
     await selectionMenu(page).getByRole('button', { name: 'Resaltar', exact: true }).tap(); await highlights(page).waitFor();
     await goToPage(page, 2);
-    await page.waitForFunction(() => document.querySelector('[aria-label="Número de página"]').value === '2');
+    assert.equal(await readingPage(page),2);
     await open(page, another); assert.equal(await highlights(page).count(), 0);
     await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
     assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-documents.png'), animations: 'disabled' }); await closeDialog(page);
     await open(page, another); await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2); await closeDialog(page);
-    await switchTo(page, source); assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '2');
+    await switchTo(page, source); assert.equal(await readingPage(page),2);
     await waitForReadingPage(page, 2);
+    await page.getByRole('button', {name:'Ir a página',exact:true}).tap();
     const pageInput = page.getByLabel('Número de página', { exact: true });
     await pageInput.fill('1'); await pageInput.press('Enter');
     // A user can open actions while the smooth scroll is still running. Do
     // not wait between Enter and this tap: leaving the field must not submit
     // the observer's intermediate page number and cancel the requested jump.
     await actions(page);
-    await waitForReadingPage(page, 1); assert.equal(await pageInput.inputValue(), '1');
+    await waitForReadingPage(page, 1); assert.equal(await readingPage(page),1);
     await closeDialog(page); await highlights(page).waitFor();
     const firstPageNavigation = await page.evaluate(() => window.__iphoneNavigation);
     await page.screenshot({ path: path.join(output, 'iphone-restored-page-one.png'), animations: 'disabled' });
     const first = await save(page, 'iphone-first-export.pdf'); assert.equal(first.inspection.annotations.length, 1); assert.equal(first.inspection.annotations[0].text, copiedPhrase);
     await switchTo(page, another); await goToPage(page, 2);
     const second = await save(page, 'iphone-second-export.pdf'); assert.equal(second.inspection.annotations.length, 0);
-    assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '2');
+    assert.equal(await readingPage(page),2);
     assert(operateDocument(second.bytes, { operation: 'text' })[0].includes('ORIGINAL SECOND'));
     await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
     await page.getByRole('button', { name: `Cerrar ${path.basename(source)}`, exact: true }).tap();
@@ -321,7 +339,7 @@ try {
     await selectionMenu(page).getByRole('button', { name: 'Comentar', exact: true }).tap();
     await page.getByLabel('Texto de la nota', { exact: true }).fill('An iPhone text comment.'); assertScreen(await geometry(page));
     await page.getByRole('button', { name: 'Guardar nota', exact: true }).tap(); await page.locator('.note-marker').waitFor();
-    await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).tap();
+    assert.equal(await page.getByRole('dialog', {name:'Anotaciones',exact:true}).count(),0,'Saving a note returns to reading without forcing the annotations panel.');
     const saved = await save(page, 'iphone-selection-export.pdf'); assert.deepEqual(operateDocument(saved.bytes, { operation: 'text' }), sourceText);
     const highlight = saved.inspection.annotations.find(item => item.kind === 'highlight'), comment = saved.inspection.annotations.find(item => item.kind === 'note');
     assert.equal(highlight.text, copiedPhrase); assert(highlight.quads?.length); assert.equal(comment.text, 'An iPhone text comment.');
@@ -332,6 +350,7 @@ try {
 
   await check('automatic-highlight-custom-color-and-reopen-persistence', async page => {
     await annotateMode(page);
+    await page.getByRole('button', { name: 'Resaltado automático', exact: true }).tap();
     assertScreen(await geometry(page));
     await page.screenshot({ path: path.join(output, 'iphone-annotation-tools.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
@@ -339,18 +358,21 @@ try {
     assert.equal(await palette.locator('.highlight-color-presets button').count(), 12); assertScreen(await geometry(page));
     await page.getByLabel('Color personalizado del resaltador', { exact: true }).fill('#1177dd');
     await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
-    await page.getByRole('button', { name: 'Resaltado automático', exact: true }).tap();
     assert.equal(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).getAttribute('aria-pressed'), 'true');
     await selection(page, automaticPhrase, automaticPhrase); await highlights(page).waitFor();
     assert.equal(await selectionMenu(page).count(), 0);
+    await page.getByRole('button',{name:'Deshacer',exact:true}).tap(); await highlights(page).waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Más herramientas de anotación',exact:true}).tap();
+    await page.getByRole('dialog',{name:'Opciones de anotación',exact:true}).getByRole('button',{name:'Rehacer',exact:true}).tap(); await highlights(page).waitFor();
     const saved = await save(page, 'iphone-automatic-export.pdf'); const highlight = saved.inspection.annotations.find(item => item.kind === 'highlight');
     assert.equal(highlight.text, automaticPhrase); assert.equal(highlight.color.toLowerCase(), '#1177dd');
+    await annotateMode(page); await page.getByRole('button', {name:'Resaltado automático',exact:true}).tap();
     await removeHighlight(page); await highlights(page).waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).getAttribute('aria-pressed'), 'true');
     await page.reload(); await open(page, saved.file); assert.equal(await highlights(page).count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('folio.highlightColor')), '#1177dd');
     const final = await save(page, 'iphone-automatic-deleted.pdf'); assert.equal(final.inspection.annotations.length, 0);
-    return { twelvePresetColors: true, customColor: '#1177dd', stableTextSelectionAutomaticallyHighlights: true, modeSurvivesRemoval: true, deletionSurvivesReload: true, nativeSelectionHandlesNotAutomated: true };
+    return { twelvePresetColors: true, customColor: '#1177dd', stableTextSelectionAutomaticallyHighlights: true, annotationToolbarUndoAndMenuRedo:true,modeSurvivesRemoval: true, deletionSurvivesReload: true, nativeSelectionHandlesNotAutomated: true };
   });
 
   await check('external-highlight-removal-retains-standard-note', async page => {
@@ -364,8 +386,10 @@ try {
   }, { file: external });
 
   await check('readonly-copy-and-highlight-permission-enforced', async page => {
-    await actions(page);
-    assert(await page.getByRole('button', { name: 'Anotar documento', exact: true }).isDisabled());
+    assert.equal(await page.getByRole('button', {name:'Anotar',exact:true}).isDisabled(),false);
+    await page.getByRole('button', {name:'Anotar',exact:true}).tap();
+    await page.getByRole('dialog', {name:'Herramientas disponibles',exact:true}).waitFor();
+    assert(await page.getByRole('dialog', {name:'Herramientas disponibles',exact:true}).textContent().then(text=>text.includes('permisos')));
     await closeDialog(page);
     await selection(page); await selectionMenu(page).waitFor(); assert.equal(await selectionMenu(page).getByRole('button').count(), 1);
     const saved = await save(page, 'iphone-readonly-export.pdf'), originalBytes = new Uint8Array(fs.readFileSync(readOnly));
@@ -389,21 +413,30 @@ try {
     await settings(page); assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-settings.png'), animations: 'disabled' });
     await page.getByLabel('Zoom inicial', { exact: true }).selectOption('width');
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('single');
+    await page.getByText('Opciones avanzadas', {exact:true}).tap();
     await page.getByLabel('Panel inicial', { exact: true }).selectOption('bookmarks');
     await page.getByLabel('Reabrir en la última página', { exact: true }).uncheck();
     await page.getByRole('button', { name: 'Sistema', exact: true }).tap(); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
     await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.emulateMedia({ colorScheme: 'light' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+    await continueReading(page);
+    assert.equal(await page.locator('.pdf-page-wrap').count(),3,'Global defaults do not change the current iPhone document view.');
+    await viewSettings(page); await page.getByLabel('Modo de desplazamiento',{exact:true}).selectOption('single');
+    await page.getByRole('button',{name:'Listo',exact:true}).tap();
     assert.equal(await page.locator('.pdf-page-wrap').count(), 1); await goToPage(page, 2);
     await page.locator('.pdf-page-wrap[data-page-number="2"]').waitFor(); assert.equal(await page.locator('.pdf-page-wrap').count(), 1);
-    await page.reload(); await open(page); assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '1');
-    await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor(); await page.locator('.bookmark-tree').waitFor({ state: 'attached' });
+    await page.reload(); await open(page); assert.equal(await readingPage(page),1);
+    assert.equal(await page.locator('.pdf-page-wrap').count(),1,'Reopening uses the single-page default.');
+    await panel(page,'Marcadores'); await page.locator('.bookmark-tree').waitFor({ state: 'attached' });
     assertScreen(await geometry(page)); await closePanel(page); await settings(page);
     assert.equal(await page.getByLabel('Zoom inicial', { exact: true }).inputValue(), 'width'); assert.equal(await page.getByLabel('Modo de desplazamiento', { exact: true }).inputValue(), 'single');
+    await page.getByText('Opciones avanzadas',{exact:true}).tap();
     assert.equal(await page.getByLabel('Panel inicial', { exact: true }).inputValue(), 'bookmarks'); assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('continuous'); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
+    await continueReading(page); assert.equal(await page.locator('.pdf-page-wrap').count(),1,'Updating the next-document default preserves the current single-page view.');
+    await viewSettings(page); await page.getByLabel('Modo de desplazamiento',{exact:true}).selectOption('continuous'); await page.getByRole('button',{name:'Listo',exact:true}).tap();
     assert.equal(await page.locator('.pdf-page-wrap').count(), 3);
-    return { persistentPreferences: true, responsiveSystemTheme: true, singlePageNavigation: true, defaultPanelOpens: true, restorePageCanBeDisabled: true };
+    return { persistentPreferences: true, responsiveSystemTheme: true, singlePageNavigation: true, explorerAccessible: true, globalDefaultsSeparateFromCurrentView:true,restorePageCanBeDisabled: true };
   });
 
   await check('bookmark-name-tree-pointer-handle-move-and-persistence', async page => {
@@ -416,10 +449,11 @@ try {
       throw new Error('The bookmark tree was not persisted in the expected state.');
     };
     await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).tap();
-    await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor();
+    assert.equal(await page.getByRole('dialog',{name:'Explorar documento',exact:true}).count(),0,'Quick bookmark keeps reading visible.');
+    assert.equal(await page.getByLabel('Nombre del marcador',{exact:true}).count(),0,'Quick bookmark does not open the keyboard.');
+    await panel(page,'Marcadores'); await option('Página 1','Renombrar');
     const name = page.getByLabel('Nombre del marcador', { exact: true }); await name.waitFor();
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Nombre del marcador');
-    assert.equal(await name.evaluate(input => input === document.activeElement), true, 'The new bookmark must immediately offer naming.');
+    assert.equal(await name.evaluate(input => input === document.activeElement), true, 'Explicit rename focuses the bookmark input.');
     assertScreen(await geometry(page)); await rename('Cover I chose');
     await page.getByRole('button', { name: 'Crear grupo de marcadores', exact: true }).tap(); await rename('Medicine');
     await option('Medicine', 'Añadir grupo dentro'); await rename('Kidney');
@@ -455,7 +489,7 @@ try {
     await page.screenshot({ path: path.join(output, 'iphone-bookmarks.png'), animations: 'disabled' }); await closePanel(page);
     await page.reload(); await open(page); await panel(page, 'Marcadores'); await row('Clinical page').waitFor();
     assert.deepEqual((await stored()).bookmarks, final);
-    return { pageBookmarkImmediatelyNames: true, nestedGroupsCreatedThroughUi: true, pointerDragDedicatedHandle: true, touchMoveDialogCompleted: true, branchChildrenAndColorPreserved: true, compactTreeFits320: true, childLabelsVisiblyIndented: true, entireTreePersistsAfterReload: true, physicalTouchDragNotAutomated: true };
+    return { quickBookmarkPreservesReading:true, explicitBookmarkRename:true, nestedGroupsCreatedThroughUi: true, pointerDragDedicatedHandle: true, touchMoveDialogCompleted: true, branchChildrenAndColorPreserved: true, compactTreeFits320: true, childLabelsVisiblyIndented: true, entireTreePersistsAfterReload: true, physicalTouchDragNotAutomated: true };
   });
 
   await check('reader-short-touch-chrome-and-gesture-exclusions', async page => {
@@ -492,11 +526,13 @@ try {
         }
       }, { capture: true });
     });
-    const initial = await reader(page).boundingBox(), blank = await blankPoint();
+    const initial = await reader(page).boundingBox(), initialScale=await page.locator('.pdf-page-wrap[data-page-number="1"] canvas').getAttribute('data-render-scale'), blank = await blankPoint();
     await page.touchscreen.tap(blank.x, blank.y);
     await page.waitForFunction(() => document.querySelector('.app-shell')?.classList.contains('reader-chrome-hidden'));
+    await header.waitFor({state:'hidden'}); await page.locator('.mobile-reading-status').waitFor({state:'hidden'});
     assert.equal(await header.isVisible(), false); assert.equal(await page.locator('.mobile-reading-status').isVisible(), false);
-    const expanded = await reader(page).boundingBox(); assert(expanded.height >= initial.height + 50, 'Hidden chrome must give its space to the PDF.');
+    const expanded = await reader(page).boundingBox(); assert.equal(expanded.height,initial.height,'Hiding overlay controls keeps the PDF viewport stable.');
+    assert.equal(await page.locator('.pdf-page-wrap[data-page-number="1"] canvas').getAttribute('data-render-scale'),initialScale,'Hiding controls must not rescale the PDF.');
     await page.screenshot({ path: path.join(output, 'iphone-reader-chrome-hidden.png'), animations: 'disabled' });
     const restore = await blankPoint(); await page.touchscreen.tap(restore.x, restore.y);
     await visibleChrome('A second short touch must restore the complete reader controls.');
@@ -692,7 +728,7 @@ try {
     await page.getByRole('button', { name: 'Aplicar orden', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
     const organized = await save(page, 'iphone-organized-export.pdf'), text = operateDocument(organized.bytes, { operation: 'text' });
     assert.equal(text.length, 2); assert(text[0].includes('FIRST PAGE 3')); assert(text[1].includes('FIRST PAGE 1'));
-    await actions(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
+    await library(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
     await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor(); await page.getByLabel('Nombre', { exact: true }).fill('iPhone created.pdf');
     await page.locator('.workbench input[type=file]').setInputFiles(imageSource); assertScreen(await geometry(page));
     await page.getByRole('button', { name: 'Crear documento', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
@@ -727,7 +763,8 @@ try {
     await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + Math.min(180, bounds.height / 2));
     await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
     await page.getByLabel('Texto de la nota', { exact: true }).fill('Created by one short touch tap.');
-    await page.getByRole('button', { name: 'Guardar nota', exact: true }).tap(); await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).tap();
+    await page.getByRole('button', { name: 'Guardar nota', exact: true }).tap();
+    assert.equal(await page.getByRole('dialog',{name:'Anotaciones',exact:true}).count(),0); await page.getByRole('button',{name:'Terminar anotación',exact:true}).tap();
     assert.equal(await page.locator('.note-marker').count(), 1); assertScreen(await geometry(page));
     const saved = await save(page, 'iphone-short-touch-note.pdf'); assert.equal(saved.inspection.annotations.length, 1);
     assert.equal(saved.inspection.annotations[0].kind, 'note'); assert.equal(saved.inspection.annotations[0].text, 'Created by one short touch tap.');
@@ -769,8 +806,8 @@ try {
     await page.evaluate(summaries => { window.__iphoneDraftSummaries = summaries; }, [beforeSummary, afterSummary]);
     assert.equal(afterSummary.draftPages, 2, 'The stored draft must remain two pages after reload.');
     assert.equal(afterSummary.recentHash, identity, 'The recent document must remain the original PDF bytes.');
-    await actions(page); await page.getByRole('button', { name: 'Mis documentos', exact: true }).tap();
-    const row = page.locator('.recent-row').filter({ has: page.locator('strong', { hasText: /^iphone-reading\.pdf$/ }) }); await row.waitFor();
+    await library(page);
+    const row = page.locator('.document-library-row').filter({ has: page.locator('strong', { hasText: /^iphone-reading\.pdf$/ }) }); await row.waitFor();
     assertScreen(await geometry(page)); await row.locator('button').first().tap();
     await heading(page, source).waitFor({ state: 'attached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     const reopenedSummary = snapshotSummary(await storageSnapshot(), 'after-open');

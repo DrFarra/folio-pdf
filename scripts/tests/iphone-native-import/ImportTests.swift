@@ -19,14 +19,23 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(folio.wait(for: .runningForeground, timeout: 45), "iOS did not foreground Folio")
         let rendered = folio.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
         XCTAssertTrue(rendered.waitForExistence(timeout: 45), "The actual PDF text did not appear: " + text)
-        XCTAssertTrue(folio.textFields["Número de página"].firstMatch.waitForExistence(timeout: 10), "No reading page control")
-        XCTAssertEqual(folio.textFields["Número de página"].firstMatch.value as? String, "1")
+        let jump = folio.buttons["Ir a página"].firstMatch
+        XCTAssertTrue(jump.waitForExistence(timeout: 10), "No reading page control")
+        XCTAssertTrue(jump.isEnabled); jump.tap()
+        let number = folio.textFields["Número de página"].firstMatch
+        XCTAssertTrue(number.waitForExistence(timeout: 10), "The page-jump sheet did not open")
+        XCTAssertEqual(number.value as? String, "1")
+        folio.buttons["Cancelar"].firstMatch.tap()
         attach(screenshot, app: folio)
     }
     private func openPicker() {
-        let plus = folio.buttons["Abrir PDF"].firstMatch
-        XCTAssertTrue(plus.waitForExistence(timeout: 15)); XCTAssertTrue(plus.isEnabled)
-        plus.tap()
+        // Import belongs to the library. Returning there preserves the open
+        // documents; choosing a second provider PDF must keep the first tab.
+        let library = folio.buttons["Volver a biblioteca"].firstMatch
+        if library.exists && library.isHittable { library.tap() }
+        let importPDF = folio.buttons["Importar PDF"].firstMatch
+        XCTAssertTrue(importPDF.waitForExistence(timeout: 15)); XCTAssertTrue(importPDF.isEnabled)
+        importPDF.tap()
         XCTAssertTrue(folio.buttons["Cancel"].firstMatch.waitForExistence(timeout: 15), "UIDocumentPicker did not appear")
     }
     private func select(_ filename: String) {
@@ -59,10 +68,10 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(host.buttons["openin-cold"].firstMatch.waitForExistence(timeout: 10))
         folio.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         folio.launch()
-        XCTAssertFalse(folio.textFields["Número de página"].firstMatch.exists, "This test must start without argv/seeded startup PDF")
+        XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "This test must start without argv/seeded startup PDF")
         openPicker(); folio.buttons["Cancel"].firstMatch.tap()
-        XCTAssertTrue(folio.buttons["Abrir PDF"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertFalse(folio.textFields["Número de página"].firstMatch.exists, "Cancel created a reading document")
+        XCTAssertTrue(folio.buttons["Importar PDF"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "Cancel created a reading document")
         attach("picker-canceled", app: folio)
         openPicker(); select("Folio selección uno.PDF")
         reading("FOLIO PICKER UNO", screenshot: "picker-open-one")
