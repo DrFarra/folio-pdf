@@ -32,11 +32,15 @@ final class ImportTests: XCTestCase {
     private func select(_ filename: String) {
         let basename = (filename as NSString).deletingPathExtension
         func fixture() -> XCUIElement {
-            return folio.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR label == %@ OR label BEGINSWITH %@", filename, basename, filename + ",")).firstMatch
+            // Files presents a cell ID with the hidden-extension display name
+            // and extension separated by a comma. APFS/Files uses decomposed
+            // Unicode; match only canonically equivalent names of this PDF.
+            let identifier = basename + ", " + (filename as NSString).pathExtension
+            return folio.cells.matching(NSPredicate(format: "identifier == %@ OR identifier == %@", identifier.precomposedStringWithCanonicalMapping, identifier.decomposedStringWithCanonicalMapping)).firstMatch
         }
         if !fixture().waitForExistence(timeout: 4) {
-            // directoryURL only selects the initial real provider location; the
-            // following fallback still navigates UIKit through visible controls.
+            // Navigate the real production picker through visible provider
+            // controls. No fixture directory or picker delegate is injected.
             let browse = folio.buttons["Browse"].firstMatch
             if browse.exists && browse.isHittable { browse.tap() }
             let local = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone' OR label == 'On My iPad'")).firstMatch
@@ -53,7 +57,7 @@ final class ImportTests: XCTestCase {
     func test01CancelThenSelectTwoActualProviderDocuments() {
         prepareHost()
         XCTAssertTrue(host.buttons["openin-cold"].firstMatch.waitForExistence(timeout: 10))
-        folio.launchArguments = ["--folio-ui-test-picker", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        folio.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         folio.launch()
         XCTAssertFalse(folio.textFields["Número de página"].firstMatch.exists, "This test must start without argv/seeded startup PDF")
         openPicker(); folio.buttons["Cancel"].firstMatch.tap()
@@ -64,9 +68,15 @@ final class ImportTests: XCTestCase {
         reading("FOLIO PICKER UNO", screenshot: "picker-open-one")
         openPicker(); select("Folio selección dos.pdf")
         reading("FOLIO PICKER DOS", screenshot: "picker-open-two")
-        folio.buttons["Documentos abiertos"].firstMatch.tap()
-        XCTAssertTrue(folio.buttons["Abrir pestaña Folio selección uno.PDF"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(folio.buttons["Abrir pestaña Folio selección dos.pdf"].firstMatch.exists)
+        // WKWebView reports the dialog-opening document selector as Other.
+        let documents = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Documentos abiertos'")).firstMatch
+        XCTAssertTrue(documents.waitForExistence(timeout: 10)); documents.tap()
+        func tab(_ filename: String) -> XCUIElement {
+            let label = "Abrir pestaña " + filename
+            return folio.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", label.precomposedStringWithCanonicalMapping, label.decomposedStringWithCanonicalMapping)).firstMatch
+        }
+        XCTAssertTrue(tab("Folio selección uno.PDF").waitForExistence(timeout: 10))
+        XCTAssertTrue(tab("Folio selección dos.pdf").exists)
         attach("picker-two-tabs", app: folio)
         folio.buttons["Cerrar diálogo"].firstMatch.tap()
     }

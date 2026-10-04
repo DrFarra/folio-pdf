@@ -62,7 +62,8 @@ def main():
               'UIKitDialogInteractionTested': False, 'OSOpenInInteractionTested': False,
               'physicalDeviceTested': False, 'FeatherInstallationTested': False,
               'pickerDelegateInjected': False, 'javascriptOpenEventInjected': False,
-              'startupFixturePassedAsArgument': False, 'fixtureInitialDirectoryOnly': True,
+              'startupFixturePassedAsArgument': False, 'fixtureInitialDirectoryOnly': False,
+              'sourceBuildRole': 'production', 'sourceContainsNativeQA': False,
               'pickerProvider': 'Apple local file provider; separate Folio Import Host Documents'}
     device = None
     try:
@@ -71,6 +72,9 @@ def main():
         info = plistlib.loads((original_app / 'Info.plist').read_bytes())
         assert info['CFBundleIdentifier'] == 'org.folio.pdf' and info['CFBundleShortVersionString'] == version
         original_executable = original_app / info['CFBundleExecutable']
+        contains_native_qa = b'FOLIO_NATIVE_QA_BUILD' in original_executable.read_bytes()
+        report['sourceContainsNativeQA'] = contains_native_qa
+        assert contains_native_qa is False, 'Actual UIKit interaction must use the production app; automatic QA selection/search would change the UI during taps.'
         assert 'IOSSIMULATOR' in run('vtool', '-show-build', str(original_executable)).upper()
         assert run('lipo', '-archs', str(original_executable)).split() == ['arm64']
         runtimes = json.loads(run('xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']

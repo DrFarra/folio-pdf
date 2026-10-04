@@ -170,6 +170,8 @@ require(all(large_reader.get(flag) is True for flag in ['actualWKWebView','fileB
         'Falta la apertura del PDF de 2 GiB en la interfaz WK/PDFKit real, con selección/búsqueda y memoria acotada.')
 ui_imports = report('iphone-native-import-ui-results.json')
 require(ui_imports.get('UIKitDialogInteractionTested') is True and ui_imports.get('OSOpenInInteractionTested') is True and
+        ui_imports.get('sourceExecutableSha256') == production.get('executableSha256') and
+        ui_imports.get('sourceBuildRole') == 'production' and ui_imports.get('sourceContainsNativeQA') is False and
         ui_imports.get('startupFixturePassedAsArgument') is False and ui_imports.get('pickerDelegateInjected') is False and
         ui_imports.get('javascriptOpenEventInjected') is False and
         ui_imports.get('xctest', {}).get('passed') == 2 and ui_imports.get('xctest', {}).get('failed') == 0 and

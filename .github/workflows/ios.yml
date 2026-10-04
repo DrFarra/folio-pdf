@@ -63,11 +63,8 @@ jobs:
       - name: Test actual iPhone WKWebView, selection, search and Rust persistence
         run: |
           python3 scripts/tests/native-smoke-ios.py --qa --app test-results/ios-build/qa/Folio.app
-      - name: Exercise actual UIKit PDF picker and cold and warm Open In
-        if: always() && !cancelled() && steps.ios_qa_build.outcome == 'success'
-        run: |
-          python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-build/qa/Folio.app
       - name: Build the production simulator and unsigned device IPA
+        id: ios_production_build
         if: inputs.mode == 'full'
         run: |
           set -o pipefail
@@ -76,6 +73,10 @@ jobs:
         if: inputs.mode == 'full'
         run: |
           python3 scripts/tests/native-smoke-ios.py --app test-results/ios-build/simulator/Folio.app
+      - name: Exercise actual UIKit PDF picker and cold and warm Open In
+        if: always() && !cancelled() && steps.ios_production_build.outcome == 'success'
+        run: |
+          python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-build/simulator/Folio.app
       - name: Verify the device IPA and package source and licenses
         if: inputs.mode == 'full'
         run: |
