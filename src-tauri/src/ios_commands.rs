@@ -75,33 +75,57 @@ fn write_reserved(request: tauri::ipc::Request<'_>, desktop: &Desktop, pdf: bool
     Ok(output.path)
 }
 
+fn remove_export(desktop: &Desktop, path: &Path) {
+    if let Some(folder) = path.parent().filter(|folder| folder.parent() == Some(desktop.data.join("exports").as_path())) {
+        let _ = fs::remove_dir_all(folder);
+    }
+}
+
+pub fn cleanup_unreferenced_exports(desktop: &Desktop) {
+    let retained = read_recents(desktop).into_iter().map(|r| r.path).collect::<Vec<_>>();
+    if let Ok(entries) = fs::read_dir(desktop.data.join("exports")) {
+        for entry in entries.flatten() {
+            let folder = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) && !retained.iter().any(|p| p.parent() == Some(folder.as_path())) {
+                let _ = fs::remove_dir_all(folder);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn write_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
     let path = write_reserved(request, &desktop, true)?;
-    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await?;
-    if response["completed"].as_bool() != Some(true) { return Ok(None); }
+    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await;
+    if response.as_ref().ok().and_then(|r| r["completed"].as_bool()) != Some(true) {
+        remove_export(&desktop, &path);
+        return response.map(|_| None);
+    }
     register(&desktop, path).map(Some)
 }
 
 #[tauri::command]
 pub async fn write_export(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
     let path = write_reserved(request, &desktop, false)?;
-    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await?;
-    Ok(response["completed"].as_bool() == Some(true))
+    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
 #[tauri::command]
 pub async fn share_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
     let path = write_reserved(request, &desktop, true)?;
-    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path})).await?;
-    Ok(response["completed"].as_bool() == Some(true))
+    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
 #[tauri::command]
 pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
     let path = write_reserved(request, &desktop, true)?;
-    let response = mobile_call(app, "printFile", serde_json::json!({"path":path})).await?;
-    Ok(response["completed"].as_bool() == Some(true))
+    let response = mobile_call(app, "printFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
 fn source_path(desktop: &Desktop, token: &str) -> Result<PathBuf, String> {

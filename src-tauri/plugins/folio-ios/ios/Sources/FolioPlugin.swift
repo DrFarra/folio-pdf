@@ -181,9 +181,11 @@ final class FolioPlugin: Plugin {
                 self.presenting = false
                 if let error = error { self.fail(invoke, error) } else { invoke.resolve(["completed": completed]) }
             }
+            let shown: Bool
             if UIDevice.current.userInterfaceIdiom == .pad {
-                controller.present(from: CGRect(x: parent.view.bounds.midX, y: 40, width: 1, height: 1), in: parent.view, animated: true, completionHandler: completion)
-            } else { controller.present(animated: true, completionHandler: completion) }
+                shown = controller.present(from: CGRect(x: parent.view.bounds.midX, y: 40, width: 1, height: 1), in: parent.view, animated: true, completionHandler: completion)
+            } else { shown = controller.present(animated: true, completionHandler: completion) }
+            if !shown { self.presenting = false; invoke.reject("No se pudo abrir el diálogo de impresión.") }
         }
     }
 }

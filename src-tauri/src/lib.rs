@@ -344,6 +344,8 @@ pub fn run() {
             let data = data.join("native-qa");
             fs::create_dir_all(&data)?;
             let desktop = Desktop { files: Mutex::new(Files::default()), store: Mutex::new(()), data };
+            #[cfg(target_os = "ios")]
+            ios_commands::cleanup_unreferenced_exports(&desktop);
             for path in std::env::args_os().skip(1).map(PathBuf::from).filter(|p| p.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("pdf"))) {
                 match register(&desktop, path) {
                     Ok(info) => desktop.files.lock().unwrap().startup.push(info),

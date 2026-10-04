@@ -34,7 +34,8 @@
     "test:remove-highlights": "node scripts/tests/remove-highlights.mjs",
     "test:bookmark-drag": "node scripts/tests/bookmark-drag.mjs",
     "iphone:build": "node scripts/build-ios.mjs",
-    "test:iphone": "node scripts/tests/iphone.mjs"
+    "test:iphone": "node scripts/tests/iphone.mjs",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

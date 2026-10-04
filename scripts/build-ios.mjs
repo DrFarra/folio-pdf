@@ -38,7 +38,10 @@ try {
   run('rustup', ['target', 'add', 'aarch64-apple-ios', 'aarch64-apple-ios-sim'], true, env);
   const project = path.join(root, 'src-tauri/gen/apple');
   if (!fs.existsSync(path.join(project, '.folio-scaffold-version'))) {
-    run(process.execPath, [cli, 'ios', 'init', '--ci', '--skip-targets-install'], true, env);
+    // Invoke through the project's npm script. Tauri records this invocation
+    // in XcodeBuildRustScript; invoking tauri.js directly would record the
+    // invalid relative command `node tauri` inside gen/apple.
+    run('npm', ['run', 'tauri', '--', 'ios', 'init', '--ci', '--skip-targets-install'], true, env);
     fs.writeFileSync(path.join(project, '.folio-scaffold-version'), `${pkg.version}\n`);
   } else if (fs.readFileSync(path.join(project, '.folio-scaffold-version'), 'utf8').trim() !== pkg.version) {
     fail('El scaffold iOS pertenece a otra versión. Usa una copia limpia de la fuente; no se borra un proyecto Xcode existente.');
@@ -50,7 +53,7 @@ try {
   const builds = path.join(root, 'test-results/ios-build');
   fs.mkdirSync(builds, { recursive: true });
   for (const target of targets) {
-    run(process.execPath, [cli, 'ios', 'build', '--target', target, '--no-sign', '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
+    run('npm', ['run', 'tauri', '--', 'ios', 'build', '--target', target, '--no-sign', '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
     const build = path.join(project, 'build');
     if (target === 'aarch64-sim') {
       const apps = find(path.join(build, 'arm64-sim'), '.app');

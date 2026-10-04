@@ -44,18 +44,20 @@ try:
     executable = app / info['CFBundleExecutable']
     assert 'arm64' in run('lipo', '-archs', str(executable))
     assert 'IOSSIMULATOR' in run('vtool', '-show-build', str(executable)).upper()
-    report['executableSha256'] = hashlib.sha256(executable.read_bytes()).hexdigest()
     has_marker = b'FOLIO_NATIVE_QA_BUILD' in executable.read_bytes()
     assert has_marker == args.qa, 'La variante QA no coincide con el bundle.'
     # An unsigned simulator .app is signed ad hoc locally; it is never placed
     # inside the device IPA or represented as a Feather-installable artifact.
     run('codesign', '--force', '--deep', '--sign', '-', str(app))
+    report['executableSha256'] = hashlib.sha256(executable.read_bytes()).hexdigest()
     runtimes = json.loads(run('xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
     runtimes = [r for r in runtimes if r.get('isAvailable') and 'iOS' in r['name']]
     assert runtimes, 'No hay runtime iOS instalado en Xcode.'
     runtime = sorted(runtimes, key=lambda r: tuple(int(n) for n in r['version'].split('.')))[-1]
     types = json.loads(run('xcrun', 'simctl', 'list', 'devicetypes', '--json'))['devicetypes']
-    phone = next((d for d in reversed(types) if d.get('productFamily') == 'iPhone' or 'iPhone' in d['name']), None)
+    phone = next((d for d in types if d['name'] == 'iPhone 16 Pro'), None)
+    if phone is None:
+        phone = next((d for d in types if d.get('productFamily') == 'iPhone' or 'iPhone' in d['name']), None)
     assert phone, 'No hay tipo de dispositivo iPhone disponible.'
     device = run('xcrun', 'simctl', 'create', 'Folio-iPhone-QA' if args.qa else 'Folio-iPhone', phone['identifier'], runtime['identifier'])
     report.update({'runtime': runtime['name'], 'device': phone['name']})
