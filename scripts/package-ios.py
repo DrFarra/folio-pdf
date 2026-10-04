@@ -61,6 +61,31 @@ def verify_bundle(app, simulator=False):
 qa = report('native-smoke-ios-qa.json')
 production = report('native-smoke-ios.json')
 require(qa.get('nativeQA') and not production.get('nativeQA'), 'Las pruebas no distinguen QA y producción.')
+for name, smoke in [('QA', qa), ('producción', production)]:
+    fresh = smoke.get('relaunch', {})
+    before, after = fresh.get('previousRevision'), fresh.get('freshRevision')
+    require(smoke.get('sandboxPersistenceVerified') is True and
+            type(before) is int and before > 0 and type(after) is int and after > before and
+            type(fresh.get('startedAt')) is int and fresh['startedAt'] > 0 and
+            fresh.get('fixtureBookmarkSeededWhileStopped') is True and
+            isinstance(fresh.get('restoredFixtureBookmark'), str) and fresh['restoredFixtureBookmark'].startswith('native-smoke-'),
+            f'Falta evidencia nueva de lectura y escritura tras reabrir la app de {name}.')
+fresh_qa = qa['relaunch']
+require(all(fresh_qa.get(key) is True for key in ['selectionVerified', 'searchVerified', 'nativeBridgeVerified', 'nativeClipboardVerified']) and
+        type(fresh_qa.get('freshDiagnosticAt')) is int and fresh_qa['freshDiagnosticAt'] >= fresh_qa['startedAt'] and
+        type(fresh_qa.get('freshChecksStartedAt')) is int and fresh_qa['freshChecksStartedAt'] >= fresh_qa['startedAt'],
+        'La reapertura QA no repitió selección, búsqueda, Swift y portapapeles con evidencia nueva.')
+relaunch_diagnostic = json.loads((ROOT / 'test-results/ios/native-qa-ios-relaunch.json').read_text())
+require(relaunch_diagnostic.get('buildMarker') == 'FOLIO_NATIVE_QA_BUILD' and
+        not relaunch_diagnostic.get('errors') and not relaunch_diagnostic.get('persistError') and
+        relaunch_diagnostic.get('snapshot', {}).get('at') == fresh_qa['freshDiagnosticAt'] and
+        relaunch_diagnostic.get('iosNative', {}).get('platform') == 'iOS' and
+        relaunch_diagnostic.get('iosNative', {}).get('uiAvailable') is True and
+        any(d.get('checksCompleted') is True and not d.get('error') and
+            d.get('startedAt') == fresh_qa['freshChecksStartedAt'] and
+            d.get('selectionMatchesSpan') is True and d.get('search', {}).get('found') is True and
+            d.get('nativeClipboardWritten') is True for d in relaunch_diagnostic.get('documents', {}).values()),
+        'El diagnóstico QA de reapertura no coincide con las verificaciones declaradas.')
 require(source_ipa.is_file(), 'Falta la IPA de dispositivo compilada por Tauri.')
 with tempfile.TemporaryDirectory(prefix='folio-ios-verify-') as directory:
     directory = Path(directory)

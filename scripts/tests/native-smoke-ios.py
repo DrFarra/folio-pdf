@@ -4,7 +4,7 @@ This is a simulator smoke, never a physical-device/Feather installation claim.
 UIKit dialog and AirPrint availability are distinct from interaction testing.
 """
 from pathlib import Path
-import argparse, hashlib, json, os, plistlib, shutil, subprocess, sys, time
+import argparse, hashlib, json, os, plistlib, shutil, subprocess, sys, time, uuid
 
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
@@ -37,6 +37,28 @@ def wait_file(folder, filename, condition, timeout=80):
             except (OSError, ValueError): pass
         time.sleep(.3)
     raise AssertionError(f'El WKWebView no completó {filename}.')
+
+def fresh_diagnostic(started_at):
+    diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d:
+        d.get('snapshot', {}).get('at', 0) >= started_at and
+        any(r.get('checksCompleted') and r.get('startedAt', 0) >= started_at
+            for r in d.get('documents', {}).values()))
+    assert diagnostic['buildMarker'] == 'FOLIO_NATIVE_QA_BUILD'
+    assert not diagnostic.get('errors'), json.dumps(diagnostic.get('errors'), ensure_ascii=False)
+    assert not diagnostic.get('persistError'), diagnostic.get('persistError')
+    checked = next(r for r in diagnostic['documents'].values()
+                   if r.get('checksCompleted') and r.get('startedAt', 0) >= started_at)
+    assert not checked.get('error'), json.dumps(checked.get('error'), ensure_ascii=False)
+    assert checked.get('selectionMatchesSpan'), 'La selección nativa de texto no coincide.'
+    assert checked.get('search', {}).get('found'), 'Buscar Folio no devolvió resultados en WKWebView.'
+    native = diagnostic.get('iosNative')
+    assert native and native.get('platform') == 'iOS' and native.get('uiAvailable'), 'No respondió el puente Swift/UIKit.'
+    assert checked.get('nativeClipboardWritten'), 'La copia nativa no se completó.'
+    pasted = run('xcrun', 'simctl', 'pbpaste', device)
+    assert pasted == checked['selectedText'].strip(), 'El portapapeles del simulador no coincide con el texto PDF.'
+    viewport = diagnostic['snapshot']['document']
+    assert viewport['scrollWidth'] <= viewport['width'] + 1, 'La aplicación completa desborda horizontalmente.'
+    return diagnostic, checked, native
 
 try:
     assert info['CFBundleIdentifier'] == 'org.folio.pdf'
@@ -85,33 +107,51 @@ try:
     report['session'] = {'version': session['version'], 'documentRevision': session['documentRevision']}
     assert hashlib.sha256(copied.read_bytes()).hexdigest() == digest, 'El original cambió al leerlo.'
     if args.qa:
-        diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d: d.get('snapshot', {}).get('at', 0) >= started and any(r.get('checksCompleted') for r in d.get('documents', {}).values()))
+        diagnostic, checked, native = fresh_diagnostic(started)
         (out / 'native-qa-ios.json').write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2))
-        assert diagnostic['buildMarker'] == 'FOLIO_NATIVE_QA_BUILD'
-        assert not diagnostic.get('errors'), json.dumps(diagnostic.get('errors'), ensure_ascii=False)
-        assert not diagnostic.get('persistError'), diagnostic.get('persistError')
-        checked = next(r for r in diagnostic['documents'].values() if r.get('checksCompleted'))
-        assert checked.get('selectionMatchesSpan'), 'La selección nativa de texto no coincide.'
-        assert checked.get('search', {}).get('found'), 'Buscar Folio no devolvió resultados en WKWebView.'
-        native = diagnostic.get('iosNative')
-        assert native and native.get('platform') == 'iOS' and native.get('uiAvailable'), 'No respondió el puente Swift/UIKit.'
         report['nativeBridge'] = native
-        require_clipboard = checked.get('nativeClipboardWritten')
-        assert require_clipboard, 'La copia nativa no se completó.'
-        pasted = run('xcrun', 'simctl', 'pbpaste', device)
-        assert pasted == checked['selectedText'].strip(), 'El portapapeles del simulador no coincide con el texto PDF.'
         report['nativeClipboardVerified'] = True
-        viewport = diagnostic['snapshot']['document']
-        assert viewport['scrollWidth'] <= viewport['width'] + 1, 'La aplicación completa desborda horizontalmente.'
         report['documentDiagnostic'] = checked
     time.sleep(2)
     screenshot = out / ('folio-iphone-qa.png' if args.qa else 'folio-iphone.png')
     run('xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot))
-    # Relaunch the same sandbox with the fixture: real persistence and startup
-    # paths must survive, independent of Safari IndexedDB/browser mocks.
+    # Seed one valid bookmark only after the app is stopped. It is a test
+    # fixture, not a claim that UIKit or this script created it through the UI.
+    # A successful relaunch must read it and write a NEW session revision.
+    # Merely finding the previous session file cannot satisfy this check.
     run('xcrun', 'simctl', 'terminate', device, 'org.folio.pdf')
+    session_paths = list(data.rglob(f'{digest}.json'))
+    assert len(session_paths) == 1, 'No se encontró una única sesión de la prueba.'
+    session_path = session_paths[0]
+    seeded = json.loads(session_path.read_text())
+    baseline_revision = int(seeded.get('revision', 0))
+    assert baseline_revision > 0, 'La sesión no contiene una revisión persistida.'
+    canary = {'id': 'native-smoke-' + uuid.uuid4().hex, 'title': 'Folio relaunch persistence',
+              'page': 1, 'parentId': None, 'color': '#bd4b38', 'order': len(seeded.get('bookmarks', []))}
+    seeded['bookmarks'] = [*seeded.get('bookmarks', []), canary]
+    temporary = session_path.with_suffix('.smoke-tmp')
+    temporary.write_text(json.dumps(seeded, ensure_ascii=False))
+    os.replace(temporary, session_path)
+    relaunched_at = int(time.time() * 1000)
+    report['relaunch'] = {'startedAt': relaunched_at, 'previousRevision': baseline_revision,
+                          'restoredFixtureBookmark': canary['id'], 'fixtureBookmarkSeededWhileStopped': True}
     run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(copied))
-    wait_file(data, f'{digest}.json', lambda s: s.get('version') == 3)
+    restored = wait_file(data, f'{digest}.json', lambda s:
+        s.get('version') == 3 and s.get('documentRevision') == digest and
+        int(s.get('revision', 0)) > baseline_revision and
+        any(b.get('id') == canary['id'] and b.get('title') == canary['title']
+            and b.get('page') == 1 for b in s.get('bookmarks', [])))
+    assert hashlib.sha256(copied.read_bytes()).hexdigest() == digest, 'El original cambió al reabrirlo.'
+    report['relaunch']['freshRevision'] = restored['revision']
+    if args.qa:
+        diagnostic, checked, native = fresh_diagnostic(relaunched_at)
+        (out / 'native-qa-ios-relaunch.json').write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2))
+        report['relaunch'].update({'freshDiagnosticAt': diagnostic['snapshot']['at'],
+                                  'freshChecksStartedAt': checked['startedAt'],
+                                  'selectionVerified': True, 'searchVerified': True,
+                                  'nativeBridgeVerified': native['uiAvailable'], 'nativeClipboardVerified': True})
+    time.sleep(2)
+    run('xcrun', 'simctl', 'io', device, 'screenshot', str(out / ('folio-iphone-qa-relaunch.png' if args.qa else 'folio-iphone-relaunch.png')))
     report['sandboxPersistenceVerified'] = True
     report['passed'] = True
 except Exception as error:
