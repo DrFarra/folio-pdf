@@ -1,0 +1,95 @@
+name: Folio iPhone and iPad
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Native bridge check or complete verified delivery
+        type: choice
+        options: [full, build-check]
+        default: full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  iphone:
+    runs-on: macos-15
+    timeout-minutes: 55
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install locked dependencies and iOS toolchains
+        run: |
+          npm ci
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          mkdir -p test-results/ios
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Verify MuPDF corresponding source and dependency notices
+        run: |
+          curl --fail --location --retry 3 https://mupdf.com/downloads/archive/mupdf-1.28.1-source.tar.gz -o test-results/mupdf-1.28.1-source.tar.gz
+          echo 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3  test-results/mupdf-1.28.1-source.tar.gz' | shasum -a 256 -c -
+          node scripts/prepare-resources.mjs
+          cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform aarch64-apple-ios --format-version 1 > test-results/ios/cargo-metadata-ios.json
+          python3 scripts/generate-notices.py --platform ios --cargo-metadata test-results/ios/cargo-metadata-ios.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+          npm run build
+          cargo test --manifest-path crates/folio-core/Cargo.toml --locked
+      - name: Verify touch layouts and editing in mobile WebKit
+        if: inputs.mode == 'full'
+        run: |
+          npx playwright-core install webkit
+          npm run test:iphone
+      - name: Build real arm64 iPhone Simulator diagnostics
+        run: |
+          set -o pipefail
+          node scripts/build-ios.mjs --simulator --qa 2>&1 | tee test-results/ios/ios-qa-build.log
+      - name: Test actual iPhone WKWebView, selection, search and Rust persistence
+        run: |
+          python3 scripts/tests/native-smoke-ios.py --qa --app test-results/ios-build/qa/Folio.app
+      - name: Build the production simulator and unsigned device IPA
+        if: inputs.mode == 'full'
+        run: |
+          set -o pipefail
+          node scripts/build-ios.mjs 2>&1 | tee test-results/ios/ios-production-build.log
+      - name: Verify production simulator contains no QA and renders a PDF
+        if: inputs.mode == 'full'
+        run: |
+          python3 scripts/tests/native-smoke-ios.py --app test-results/ios-build/simulator/Folio.app
+      - name: Verify the device IPA and package source and licenses
+        if: inputs.mode == 'full'
+        run: |
+          python3 scripts/package-ios.py --out release/Folio-ios --build-dir test-results/ios-build --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+      - name: Upload the iPhone delivery without duplicate archives
+        if: inputs.mode == 'full'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-iOS
+          path: release/Folio-ios/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload native and mobile UI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-iOS-evidence
+          path: |
+            test-results/ios/*.json
+            test-results/ios/*.png
+            test-results/ios/*.log
+            test-results/iphone/*.json
+            test-results/iphone/*.png
+          if-no-files-found: ignore
+          retention-days: 1

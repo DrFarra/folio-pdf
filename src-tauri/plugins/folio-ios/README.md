@@ -1,0 +1,1 @@
+# Tauri Plugin folio-ios

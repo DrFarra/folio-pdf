@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Highlighter, MessageSquare } from 'lucide-react';
 import { selectedTextRects } from '../text-selection';
+import { visibleBounds } from '../mobile';
 import './TextSelectionMenu.css';
 
 type Props = {
@@ -61,7 +62,9 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
       if (frame) { cancelAnimationFrame(frame); frame = 0; }
     };
     const pointerUp = () => { moving.current = false; update(); };
-    const cancel = () => { moving.current = false; setSelected(null); };
+    // WebKit cancels a pointer when its native word-selection handles take
+    // over. The Range remains valid and must still expose Folio's actions.
+    const cancel = () => { moving.current = false; update(); };
     const dismiss = () => { setSelected(null); if (frame) { cancelAnimationFrame(frame); frame = 0; } };
     const keyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { dismiss(); return; }
@@ -71,33 +74,38 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     document.addEventListener('pointerdown', pointerDown, true);
     document.addEventListener('pointerup', pointerUp);
     document.addEventListener('mouseup', pointerUp);
+    document.addEventListener('touchend', pointerUp, { passive: true });
     document.addEventListener('pointercancel', cancel);
     document.addEventListener('scroll', dismiss, true);
     document.addEventListener('wheel', dismiss, { passive: true });
     document.addEventListener('keydown', keyDown);
     window.addEventListener('resize', dismiss);
     window.addEventListener('folio:text-selection-finished', pointerUp);
+    window.addEventListener('folio:pinch-start', dismiss);
     return () => {
       if (frame) cancelAnimationFrame(frame);
       document.removeEventListener('selectionchange', update);
       document.removeEventListener('pointerdown', pointerDown, true);
       document.removeEventListener('pointerup', pointerUp);
       document.removeEventListener('mouseup', pointerUp);
+      document.removeEventListener('touchend', pointerUp);
       document.removeEventListener('pointercancel', cancel);
       document.removeEventListener('scroll', dismiss, true);
       document.removeEventListener('wheel', dismiss);
       document.removeEventListener('keydown', keyDown);
       window.removeEventListener('resize', dismiss);
       window.removeEventListener('folio:text-selection-finished', pointerUp);
+      window.removeEventListener('folio:pinch-start', dismiss);
     };
   }, [enabled]);
 
   useLayoutEffect(() => {
     if (!selected || !menu.current) return;
     const box = menu.current.getBoundingClientRect();
-    const left = Math.max(8, Math.min(innerWidth - box.width - 8, (selected.left + selected.right - box.width) / 2));
+    const bounds = visibleBounds();
+    const left = Math.max(bounds.left + 8, Math.min(bounds.right - box.width - 8, (selected.left + selected.right - box.width) / 2));
     const below = selected.bottom + 8;
-    const top = Math.max(8, Math.min(innerHeight - box.height - 8, below + box.height + 8 <= innerHeight ? below : selected.top - box.height - 8));
+    const top = Math.max(bounds.top + 8, Math.min(bounds.bottom - box.height - 8, below + box.height + 8 <= bounds.bottom ? below : selected.top - box.height - 8));
     setPosition({ left, top });
   }, [selected, canAnnotate]);
 

@@ -7,6 +7,7 @@ import type { Area } from '../engine/operations.mjs';
 import { highlightSelection, selectedTextRects, textCaretAtPoint } from '../text-selection';
 import type { AnnotationDraft, HighlightSelectionRequest, TextSelectionRequest } from '../text-selection';
 import HighlightAnnotationMenu from './HighlightAnnotationMenu';
+import { isMobile } from '../platform';
 import './PDFPage.css';
 
 function useNearby(ref: React.RefObject<HTMLDivElement | null>, first = false) {
@@ -14,7 +15,7 @@ function useNearby(ref: React.RefObject<HTMLDivElement | null>, first = false) {
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const observer = new IntersectionObserver(([entry]) => setNearby(entry.isIntersecting), { rootMargin: '800px 200px' });
+    const observer = new IntersectionObserver(([entry]) => setNearby(entry.isIntersecting), { rootMargin: isMobile ? '350px 100px' : '800px 200px' });
     observer.observe(node);
     return () => observer.disconnect();
   }, [ref]);
@@ -90,7 +91,8 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
     rendering.current = true;
     canvas.dataset.rendering = 'true';
     const view = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
-    const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16_000_000 / (view.width * view.height)));
+    const pixelBudget = isMobile ? 4_000_000 : 16_000_000;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(pixelBudget / (view.width * view.height)));
     // The visible bitmap survives zoom and canceled renders. Prepare pixels and
     // text separately, then publish both in one task before the next paint.
     const surface = document.createElement('canvas');
@@ -165,6 +167,36 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
   }, [canCopy, color, number, onAnnotate, viewport]);
   useEffect(() => () => selectionCleanup.current?.(), [tool, canCopy, scale, rotation, query]);
 
+  useEffect(() => {
+    // iOS owns the long-press selection and its handles. Wait for a stable
+    // selection after fingers lift instead of replacing it with mouse carets.
+    if (!isMobile || tool !== 'highlight' || !canCopy || !canAnnotate) return;
+    let fingers = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      if (fingers || rendering.current) return;
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || selection.isCollapsed ||
+          !textRef.current?.contains(selection.getRangeAt(0).startContainer)) return;
+      timer = setTimeout(() => {
+        if (!fingers && !rendering.current && !document.querySelector('dialog[open]')) highlightSelection();
+      }, 450);
+    };
+    const touched = (event: TouchEvent) => { fingers = event.touches.length; schedule(); };
+    document.addEventListener('selectionchange', schedule);
+    document.addEventListener('touchstart', touched, { passive: true });
+    document.addEventListener('touchend', touched, { passive: true });
+    document.addEventListener('touchcancel', touched, { passive: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('selectionchange', schedule);
+      document.removeEventListener('touchstart', touched);
+      document.removeEventListener('touchend', touched);
+      document.removeEventListener('touchcancel', touched);
+    };
+  }, [tool, canCopy, canAnnotate, scale, rotation]);
+
   function localPoint(event: React.PointerEvent) {
     const rect = frameRef.current!.getBoundingClientRect();
     return { x: Math.max(0, Math.min(viewport.width, event.clientX - rect.left)), y: Math.max(0, Math.min(viewport.height, event.clientY - rect.top)) };
@@ -174,6 +206,7 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
     pointerOrigin.current = { x: event.clientX, y: event.clientY };
     if (tool === 'select' || tool === 'highlight') {
       if (rendering.current) { event.preventDefault(); return; }
+      if (event.pointerType === 'touch') return;
       // Let the browser select characters naturally, including across lines/pages.
       // A gesture on an image or a blank margin never creates an area highlight.
       selectionCleanup.current?.();

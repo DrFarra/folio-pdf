@@ -4,6 +4,7 @@
   const buildMarker = 'FOLIO_NATIVE_QA_BUILD';
   const id = 'f'.repeat(64), errors = [], documents = {};
   let saving = false, lastRevision = Date.now(), persistError = null;
+  let iosNative = null;
   let activeSince = Date.now(), lastActive = '', probing = false;
   const now = () => Date.now();
   const text = (value, limit = 6000) => String(value ?? '').slice(0, limit);
@@ -70,7 +71,7 @@
     const revision = lastRevision = Math.max(now(), lastRevision + 1);
     try {
       await invoke('store_session', { id, session: { version: 1, nativeQA: true, buildMarker, revision,
-        snapshot: snapshot(), errors: errors.slice(), documents, persistError } });
+        snapshot: snapshot(), errors: errors.slice(), documents, persistError, iosNative } });
       persistError = null;
     } catch (error) { persistError = describe(error); }
     finally { saving = false; }
@@ -111,6 +112,7 @@
         selection.removeAllRanges();
       } else { report.selectedText = ''; report.selectionMatchesSpan = false; }
       report.search = await search('Folio');
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent)) iosNative = await window.__TAURI_INTERNALS__.invoke('ios_native_status');
       report.after = snapshot();
       report.errors = errors.filter(error => error.active === name);
     } catch (error) { report.error = describe(error); }

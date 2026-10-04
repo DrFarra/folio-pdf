@@ -12,3 +12,5 @@ entrega-original/
 .migration/
 .tools/
 release/
+
+src-tauri/gen/apple/

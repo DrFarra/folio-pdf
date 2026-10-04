@@ -1,6 +1,6 @@
 import type { RecentDocument, Session } from './types';
 import { invoke } from '@tauri-apps/api/core';
-import { isDesktop } from './platform';
+import { isNative } from './platform';
 import { normalizeBookmarks } from './bookmarks';
 
 const PREFIX = 'folio.session.';
@@ -22,7 +22,7 @@ function parseSession(raw: Partial<Session> | null): Session {
     };
 }
 export async function readSession(id: string): Promise<Session> {
-  if (isDesktop) {
+  if (isNative) {
     const raw = await invoke<(Session & { revision?: number }) | null>('load_session', { id });
     revisions.set(id, raw?.revision || 0);
     return parseSession(raw);
@@ -35,7 +35,7 @@ export async function saveSession(id: string, session: Session): Promise<boolean
   revisions.set(id, revision);
   const data = { ...session, bookmarks: normalizeBookmarks(session.bookmarks), version: 3, revision };
   try {
-    if (isDesktop) await invoke('store_session', { id, session: data });
+    if (isNative) await invoke('store_session', { id, session: data });
     else localStorage.setItem(PREFIX + id, JSON.stringify(data));
     return true;
   } catch { return false; }
@@ -43,7 +43,7 @@ export async function saveSession(id: string, session: Session): Promise<boolean
 
 // Drafts hold real modified PDF bytes, separately from the original on disk.
 export async function readDraft(id: string): Promise<Uint8Array | null> {
-  if (isDesktop) {
+  if (isNative) {
     const bytes = new Uint8Array(await invoke<ArrayBuffer>('load_draft', { id }));
     return bytes.length ? bytes : null;
   }
@@ -55,7 +55,7 @@ export async function readDraft(id: string): Promise<Uint8Array | null> {
   });
 }
 export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
-  if (isDesktop) { await invoke('store_draft', new Uint8Array(bytes), { headers: { 'x-folio-draft-id': id } }); return; }
+  if (isNative) { await invoke('store_draft', new Uint8Array(bytes), { headers: { 'x-folio-draft-id': id } }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put(new Blob([new Uint8Array(bytes).buffer]), id);
@@ -63,7 +63,7 @@ export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
   });
 }
 export async function discardDraft(id: string): Promise<void> {
-  if (isDesktop) { await invoke('discard_draft', { id }); return; }
+  if (isNative) { await invoke('discard_draft', { id }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').delete(id);
@@ -85,7 +85,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 export async function listRecent(): Promise<RecentDocument[]> {
-  if (isDesktop) return invoke<RecentDocument[]>('recent_documents');
+  if (isNative) return invoke<RecentDocument[]>('recent_documents');
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readonly');
@@ -97,7 +97,7 @@ export async function listRecent(): Promise<RecentDocument[]> {
 }
 
 export async function rememberDocument(doc: RecentDocument): Promise<void> {
-  if (isDesktop) {
+  if (isNative) {
     if (doc.nativeSource) await invoke('remember_document', { id: doc.id, token: doc.nativeSource, pages: doc.pages, openedAt: doc.openedAt });
     else if (doc.draft) await invoke('remember_draft', { id: doc.id, name: doc.name, pages: doc.pages, openedAt: doc.openedAt });
     return;
@@ -116,7 +116,7 @@ export async function rememberDocument(doc: RecentDocument): Promise<void> {
 }
 
 export async function forgetDocument(id: string): Promise<void> {
-  if (isDesktop) { await invoke('forget_document', { id }); return; }
+  if (isNative) { await invoke('forget_document', { id }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readwrite');
@@ -126,7 +126,7 @@ export async function forgetDocument(id: string): Promise<void> {
   });
 }
 export async function clearSavedState(): Promise<void> {
-  if (isDesktop) { await invoke('clear_saved_state'); return; }
+  if (isNative) { await invoke('clear_saved_state'); return; }
   for (const recent of await listRecent()) await forgetDocument(recent.id);
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
+import { visibleBounds } from '../mobile';
 import './HighlightColorPicker.css';
 
 type Props = { color: string; onChange: (hex: string) => void; disabled?: boolean };
@@ -46,13 +47,15 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
     if (!open || !palette.current || !trigger.current) return;
     const update = () => {
       const anchor = trigger.current!.getBoundingClientRect(), box = palette.current!.getBoundingClientRect();
-      setPosition({ left: Math.max(8, Math.min(innerWidth - box.width - 8, anchor.left)), top: Math.max(8, Math.min(innerHeight - box.height - 8, anchor.bottom + box.height + 8 <= innerHeight ? anchor.bottom + 5 : anchor.top - box.height - 5)) });
+      const bounds = visibleBounds();
+      setPosition({ left: Math.max(bounds.left + 8, Math.min(bounds.right - box.width - 8, anchor.left)), top: Math.max(bounds.top + 8, Math.min(bounds.bottom - box.height - 8, anchor.bottom + box.height + 8 <= bounds.bottom ? anchor.bottom + 5 : anchor.top - box.height - 5)) });
     };
     update();
     if (restoreFocus.current) palette.current.querySelector<HTMLButtonElement>('button[aria-pressed=true]')?.focus({ preventScroll: true });
     if (restoreFocus.current && !palette.current.contains(document.activeElement)) palette.current.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    window.visualViewport?.addEventListener('resize', update);
+    return () => { window.removeEventListener('resize', update); window.visualViewport?.removeEventListener('resize', update); };
   }, [open]);
   useEffect(() => {
     if (!open) return;

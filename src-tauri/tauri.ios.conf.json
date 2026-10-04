@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [{ "label": "main", "title": "Folio", "width": 390, "height": 844, "minWidth": 0, "minHeight": 0, "maximized": false, "decorations": true, "dragDropEnabled": false }],
+    "security": { "capabilities": ["ios-window"] }
+  },
+  "bundle": {
+    "fileAssociations": [{ "ext": ["pdf"], "contentTypes": ["com.adobe.pdf"], "name": "Documento PDF", "role": "Editor", "rank": "Alternate" }],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "iOS": { "minimumSystemVersion": "17.0", "infoPlist": "Info.ios.plist" },
+    "resources": { "../LICENSE": "LICENSE.txt", "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt", "../SOURCE-BUILD.txt": "SOURCE-BUILD.txt" }
+  }
+}

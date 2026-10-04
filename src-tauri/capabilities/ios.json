@@ -1,0 +1,7 @@
+{
+  "identifier": "ios-window",
+  "description": "Lectura local en iPhone e iPad. Los archivos se autorizan mediante los selectores nativos de iOS.",
+  "windows": ["main"],
+  "platforms": ["iOS"],
+  "permissions": ["core:default"]
+}

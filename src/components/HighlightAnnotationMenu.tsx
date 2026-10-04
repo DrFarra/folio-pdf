@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
+import { visibleBounds } from '../mobile';
 import './HighlightAnnotationMenu.css';
 
 type Props = { x: number; y: number; onRemove: () => void; onClose: () => void };
@@ -12,7 +13,8 @@ export default function HighlightAnnotationMenu({ x, y, onRemove, onClose }: Pro
     const element = menu.current;
     if (!element) return;
     const box = element.getBoundingClientRect();
-    setPosition({ left: Math.max(8, Math.min(x, innerWidth - box.width - 8)), top: Math.max(8, Math.min(y + 8, innerHeight - box.height - 8)) });
+    const bounds = visibleBounds();
+    setPosition({ left: Math.max(bounds.left + 8, Math.min(x, bounds.right - box.width - 8)), top: Math.max(bounds.top + 8, Math.min(y + 8, bounds.bottom - box.height - 8)) });
     element.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
   }, [x, y]);
   useEffect(() => {

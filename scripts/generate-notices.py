@@ -12,13 +12,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--cargo-metadata', required=True, type=Path)
 parser.add_argument('--cargo-licenses', type=Path)
 parser.add_argument('--mupdf-source', type=Path)
-parser.add_argument('--platform', choices=['windows', 'macos'], default='windows')
+parser.add_argument('--platform', choices=['windows', 'macos', 'ios'], default='windows')
 args = parser.parse_args()
 metadata = json.loads(args.cargo_metadata.read_text(encoding='utf-8-sig'))
 lock = json.loads((root/'package-lock.json').read_text(encoding='utf-8'))
 version = json.loads((root/'package.json').read_text(encoding='utf-8'))['version']
-platform_name = 'macOS' if args.platform == 'macos' else 'Windows'
-runtime_notice = ("macOS uses Apple's system WKWebView. This development build has ad-hoc\n"
+platform_name = {'windows': 'Windows', 'macos': 'macOS', 'ios': 'iOS'}[args.platform]
+runtime_notice = ("iOS uses Apple\'s system WKWebView and UIKit file import/export.\n"
+                  "The device IPA is unsigned; Feather must sign it with a valid certificate\n"
+                  "and provisioning profile before installation. Folio does not upload PDF documents.\n"
+                  if args.platform == 'ios' else "macOS uses Apple's system WKWebView. This development build has ad-hoc\n"
                   "code signing and is not notarized by Apple. Folio does not upload PDF documents.\n"
                   if args.platform == 'macos' else
                   "Microsoft WebView2 is a separate runtime under Microsoft's license terms.\n"

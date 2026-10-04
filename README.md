@@ -1,10 +1,18 @@
-# Folio 0.4.1
+# Folio 0.5.0
 
-Aplicación PDF para Windows 10/11 x64 y macOS 14 o posterior, con React, PDF.js, MuPDF y Tauri.
+Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas de Windows y sus límites
 constan en docs/acceptance-windows.md. La entrega original 0.2.0 se conserva aparte.
 
 ## Interfaz
+
+En iPhone, los documentos abiertos se eligen desde la cabecera y las herramientas
+secundarias se abren en un panel. Los controles táctiles tienen al menos 44 px;
+los paneles y diálogos respetan las zonas de la cámara, el indicador de inicio y
+el teclado. El zoom con dos dedos conserva el PDF visible durante el gesto.
+La selección usa las herramientas y los tiradores de selección de iOS. Archivos
+importa los PDF al almacenamiento de la aplicación; guardar y compartir incluyen
+las anotaciones y cambios actuales.
 
 Cabecera de 44 px y herramientas de 40 px. La ventana permanece fija;
 PDF, miniaturas y anotaciones se desplazan por separado. Sin barra inferior,
@@ -86,6 +94,22 @@ Aplicaciones. La firma es ad hoc; no tiene notarización Apple. Si macOS bloquea
 la primera apertura, usa Privacidad y seguridad > Abrir igualmente para esta
 aplicación, sin desactivar Gatekeeper. Actualiza Safari/WebKit junto con macOS.
 En Mac los atajos usan ⌘ y los controles de ventana son nativos.
+
+### iPhone y iPad
+
+La compilación iOS requiere un Mac con Xcode y los SDK de Apple. El workflow
+`.github/workflows/ios.yml` permite compilar en GitHub Actions desde la rama elegida.
+
+```sh
+npm ci
+npm run iphone:build
+```
+
+La entrega para Feather contiene un IPA de dispositivo arm64. Feather debe
+firmarlo con el certificado y perfil válidos configurados por el usuario antes
+de instalarlo. Una aplicación de simulador se entrega por separado y no puede
+instalarse en un iPhone. Las instrucciones y los resultados de aceptación de
+iOS constan en `docs/ios.md` y en los informes de la entrega.
 
 ## Verificar
 

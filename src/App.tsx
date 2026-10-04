@@ -3,7 +3,7 @@ import {
   ArrowDownToLine, ArrowRight, BookOpen, Bookmark, Check,
   ChevronDown, ChevronLeft, ChevronRight, CircleHelp, FileText, FolderOpen,
   Highlighter, Info, Keyboard, Layers, ListTree, LoaderCircle, LockKeyhole,
-  Maximize, MessageSquare, Minus, MousePointer2,
+  Maximize, MessageSquare, Minus, MoreHorizontal, MousePointer2, PanelLeft,
   Plus, Printer, Redo2, RotateCw, Search, ShieldCheck,
   Settings2, Sparkles, StickyNote, Trash2, Undo2, Upload, X, Wrench, FilePlus2,
 } from 'lucide-react';
@@ -25,8 +25,10 @@ import { commentSelection, highlightSelection } from './text-selection';
 import type { AnnotationDraft } from './text-selection';
 import './tabs.css';
 import './mac-platform.css';
+import './mobile.css';
+import { usePhoneLayout } from './mobile';
 import { assetUrl, pdfAssetSettings } from './assets';
-import { isDesktop, isMac, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, startupDocuments } from './platform';
+import { isDesktop, isNative, isIOS, isMac, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, sharePdf, printPdf, startupDocuments } from './platform';
 import { clearSavedState, forgetDocument, listRecent, readSession, rememberDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, RecentDocument, SideTab, Tool } from './types';
 
@@ -46,6 +48,9 @@ function IconButton({ children, label, onClick, onMouseDown, disabled = false, a
 }
 
 export default function App() {
+  const phone = usePhoneLayout();
+  const [mobileActions, setMobileActions] = useState(false);
+  const [mobileTabs, setMobileTabs] = useState(false);
   const [doc, setDoc] = useState<LoadedDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<'download' | 'print' | 'edit' | null>(null);
@@ -126,6 +131,7 @@ export default function App() {
   const preferencesRef = useRef({ rememberRecent, defaultZoom });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentScale = useRef(1);
+  const phoneRef = useRef(phone); phoneRef.current = phone;
   const wheelAnchor = useRef<{ id: string; page: number; x: number; y: number; pointerX: number; pointerY: number } | null>(null);
   const activeView = useRef<TabView>(null!);
   activeView.current = { page, dimensions, zoomMode, customScale, rotation, tool, color, sidebar, sideTab, notesOpen, outline, textIndex, indexing, searchOpen, query, resultIndex, activeNote, redactions, editArea, sessionFailed, draftFailed };
@@ -150,7 +156,7 @@ export default function App() {
     restoreScroll.current = { key: tab.key, top: tab.scrollTop, left: tab.scrollLeft };
     setDoc(tab.doc); setAnnotations(tab.annotations); setBookmarks(tab.bookmarks); setPage(tab.page); setPageInput(String(tab.page)); setDimensions(tab.dimensions);
     setZoomMode(tab.zoomMode); setCustomScale(tab.customScale); setRotation(tab.rotation); setTool(tab.tool); setColor(tab.color);
-    setSidebar(tab.sidebar); setSideTab(tab.sideTab); setNotesOpen(tab.notesOpen); setOutline(tab.outline); setTextIndex(tab.textIndex); setIndexing(tab.indexing);
+    setSidebar(phoneRef.current ? false : tab.sidebar); setSideTab(tab.sideTab); setNotesOpen(phoneRef.current ? false : tab.notesOpen); setOutline(tab.outline); setTextIndex(tab.textIndex); setIndexing(tab.indexing);
     setSearchOpen(tab.searchOpen); setQuery(tab.query); setResultIndex(tab.resultIndex); setActiveNote(tab.activeNote);
     setRedactions(tab.redactions); setEditArea(tab.editArea); setSessionFailed(tab.sessionFailed); setDraftFailed(tab.draftFailed); setBookmarkEditingId(null);
     setWorkBenchClosed(); setHistoryTick(v => v + 1); window.getSelection()?.removeAllRanges();
@@ -258,7 +264,7 @@ export default function App() {
       const session = context?.useSession === false ? { annotations: inspection.annotations, bookmarks: context.bookmarks || [], lastPage: context.page || 1, version: 2 } : await readSession(id);
       if (!context && !readingPreferencesRef.current.restorePage) session.lastPage = 1;
       if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
-      const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isDesktop), name, size: bytes.length, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
+      const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isNative), name, size: bytes.length, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
       const replacing = !!context?.preserveHistory || !!context?.savedCopy;
       const previousTab = captureTab(); retainCurrentTab();
       const restoredTool: Tool = replacing && previousTab?.tool === 'highlight' && loaded.canAnnotate && loaded.canCopy ? 'highlight' : 'select';
@@ -335,7 +341,11 @@ export default function App() {
   }, [rememberRecent, defaultZoom]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => { document.documentElement.dataset.theme = theme === 'system' ? media.matches ? 'dark' : 'light' : theme; };
+    const apply = () => {
+      const resolved = theme === 'system' ? media.matches ? 'dark' : 'light' : theme;
+      document.documentElement.dataset.theme = resolved;
+      if (isNative && isIOS) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_mobile_theme', { theme: resolved })).catch(() => {});
+    };
     apply();
     media.addEventListener('change', apply);
     try { localStorage.setItem('folio.theme', theme); } catch { /* Reading stays available without storage. */ }
@@ -364,14 +374,16 @@ export default function App() {
     if (isDesktop) return;
     const preserve = () => {
       retainCurrentTab();
-      for (const tab of tabsRef.current) void saveSession(tab.doc.id, { annotations: tab.annotations, bookmarks: tab.bookmarks, lastPage: tab.page, documentRevision: tab.doc.revision });
+      for (const tab of tabsRef.current) void persistTab(tab).catch(() => { setSessionFailed(true); });
     };
+    const background = () => { if (document.visibilityState === 'hidden') preserve(); };
     window.addEventListener('beforeunload', preserve);
     window.addEventListener('pagehide', preserve);
-    return () => { window.removeEventListener('beforeunload', preserve); window.removeEventListener('pagehide', preserve); };
+    document.addEventListener('visibilitychange', background);
+    return () => { window.removeEventListener('beforeunload', preserve); window.removeEventListener('pagehide', preserve); document.removeEventListener('visibilitychange', background); };
   }, []);
   useEffect(() => {
-    if (!isDesktop) { setLoading(false); return; }
+    if (!isNative) { setLoading(false); return; }
     let alive = true;
     const openNativeFiles = async (files: { token: string; name: string; size: number }[]) => {
       for (const file of files) {
@@ -471,10 +483,10 @@ export default function App() {
     const rotated = rotation % 180 !== 0;
     const w = rotated ? dimensions.height : dimensions.width;
     const h = rotated ? dimensions.width : dimensions.height;
-    if (zoomMode === 'width') return Math.max(.25, Math.min(3, (viewportSize.width - (viewportSize.width < 600 ? 30 : 100)) / w));
-    if (zoomMode === 'page') return Math.max(.25, Math.min(2, (viewportSize.width - 54) / w, (viewportSize.height - 76) / h));
+    if (zoomMode === 'width') return Math.max(.25, Math.min(3, (viewportSize.width - (phone ? 16 : viewportSize.width < 600 ? 30 : 100)) / w));
+    if (zoomMode === 'page') return Math.max(.25, Math.min(2, (viewportSize.width - (phone ? 16 : 54)) / w, (viewportSize.height - (phone ? 40 : 76)) / h));
     return customScale;
-  }, [zoomMode, customScale, viewportSize, dimensions, rotation]);
+  }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone]);
   currentScale.current = scale;
 
   useLayoutEffect(() => {
@@ -517,6 +529,69 @@ export default function App() {
     shell.addEventListener('wheel', onWheel, { passive: false });
     return () => shell.removeEventListener('wheel', onWheel);
   }, []);
+
+  useEffect(() => {
+    const root = viewer.current;
+    if (!phone || !root) return;
+    type Pinch = { stack: HTMLElement; distance: number; scale: number; next: number; originX: number; originY: number; centerX: number; centerY: number; pointerX: number; pointerY: number; page: number; x: number; y: number; id: string; frame: number };
+    let gesture: Pinch | null = null;
+    const geometry = (event: TouchEvent) => {
+      const a = event.touches[0], b = event.touches[1];
+      return { distance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    };
+    const clearPreview = (active: Pinch) => {
+      cancelAnimationFrame(active.frame); active.stack.style.removeProperty('transform'); active.stack.style.removeProperty('transform-origin');
+      root.classList.remove('pinching');
+    };
+    const start = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || gesture || !docRef.current || busyRef.current || loadingRef.current || document.querySelector('dialog[open], .mobile-drawer')) return;
+      const center = geometry(event), stack = root.querySelector<HTMLElement>('.pdf-stack');
+      const node = document.elementFromPoint(center.x, center.y)?.closest<HTMLElement>('.pdf-page') || root.querySelector<HTMLElement>(`[data-page-number="${readingState.current.page}"] .pdf-page`);
+      if (!stack || !node) return;
+      event.preventDefault(); document.getSelection()?.removeAllRanges(); window.dispatchEvent(new Event('folio:pinch-start'));
+      const bounds = node.getBoundingClientRect(), stackBounds = stack.getBoundingClientRect();
+      gesture = { stack, distance: center.distance, scale: currentScale.current, next: currentScale.current, originX: center.x - stackBounds.left, originY: center.y - stackBounds.top,
+        centerX: center.x, centerY: center.y, pointerX: center.x, pointerY: center.y, page: Number(node.closest<HTMLElement>('[data-page-number]')?.dataset.pageNumber),
+        x: (center.x - bounds.left) / bounds.width, y: (center.y - bounds.top) / bounds.height, id: docRef.current.id, frame: 0 };
+      stack.style.transformOrigin = `${gesture.originX}px ${gesture.originY}px`; root.classList.add('pinching');
+    };
+    const move = (event: TouchEvent) => {
+      if (!gesture || event.touches.length !== 2) return;
+      event.preventDefault(); const center = geometry(event), active = gesture;
+      active.next = Math.max(.25, Math.min(3, active.scale * center.distance / active.distance)); active.pointerX = center.x; active.pointerY = center.y;
+      if (active.frame) cancelAnimationFrame(active.frame);
+      active.frame = requestAnimationFrame(() => { active.stack.style.transform = `translate(${active.pointerX - active.centerX}px, ${active.pointerY - active.centerY}px) scale(${active.next / active.scale})`; });
+    };
+    const finish = (event: TouchEvent) => {
+      if (!gesture || event.touches.length >= 2) return;
+      event.preventDefault(); const active = gesture; gesture = null; clearPreview(active);
+      if (docRef.current?.id !== active.id) return;
+      const frame = root.getBoundingClientRect(), next = Math.round(active.next * 1000) / 1000;
+      wheelAnchor.current = { id: active.id, page: active.page, x: active.x, y: active.y, pointerX: active.pointerX - frame.left, pointerY: active.pointerY - frame.top };
+      currentScale.current = next; setCustomScale(next); setZoomMode('custom');
+    };
+    const cancel = () => { if (gesture) { clearPreview(gesture); gesture = null; } };
+    root.addEventListener('touchstart', start, { passive: false }); root.addEventListener('touchmove', move, { passive: false }); root.addEventListener('touchend', finish, { passive: false }); root.addEventListener('touchcancel', cancel);
+    return () => { cancel(); root.removeEventListener('touchstart', start); root.removeEventListener('touchmove', move); root.removeEventListener('touchend', finish); root.removeEventListener('touchcancel', cancel); };
+  }, [phone]);
+
+  useEffect(() => {
+    if (!phone || !(sidebar || notesOpen)) return;
+    const drawer = document.querySelector<HTMLElement>('.mobile-drawer'); if (!drawer) return;
+    const previous = document.activeElement as HTMLElement | null;
+    if (!bookmarkEditingId) drawer.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+    const keyboard = (event: KeyboardEvent) => {
+      if (document.querySelector('dialog[open], .bookmark-menu')) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSidebar(false); setSearchOpen(false); setNotesOpen(false); }
+      if (event.key !== 'Tab') return;
+      const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter(element => element.getClientRects().length);
+      const first = focusable[0], last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', keyboard, true);
+    return () => { document.removeEventListener('keydown', keyboard, true); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [phone, sidebar, notesOpen, bookmarkEditingId]);
   const results = useMemo(() => searchText(textIndex, query), [textIndex, query]);
   const occurrences = results.reduce((sum, r) => sum + r.count, 0);
   const pages = useMemo(() => Array.from({ length: doc?.pdf.numPages || 0 }, (_, i) => i + 1), [doc]);
@@ -556,9 +631,13 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [doc, goToPage]);
 
+  function trimHistory(stack: History[], maxEntries = 50) {
+    const budget = (phoneRef.current ? 40 : 200) * 1024 * 1024;
+    while (stack.length > maxEntries || stack.reduce((total, item) => total + (item.bytes?.length || 0), 0) > budget) stack.shift();
+  }
   const commitAnnotations = useCallback((next: Annotation[]) => {
     undoStack.current.push({ annotations: annotationRef.current });
-    if (undoStack.current.length > 50) undoStack.current.shift();
+    trimHistory(undoStack.current);
     redoStack.current = [];
     annotationRef.current = next; setAnnotations(next); setHistoryTick(v => v + 1);
   }, []);
@@ -566,6 +645,7 @@ export default function App() {
     const previous = undoStack.current.pop();
     if (!previous) return;
     redoStack.current.push(previous.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
+    trimHistory(redoStack.current);
     if (previous.bytes) { void restoreHistory(previous); return; }
     annotationRef.current = previous.annotations;
     if (previous.bookmarks) { readingState.current.bookmarks = previous.bookmarks; setBookmarks(previous.bookmarks); }
@@ -575,6 +655,7 @@ export default function App() {
     const next = redoStack.current.pop();
     if (!next) return;
     undoStack.current.push(next.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
+    trimHistory(undoStack.current);
     if (next.bytes) { void restoreHistory(next); return; }
     annotationRef.current = next.annotations;
     if (next.bookmarks) { readingState.current.bookmarks = next.bookmarks; setBookmarks(next.bookmarks); }
@@ -583,7 +664,7 @@ export default function App() {
   const commitBookmarks = useCallback((next: BookmarkNode[]) => {
     if (JSON.stringify(next) === JSON.stringify(readingState.current.bookmarks)) return;
     undoStack.current.push({ annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
-    if (undoStack.current.length > 50) undoStack.current.shift();
+    trimHistory(undoStack.current);
     redoStack.current = [];
     readingState.current.bookmarks = next; setBookmarks(next); setHistoryTick(value => value + 1);
   }, []);
@@ -648,7 +729,7 @@ export default function App() {
   }
   async function chooseFile() {
     if (busyRef.current) return;
-    if (!isDesktop) { fileInput.current?.click(); return; }
+    if (!isNative) { fileInput.current?.click(); return; }
     try {
       const files = await pickNativeDocuments();
       for (const file of files) await openDocument(await readNativeDocument(file), file.name, false, file.token);
@@ -703,7 +784,7 @@ export default function App() {
       if (!opened) throw new Error('No se pudo cargar el resultado de la operación.');
       undoStack.current.push(before);
       // Bound the total retained PDF history as well as the number of operations.
-      while (undoStack.current.length > 20 || undoStack.current.reduce((n, entry) => n + (entry.bytes?.length || 0), 0) > 200 * 1024 * 1024) undoStack.current.shift();
+      trimHistory(undoStack.current, 20);
       redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(null); setTool('select');
       if (operation.operation === 'compress') notify(output.length < source.length ? `PDF reducido de ${formatSize(source.length)} a ${formatSize(output.length)}.` : 'El PDF ya está optimizado; no se redujo su tamaño.');
     } finally { setBusy(null); }
@@ -720,7 +801,7 @@ export default function App() {
       const opened = await openDocument(bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, modified: true,
         useSession: false, preserveHistory: true, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
       if (!opened) throw new Error('No se pudo abrir el documento firmado.');
-      undoStack.current.push(before); redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(null);
+      undoStack.current.push(before); trimHistory(undoStack.current, 20); redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(null);
     } finally { setBusy(null); }
   }
   function onArea(area: Area) {
@@ -755,6 +836,13 @@ export default function App() {
   async function printDocument() {
     const current = docRef.current;
     if (!current?.canPrint || busyRef.current) return;
+    if (isIOS) {
+      setBusy('print');
+      try { await printPdf(current.canAnnotate ? await exportAnnotated(current.bytes, annotationRef.current, current.password) : current.bytes, current.name, current.nativeSource); }
+      catch (error) { notify(error instanceof Error ? error.message : 'No se pudo preparar la impresión.', true); }
+      finally { setBusy(null); }
+      return;
+    }
     setBusy('print'); document.querySelector('.print-document')?.remove();
     const container = document.createElement('div'); container.className = 'print-document'; document.body.append(container);
     let printable = current.pdf;
@@ -784,6 +872,16 @@ export default function App() {
     setResultIndex(next); goToPage(results[next].page);
   }
   function closeSearch() { setSearchOpen(false); setQuery(''); }
+  async function shareDocument() {
+    const current = docRef.current; if (!current || busyRef.current || saving.current) return;
+    setBusy('download');
+    try { await sharePdf(current.canAnnotate ? await exportAnnotated(current.bytes, annotationRef.current, current.password) : current.bytes, current.name, current.nativeSource); }
+    catch (error) { notify(error instanceof Error ? error.message : 'No se pudo compartir el PDF.', true); }
+    finally { setBusy(null); }
+  }
+  function mobileAction(action: () => void) { setMobileActions(false); requestAnimationFrame(action); }
+  function closeMobilePanel() { setSidebar(false); setSearchOpen(false); setNotesOpen(false); }
+  function mobilePage(number: number) { goToPage(number); if (phoneRef.current) closeMobilePanel(); }
   function cancelPassword() {
     passwordCancelled.current = true;
     engineRef.current?.abort();
@@ -826,11 +924,16 @@ export default function App() {
     } catch { notify('No se pudo eliminar el archivo de la biblioteca.', true); }
   }
 
-  return <div className={`app-shell${isDesktop && isMac ? ' native-mac' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); if (!isDesktop) void openFiles(Array.from(e.dataTransfer.files)); }}>
+  return <div className={`app-shell${isDesktop && isMac ? ' native-mac' : ''}${phone ? ' phone-layout' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); if (!isNative) void openFiles(Array.from(e.dataTransfer.files)); }}>
     {closeBlocked && <Modal title="No se pudo guardar la sesión" onClose={() => setCloseBlocked(false)}><p className="modal-description">Puedes guardar una copia del PDF antes de salir. Si cierras ahora, los cambios de esta sesión podrían perderse.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setCloseBlocked(false)}>Volver</button><button className="secondary-button" onClick={() => { setCloseBlocked(false); void download(); }}>Guardar una copia</button><button className="primary-button" onClick={() => { void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().destroy()); }}>Cerrar sin guardar sesión</button></div></Modal>}
     <header className="app-header" data-tauri-drag-region>
       <div className="brand"><img src="/folio.svg" alt="Folio" /></div>
       <h1 className="sr-only">{doc?.name || 'Folio'}</h1>
+      {phone ? <>
+        <button className="mobile-document-selector" aria-label="Documentos abiertos" aria-haspopup="dialog" disabled={!!busy || loading || !tabs.length} onClick={() => setMobileTabs(true)}><span>{doc?.name || 'Folio'}</span>{tabs.length > 0 && <span className="mobile-tab-count">{tabs.length}</span>}<ChevronDown size={16} /></button>
+        <IconButton label="Abrir PDF" disabled={!!busy || loading} onClick={() => void chooseFile()}><Plus size={21} /></IconButton>
+        <IconButton label="Más acciones" onClick={() => setMobileActions(true)}><MoreHorizontal size={23} /></IconButton>
+      </> : <>
       <div className="document-tab-strip" role="tablist" aria-label="Documentos abiertos">
         {tabs.map(tab => <div className={`document-tab ${tab.key === activeTabKey ? 'selected' : ''}`} key={tab.key} data-tab-key={tab.key}>
           <button role="tab" aria-selected={tab.key === activeTabKey} aria-controls="document-reader" aria-label={tab.doc.name} title={tab.doc.name} tabIndex={tab.key === activeTabKey ? 0 : -1} disabled={!!busy || loading} onClick={() => void switchTab(tab.key)} onKeyDown={event => {
@@ -851,11 +954,12 @@ export default function App() {
         <IconButton label="Maximizar o restaurar ventana" onClick={() => void windowAction('toggleMaximize')}><Maximize size={14} /></IconButton>
         <IconButton label="Cerrar ventana" onClick={() => void windowAction('close')} className="window-close"><X size={17} /></IconButton>
       </div>}
+      </>}
       <input ref={fileInput} type="file" multiple accept="application/pdf,.pdf" className="sr-only" aria-label="Elegir archivo PDF" onChange={e => { const input = e.currentTarget; void openFiles(Array.from(input.files || [])).finally(() => { input.value = ''; }); }} />
     </header>
 
     <div className="workspace">
-      <nav className="tool-rail" aria-label="Herramientas del documento">
+      {!phone && <nav className="tool-rail" aria-label="Herramientas del documento">
         <div className="rail-primary">
           <button className={library ? 'rail-button active' : 'rail-button'} aria-label="Mis documentos" title="Mis documentos" onClick={() => setLibrary(true)}><FolderOpen size={21} /><span>Documentos</span></button>
           <button className={`rail-button ${sidebar && !searchOpen && sideTab === 'pages' ? 'active' : ''}`} aria-label="Páginas" title="Páginas" aria-expanded={sidebar && !searchOpen && sideTab === 'pages'} disabled={!doc} onClick={() => toggleSidePanel('pages')}><Layers size={21} /><span>Páginas</span></button>
@@ -868,10 +972,12 @@ export default function App() {
           <IconButton label="Preferencias de lectura" onClick={() => { setSettings(true); setConfirmClear(false); }}><Settings2 size={19} /></IconButton>
           <IconButton label="Ayuda y atajos" onClick={() => setHelp(true)}><CircleHelp size={19} /></IconButton>
         </div>
-      </nav>
-      {sidebar && <aside className="sidebar" style={{ width: readingPreferences.panelWidth, minWidth: readingPreferences.panelWidth }}>
+      </nav>}
+      {phone && (sidebar || notesOpen) && <button className="mobile-panel-backdrop" aria-label="Cerrar panel lateral" tabIndex={-1} onClick={closeMobilePanel} />}
+      {sidebar && <aside className={`sidebar${phone ? ' mobile-drawer' : ''}`} role={phone ? 'dialog' : undefined} aria-modal={phone ? true : undefined} aria-label={phone ? 'Explorar documento' : undefined} style={phone ? undefined : { width: readingPreferences.panelWidth, minWidth: readingPreferences.panelWidth }}>
+        {phone && <><div className="mobile-drawer-heading"><h2>Explorar</h2><IconButton label="Cerrar panel" onClick={closeMobilePanel}><X size={20} /></IconButton></div><div className="mobile-panel-tabs" role="tablist" aria-label="Explorar PDF">{[['pages', 'Páginas', Layers], ['bookmarks', 'Marcadores', Bookmark], ['outline', 'Índice', ListTree], ['search', 'Buscar', Search]].map(([id, label, Icon]) => { const Symbol = Icon as typeof Layers; return <button key={id as string} role="tab" aria-selected={id === 'search' ? searchOpen : !searchOpen && sideTab === id} onClick={() => { if (id === 'search') setSearchOpen(true); else { setSearchOpen(false); setSideTab(id as SideTab); } }}><Symbol size={19} /><span>{label as string}</span></button>; })}</div></>}
         {searchOpen ? <>
-          <div className="sidebar-title"><span>Buscar en el documento</span><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={16} /></IconButton></div>
+          <div className="sidebar-title"><span>Buscar en el documento</span>{!phone && <IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={16} /></IconButton>}</div>
           <form className="search-field" onSubmit={e => { e.preventDefault(); goToResult(resultIndex + 1); }}><Search size={16} /><input ref={searchInput} placeholder="Palabra o frase…" value={query} onChange={e => { setQuery(e.target.value); setResultIndex(0); }} aria-label="Buscar texto en el PDF" />{query && <button type="button" onClick={() => setQuery('')} aria-label="Borrar búsqueda"><X size={14} /></button>}</form>
           <div className="search-summary"><span>{indexing ? 'Preparando búsqueda…' : query ? `${occurrences} coincidencia${occurrences === 1 ? '' : 's'}` : 'Buscar texto'}</span>{results.length > 0 && <div><IconButton label="Resultado anterior" onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={15} /></IconButton><IconButton label="Siguiente resultado" onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={15} /></IconButton></div>}</div>
           <div className="sidebar-scroll search-results">{results.map((result, i) => <button key={result.page} className={`search-result ${i === resultIndex ? 'selected' : ''}`} onClick={() => goToResult(i)}><span className="result-heading">Página {result.page}<span>{result.count}</span></span><span>{result.text}</span></button>)}{query && !indexing && !results.length && <div className="empty-panel"><Search size={26} /><p>No encontramos «{query}».</p><span>{textIndex.every(t => !t.trim()) ? 'Este PDF no contiene texto seleccionable. La búsqueda necesita texto; no incluye OCR.' : 'Prueba con otra palabra o una frase más corta.'}</span></div>}{!query && <div className="search-hint"><Keyboard size={24} /><p>Introduce un texto para buscar.</p><span>Busca sin distinguir mayúsculas ni acentos.</span></div>}</div>
@@ -879,18 +985,22 @@ export default function App() {
           <div className="sidebar-title"><span>{sideTab === 'pages' ? 'Páginas' : sideTab === 'outline' ? 'Índice' : 'Marcadores'}</span><span className="page-total">{doc?.pdf.numPages || 0}</span></div>
 
           <div className={`sidebar-scroll ${sideTab === 'pages' ? 'thumbnails' : 'outline-list'}`} role="tabpanel">
-            {sideTab === 'pages' && doc && pages.map(number => <Thumbnail key={`${doc.pdf.loadingTask.docId}-${number}`} pdf={doc.pdf} number={number} selected={page === number} onClick={() => goToPage(number)} />)}
-            {sideTab === 'outline' && (outline.length ? outline.map((entry, i) => <button key={i} className={`outline-entry ${page === entry.page ? 'selected' : ''}`} style={{ paddingLeft: 14 + Math.min(entry.depth, 4) * 12 }} onClick={() => goToPage(entry.page)}><span>{entry.title}</span><span>{entry.page}</span></button>) : <div className="empty-panel"><ListTree size={26} /><p>Sin índice en este PDF.</p><span>Explora sus páginas desde las miniaturas.</span></div>)}
-            {sideTab === 'bookmarks' && <BookmarkTree key={activeTabKey} bookmarks={bookmarks} onChange={commitBookmarks} page={page} onGoToPage={goToPage} disabled={!!busy || loading} startEditingId={bookmarkEditingId} onEditingComplete={() => setBookmarkEditingId(null)} />}
+            {sideTab === 'pages' && doc && pages.map(number => <Thumbnail key={`${doc.pdf.loadingTask.docId}-${number}`} pdf={doc.pdf} number={number} selected={page === number} onClick={() => mobilePage(number)} />)}
+            {sideTab === 'outline' && (outline.length ? outline.map((entry, i) => <button key={i} className={`outline-entry ${page === entry.page ? 'selected' : ''}`} style={{ paddingLeft: 14 + Math.min(entry.depth, 4) * 12 }} onClick={() => mobilePage(entry.page)}><span>{entry.title}</span><span>{entry.page}</span></button>) : <div className="empty-panel"><ListTree size={26} /><p>Sin índice en este PDF.</p><span>Explora sus páginas desde las miniaturas.</span></div>)}
+            {sideTab === 'bookmarks' && <BookmarkTree key={activeTabKey} bookmarks={bookmarks} onChange={commitBookmarks} page={page} onGoToPage={mobilePage} disabled={!!busy || loading} startEditingId={bookmarkEditingId} onEditingComplete={() => setBookmarkEditingId(null)} />}
           </div>
         </>}
       </aside>}
 
       <main className="reader" id="document-reader">
         <div className="reader-toolbar">
+          {phone ? <div className="mobile-tools"><IconButton label="Explorar documento" disabled={!doc} onClick={() => { setNotesOpen(false); setSidebar(v => !v); }}><PanelLeft size={21} /></IconButton><IconButton label="Resaltado automático" toggle active={tool === 'highlight'} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} onMouseDown={event => event.preventDefault()} onClick={activateHighlight}><Highlighter size={21} /></IconButton><HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /></div> :
           <div className="toolbar-left"><button className="tools-button" disabled={!doc || !!busy} onClick={() => { setWorkbench('home'); setTool('select'); }} title="Herramientas"><Wrench size={17} /><span>Herramientas</span></button><span className="toolbar-divider" /><div className="tool-group"><IconButton label="Seleccionar texto (V)" active={tool === 'select'} disabled={!doc} onClick={() => setTool('select')}><MousePointer2 size={17} /></IconButton><IconButton label="Resaltado automático (H)" toggle active={tool === 'highlight'} disabled={!doc?.canAnnotate || !doc.canCopy || !!busy || loading} onMouseDown={e => e.preventDefault()} onClick={activateHighlight}><Highlighter size={18} /></IconButton><HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /><IconButton label="Añadir nota (N)" active={tool === 'note'} disabled={!doc?.canAnnotate} onClick={() => setTool('note')}><StickyNote size={17} /></IconButton></div><div className="undo-group"><span className="toolbar-divider" /><IconButton label={`Deshacer (${shortcutLabel('Z')})`} onClick={undo} disabled={!!busy || !undoStack.current.length}><Undo2 size={17} /></IconButton><IconButton label={`Rehacer (${shortcutLabel(isMac ? '⇧+Z' : 'Y')})`} onClick={redo} disabled={!!busy || !redoStack.current.length}><Redo2 size={17} /></IconButton></div></div>
-          <div className="page-controls"><IconButton label="Página anterior" onClick={() => goToPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton><form onSubmit={e => { e.preventDefault(); const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={pageInput} onChange={e => setPageInput(e.target.value.replace(/\D/g, ''))} onBlur={() => { const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }} /><span>/ {doc?.pdf.numPages || '—'}</span></form><IconButton label="Página siguiente" onClick={() => goToPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton></div>
+          }
+          <div className="page-controls">{!phone && <IconButton label="Página anterior" onClick={() => goToPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton>}<form onSubmit={e => { e.preventDefault(); const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={pageInput} onChange={e => setPageInput(e.target.value.replace(/\D/g, ''))} onBlur={() => { const p = Number(pageInput); if (Number.isInteger(p) && p > 0) goToPage(p); else setPageInput(String(page)); }} /><span>/ {doc?.pdf.numPages || '—'}</span></form>{!phone && <IconButton label="Página siguiente" onClick={() => goToPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton>}</div>
+          {phone ? <IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!doc || !!busy || loading} onClick={() => { setNotesOpen(false); toggleBookmark(); }} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={21} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton> :
           <div className="toolbar-right"><div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} onChange={e => { if (['page', 'width'].includes(e.target.value)) setZoomMode(e.target.value); else { setCustomScale(Number(e.target.value) / 100); setZoomMode('custom'); } }} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300].map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= 3}><Plus size={16} /></IconButton></div><span className="toolbar-divider" /><IconButton label="Rotar vista 90 grados" disabled={!doc} onClick={() => setRotation(v => (v + 90) % 360)}><RotateCw size={17} /></IconButton><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!doc} onClick={toggleBookmark} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={17} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton><IconButton label="Pantalla completa" onClick={() => void fullscreen()} className="fullscreen-button"><Maximize size={17} /></IconButton><span className="toolbar-divider" /><IconButton label="Imprimir PDF" disabled={!doc?.canPrint || !!busy} onClick={() => void printDocument()} className="print-button">{busy === 'print' ? <LoaderCircle size={17} className="spin" /> : <Printer size={17} />}</IconButton><button className="download-button" onClick={() => void download()} disabled={!doc || !!busy}><ArrowDownToLine size={16} /><span>{isDesktop ? 'Guardar' : 'Descargar'}</span></button></div>
+          }
         </div>
 
         <div className="reading-area" ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
@@ -899,7 +1009,7 @@ export default function App() {
         </div>
 
         {tool !== 'select' && tool !== 'highlight' && doc && <div className="annotation-tool-hint">
-          <span>{tool === 'note' ? 'Haz clic para añadir una nota' : tool === 'redact' ? 'Marca las áreas que quieres eliminar' : 'Arrastra para seleccionar el área'}</span>
+          <span>{tool === 'note' ? phone ? 'Toca la página para añadir una nota' : 'Haz clic para añadir una nota' : tool === 'redact' ? 'Marca las áreas que quieres eliminar' : 'Arrastra para seleccionar el área'}</span>
 
           {tool === 'redact' && redactions.length > 0 && <><button className="secondary-button" onClick={() => setRedactions(previous => previous.slice(0, -1))}>Quitar última área</button><button className="primary-button" onClick={() => setWorkbench('redact')}>Revisar {redactions.length} áreas</button></>}
           <IconButton label="Terminar herramienta" onClick={() => { setTool('select'); setRedactions([]); }}><X size={15} /></IconButton>
@@ -908,10 +1018,30 @@ export default function App() {
 
       </main>
 
-      {notesOpen && <aside className="notes-panel"><div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => setNotesOpen(false)}><X size={16} /></IconButton></div><div className="notes-scroll">{annotations.length ? annotations.map(a => <article key={a.id} className={`annotation-card ${activeNote === a.id ? 'selected' : ''}`}><div className="annotation-card-heading"><button onClick={() => { goToPage(a.page); setActiveNote(a.id); }}>{a.kind === 'note' ? <StickyNote size={14} /> : <Highlighter size={14} />}<span>Página {a.page}</span></button><IconButton label="Eliminar anotación" disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => removeAnnotation(a.id)}><Trash2 size={14} /></IconButton></div>{a.kind === 'note' ? <><p>{a.text}</p><button className="note-edit" disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => { setNoteDraft(a); setNoteText(a.text); }}>Editar nota</button></> : <span className="highlight-description"><span style={{ backgroundColor: a.color }} />{a.text || 'Texto resaltado'}</span>}</article>) : <div className="empty-panel annotations-empty"><div className="note-illustration"><StickyNote size={32} /></div><h3>Sin anotaciones</h3></div>}</div></aside>}
+      {notesOpen && <aside className={`notes-panel${phone ? ' mobile-drawer' : ''}`} role={phone ? 'dialog' : undefined} aria-modal={phone ? true : undefined} aria-label={phone ? 'Anotaciones' : undefined}><div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => setNotesOpen(false)}><X size={16} /></IconButton></div><div className="notes-scroll">{annotations.length ? annotations.map(a => <article key={a.id} className={`annotation-card ${activeNote === a.id ? 'selected' : ''}`}><div className="annotation-card-heading"><button onClick={() => { mobilePage(a.page); setActiveNote(a.id); }}>{a.kind === 'note' ? <StickyNote size={14} /> : <Highlighter size={14} />}<span>Página {a.page}</span></button><IconButton label="Eliminar anotación" disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => removeAnnotation(a.id)}><Trash2 size={14} /></IconButton></div>{a.kind === 'note' ? <><p>{a.text}</p><button className="note-edit" disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => { setNoteDraft(a); setNoteText(a.text); }}>Editar nota</button></> : <span className="highlight-description"><span style={{ backgroundColor: a.color }} />{a.text || 'Texto resaltado'}</span>}</article>) : <div className="empty-panel annotations-empty"><div className="note-illustration"><StickyNote size={32} /></div><h3>Sin anotaciones</h3></div>}</div></aside>}
     </div>
 
-    <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={notify} />
+    {phone && mobileTabs && <Modal title="Documentos abiertos" onClose={() => setMobileTabs(false)} className="mobile-tabs-modal"><div className="mobile-document-list">{tabs.map(tab => <div key={tab.key} className={tab.key === activeTabKey ? 'selected' : ''}><button aria-label={`Abrir pestaña ${tab.doc.name}`} aria-current={tab.key === activeTabKey ? 'page' : undefined} onClick={() => { setMobileTabs(false); requestAnimationFrame(() => { closeMobilePanel(); void switchTab(tab.key); }); }} disabled={!!busy || loading}><FileText size={20} /><span>{tab.doc.name}</span>{tab.key === activeTabKey && <Check size={18} />}</button><IconButton label={`Cerrar ${tab.doc.name}`} onClick={() => { setMobileTabs(false); requestAnimationFrame(() => void closeTab(tab.key)); }} disabled={!!busy || loading}><X size={19} /></IconButton></div>)}</div></Modal>}
+    {phone && mobileActions && <Modal title="Acciones del documento" onClose={() => setMobileActions(false)} className="mobile-actions-modal">
+      {storageFailed && <p className="mobile-storage-error" role="alert">No se pudo guardar la sesión. Guarda una copia del PDF.</p>}
+      <div className="mobile-file-actions"><button className="primary-button" aria-label="Guardar PDF" onClick={() => mobileAction(() => void download())} disabled={!doc || !!busy || loading}><ArrowDownToLine size={20} /><span>Guardar PDF</span></button>{isIOS && <button className="secondary-button" aria-label="Compartir PDF" onClick={() => mobileAction(() => void shareDocument())} disabled={!doc || !!busy || loading}><Upload size={20} /><span>Compartir</span></button>}</div>
+      <div className="mobile-reading-controls"><div><IconButton label="Página anterior" onClick={() => mobileAction(() => goToPage(page - 1))} disabled={!doc || page <= 1}><ChevronLeft size={20} /></IconButton><span>Página {page} de {doc?.pdf.numPages || '—'}</span><IconButton label="Página siguiente" onClick={() => mobileAction(() => goToPage(page + 1))} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={20} /></IconButton></div><div><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={20} /></IconButton><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} disabled={!doc} onChange={event => { if (['page', 'width'].includes(event.target.value)) setZoomMode(event.target.value); else { setCustomScale(Number(event.target.value) / 100); setZoomMode('custom'); } }}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300].map(number => <option key={number} value={number}>{number} %</option>)}</select><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= 3}><Plus size={20} /></IconButton></div></div>
+      <div className="mobile-action-grid">
+        <button onClick={() => mobileAction(() => { closeMobilePanel(); setNotesOpen(true); })} disabled={!doc}><MessageSquare size={21} /><span>Anotaciones{annotations.length ? ` (${annotations.length})` : ''}</span></button>
+        <button onClick={() => mobileAction(() => setTool('note'))} disabled={!doc?.canAnnotate || !!busy}><StickyNote size={21} /><span>Añadir nota</span></button>
+        <button onClick={() => mobileAction(() => { setWorkbench('home'); setTool('select'); })} disabled={!doc || !!busy}><Wrench size={21} /><span>Herramientas</span></button>
+        <button onClick={() => mobileAction(() => { setSettings(true); setConfirmClear(false); })}><Settings2 size={21} /><span>Preferencias de lectura</span></button>
+        <button onClick={() => mobileAction(undo)} disabled={!!busy || !undoStack.current.length}><Undo2 size={21} /><span>Deshacer</span></button>
+        <button onClick={() => mobileAction(redo)} disabled={!!busy || !redoStack.current.length}><Redo2 size={21} /><span>Rehacer</span></button>
+        <button onClick={() => mobileAction(() => setRotation(value => (value + 90) % 360))} disabled={!doc}><RotateCw size={21} /><span>Rotar vista</span></button>
+        <button onClick={() => mobileAction(() => void printDocument())} disabled={!doc?.canPrint || !!busy}><Printer size={21} /><span>Imprimir PDF</span></button>
+        <button onClick={() => mobileAction(() => setLibrary(true))}><FolderOpen size={21} /><span>Mis documentos</span></button>
+        <button onClick={() => mobileAction(() => setInfo(true))} disabled={!doc}><Info size={21} /><span>Información del documento</span></button>
+        <button onClick={() => mobileAction(() => setCreating(true))} disabled={!!busy || loading}><FilePlus2 size={21} /><span>Crear PDF</span></button>
+        <button onClick={() => mobileAction(() => setHelp(true))}><CircleHelp size={21} /><span>Ayuda</span></button>
+      </div>
+    </Modal>}
+    <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked && !(phone && (sidebar || notesOpen || mobileActions || mobileTabs))} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={notify} />
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Soltar para abrir</h2><p>Archivo PDF · Hasta 100 MiB</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     {toast && <div className={`toast ${toast.error ? 'error' : ''}`} role={toast.error ? 'alert' : 'status'}>{toast.error ? <Info size={18} /> : <Check size={18} />}<span>{toast.message}</span><button aria-label="Cerrar aviso" onClick={() => setToast(null)}><X size={15} /></button></div>}
@@ -921,7 +1051,7 @@ export default function App() {
     {noteDraft && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {noteDraft.page}</div><textarea autoFocus aria-label="Texto de la nota" placeholder="Escribe un comentario" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} /><div className="note-modal-footer"><span>{noteText.length} / 5000</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
     {password && <Modal title="Este PDF tiene contraseña" onClose={cancelPassword} className="password-modal"><p className="modal-description">Introduce la contraseña para abrirlo.</p><form onSubmit={e => { e.preventDefault(); if (passwordText) { password.submit(passwordText); setPassword(null); } }}><label htmlFor="pdf-password">Contraseña del documento</label><input autoFocus id="pdf-password" type="password" value={passwordText} onChange={e => setPasswordText(e.target.value)} autoComplete="off" />{password.retry && <p className="password-error">La contraseña anterior no es correcta. Inténtalo de nuevo.</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={cancelPassword}>Cancelar</button><button className="primary-button" disabled={!passwordText}><LockKeyhole size={15} />Abrir PDF</button></div></form></Modal>}
     {info && doc && <Modal title="Sobre este documento" onClose={() => setInfo(false)} className="info-modal"><div className="info-file"><FileText size={30} /><strong>{doc.name}</strong></div><dl className="document-details"><div><dt>Páginas</dt><dd>{doc.pdf.numPages}</dd></div><div><dt>Tamaño</dt><dd>{formatSize(doc.size)}</dd></div><div><dt>Anotaciones de Folio</dt><dd>{annotations.length}</dd></div><div><dt>Marcadores</dt><dd>{bookmarks.length}</dd></div><div><dt>Procesamiento</dt><dd>Local, en tu dispositivo</dd></div></dl></Modal>}
-    {settings && <ReadingSettings theme={theme} onTheme={setTheme} zoom={defaultZoom} onZoom={setDefaultZoom} preferences={readingPreferences} onPreferences={setReadingPreferences} rememberRecent={rememberRecent} onRemember={setRememberRecent} confirmClear={confirmClear} onClear={() => void clearLibrary()} onCancelClear={() => setConfirmClear(false)} onClose={() => setSettings(false)} />}
+    {settings && <ReadingSettings phone={phone} theme={theme} onTheme={setTheme} zoom={defaultZoom} onZoom={setDefaultZoom} preferences={readingPreferences} onPreferences={setReadingPreferences} rememberRecent={rememberRecent} onRemember={setRememberRecent} confirmClear={confirmClear} onClear={() => void clearLibrary()} onCancelClear={() => setConfirmClear(false)} onClose={() => setSettings(false)} />}
     {help && <Modal title="Ayuda y atajos" onClose={() => setHelp(false)} className="help-modal"><div className="help-feature"><Highlighter size={21} /><div><strong>Anotaciones</strong><p>Activa el resaltado automático y selecciona palabras o líneas; pulsa H otra vez para desactivarlo. Elige el color junto al resaltador. Al seleccionar texto con V, aparece el menú para copiar, resaltar o comentar. Para añadir una nota, activa la herramienta de notas y haz clic en la página.</p></div></div><div className="help-feature"><ShieldCheck size={21} /><div><strong>Guardar comentarios</strong><p>Usa {isDesktop ? 'Guardar' : 'Descargar'} para incluir los comentarios y cambios en el archivo.</p></div></div><h3 className="shortcuts-heading">Atajos de teclado</h3><div className="shortcut-grid">{[['Abrir PDF', shortcutLabel('O')], ['Cambiar de pestaña', 'Ctrl+Tab'], ['Cerrar pestaña', shortcutLabel('W')], ['Buscar', shortcutLabel('F')], [isDesktop ? 'Guardar' : 'Descargar', shortcutLabel('S')], ['Deshacer', shortcutLabel('Z')], ['Rehacer', shortcutLabel('⇧+Z')], ['Cambiar de página', '← / →'], ['Seleccionar texto', 'V'], ['Resaltado automático', 'H'], ['Añadir nota', 'N'], ['Zoom', isMac ? '⌘ / Ctrl + rueda' : 'Ctrl + rueda'], ['Salir de una herramienta', 'Esc']].map(([label, keys]) => <div key={label}><span>{label}</span><kbd>{keys}</kbd></div>)}</div><p className="help-limit">Usa Herramientas para editar, organizar páginas, rellenar formularios, reconocer texto, comparar documentos o trabajar con firmas. Guarda una copia con {shortcutLabel('S')}.</p></Modal>}
   </div>;
 }

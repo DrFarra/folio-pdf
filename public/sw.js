@@ -1,4 +1,4 @@
-const CACHE = 'folio-0.4.0';
+const CACHE = 'folio-0.5.0';
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(['/folio.svg', '/manifest.webmanifest', '/sample.pdf', '/fonts/dm-sans-regular.ttf', '/fonts/dm-sans-semibold.ttf'])).then(() => self.skipWaiting()));
 });

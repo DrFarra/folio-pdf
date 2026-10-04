@@ -1,9 +1,13 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { downloadBytes } from './pdf';
 
-export const isDesktop = isTauri();
-export const isMac = /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform);
-export const shortcutLabel = (key: string) => `${isMac ? '⌘' : 'Ctrl'}+${key}`;
+export const isNative = isTauri();
+export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+export const isMobile = isIOS || /Android/i.test(navigator.userAgent);
+export const isDesktop = isNative && !isMobile;
+export const isMac = !isIOS && /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform);
+export const shortcutLabel = (key: string) => `${isMac || isIOS ? '⌘' : 'Ctrl'}+${key}`;
 export type NativeDocument = { token: string; name: string; size: number };
 
 export async function pickNativeDocument(): Promise<NativeDocument | null> {
@@ -16,24 +20,43 @@ export async function readNativeDocument(document: NativeDocument): Promise<Uint
   return new Uint8Array(await invoke<ArrayBuffer>('read_document', { token: document.token }));
 }
 export async function startupDocument(): Promise<NativeDocument | null> {
-  return isDesktop ? invoke<NativeDocument | null>('startup_document') : null;
+  return isNative ? invoke<NativeDocument | null>('startup_document') : null;
 }
 export async function startupDocuments(): Promise<NativeDocument[]> {
-  return isDesktop ? invoke<NativeDocument[]>('startup_documents') : [];
+  return isNative ? invoke<NativeDocument[]>('startup_documents') : [];
 }
 export async function savePdf(bytes: Uint8Array, name: string, source?: string): Promise<NativeDocument | boolean> {
-  if (!isDesktop) { downloadBytes(bytes, name); return true; }
+  if (!isNative) { downloadBytes(bytes, name); return true; }
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
-  return invoke<NativeDocument>('write_pdf_copy', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
+  return await invoke<NativeDocument | null>('write_pdf_copy', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } }) || false;
+}
+
+async function presentMobilePdf(command: 'share_pdf_copy' | 'print_pdf_copy', bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
+  const token = await invoke<string | null>('choose_output', { source: source || null, name });
+  if (!token) return false;
+  return invoke<boolean>(command, new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
+}
+export async function sharePdf(bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
+  if (isNative && isIOS) return presentMobilePdf('share_pdf_copy', bytes, name, source);
+  const file = new File([new Uint8Array(bytes).buffer], name, { type: 'application/pdf' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return true; }
+    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return false; throw error; }
+  }
+  return !!await savePdf(bytes, name, source);
+}
+export async function printPdf(bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
+  return presentMobilePdf('print_pdf_copy', bytes, name, source);
 }
 export async function saveExport(bytes: Uint8Array, name: string, format: 'txt' | 'html' | 'png' | 'jpg' | 'zip' | 'docx' | 'json', source?: string): Promise<boolean> {
-  if (!isDesktop) {
+  if (!isNative) {
     const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer]));
     const link = document.createElement('a'); link.href = url; link.download = name; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 15000); return true;
   }
   const token = await invoke<string | null>('choose_export', { source: source || null, name, format });
   if (!token) return false;
-  await invoke('write_export', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } }); return true;
+  const saved = await invoke<boolean | null>('write_export', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
+  return saved !== false;
 }

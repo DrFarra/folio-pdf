@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderPlus, MoreHorizontal, Move, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderPlus, GripVertical, MoreHorizontal, Move, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { BookmarkNode } from '../types';
 import { bookmarkChildren, bookmarkDescendants, bookmarkDropDestination, createBookmark, deleteBookmark, dropBookmark, moveBookmark, reorderBookmark } from '../bookmarks';
 import type { BookmarkDropTarget } from '../bookmarks';
 import Modal from './Modal';
+import { visibleBounds } from '../mobile';
 import './BookmarkTree.css';
 
 type Props = {
@@ -102,7 +103,8 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
   };
   const showMenu = (id: string, rectangle: { left: number; bottom: number }) => {
     if (disabled) return;
-    setMenu({ id, x: Math.max(8, Math.min(rectangle.left, window.innerWidth - 244)), y: Math.max(8, Math.min(rectangle.bottom + 4, window.innerHeight - 390)) });
+    const bounds = visibleBounds(), phone = document.documentElement.dataset.phone === 'true';
+    setMenu({ id, x: Math.max(bounds.left + 8, Math.min(rectangle.left, bounds.right - (phone ? 308 : 244))), y: Math.max(bounds.top + 8, Math.min(rectangle.bottom + 4, bounds.bottom - (phone ? 500 : 390))) });
   };
   const remove = (node: BookmarkNode) => {
     const next = deleteBookmark(bookmarks, node.id); onChange(next); setMenu(null);
@@ -161,7 +163,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
     if (!keepClickSuppressed) suppressClick.current = false;
   };
   const beginDrag = (event: React.PointerEvent<HTMLDivElement>, node: BookmarkNode) => {
-    if (disabled || event.button !== 0 || event.pointerType === 'touch' || editingId === node.id ||
+    if (disabled || event.button !== 0 || event.pointerType === 'touch' && !(event.target as Element).closest('.bookmark-drag-handle') || editingId === node.id ||
         (event.target as Element).closest('input, .bookmark-options')) return;
     if (gesture.current) cancelDrag();
     let scrollFrame = 0;
@@ -229,6 +231,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
           {node.page === null ? <Folder size={14} className="bookmark-symbol" /> : <Bookmark size={13} className="bookmark-symbol" fill="currentColor" />}
           {editingId === node.id ? <input ref={input} className="bookmark-name-input" aria-label="Nombre del marcador" value={name} maxLength={200} onChange={event => setName(event.target.value)} onBlur={() => finishEdit(true, false)} onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishEdit(event.key === 'Enter'); } }} disabled={disabled} /> : <button className="bookmark-label" tabIndex={-1} title={node.page === null ? node.title : `${node.title} · Página ${node.page}`} onDoubleClick={() => beginEdit(node.id)} onClick={() => { setFocusedId(node.id); if (node.page !== null) onGoToPage(node.page); else if (hasChildren) toggle(node); }} disabled={disabled}>{node.title}</button>}
           {node.page !== null && <span className="bookmark-page">{node.page}</span>}
+          <button className="bookmark-drag-handle" tabIndex={-1} aria-label={`Arrastrar ${node.title}`} disabled={disabled || editingId === node.id} onClick={event => { event.preventDefault(); event.stopPropagation(); }}><GripVertical size={18} /></button>
           <button className="bookmark-options" tabIndex={-1} aria-label={`Opciones de ${node.title}`} aria-haspopup="menu" aria-expanded={menu?.id === node.id} onClick={event => showMenu(node.id, event.currentTarget.getBoundingClientRect())} disabled={disabled}><MoreHorizontal size={16} /></button>
         </div>;
       })}

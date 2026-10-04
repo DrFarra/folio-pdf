@@ -1,6 +1,6 @@
 {
   "name": "folio-pdf",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -32,7 +32,9 @@
     "test:interop:legacy": "python scripts/verify-interoperability.py",
     "test:reading-settings": "node scripts/tests/reading-settings.mjs",
     "test:remove-highlights": "node scripts/tests/remove-highlights.mjs",
-    "test:bookmark-drag": "node scripts/tests/bookmark-drag.mjs"
+    "test:bookmark-drag": "node scripts/tests/bookmark-drag.mjs",
+    "iphone:build": "node scripts/build-ios.mjs",
+    "test:iphone": "node scripts/tests/iphone.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",
