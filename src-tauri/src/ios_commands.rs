@@ -15,6 +15,12 @@ pub async fn set_mobile_theme(theme: String, app: tauri::AppHandle) -> Result<()
     mobile_call(app, "setTheme", serde_json::json!({"theme":theme})).await.map(|_| ())
 }
 
+#[tauri::command]
+pub async fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String> {
+    if text.len() > 1024 * 1024 { return Err("El texto seleccionado es demasiado grande para copiarlo.".into()); }
+    mobile_call(app, "copyText", serde_json::json!({"text":text})).await.map(|_| ())
+}
+
 async fn mobile_call(app: tauri::AppHandle, command: &'static str, args: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || app.folio_ios().call(command, args))
         .await.map_err(|_| "No se pudo completar la operación de iOS.".to_string())?
@@ -23,7 +29,7 @@ async fn mobile_call(app: tauri::AppHandle, command: &'static str, args: Value) 
 
 fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
     let paths = response["paths"].as_array().ok_or("iOS no devolvió los archivos elegidos.")?;
-    paths.iter().map(|p| p.as_str().ok_or("Ruta de importación inválida.").and_then(|p| register(desktop, PathBuf::from(p)))).collect()
+    paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
 }
 
 #[tauri::command]

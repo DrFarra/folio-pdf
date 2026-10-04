@@ -40,6 +40,12 @@ async function open(page, file) {
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
   await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
+  // Zoom intentionally keeps the previous bitmap and text visible. A detached
+  // first-paint loader alone does not mean the new selection layer is ready.
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('.pdf-page-wrap[data-page-number="1"] .page-content>canvas');
+    return canvas?.dataset.rendering === 'false' && Number(canvas.dataset.renderScale) === 1;
+  });
   await page.locator('.textLayer span').first().waitFor();
 }
 async function point(page, text, index, end = false) {

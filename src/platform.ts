@@ -49,6 +49,9 @@ export async function sharePdf(bytes: Uint8Array, name: string, source?: string)
 export async function printPdf(bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
   return presentMobilePdf('print_pdf_copy', bytes, name, source);
 }
+export async function copyNativeText(text: string): Promise<void> {
+  return invoke<void>('copy_text', { text });
+}
 export async function saveExport(bytes: Uint8Array, name: string, format: 'txt' | 'html' | 'png' | 'jpg' | 'zip' | 'docx' | 'json', source?: string): Promise<boolean> {
   if (!isNative) {
     const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer]));

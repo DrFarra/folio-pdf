@@ -112,7 +112,13 @@
         selection.removeAllRanges();
       } else { report.selectedText = ''; report.selectionMatchesSpan = false; }
       report.search = await search('Folio');
-      if (/iPhone|iPad|iPod/.test(navigator.userAgent)) iosNative = await window.__TAURI_INTERNALS__.invoke('ios_native_status');
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+        iosNative = await window.__TAURI_INTERNALS__.invoke('ios_native_status');
+        if (report.selectedText) {
+          await window.__TAURI_INTERNALS__.invoke('copy_text', { text: report.selectedText });
+          report.nativeClipboardWritten = true;
+        }
+      }
       report.after = snapshot();
       report.errors = errors.filter(error => error.active === name);
     } catch (error) { report.error = describe(error); }

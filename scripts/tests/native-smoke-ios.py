@@ -53,7 +53,13 @@ try:
     runtimes = json.loads(run('xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes']
     runtimes = [r for r in runtimes if r.get('isAvailable') and 'iOS' in r['name']]
     assert runtimes, 'No hay runtime iOS instalado en Xcode.'
-    runtime = sorted(runtimes, key=lambda r: tuple(int(n) for n in r['version'].split('.')))[-1]
+    # This workflow uses Xcode 16.4; installed runtimes for Xcode 26 can also
+    # appear in simctl's inventory but are not the intended tested platform.
+    runtime = next((r for r in runtimes if r['version'] == '18.5'), None)
+    if runtime is None:
+        compatible = [r for r in runtimes if tuple(int(n) for n in r['version'].split('.')) < (19,)]
+        assert compatible, 'No hay runtime iOS 17/18 compatible con Xcode 16 disponible.'
+        runtime = sorted(compatible, key=lambda r: tuple(int(n) for n in r['version'].split('.')))[-1]
     types = json.loads(run('xcrun', 'simctl', 'list', 'devicetypes', '--json'))['devicetypes']
     phone = next((d for d in types if d['name'] == 'iPhone 16 Pro'), None)
     if phone is None:
@@ -89,6 +95,11 @@ try:
         native = diagnostic.get('iosNative')
         assert native and native.get('platform') == 'iOS' and native.get('uiAvailable'), 'No respondió el puente Swift/UIKit.'
         report['nativeBridge'] = native
+        require_clipboard = checked.get('nativeClipboardWritten')
+        assert require_clipboard, 'La copia nativa no se completó.'
+        pasted = run('xcrun', 'simctl', 'pbpaste', device)
+        assert pasted == checked['selectedText'].strip(), 'El portapapeles del simulador no coincide con el texto PDF.'
+        report['nativeClipboardVerified'] = True
         viewport = diagnostic['snapshot']['document']
         assert viewport['scrollWidth'] <= viewport['width'] + 1, 'La aplicación completa desborda horizontalmente.'
         report['documentDiagnostic'] = checked

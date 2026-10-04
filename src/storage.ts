@@ -7,6 +7,10 @@ const PREFIX = 'folio.session.';
 const EMPTY: Session = { annotations: [], bookmarks: [], lastPage: 1 };
 
 const revisions = new Map<string, number>();
+type StoredRecent = Omit<RecentDocument, 'data'> & { data?: Blob | ArrayBuffer };
+function recentDocument(value: StoredRecent): RecentDocument {
+  return { ...value, data: value.data instanceof ArrayBuffer ? new Blob([value.data], { type: 'application/pdf' }) : value.data };
+}
 function parseSession(raw: Partial<Session> | null): Session {
     if (!raw || !Array.isArray(raw.annotations) || !Array.isArray(raw.bookmarks)) return { ...EMPTY };
     return {
@@ -50,7 +54,10 @@ export async function readDraft(id: string): Promise<Uint8Array | null> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('drafts', 'readonly'), request = tx.objectStore('drafts').get(id);
-    request.onsuccess = async () => resolve(request.result ? new Uint8Array(await request.result.arrayBuffer()) : null);
+    request.onsuccess = async () => {
+      try { resolve(request.result ? new Uint8Array(request.result instanceof Blob ? await request.result.arrayBuffer() : request.result) : null); }
+      catch (error) { reject(error); }
+    };
     request.onerror = () => reject(request.error); tx.oncomplete = () => db.close();
   });
 }
@@ -58,7 +65,7 @@ export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
   if (isNative) { await invoke('store_draft', new Uint8Array(bytes), { headers: { 'x-folio-draft-id': id } }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put(new Blob([new Uint8Array(bytes).buffer]), id);
+    const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put(new Uint8Array(bytes).buffer, id);
     tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); };
   });
 }
@@ -90,7 +97,7 @@ export async function listRecent(): Promise<RecentDocument[]> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readonly');
     const request = tx.objectStore('documents').getAll();
-    request.onsuccess = () => resolve((request.result as RecentDocument[]).sort((a, b) => b.openedAt - a.openedAt));
+    request.onsuccess = () => resolve((request.result as StoredRecent[]).map(recentDocument).sort((a, b) => b.openedAt - a.openedAt));
     request.onerror = () => reject(request.error);
     tx.oncomplete = () => db.close();
   });
@@ -103,11 +110,14 @@ export async function rememberDocument(doc: RecentDocument): Promise<void> {
     return;
   }
   const recents = await listRecent();
+  // WebKit can fail when cloning file-backed Blobs to IndexedDB. Keep the
+  // original PDF as binary bytes, then expose a Blob when the library reads it.
+  const stored: StoredRecent = { ...doc, data: doc.data ? await doc.data.arrayBuffer() : undefined };
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('documents', 'readwrite');
     const store = tx.objectStore('documents');
-    store.put(doc);
+    store.put(stored);
     recents.filter(d => d.id !== doc.id).slice(4).forEach(d => store.delete(d.id));
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };

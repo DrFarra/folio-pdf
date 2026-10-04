@@ -7,6 +7,7 @@ private struct PickArgs: Decodable { let multiple: Bool? }
 private struct PathsArgs: Decodable { let paths: [String] }
 private struct FileArgs: Decodable { let path: String }
 private struct ThemeArgs: Decodable { let theme: String }
+private struct TextArgs: Decodable { let text: String }
 
 private final class PickerDelegate: NSObject, UIDocumentPickerDelegate {
     let picked: ([URL]) -> Void
@@ -63,6 +64,11 @@ final class FolioPlugin: Plugin {
                             "share": "UIActivityViewController", "printAvailable": UIPrintInteractionController.isPrintingAvailable,
                             "systemVersion": UIDevice.current.systemVersion])
         }
+    }
+
+    @objc public func copyText(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(TextArgs.self)
+        DispatchQueue.main.async { UIPasteboard.general.string = args.text; invoke.resolve() }
     }
 
     private func importURLs(_ urls: [URL]) throws -> [String] {

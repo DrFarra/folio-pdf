@@ -32,6 +32,9 @@ async function createPdf(name) {
 }
 fs.writeFileSync(source, await createPdf('FIRST'));
 fs.writeFileSync(another, await createPdf('SECOND'));
+const imageSource = path.join(output, 'iphone-page-image.png');
+const rasterDocument = new mupdf.PDFDocument(new Uint8Array(fs.readFileSync(source))), rasterPage = rasterDocument.loadPage(0), raster = rasterPage.toPixmap([.75, 0, 0, .75, 0, 0], mupdf.ColorSpace.DeviceRGB, false);
+fs.writeFileSync(imageSource, new Uint8Array(raster.asPNG())); raster.destroy(); rasterPage.destroy(); rasterDocument.destroy();
 const external = path.join(output, 'iphone-external.pdf');
 const externalDoc = new mupdf.PDFDocument(new Uint8Array(fs.readFileSync(source))), externalPage = externalDoc.loadPage(0);
 const imported = externalPage.createAnnotation('Highlight');
@@ -47,10 +50,25 @@ fs.writeFileSync(noCopy, operateDocument(new Uint8Array(fs.readFileSync(source))
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const originals = new Map([source, another, external, readOnly, noCopy].map(file => [file, hash(file)]));
 const sourceText = operateDocument(new Uint8Array(fs.readFileSync(source)), { operation: 'text' });
+function nativePdfAnnotations(bytes) {
+  const doc = new mupdf.PDFDocument(bytes), results = [];
+  try {
+    if (doc.needsPassword()) assert(doc.authenticatePassword(''));
+    for (let index = 0; index < doc.countPages(); index++) {
+      const page = doc.loadPage(index), items = page.getAnnotations();
+      try { for (const annotation of items) results.push({ page: index + 1, type: annotation.getType(), text: annotation.getContents(), name: annotation.getObject().get('NM').asString() }); }
+      finally { for (const annotation of items) annotation.destroy(); page.destroy(); }
+    }
+    return results;
+  } finally { doc.destroy(); }
+}
 const testFilter = process.env.FOLIO_IPHONE_TEST ? new RegExp(process.env.FOLIO_IPHONE_TEST) : null;
 const selected = id => !testFilter || testFilter.test(id);
 const port = process.env.FOLIO_IPHONE_PORT || '4195', origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), ...(process.env.FOLIO_IPHONE_DEV ? [] : ['preview']), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
+const snapshotRoot = path.resolve(root, '.tools'), snapshot = process.env.FOLIO_IPHONE_DEV ? null : path.join(snapshotRoot, `iphone-preview-${process.pid}`);
+if (snapshot) { fs.mkdirSync(snapshot, { recursive: true }); fs.cpSync(path.join(root, 'dist'), snapshot, { recursive: true }); }
+const builtIndexHash = snapshot ? createHash('sha256').update(fs.readFileSync(path.join(snapshot, 'index.html'))).digest('hex') : null;
+const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
 let log = '', browser; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
 const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
@@ -87,9 +105,9 @@ async function save(page, name) {
   await actions(page); const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Guardar PDF', exact: true }).tap();
   const downloaded = await pending, file = path.join(output, name); await downloaded.saveAs(file);
-  await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).waitFor();
   await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Abrir PDF"]')?.disabled);
-  await page.locator('.pdf-page-wrap canvas').first().waitFor();
+  await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
+  await page.locator('.pdf-page-wrap[data-page-number="1"] canvas[data-render-scale]').waitFor();
   const bytes = new Uint8Array(fs.readFileSync(file));
   return { file, bytes, inspection: inspectDocument(bytes) };
 }
@@ -129,6 +147,14 @@ async function selection(page, text = phrase, target = copiedPhrase) {
 async function removeHighlight(page, index = 0) {
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
   const box = await highlights(page).nth(index).boundingBox(); assert(box, 'A visible highlight is required.');
+  await page.evaluate(() => {
+    window.__iphoneHighlightTapEvents = [];
+    const record = event => window.__iphoneHighlightTapEvents.push({ type: event.type, pointerType: event.pointerType, button: event.button,
+      x: event.clientX, y: event.clientY, selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed,
+      rendering: document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas')?.dataset.rendering,
+      target: event.target?.className });
+    for (const name of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click']) document.addEventListener(name, record, { once: true, capture: true });
+  });
   await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('menu', { name: 'Resaltado', exact: true }).waitFor();
   await page.getByRole('menuitem', { name: 'Eliminar resaltado', exact: true }).tap();
@@ -167,7 +193,10 @@ async function check(id, action, options = {}) {
     for (const [file, initialHash] of originals) assert.equal(hash(file), initialHash, 'The original file must remain unchanged.');
     results.push({ id, status: 'passed', viewport, engine: process.env.FOLIO_TEST_BROWSER === 'chromium' ? 'chromium' : 'webkit', ...evidence, originalFilesUnchanged: true, outsideRequests: [] });
   } catch (error) {
-    process.exitCode = 1; results.push({ id, status: 'failed', error: error.stack, diagnostics });
+    process.exitCode = 1; results.push({ id, status: 'failed', error: error.stack, diagnostics, uiState: await page.evaluate(() => ({
+      selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed, highlightTapEvents: window.__iphoneHighlightTapEvents,
+      activeElement: document.activeElement?.outerHTML?.slice(0, 500), alerts: [...document.querySelectorAll('[role=alert], .toast')].map(node => node.textContent),
+    })).catch(() => null) });
     await page.screenshot({ path: path.join(output, `failure-${id}.png`), animations: 'disabled' }).catch(() => {});
   } finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
 }
@@ -186,7 +215,7 @@ try {
     assert(executablePath, 'Set CHROME_PATH to the installed Chromium executable.'); browser = await chromium.launch({ executablePath, headless: true });
   } else browser = await webkit.launch({ headless: true });
 
-  for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
+  for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }, { width: 768, height: 1024 }]) {
     await check(`reading-layout-${viewport.width}x${viewport.height}`, async page => {
       assert.equal(await page.locator('.app-shell.phone-layout').count(), 1);
       assert.equal(await page.locator('.window-actions').count(), 0);
@@ -286,8 +315,13 @@ try {
   await check('readonly-copy-and-highlight-permission-enforced', async page => {
     assert(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).isDisabled());
     await selection(page); await selectionMenu(page).waitFor(); assert.equal(await selectionMenu(page).getByRole('button').count(), 1);
-    const saved = await save(page, 'iphone-readonly-export.pdf'); assert.equal(saved.inspection.annotations.length, 2);
-    assert(saved.inspection.annotations.some(item => item.kind === 'highlight')); assert(saved.inspection.annotations.some(item => item.kind === 'note'));
+    const saved = await save(page, 'iphone-readonly-export.pdf'), originalBytes = new Uint8Array(fs.readFileSync(readOnly));
+    // Folio's editable-annotation inspection intentionally excludes a PDF whose
+    // permissions forbid editing. Inspect its actual PDF Annots independently.
+    assert.deepEqual(saved.bytes, originalBytes, 'Read-only export must preserve every original byte.');
+    const native = nativePdfAnnotations(saved.bytes); assert.equal(native.length, 2);
+    assert(native.some(item => item.type === 'Highlight')); assert(native.some(item => item.type === 'Text'));
+    assert.deepEqual(native, nativePdfAnnotations(originalBytes));
     return { annotationPermissionEnforced: true, copyAllowed: true, externalAnnotationsPreserved: true };
   }, { file: readOnly });
 
@@ -309,7 +343,7 @@ try {
     assert.equal(await page.locator('.pdf-page-wrap').count(), 1); await goToPage(page, 2);
     await page.locator('.pdf-page-wrap[data-page-number="2"]').waitFor(); assert.equal(await page.locator('.pdf-page-wrap').count(), 1);
     await page.reload(); await open(page); assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '1');
-    await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor(); await page.locator('.bookmark-tree').waitFor();
+    await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor(); await page.locator('.bookmark-tree').waitFor({ state: 'attached' });
     assertScreen(await geometry(page)); await closePanel(page); await settings(page);
     assert.equal(await page.getByLabel('Zoom inicial', { exact: true }).inputValue(), 'width'); assert.equal(await page.getByLabel('Modo de desplazamiento', { exact: true }).inputValue(), 'single');
     assert.equal(await page.getByLabel('Panel inicial', { exact: true }).inputValue(), 'bookmarks'); assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
@@ -330,6 +364,7 @@ try {
     await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).tap();
     await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor();
     const name = page.getByLabel('Nombre del marcador', { exact: true }); await name.waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Nombre del marcador');
     assert.equal(await name.evaluate(input => input === document.activeElement), true, 'The new bookmark must immediately offer naming.');
     assertScreen(await geometry(page)); await rename('Cover I chose');
     await page.getByRole('button', { name: 'Crear grupo de marcadores', exact: true }).tap(); await rename('Medicine');
@@ -392,13 +427,26 @@ try {
         const initial = Number(canvas.dataset.renderScale), bounds = root.getBoundingClientRect(), x = (bounds.left + bounds.right) / 2, y = Math.min(bounds.top + 170, bounds.bottom - 70);
         // Send standard DOM TouchEvents through the production pinch listeners.
         // This tests the compositor/commit contract, not an OS gesture recognizer.
-        const touches = distance => [new Touch({ identifier: 1, target: root, clientX: x - distance / 2, clientY: y }), new Touch({ identifier: 2, target: root, clientX: x + distance / 2, clientY: y })];
-        const dispatch = (type, fingers) => root.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: fingers, targetTouches: fingers, changedTouches: fingers }));
+        let eventConstruction = 'TouchEvent';
+        const touches = distance => [{ identifier: 1, target: root, clientX: x - distance / 2, clientY: y }, { identifier: 2, target: root, clientX: x + distance / 2, clientY: y }];
+        const dispatch = (type, fingers) => {
+          let event;
+          try { const native = fingers.map(touch => new Touch(touch)); event = new TouchEvent(type, { bubbles: true, cancelable: true, touches: native, targetTouches: native, changedTouches: native }); }
+          catch {
+            // The Windows WebKit port exposes Touch but forbids its constructor.
+            // Retain the genuine production listener/render test while stating
+            // clearly that its touch lists were supplied by the harness.
+            eventConstruction = 'Event with synthetic read-only touch lists';
+            event = new Event(type, { bubbles: true, cancelable: true });
+            for (const name of ['touches', 'targetTouches', 'changedTouches']) Object.defineProperty(event, name, { value: fingers });
+          }
+          return root.dispatchEvent(event);
+        };
         dispatch('touchstart', touches(100)); dispatch('touchmove', touches(100 * ratio));
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         const preview = { scale: Number(canvas.dataset.renderScale), transform: document.querySelector('.pdf-stack').style.transform, width: canvas.width, height: canvas.height };
         dispatch(cancel ? 'touchcancel' : 'touchend', []);
-        return { initial, preview, expected: cancel ? initial : Math.round(Math.max(.25, Math.min(3, initial * ratio)) * 1000) / 1000 };
+        return { initial, preview, eventConstruction, expected: cancel ? initial : Math.round(Math.max(.25, Math.min(3, initial * ratio)) * 1000) / 1000 };
       }, { ratio, cancel });
     }
     const scales = [];
@@ -416,9 +464,35 @@ try {
     assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-after-pinch.png'), animations: 'disabled' });
     return { productionTouchEventPinchHandler: true, physicalGestureNotAutomated: true, compositorPreviewRetainsRaster: true, completedScaleChanges: scales, canceledGestureKeepsScale: true, sampledFrames: trace.frames, blankFrames: 0, loaderFrames: 0 };
   });
+
+  await check('mobile-workbench-page-order-and-image-pdf-creation', async page => {
+    await actions(page); await page.getByRole('button', { name: 'Herramientas', exact: true }).tap();
+    await page.getByRole('dialog', { name: 'Herramientas', exact: true }).waitFor(); assertScreen(await geometry(page));
+    await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
+    await page.getByRole('dialog', { name: 'Organizar páginas', exact: true }).waitFor(); assertScreen(await geometry(page));
+    await page.getByLabel('Orden o intervalo de páginas', { exact: true }).fill('3,1');
+    await page.getByRole('button', { name: 'Usar orden', exact: true }).tap();
+    await page.screenshot({ path: path.join(output, 'iphone-organize-pages.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: 'Aplicar orden', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    const organized = await save(page, 'iphone-organized-export.pdf'), text = operateDocument(organized.bytes, { operation: 'text' });
+    assert.equal(text.length, 2); assert(text[0].includes('FIRST PAGE 3')); assert(text[1].includes('FIRST PAGE 1'));
+    await actions(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
+    await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor(); await page.getByLabel('Nombre', { exact: true }).fill('iPhone created.pdf');
+    await page.locator('.workbench input[type=file]').setInputFiles(imageSource); assertScreen(await geometry(page));
+    await page.getByRole('button', { name: 'Crear documento', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.getByRole('heading', { name: 'iPhone created.pdf', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
+    const created = await save(page, 'iphone-created-image-export.pdf'), document = new mupdf.PDFDocument(created.bytes);
+    let images = 0;
+    try { assert.equal(document.countPages(), 1); document.findPage(0).get('Resources', 'XObject').forEach(value => { if (value.get('Subtype').asName() === 'Image') images++; }); }
+    finally { document.destroy(); }
+    assert.equal(images, 1);
+    return { pageOrderSavedThroughMobileUi: [3, 1], toolSheetTouchTargetsSized: true, imagePdfCreatedThroughMobileUi: true, actualEmbeddedImages: images };
+  }, { viewport: { width: 320, height: 568 } });
 } finally {
   await browser?.close(); server.kill();
+  if (snapshot) { assert(snapshot.startsWith(snapshotRoot + path.sep)); fs.rmSync(snapshot, { recursive: true, force: true }); }
   const report = { capturedAt: new Date().toISOString(), passed: results.length > 0 && results.every(result => result.status === 'passed') && errors.length === 0, results, errors,
+    builtIndexSha256: builtIndexHash,
     scope: 'Real browser PDF rendering, text Range, UI touch taps, standard PDF export and persistence.',
     limitations: ['The WebKit browser harness does not automate UIKit Files or Share sheets.', 'Native iOS text-selection handles and physical pinch gestures need separate simulator/device validation.', 'Viewport sizes do not emulate actual notch safe-area insets.'],
     ...(results.some(result => result.status === 'failed') ? { serverLog: log } : {}) };

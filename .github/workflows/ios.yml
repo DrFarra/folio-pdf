@@ -52,6 +52,7 @@ jobs:
         run: |
           npx playwright-core install webkit
           npm run test:iphone
+          node scripts/tests/iphone-native-contract.mjs
       - name: Build real arm64 iPhone Simulator diagnostics
         run: |
           set -o pipefail

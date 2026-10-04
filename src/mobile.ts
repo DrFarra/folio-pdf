@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { isIOS } from './platform';
 
-// A phone keeps the same controls when rotated. A narrow desktop window can
-// use the compact layout too, without changing the platform's file commands.
-const PHONE_QUERY = '(max-width: 760px), (max-width: 1024px) and (pointer: coarse)';
+// A phone keeps its touch controls when rotated; a narrow mouse-driven desktop
+// window keeps keyboard and zoom controls directly available.
+const PHONE_QUERY = '(max-width: 1024px) and (pointer: coarse)';
 
 export function visibleBounds() {
   const viewport = window.visualViewport, styles = getComputedStyle(document.documentElement);
@@ -12,9 +13,9 @@ export function visibleBounds() {
 }
 
 export function usePhoneLayout() {
-  const [phone, setPhone] = useState(() => matchMedia(PHONE_QUERY).matches);
+  const [phone, setPhone] = useState(() => isIOS || matchMedia(PHONE_QUERY).matches);
   useEffect(() => {
-    const media = matchMedia(PHONE_QUERY), update = () => setPhone(media.matches);
+    const media = matchMedia(PHONE_QUERY), update = () => setPhone(isIOS || media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);

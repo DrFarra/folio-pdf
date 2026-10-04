@@ -71,7 +71,7 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
   const [rendered, setRendered] = useState(false);
   const [failed, setFailed] = useState(false);
   const [highlightMenu, setHighlightMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const pointerOrigin = useRef<{ x: number; y: number } | null>(null);
+  const pointerOrigin = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   const rendering = useRef(false);
   const [drag, setDrag] = useState<{ x: number; y: number; ex: number; ey: number } | null>(null);
   const dragRef = useRef<typeof drag>(null);
@@ -166,6 +166,11 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
     return () => { window.removeEventListener('folio:highlight-selection', applySelection); window.removeEventListener('folio:comment-selection', comment); };
   }, [canCopy, color, number, onAnnotate, viewport]);
   useEffect(() => () => selectionCleanup.current?.(), [tool, canCopy, scale, rotation, query]);
+  useEffect(() => {
+    const cancelGesture = () => { pointerOrigin.current = null; dragRef.current = null; setDrag(null); setHighlightMenu(null); selectionCleanup.current?.(); };
+    window.addEventListener('folio:pinch-start', cancelGesture);
+    return () => window.removeEventListener('folio:pinch-start', cancelGesture);
+  }, []);
 
   useEffect(() => {
     // iOS owns the long-press selection and its handles. Wait for a stable
@@ -203,7 +208,7 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
   }
   function pointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
-    pointerOrigin.current = { x: event.clientX, y: event.clientY };
+    pointerOrigin.current = { x: event.clientX, y: event.clientY, at: Date.now(), pointerId: event.pointerId };
     if (tool === 'select' || tool === 'highlight') {
       if (rendering.current) { event.preventDefault(); return; }
       if (event.pointerType === 'touch') return;
@@ -243,6 +248,9 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
     }
     const p = localPoint(event);
     if (tool === 'note') {
+      // A second finger can turn the first touch into a pinch. Add a mobile
+      // note only after a short tap ends, so zoom cannot accidentally add one.
+      if (event.pointerType === 'touch') return;
       const coords = viewport.convertToPdfPoint(p.x, p.y);
       onAnnotate({ page: number, kind: 'note', rect: [coords[0], coords[1], coords[0], coords[1]], color, text: '' });
       return;
@@ -259,6 +267,16 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
     setDrag(dragRef.current);
   }
   function pointerUp(event: React.PointerEvent) {
+    if (event.pointerType === 'touch' && tool === 'note') {
+      const origin = pointerOrigin.current;
+      pointerOrigin.current = null;
+      if (canAnnotate && origin?.pointerId === event.pointerId && Date.now() - origin.at < 400 &&
+          Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5) {
+        const point = localPoint(event), coordinates = viewport.convertToPdfPoint(point.x, point.y);
+        onAnnotate({ page: number, kind: 'note', rect: [coordinates[0], coordinates[1], coordinates[0], coordinates[1]], color, text: '' });
+      }
+      return;
+    }
     const d = dragRef.current;
     dragRef.current = null;
     setDrag(null);
@@ -317,7 +335,7 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
           const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
           return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), background: a.color }} />;
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color }} /> :
-          <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.min(p1[0], viewport.width - 28), top: Math.min(p1[1], viewport.height - 28) }} onPointerDown={e => e.stopPropagation()} onClick={() => onNoteClick(a.id)}><MessageSquare size={15} fill="currentColor" /></button>;
+          <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.max(0, Math.min(p1[0], viewport.width - (isMobile ? 44 : 28))), top: Math.max(0, Math.min(p1[1], viewport.height - (isMobile ? 44 : 28))) }} onPointerDown={e => e.stopPropagation()} onClick={() => onNoteClick(a.id)}><MessageSquare size={15} fill="currentColor" /></button>;
       })}
       {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}
     </div>

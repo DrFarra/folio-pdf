@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Copy, Highlighter, MessageSquare } from 'lucide-react';
 import { selectedTextRects } from '../text-selection';
 import { visibleBounds } from '../mobile';
+import { copyNativeText, isIOS, isNative } from '../platform';
 import './TextSelectionMenu.css';
 
 type Props = {
@@ -48,6 +49,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
   const [position, setPosition] = useState({ left: -1000, top: -1000 });
   const menu = useRef<HTMLDivElement>(null);
   const moving = useRef(false);
+  const touchHandled = useRef(false), ignoreClickUntil = useRef(0);
 
   useEffect(() => {
     if (!enabled) { setSelected(null); return; }
@@ -118,7 +120,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
   async function copy() {
     if (!selected || !restoreSelection()) return;
     let copied = false;
-    try { await navigator.clipboard.writeText(selected.text); copied = true; } catch {
+    try { if (isNative && isIOS) await copyNativeText(selected.text); else await navigator.clipboard.writeText(selected.text); copied = true; } catch {
       const active = document.activeElement as HTMLElement | null;
       const input = document.createElement('textarea');
       input.value = selected.text; input.setAttribute('aria-hidden', 'true'); input.tabIndex = -1;
@@ -128,9 +130,18 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     }
     onNotify(copied ? 'Texto copiado.' : 'No se pudo copiar el texto.', !copied);
   }
+  function touchAction(event: React.PointerEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>, action: () => void) {
+    if ('pointerType' in event && event.pointerType !== 'touch') return;
+    event.preventDefault(); event.stopPropagation();
+    if (touchHandled.current) return;
+    touchHandled.current = true; ignoreClickUntil.current = Date.now() + 700; action();
+  }
+  const highlight = () => { if (restoreSelection()) onHighlight(); };
+  const comment = () => { if (restoreSelection()) onComment(); };
+  const clickAction = (action: () => void) => { if (Date.now() >= ignoreClickUntil.current) action(); };
 
   if (!enabled || !selected) return null;
-  return createPortal(<div ref={menu} className="text-selection-menu" role="toolbar" aria-label="Herramientas del texto seleccionado" style={position} onPointerDown={event => event.preventDefault()} onMouseDown={event => event.preventDefault()} onKeyDown={event => {
+  return createPortal(<div ref={menu} className="text-selection-menu" role="toolbar" aria-label="Herramientas del texto seleccionado" style={position} onPointerDown={event => { touchHandled.current = false; event.preventDefault(); }} onTouchStart={() => { touchHandled.current = false; }} onMouseDown={event => event.preventDefault()} onKeyDown={event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') || [])];
@@ -138,7 +149,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowLeft' ? buttons.length - 1 : 1)) % buttons.length;
     buttons[next]?.focus({ preventScroll: true });
   }}>
-    <button aria-label="Copiar" title="Copiar texto" onClick={() => void copy()}><Copy size={15} /><span>Copiar</span></button>
-    {canAnnotate && <><button aria-label="Resaltar" title="Resaltar texto" onClick={() => { if (restoreSelection()) onHighlight(); }}><Highlighter size={15} /><span>Resaltar</span><i style={{ backgroundColor: color }} /></button><button aria-label="Comentar" title="Comentar selección" onClick={() => { if (restoreSelection()) onComment(); }}><MessageSquare size={15} /><span>Comentar</span></button></>}
+    <button aria-label="Copiar" title="Copiar texto" onPointerUp={event => touchAction(event, () => void copy())} onTouchEnd={event => touchAction(event, () => void copy())} onClick={() => clickAction(() => void copy())}><Copy size={15} /><span>Copiar</span></button>
+    {canAnnotate && <><button aria-label="Resaltar" title="Resaltar texto" onPointerUp={event => touchAction(event, highlight)} onTouchEnd={event => touchAction(event, highlight)} onClick={() => clickAction(highlight)}><Highlighter size={15} /><span>Resaltar</span><i style={{ backgroundColor: color }} /></button><button aria-label="Comentar" title="Comentar selección" onPointerUp={event => touchAction(event, comment)} onTouchEnd={event => touchAction(event, comment)} onClick={() => clickAction(comment)}><MessageSquare size={15} /><span>Comentar</span></button></>}
   </div>, document.body);
 }
