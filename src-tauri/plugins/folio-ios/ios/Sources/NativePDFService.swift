@@ -2,6 +2,7 @@ import Foundation
 import PDFKit
 import UIKit
 import CoreGraphics
+import FolioMuPDF
 
 struct PDFOpenArgs: Decodable { let token: String; let path: String; let id: String; let revision: String; let size: UInt64; let password: String? }
 struct PDFPageArgs: Decodable { let token: String; let page: Int }
@@ -23,6 +24,7 @@ final class NativePDFService {
         let document: PDFDocument
         let signed: Bool
         var used = Date()
+        var annotations = [Int: [[String: Any]]]()
         init(_ args: PDFOpenArgs, _ document: PDFDocument, _ signed: Bool) { self.args = args; self.document = document; self.signed = signed }
         // PDFKit declares PDFAccessPermissions as an enum carrying a bit mask,
         // rather than a Swift OptionSet (including on the iOS 18 SDK).
@@ -92,66 +94,60 @@ final class NativePDFService {
         if !color.getRed(&r, green: &g, blue: &b, alpha: &a) { return "#f5d76e" }
         return String(format: "#%02x%02x%02x", Int((min(1, max(0, r)) * 255).rounded()), Int((min(1, max(0, g)) * 255).rounded()), Int((min(1, max(0, b)) * 255).rounded()))
     }
-    private func opacity(_ annotation: PDFAnnotation) -> Double {
-        let value = (annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "CA")) ?? annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/CA"))) as? NSNumber
-        return min(1, max(0, value?.doubleValue ?? Double(annotation.color.cgColor.alpha)))
+    private func floats<T>(_ value: T, _ count: Int) -> [Double] {
+        withUnsafeBytes(of: value) { Array($0.bindMemory(to: Float.self).prefix(count)).map(Double.init) }
     }
-    private func sourceOpacity(_ page: PDFPage, _ index: Int) -> Double {
-        guard let reference = page.pageRef, let source = reference.dictionary else { return opacity(page.annotations[index]) }
-        var array: CGPDFArrayRef?, dictionary: CGPDFDictionaryRef?
-        guard CGPDFDictionaryGetArray(source, "Annots", &array), let array = array else { return opacity(page.annotations[index]) }
-        if let name = page.annotations[index].value(forAnnotationKey: .name) as? String, !name.isEmpty {
-            // PDFKit can omit unsupported annotations from its public array.
-            // Prefer the source /NM identity before using the original index.
-            for candidate in 0..<CGPDFArrayGetCount(array) {
-                var item: CGPDFDictionaryRef?, pdfName: CGPDFStringRef?
-                if CGPDFArrayGetDictionary(array, candidate, &item), let item = item,
-                   CGPDFDictionaryGetString(item, "NM", &pdfName), let pdfName = pdfName,
-                   let actual = CGPDFStringCopyTextString(pdfName), actual as String == name { dictionary = item; break }
+    private func sourceAnnotations(_ value: Entry, _ number: Int) throws -> [[String: Any]] {
+        if let cached = value.annotations[number] { return cached }
+        var pointer: UnsafeMutablePointer<FolioSourceAnnotation>?, count = 0
+        var message = [CChar](repeating: 0, count: 2048)
+        let messageCapacity = message.count
+        let status = value.args.path.withCString { path in
+            (value.args.password ?? "").withCString { password in
+                folio_pdf_read_annotations(path, password, Int32(number), &pointer, &count, &message, messageCapacity)
             }
         }
-        if dictionary == nil && index < CGPDFArrayGetCount(array) { _ = CGPDFArrayGetDictionary(array, index, &dictionary) }
-        guard let dictionary = dictionary else { return opacity(page.annotations[index]) }
-        // /CA is not exposed by PDFKit's annotationKeyValues on the iOS SDK.
-        // Read the immutable PDF annotation dictionary without materializing
-        // the document or changing an annotation's appearance/geometry.
-        var alpha: CGPDFReal = 1
-        if CGPDFDictionaryGetNumber(dictionary, "CA", &alpha) { return min(1, max(0, Double(alpha))) }
-        return 1
-    }
-    private func annotationQuads(_ annotation: PDFAnnotation) -> [[Double]] {
-        guard let points = annotation.quadrilateralPoints, points.count >= 4 else { return [] }
-        return stride(from: 0, to: points.count - 3, by: 4).map { start in
-            points[start..<start+4].flatMap { point -> [Double] in let p = point.cgPointValue; return [Double(p.x + annotation.bounds.minX), Double(p.y + annotation.bounds.minY)] }
+        guard status == 0 else { throw error("No se pudieron leer las anotaciones originales: " + String(cString: message)) }
+        defer { folio_pdf_free_annotations(pointer, count) }
+        var result = [[String: Any]]()
+        if let pointer = pointer {
+            for index in 0..<count {
+                let item = pointer[index]
+                if item.flags & (1 | 2 | 32) != 0 { continue }
+                let kind = item.kind == 1 ? "highlight" : "note", raw = floats(item.rect, 4), rgb = floats(item.color, 3)
+                let rect = kind == "note" ? [raw[0], raw[3], raw[0], raw[3]] : raw
+                let reference = "pdfkit:\(number):\(item.index)"
+                var dto: [String: Any] = ["id": reference, "nativeSourceRef": reference, "page": number, "kind": kind,
+                    "rect": rect, "rawRect": raw,
+                    "color": String(format: "#%02x%02x%02x", Int((min(1, max(0, rgb[0])) * 255).rounded()), Int((min(1, max(0, rgb[1])) * 255).rounded()), Int((min(1, max(0, rgb[2])) * 255).rounded())),
+                    "text": item.contents.map { String(cString: $0) } ?? "", "author": item.author.map { String(cString: $0) } ?? "",
+                    "created": Double(item.modified_seconds) * 1000, "opacity": Double(item.opacity)]
+                if let name = item.name, name.pointee != 0 { dto["originalName"] = String(cString: name) }
+                if let quads = item.quads, item.quad_count > 0 {
+                    dto["quads"] = (0..<item.quad_count).map { number in (0..<8).map { Double(quads[number * 8 + $0]) } }
+                }
+                result.append(dto)
+            }
         }
+        if value.annotations.count >= 12, let oldest = value.annotations.keys.sorted().first { value.annotations.removeValue(forKey: oldest) }
+        value.annotations[number] = result
+        return result
     }
-    private func matches(_ overlay: PDFOverlay, _ annotation: PDFAnnotation, _ alpha: Double) -> Bool {
-        guard overlay.kind == overlayKind(annotation), overlay.text == (annotation.contents ?? ""),
-              (overlay.author ?? "") == (annotation.userName ?? ""),
-              overlay.color.lowercased() == colorHex(annotation.color).lowercased(), overlay.rect.count == 4,
-              abs((overlay.opacity ?? alpha) - alpha) < 0.001 else { return false }
-        if zip(overlay.rect, overlayRect(annotation)).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false }
-        let existing = annotationQuads(annotation), requested = overlay.quads ?? []
+    private func matches(_ overlay: PDFOverlay, _ source: [String: Any]) -> Bool {
+        guard overlay.kind == source["kind"] as? String, overlay.text == source["text"] as? String,
+              (overlay.author ?? "") == source["author"] as? String,
+              overlay.color.lowercased() == (source["color"] as? String)?.lowercased(),
+              let rect = source["rect"] as? [Double], rect.count == overlay.rect.count,
+              let alpha = source["opacity"] as? Double, abs((overlay.opacity ?? alpha) - alpha) < 0.001 else { return false }
+        if zip(overlay.rect, rect).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false }
+        let existing = source["quads"] as? [[Double]] ?? [], requested = overlay.quads ?? []
         if existing.count != requested.count { return false }
         for (a, b) in zip(existing, requested) { if a.count != b.count || zip(a,b).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false } }
         return true
     }
     func pageInfo(_ token: String, _ number: Int) throws -> [String: Any] {
         let value = try entry(token), page = try page(value, number)
-        var annotations = [[String: Any]]()
-        if value.canAnnotate {
-            for (index, annotation) in page.annotations.enumerated() {
-                guard let kind = overlayKind(annotation), annotation.shouldDisplay else { continue }
-                let reference = "pdfkit:\(number):\(index)"
-                var item: [String: Any] = ["id": reference, "nativeSourceRef": reference, "page": number, "kind": kind,
-                    "rect": overlayRect(annotation), "color": colorHex(annotation.color), "text": annotation.contents ?? "",
-                    "created": (annotation.modificationDate?.timeIntervalSince1970 ?? 0) * 1000,
-                    "author": annotation.userName ?? "", "opacity": sourceOpacity(page, index)]
-                if let name = annotation.value(forAnnotationKey: .name) as? String { item["originalName"] = name }
-                let quads = annotationQuads(annotation); if !quads.isEmpty { item["quads"] = quads }
-                annotations.append(item)
-            }
-        }
+        let annotations = value.canAnnotate ? try sourceAnnotations(value, number) : []
         return ["view": bounds(page.bounds(for: .cropBox)), "rotation": ((page.rotation % 360) + 360) % 360, "annotations": annotations,
                 "sourceAnnotationTypes": page.annotations.map { ($0.type ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")) }]
     }
@@ -230,53 +226,70 @@ final class NativePDFService {
         let changed = !args.annotations.isEmpty || !args.removedSourceRefs.isEmpty
         if !changed { try FileManager.default.copyItem(at: URL(fileURLWithPath: value.args.path), to: target); return ["path": target.path] }
         guard value.canAnnotate else { throw error("Este documento no permite modificar anotaciones.") }
-        guard let document = PDFDocument(url: URL(fileURLWithPath: value.args.path)) else { throw error("No se pudo preparar la copia del PDF.") }
-        if document.isLocked { _ = document.unlock(withPassword: value.args.password ?? "") }
-        guard !document.isLocked else { throw error("No se pudo desbloquear la copia del PDF.") }
-        // Resolve all source indices before removal. Other pages and annotation
-        // types are left intact; never clear the annotation collection wholesale.
+        // Source references use the immutable raw /Annots array. PDFKit can
+        // insert Popup annotations into its own array or discard CA/NM while
+        // writing, so neither that index nor its writer is used for export.
         var unchanged = Set<String>()
         for overlay in args.annotations {
             guard let reference = overlay.nativeSourceRef else { continue }
             let parts = reference.split(separator: ":")
-            if parts.count == 3, parts[0] == "pdfkit", let number = Int(parts[1]), let index = Int(parts[2]), number > 0,
-               let page = document.page(at: number - 1), index >= 0, index < page.annotations.count, matches(overlay, page.annotations[index], sourceOpacity(page, index)) {
+            if parts.count == 3, parts[0] == "pdfkit", let number = Int(parts[1]), number > 0,
+               let source = try sourceAnnotations(value, number).first(where: { $0["nativeSourceRef"] as? String == reference }), matches(overlay, source) {
                 unchanged.insert(reference)
             }
         }
         let replaced = Set(args.removedSourceRefs + args.annotations.compactMap { $0.nativeSourceRef }.filter { !unchanged.contains($0) })
-        var removals = [(PDFPage, PDFAnnotation)]()
+        var removals = [FolioRemoval]()
         for reference in replaced {
             let parts = reference.split(separator: ":")
             guard parts.count == 3, parts[0] == "pdfkit", let number = Int(parts[1]), let index = Int(parts[2]), number > 0,
-                  let page = document.page(at: number - 1), index >= 0, index < page.annotations.count else { throw error("Una anotación de origen ya no coincide con el PDF.") }
-            let annotation = page.annotations[index]
-            guard overlayKind(annotation) != nil else { throw error("Esta anotación de origen no se puede editar en Folio.") }
-            removals.append((page, annotation))
+                  number <= value.document.pageCount, index >= 0, index <= Int(Int32.max),
+                  try sourceAnnotations(value, number).contains(where: { $0["nativeSourceRef"] as? String == reference }) else { throw error("Una anotación de origen ya no coincide con el PDF.") }
+            var removal = FolioRemoval(); removal.page = Int32(number); removal.index = Int32(index); removals.append(removal)
         }
-        for (page, annotation) in removals { page.removeAnnotation(annotation) }
+        var nativeOverlays = [FolioOverlay](), strings = [UnsafeMutablePointer<CChar>](), geometries = [UnsafeMutablePointer<Float>]()
+        defer { for pointer in strings { free(pointer) }; for pointer in geometries { pointer.deallocate() } }
+        func string(_ text: String) throws -> UnsafePointer<CChar> {
+            guard let pointer = strdup(text) else { throw error("No hay memoria para preparar las anotaciones.") }
+            strings.append(pointer); return UnsafePointer(pointer)
+        }
         for overlay in args.annotations {
             if let reference = overlay.nativeSourceRef, unchanged.contains(reference), !args.removedSourceRefs.contains(reference) { continue }
             guard ["highlight", "note"].contains(overlay.kind), overlay.rect.count == 4, overlay.rect.allSatisfy({ $0.isFinite }),
-                  overlay.page > 0, let page = document.page(at: overlay.page - 1) else { throw error("La anotación no tiene una página o posición válida.") }
-            var rect = CGRect(x: overlay.rect[0], y: overlay.rect[1], width: overlay.rect[2] - overlay.rect[0], height: overlay.rect[3] - overlay.rect[1])
-            if overlay.kind == "note" { rect = CGRect(x: overlay.rect[0], y: overlay.rect[1] - 20, width: 20, height: 20) }
-            guard rect.width > 0, rect.height > 0 else { throw error("La anotación tiene un tamaño inválido.") }
-            let annotation = PDFAnnotation(bounds: rect, forType: overlay.kind == "highlight" ? .highlight : .text, withProperties: nil)
-            let alpha = min(1, max(0, overlay.opacity ?? (overlay.kind == "highlight" ? 0.35 : 1)))
-            annotation.color = color(overlay.color, alpha)
-            annotation.contents = overlay.text; annotation.userName = overlay.author ?? "Folio"
-            annotation.modificationDate = Date(timeIntervalSince1970: overlay.created / 1000)
-            _ = annotation.setValue(overlay.originalName ?? overlay.id, forAnnotationKey: .name)
-            if overlay.kind == "highlight", let quads = overlay.quads {
-                guard quads.allSatisfy({ $0.count == 8 && $0.allSatisfy({ $0.isFinite }) }) else { throw error("El resaltado contiene coordenadas inválidas.") }
-                annotation.quadrilateralPoints = quads.flatMap { quad in stride(from: 0, to: 8, by: 2).map { index in
-                    NSValue(cgPoint: CGPoint(x: quad[index] - Double(rect.minX), y: quad[index + 1] - Double(rect.minY)))
-                } }
+                  overlay.page > 0, overlay.page <= value.document.pageCount, overlay.created.isFinite,
+                  abs(overlay.created / 1000) < Double(Int64.max) else { throw error("La anotación no tiene una página o posición válida.") }
+            var rect = overlay.rect
+            if overlay.kind == "note" {
+                var width = 20.0, height = 20.0
+                if let reference = overlay.nativeSourceRef, let original = try sourceAnnotations(value, overlay.page).first(where: { $0["nativeSourceRef"] as? String == reference }),
+                   let raw = original["rawRect"] as? [Double], raw.count == 4 { width = raw[2] - raw[0]; height = raw[3] - raw[1] }
+                rect = [overlay.rect[0], overlay.rect[1] - height, overlay.rect[0] + width, overlay.rect[1]]
             }
-            page.addAnnotation(annotation)
+            guard rect[2] > rect[0], rect[3] > rect[1] else { throw error("La anotación tiene un tamaño inválido.") }
+            var item = FolioOverlay(); item.page = Int32(overlay.page); item.kind = overlay.kind == "highlight" ? 1 : 2
+            item.rect = (Float(rect[0]), Float(rect[1]), Float(rect[2]), Float(rect[3]))
+            let alpha = min(1, max(0, overlay.opacity ?? (overlay.kind == "highlight" ? 0.35 : 1)))
+            item.opacity = Float(alpha); item.modified_seconds = Int64(overlay.created / 1000)
+            let rgb = UInt32(overlay.color.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0xf5d76e
+            item.color = (Float((rgb >> 16) & 255) / 255, Float((rgb >> 8) & 255) / 255, Float(rgb & 255) / 255)
+            item.name = try string(overlay.originalName ?? overlay.id); item.contents = try string(overlay.text); item.author = try string(overlay.author ?? "Folio")
+            if overlay.kind == "highlight" {
+                let quads = overlay.quads ?? [[rect[0], rect[3], rect[2], rect[3], rect[0], rect[1], rect[2], rect[1]]]
+                guard quads.allSatisfy({ $0.count == 8 && $0.allSatisfy({ $0.isFinite }) }) else { throw error("El resaltado contiene coordenadas inválidas.") }
+                let flat = quads.flatMap { $0.map(Float.init) }, pointer = UnsafeMutablePointer<Float>.allocate(capacity: flat.count)
+                flat.withUnsafeBufferPointer { if let base = $0.baseAddress { pointer.initialize(from: base, count: flat.count) } }
+                geometries.append(pointer); item.quads = UnsafePointer(pointer); item.quad_count = quads.count
+            }
+            nativeOverlays.append(item)
         }
-        guard document.write(to: target) else { throw error("No se pudo escribir la copia. Comprueba el espacio disponible.") }
-        return ["path": target.path]
+        var message = [CChar](repeating: 0, count: 2048)
+        let capacity = message.count
+        let status = value.args.path.withCString { source in target.path.withCString { output in (value.args.password ?? "").withCString { password in
+            nativeOverlays.withUnsafeBufferPointer { overlays in removals.withUnsafeBufferPointer { refs in
+                folio_pdf_export(source, output, password, overlays.baseAddress, overlays.count, refs.baseAddress, refs.count, &message, capacity)
+            } }
+        } } }
+        guard status == 0 else { throw error("No se pudo guardar la copia conservando el original: " + String(cString: message)) }
+        return ["path": target.path, "annotationWriter": "MuPDF " + String(cString: folio_pdf_engine_version()), "incremental": true]
     }
 }

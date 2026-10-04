@@ -23,6 +23,7 @@ function run(command, args, cwd = root, quiet = false) {
   return result.stdout?.trim() || '';
 }
 function hash(file) { return createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
+function shellWord(value) { return `'${value.replaceAll("'", "'\\''")}'`; }
 function owned(target) {
   const relative = path.relative(root, path.resolve(target));
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Build output must remain within the project.');
@@ -51,7 +52,7 @@ try {
   const ranlib = run('xcrun', ['--find', 'ranlib'], root, true);
   const compilerVersion = run(compiler, ['--version'], root, true);
   const sdks = Object.fromEntries(['iphoneos', 'iphonesimulator', 'macosx'].map(sdk => [sdk, run('xcrun', ['--sdk', sdk, '--show-sdk-path'], root, true)]));
-  const inputs = { version, sourceHash, compilerVersion, sdks, features, minimumIOS: '17.0',
+  const inputs = { version, sourceHash, compilerVersion, sdks, features, minimumIOS: '17.0', buildScriptSha256: hash(fileURLToPath(import.meta.url)),
     wrapper: Object.fromEntries(nativeFiles.map(file => [file, hash(path.join(plugin, file))])) };
   const key = createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
   if (fs.existsSync(stamp) && fs.existsSync(framework)) {
@@ -72,9 +73,10 @@ try {
   run('make', ['-j', jobs, ...features, 'mujs=yes', 'generate'], source);
   const libraries = [];
   for (const [sdk, triple] of [['iphoneos', 'arm64-apple-ios17.0'], ['iphonesimulator', 'arm64-apple-ios17.0-simulator']]) {
-    const output = path.join(stage, sdk);
+    const relativeOutput = `build/folio-${sdk}`;
+    const output = path.join(source, relativeOutput);
     const flags = ['-target', triple, '-isysroot', sdks[sdk]];
-    run('make', ['-j', jobs, ...features, 'mujs=no', `OUT=${output}`, `CC=${compiler}`, `AR=${ar}`, `RANLIB=${ranlib}`, `XCFLAGS=${flags.join(' ')}`, 'libs'], source);
+    run('make', ['-j', jobs, ...features, 'mujs=no', `OUT=${relativeOutput}`, `CC=${shellWord(compiler)}`, `AR=${shellWord(ar)}`, `RANLIB=${shellWord(ranlib)}`, `XCFLAGS=${flags.map(shellWord).join(' ')}`, 'libs'], source);
     const wrapper = path.join(output, 'FolioMuPDF.o');
     run(compiler, [...flags, '-O2', '-std=c11', '-I', path.join(source, 'include'), '-I', path.join(plugin, 'NativeExport/include'),
       '-c', path.join(plugin, 'NativeExport/FolioMuPDF.c'), '-o', wrapper]);
@@ -85,9 +87,12 @@ try {
   }
   // Host mutool independently validates exported PDFs at 64-bit file offsets;
   // it is a test tool and is never included in the device application.
-  const hostOut = path.join(stage, 'host');
-  run('make', ['-j', jobs, ...features, 'mujs=yes', `OUT=${hostOut}`, `CC=${compiler}`, `AR=${ar}`, `RANLIB=${ranlib}`,
-    `XCFLAGS=-isysroot ${sdks.macosx}`, path.join(hostOut, 'mutool')], source);
+  const relativeHostOut = 'build/folio-host';
+  const hostOut = path.join(source, relativeHostOut);
+  const hostTriple = `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macos13.0`;
+  const hostFlags = ['-target', hostTriple, '-isysroot', sdks.macosx].map(shellWord).join(' ');
+  run('make', ['-j', jobs, ...features, 'mujs=yes', `OUT=${relativeHostOut}`, `CC=${shellWord(compiler)}`, `AR=${shellWord(ar)}`, `RANLIB=${shellWord(ranlib)}`,
+    `XCFLAGS=${hostFlags}`, `XLDFLAGS=${hostFlags}`, `${relativeHostOut}/mutool`], source);
   const hostTool = path.join(hostOut, 'mutool');
   run(hostTool, ['-v'], root, true);
   fs.mkdirSync(owned(path.dirname(framework)), { recursive: true });
