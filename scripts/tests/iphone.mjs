@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { stripVTControlCharacters } from 'node:util';
 import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
@@ -68,7 +69,7 @@ const port = process.env.FOLIO_IPHONE_PORT || '4195', origin = `http://127.0.0.1
 const snapshotRoot = path.resolve(root, '.tools'), snapshot = process.env.FOLIO_IPHONE_DEV ? null : path.join(snapshotRoot, `iphone-preview-${process.pid}`);
 if (snapshot) { fs.mkdirSync(snapshot, { recursive: true }); fs.cpSync(path.join(root, 'dist'), snapshot, { recursive: true }); }
 const builtIndexHash = snapshot ? createHash('sha256').update(fs.readFileSync(path.join(snapshot, 'index.html'))).digest('hex') : null;
-const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
+const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });
 let log = '', browser; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
 const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
@@ -214,7 +215,7 @@ try {
     if (server.exitCode !== null) throw new Error(log);
     // Do not accidentally run against somebody else's preview process when
     // this server failed to acquire its strict port.
-    if (log.includes(origin)) try { if ((await fetch(origin)).ok) { ready = true; break; } } catch {}
+    if (stripVTControlCharacters(log).includes(origin)) try { if ((await fetch(origin)).ok) { ready = true; break; } } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert(ready, log || 'Vite did not start.');
