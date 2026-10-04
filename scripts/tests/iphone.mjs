@@ -483,7 +483,15 @@ try {
         pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
         clientX: point.x, clientY: point.y, ...extra }));
     }, { type, point, extra });
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await page.evaluate(() => {
+      window.getSelection()?.removeAllRanges();
+      window.__iphoneChromeTouchUps = [];
+      document.addEventListener('pointerup', event => {
+        if (event.pointerType === 'touch' && event.target?.closest?.('.page-content')) {
+          window.__iphoneChromeTouchUps.push({ at: performance.now(), x: event.clientX, y: event.clientY });
+        }
+      }, { capture: true });
+    });
     const initial = await reader(page).boundingBox(), blank = await blankPoint();
     await page.touchscreen.tap(blank.x, blank.y);
     await page.waitForFunction(() => document.querySelector('.app-shell')?.classList.contains('reader-chrome-hidden'));
@@ -492,6 +500,47 @@ try {
     await page.screenshot({ path: path.join(output, 'iphone-reader-chrome-hidden.png'), animations: 'disabled' });
     const restore = await blankPoint(); await page.touchscreen.tap(restore.x, restore.y);
     await visibleChrome('A second short touch must restore the complete reader controls.');
+    const independentTouchGapMs = await page.evaluate(() => {
+      const [first, second] = window.__iphoneChromeTouchUps;
+      return first && second ? second.at - first.at : null;
+    });
+    assert(Number.isFinite(independentTouchGapMs) && independentTouchGapMs > 0, 'The report must record both real hide and restore touches.');
+
+    // Exercise the end of a double tap's recognition interval inside WebKit,
+    // without transport/screenshot latency determining when its second touch
+    // arrives. These PointerEvents are explicitly synthetic in the report; the
+    // consecutive real touchscreen double tap is tested separately below.
+    const boundaryPoint = await blankPoint();
+    const boundaryDoubleTap = await page.evaluate(async point => {
+      const target = document.elementFromPoint(point.x, point.y);
+      if (!target?.closest('.page-content')) throw new Error('Boundary taps must hit the PDF.');
+      const shell = document.querySelector('.app-shell');
+      let observing = true;
+      const frames = [];
+      const observe = () => {
+        frames.push({ at: performance.now(), hidden: shell.classList.contains('reader-chrome-hidden') });
+        if (observing) requestAnimationFrame(observe);
+      };
+      requestAnimationFrame(observe);
+      const tap = () => {
+        for (const type of ['pointerdown', 'pointerup']) {
+          target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+            pointerType: 'touch', pointerId: 91, isPrimary: true, button: 0,
+            buttons: type === 'pointerdown' ? 1 : 0, clientX: point.x, clientY: point.y }));
+        }
+      };
+      tap(); const firstUp = performance.now();
+      await new Promise(resolve => setTimeout(resolve, 320));
+      const gapMs = performance.now() - firstUp;
+      const hiddenBeforeSecond = shell.classList.contains('reader-chrome-hidden');
+      tap();
+      await new Promise(resolve => setTimeout(resolve, 500)); observing = false;
+      return { gapMs, hiddenBeforeSecond, frames: frames.length, hiddenFrames: frames.filter(frame => frame.hidden).length };
+    }, boundaryPoint);
+    assert(boundaryDoubleTap.gapMs >= 300 && boundaryDoubleTap.gapMs < 350, 'The boundary regression must actually dispatch its second touch between 300 and 350 ms.');
+    assert.equal(boundaryDoubleTap.hiddenBeforeSecond, false, 'Controls must not hide before a double tap has been ruled out.');
+    assert.equal(boundaryDoubleTap.hiddenFrames, 0, 'A late double tap must not briefly hide controls.');
+    await visibleChrome('A second tap near the double tap boundary must preserve reader chrome.');
 
     const double = await blankPoint(); await page.touchscreen.tap(double.x, double.y); await page.touchscreen.tap(double.x, double.y);
     await visibleChrome('A double tap must not toggle reader chrome.');
@@ -558,7 +607,8 @@ try {
     await page.touchscreen.tap(outside.x, outside.y); await dialog.waitFor({ state: 'detached' });
     await visibleChrome('Closing an unsaved note must preserve reader chrome.');
     await page.screenshot({ path: path.join(output, 'iphone-reader-chrome-restored.png'), animations: 'disabled' });
-    return { actualTouchscreenTapHidesAndRestores: true, reclaimedReaderHeight: expanded.height - initial.height,
+    return { actualTouchscreenTapHidesAndRestores: true, independentTouchGapMs, boundaryDoubleTap,
+      doubleTapBoundaryPointerEventsSynthetic: true, reclaimedReaderHeight: expanded.height - initial.height,
       doubleTapDoesNotHide: true, scrollingDoesNotHide: true, browserTextSelectionDoesNotHide: true,
       twoFingerZoomDoesNotHide: true, activeHighlightAndNoteToolsDoNotHide: true,
       modalPaddingTapDoesNotClose: true, actualBackdropTapCloses: true,

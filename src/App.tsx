@@ -571,6 +571,7 @@ export default function App() {
     const root = viewer.current;
     if (!phone || !doc || !root) return;
     let origin: { id: number; x: number; y: number; top: number; left: number; at: number } | null = null;
+    const doubleTapWindow = 350;
     let timer = 0, lastTap = 0;
     const cancel = () => { origin = null; if (timer) clearTimeout(timer); timer = 0; };
     const down = (event: PointerEvent) => {
@@ -579,7 +580,7 @@ export default function App() {
       if (event.pointerType !== 'touch' || !event.isPrimary || tool !== 'select' || busy || loading) { origin = null; return; }
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest('.page-content') || target.closest('button,a,input,textarea,[role="button"],.highlight-annotation') || !window.getSelection()?.isCollapsed) { origin = null; return; }
-      if (Date.now() - lastTap < 350) { origin = null; lastTap = 0; return; }
+      if (Date.now() - lastTap < doubleTapWindow) { origin = null; lastTap = 0; return; }
       origin = { id: event.pointerId, x: event.clientX, y: event.clientY, top: root.scrollTop, left: root.scrollLeft, at: Date.now() };
     };
     const up = (event: PointerEvent) => {
@@ -589,7 +590,7 @@ export default function App() {
           Math.abs(root.scrollTop - start.top) > 3 || Math.abs(root.scrollLeft - start.left) > 3 ||
           !window.getSelection()?.isCollapsed || document.querySelector('dialog[open]')) return;
       lastTap = Date.now();
-      timer = window.setTimeout(() => { timer = 0; if (window.getSelection()?.isCollapsed) setReaderChromeHidden(value => !value); }, 300);
+      timer = window.setTimeout(() => { timer = 0; if (window.getSelection()?.isCollapsed && !document.querySelector('dialog[open]')) setReaderChromeHidden(value => !value); }, doubleTapWindow);
     };
     const selection = () => { if (!window.getSelection()?.isCollapsed) cancel(); };
     root.addEventListener('pointerdown', down, true); root.addEventListener('pointerup', up, true);

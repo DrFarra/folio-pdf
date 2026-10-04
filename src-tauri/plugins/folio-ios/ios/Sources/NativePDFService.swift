@@ -100,9 +100,9 @@ final class NativePDFService {
         PDFAnnotationKey(rawValue: (PDFAnnotationKey.name.rawValue.hasPrefix("/") ? "/" : "") + "CA")
     }
     private func sourceOpacity(_ page: PDFPage, _ index: Int) -> Double {
-        guard let reference = page.pageRef else { return opacity(page.annotations[index]) }
+        guard let reference = page.pageRef, let source = reference.dictionary else { return opacity(page.annotations[index]) }
         var array: CGPDFArrayRef?, dictionary: CGPDFDictionaryRef?
-        guard CGPDFDictionaryGetArray(reference.dictionary, "Annots", &array), let array = array else { return opacity(page.annotations[index]) }
+        guard CGPDFDictionaryGetArray(source, "Annots", &array), let array = array else { return opacity(page.annotations[index]) }
         if let name = page.annotations[index].value(forAnnotationKey: .name) as? String, !name.isEmpty {
             // PDFKit can omit unsupported annotations from its public array.
             // Prefer the source /NM identity before using the original index.
