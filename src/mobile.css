@@ -90,3 +90,5 @@ html[data-phone] .create-files{display:flex;flex-direction:column;gap:8px;margin
 .phone-layout .mobile-reading-status .page-controls{margin:0}.phone-layout .mobile-reading-status .page-controls input{background:transparent}
 .phone-layout .mobile-annotation-toolbar{height:52px;min-height:52px;display:flex;align-items:center;justify-content:space-evenly;gap:2px;border-top:1px solid var(--line);background:var(--surface);padding:4px 8px;flex-shrink:0}
 .phone-layout .mobile-annotating .mobile-reading-status{bottom:60px}.phone-layout .annotation-tool-hint{bottom:68px}.phone-layout .mobile-annotating .annotation-tool-hint{bottom:120px}
+.phone-layout.reader-chrome-hidden .app-header,.phone-layout.reader-chrome-hidden .mobile-reading-status,.phone-layout.reader-chrome-hidden .mobile-annotation-toolbar,.phone-layout.reader-chrome-hidden .annotation-tool-hint,.phone-layout.reader-chrome-hidden .page-caption,.phone-layout.reader-chrome-hidden .sample-hint{display:none}
+.phone-layout.reader-chrome-hidden .pdf-stack{padding-top:0;padding-bottom:0}

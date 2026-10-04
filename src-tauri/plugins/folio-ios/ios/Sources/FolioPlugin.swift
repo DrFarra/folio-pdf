@@ -23,6 +23,7 @@ final class FolioPlugin: Plugin {
     private var pickerDelegate: PickerDelegate?
     private var presenting = false
     private weak var webview: WKWebView?
+    private let pdf = NativePDFService()
 
     @objc public override func load(webview: WKWebView) {
         self.webview = webview
@@ -44,7 +45,10 @@ final class FolioPlugin: Plugin {
         return controller
     }
 
-    private func fail(_ invoke: Invoke, _ error: Error) { invoke.reject(error.localizedDescription) }
+    private func fail(_ invoke: Invoke, _ error: Error) {
+        let native = error as NSError
+        invoke.reject("\(native.localizedDescription) [\(native.domain):\(native.code)]")
+    }
 
     @objc public func setTheme(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ThemeArgs.self)
@@ -88,10 +92,23 @@ final class FolioPlugin: Plugin {
             let destination = folder.appendingPathComponent(url.lastPathComponent)
             var coordinatorError: NSError?
             var copyError: Error?
-            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readable in
-                do { try manager.copyItem(at: readable, to: destination) } catch { copyError = error }
+            let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
+            let staging = manager.temporaryDirectory.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+            let inbox = documents.appendingPathComponent("Inbox").standardizedFileURL.resolvingSymlinksInPath().path + "/"
+            if resolved.hasPrefix(staging) || resolved.hasPrefix(inbox) {
+                // These are UIKit's app-owned import copies, never a provider
+                // original or an already opened Folio source. A rename avoids
+                // keeping two extra gigabytes on the device during import.
+                do { try manager.moveItem(at: url, to: destination) } catch { copyError = error }
+            } else {
+                NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readable in
+                    do { try manager.copyItem(at: readable, to: destination) } catch { copyError = error }
+                }
             }
-            if let error = coordinatorError ?? (copyError as NSError?) { throw error }
+            if let error = coordinatorError ?? (copyError as NSError?) {
+                try? manager.removeItem(at: folder)
+                throw NSError(domain: "Folio.Import", code: error.code, userInfo: [NSLocalizedDescriptionKey: "No se pudo copiar \(url.lastPathComponent) a Folio: \(error.localizedDescription) [\(error.domain):\(error.code)]"])
+            }
             copies.append(destination.path)
         }
         return copies
@@ -119,13 +136,20 @@ final class FolioPlugin: Plugin {
         DispatchQueue.main.async {
             guard !self.presenting, let parent = self.presenter() else { invoke.reject("Cierra el diálogo abierto antes de elegir otro archivo."); return }
             self.presenting = true
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.pdf], asCopy: false)
+            // UIKit first creates an app-owned copy. The provider authorization
+            // must not be reconstructed from a string after its delegate exits.
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.pdf], asCopy: true)
             picker.allowsMultipleSelection = args.multiple ?? true
+            if ProcessInfo.processInfo.arguments.contains("--folio-ui-test-picker") {
+                picker.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            }
             self.pickerDelegate = PickerDelegate(picked: { urls in
-                self.presenting = false; self.pickerDelegate = nil
                 DispatchQueue.global(qos: .userInitiated).async {
-                    do { invoke.resolve(["paths": try self.importURLs(urls)]) }
-                    catch { self.fail(invoke, error) }
+                    do {
+                        let paths = try self.importURLs(urls)
+                        DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": paths]) }
+                    }
+                    catch { DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; self.fail(invoke, error) } }
                 }
             }, cancelled: {
                 self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": [String]()])
@@ -133,6 +157,45 @@ final class FolioPlugin: Plugin {
             picker.delegate = self.pickerDelegate
             parent.present(picker, animated: true)
         }
+    }
+
+    private func pdfOperation(_ invoke: Invoke, _ operation: @escaping () throws -> [String: Any]) {
+        pdf.queue.async {
+            autoreleasepool {
+                do { invoke.resolve(try operation()) }
+                catch { self.fail(invoke, error) }
+            }
+        }
+    }
+    @objc public func pdfOpen(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFOpenArgs.self); _ = try localFile(args.path)
+        pdfOperation(invoke) { try self.pdf.open(args) }
+    }
+    @objc public func pdfPageInfo(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFPageArgs.self)
+        pdfOperation(invoke) { try self.pdf.pageInfo(args.token, args.page) }
+    }
+    @objc public func pdfRender(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFRenderArgs.self)
+        pdfOperation(invoke) { try self.pdf.render(args) }
+    }
+    @objc public func pdfText(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFPageArgs.self)
+        pdfOperation(invoke) { try self.pdf.text(args.token, args.page) }
+    }
+    @objc public func pdfOutline(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFTokenArgs.self)
+        pdfOperation(invoke) { ["entries": try self.pdf.outline(args.token)] }
+    }
+    @objc public func pdfClose(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFTokenArgs.self)
+        pdfOperation(invoke) { self.pdf.close(args.token); return [:] }
+    }
+    @objc public func pdfExport(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFExportArgs.self)
+        let target = URL(fileURLWithPath: args.path).standardizedFileURL
+        guard target.path.hasPrefix(NSHomeDirectory() + "/"), !FileManager.default.fileExists(atPath: target.path) else { invoke.reject("Destino de copia inválido."); return }
+        pdfOperation(invoke) { try self.pdf.export(args) }
     }
 
     @objc public func exportFile(_ invoke: Invoke) throws {

@@ -13,6 +13,7 @@ export type Annotation = {
   author?: string;
   opacity?: number;
   sourceRef?: number;
+  nativeSourceRef?: string;
   originalName?: string;
   quads?: number[][];
 };
@@ -31,6 +32,9 @@ export type Session = {
   annotations: Annotation[];
   bookmarks: BookmarkNode[];
   lastPage: number;
+  nativeKnownPages?: number[];
+  nativeOriginalRefs?: string[];
+  nativeSavedAnnotations?: string;
 };
 export type LoadedDocument = {
   pdf: PDFDocumentProxy;
@@ -41,6 +45,8 @@ export type LoadedDocument = {
   sample: boolean;
   password?: string;
   nativeSource?: string;
+  nativeKnownPages?: number[];
+  nativeOriginalRefs?: string[];
   canAnnotate: boolean;
   signed: boolean;
   initialPage: number;

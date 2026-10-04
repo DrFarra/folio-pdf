@@ -1,13 +1,13 @@
 # Folio para iPhone e iPad
 
-Folio 0.5.0 requiere iOS 17 o posterior. La interfaz permite usar el lector con
+Folio 0.5.1 requiere iOS 17 o posterior. La interfaz permite usar el lector con
 toques, seleccionar texto, resaltar, organizar marcadores, cambiar entre PDFs y
 guardar copias. El motor PDF, sus recursos y el OCR se incluyen en la aplicación;
 los documentos se procesan en el dispositivo.
 
 ## Instalar con Feather
 
-La entrega `Folio_0.5.0_iphone_arm64_unsigned.ipa` es para un iPhone o iPad físico
+La entrega `Folio_0.5.1_iphone_arm64_unsigned.ipa` es para un iPhone o iPad físico
 con procesador arm64. No tiene un certificado ni perfil de Apple incorporado.
 En Feather, importa el archivo IPA, selecciona tu certificado y perfil de
 aprovisionamiento válidos, firma la aplicación e instálala. Feather requiere

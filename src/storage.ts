@@ -11,6 +11,13 @@ type StoredRecent = Omit<RecentDocument, 'data'> & { data?: Blob | ArrayBuffer }
 function recentDocument(value: StoredRecent): RecentDocument {
   return { ...value, data: value.data instanceof ArrayBuffer ? new Blob([value.data], { type: 'application/pdf' }) : value.data };
 }
+function nativeBaseline(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
+  try {
+    const rows = JSON.parse(value);
+    if (Array.isArray(rows) && rows.every(row => Array.isArray(row) && row.length >= 6 && typeof row[0] === 'string' && Number.isInteger(row[1]) && ['highlight', 'note'].includes(row[2]) && Array.isArray(row[3]) && row[3].length === 4 && row[3].every(Number.isFinite))) return value;
+  } catch { /* A damaged baseline does not prevent opening the PDF. */ }
+}
 function parseSession(raw: Partial<Session> | null): Session {
     if (!raw || !Array.isArray(raw.annotations) || !Array.isArray(raw.bookmarks)) return { ...EMPTY };
     return {
@@ -23,6 +30,9 @@ function parseSession(raw: Partial<Session> | null): Session {
         typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color)),
       bookmarks: normalizeBookmarks(raw.bookmarks),
       lastPage: Number.isInteger(raw.lastPage) && Number(raw.lastPage) > 0 ? Number(raw.lastPage) : 1,
+      nativeKnownPages: Array.isArray(raw.nativeKnownPages) ? raw.nativeKnownPages.filter(page => Number.isInteger(page) && page > 0) : [],
+      nativeOriginalRefs: Array.isArray(raw.nativeOriginalRefs) ? raw.nativeOriginalRefs.filter(ref => typeof ref === 'string') : [],
+      nativeSavedAnnotations: nativeBaseline(raw.nativeSavedAnnotations),
     };
 }
 export async function readSession(id: string): Promise<Session> {

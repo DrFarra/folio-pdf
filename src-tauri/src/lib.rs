@@ -7,12 +7,12 @@ use tauri_plugin_dialog::DialogExt;
 #[cfg(target_os = "ios")]
 mod ios_commands;
 #[cfg(target_os = "ios")]
-use ios_commands::{pick_document, pick_documents, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text};
-use folio_core::{atomic_write, digest, fingerprint, protect_original, read_pdf, validate_pdf};
+use ios_commands::{pick_document, pick_documents, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present};
+use folio_core::{atomic_write, digest, fingerprint, protect_original, read_pdf, validate_pdf, inspect_pdf_file, read_pdf_range, FileSnapshot};
 
 #[derive(Clone, Serialize)]
-struct DocumentInfo { token: String, name: String, size: usize }
-struct Source { path: PathBuf, digest: String, info: DocumentInfo }
+struct DocumentInfo { token: String, name: String, size: u64, id: String, revision: String }
+struct Source { path: PathBuf, digest: String, info: DocumentInfo, snapshot: FileSnapshot }
 struct Output { path: PathBuf, fingerprint: Option<String>, source: Option<PathBuf>, format: String }
 #[derive(Default)]
 struct SystemOpen { documents: Vec<DocumentInfo>, errors: Vec<String> }
@@ -45,10 +45,10 @@ struct Desktop { files: Mutex<Files>, store: Mutex<()>, data: PathBuf }
 struct EarlyOpenPaths(Mutex<Vec<PathBuf>>);
 
 fn register(desktop: &Desktop, path: PathBuf) -> Result<DocumentInfo, String> {
-    let bytes = read_pdf(&path)?;
+    let file = inspect_pdf_file(&path)?;
     let token = uuid::Uuid::new_v4().to_string();
-    let info = DocumentInfo { token: token.clone(), name: path.file_name().ok_or("Nombre de archivo inválido.")?.to_string_lossy().into(), size: bytes.len() };
-    desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.insert(token, Source { path, digest: digest(&bytes), info: info.clone() });
+    let info = DocumentInfo { token: token.clone(), name: path.file_name().ok_or("Nombre de archivo inválido.")?.to_string_lossy().into(), size: file.snapshot.size, id: file.digest.clone(), revision: file.digest.clone() };
+    desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.insert(token, Source { path, digest: file.digest, info: info.clone(), snapshot: file.snapshot });
     Ok(info)
 }
 
@@ -82,9 +82,18 @@ fn startup_documents(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Resu
 fn read_document(token: String, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
     let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
     let source = files.sources.get(&token).ok_or("Vuelve a elegir el archivo para abrirlo.")?;
+    #[cfg(target_os = "ios")]
+    if source.info.size > 32 * 1024 * 1024 { return Err("Este documento se abre con el lector nativo de Folio; utiliza native_pdf_open.".into()); }
     let bytes = read_pdf(&source.path)?;
     if digest(&bytes) != source.digest { return Err("El archivo cambió en disco. Vuelve a abrirlo.".into()); }
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn read_document_range(token: String, offset: u64, length: usize, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
+    let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+    let source = files.sources.get(&token).ok_or("El documento no está disponible.")?;
+    read_pdf_range(&source.path, &source.snapshot, offset, length).map(tauri::ipc::Response::new)
 }
 
 #[cfg(not(target_os = "ios"))]
@@ -212,7 +221,7 @@ fn store_session(id: String, session: Value, desktop: State<'_, Desktop>) -> Res
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Recent { id: String, name: String, size: usize, pages: usize, opened_at: u64, path: PathBuf, #[serde(default)] draft: bool }
+struct Recent { id: String, name: String, size: u64, pages: usize, opened_at: u64, path: PathBuf, #[serde(default)] draft: bool }
 fn read_recents(desktop: &Desktop) -> Vec<Recent> {
     fs::read(desktop.data.join("recent.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
@@ -243,7 +252,7 @@ fn remember_draft(id: String, name: String, pages: usize, opened_at: u64, deskto
     let path = draft_path(&desktop, &id)?;
     let bytes = read_pdf(&path)?;
     let name = Path::new(&name).file_name().ok_or("Nombre inválido.")?.to_string_lossy().into_owned();
-    let record = Recent { id: id.clone(), name, size: bytes.len(), pages, opened_at, path, draft: true };
+    let record = Recent { id: id.clone(), name, size: bytes.len() as u64, pages, opened_at, path, draft: true };
     let mut entries = read_recents(&desktop); entries.retain(|r| r.id != id); entries.insert(0, record); entries.truncate(5);
     save_recents(&desktop, &entries)
 }
@@ -333,11 +342,11 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(target_os = "ios"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, choose_output, write_pdf_copy, choose_export, write_export, print_document, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, ios_commands::ios_native_status, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     builder
         .setup(|app| {
             let data = app.path().app_data_dir()?;
@@ -396,7 +405,7 @@ mod tests {
     use super::*;
 
     fn document(token: &str) -> DocumentInfo {
-        DocumentInfo { token: token.into(), name: format!("{token}.pdf"), size: 42 }
+        DocumentInfo { token: token.into(), name: format!("{token}.pdf"), size: 42, id: "a".repeat(64), revision: "a".repeat(64) }
     }
 
     #[test]

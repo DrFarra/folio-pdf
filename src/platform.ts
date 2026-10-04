@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { downloadBytes } from './pdf';
+import type { Annotation } from './types';
 
 export const isNative = isTauri();
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
@@ -8,7 +9,11 @@ export const isMobile = isIOS || /Android/i.test(navigator.userAgent);
 export const isDesktop = isNative && !isMobile;
 export const isMac = !isIOS && /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform);
 export const shortcutLabel = (key: string) => `${isMac || isIOS ? '⌘' : 'Ctrl'}+${key}`;
-export type NativeDocument = { token: string; name: string; size: number };
+export type NativeDocument = { token: string; name: string; size: number; id?: string; revision?: string };
+
+export async function presentNativePdf(token: string, name: string, action: 'save' | 'share' | 'print', annotations: Annotation[], removedSourceRefs: string[]): Promise<NativeDocument | boolean | null> {
+  return invoke('native_pdf_present', { token, name, action, annotations, removedSourceRefs });
+}
 
 export async function pickNativeDocument(): Promise<NativeDocument | null> {
   return invoke<NativeDocument | null>('pick_document');

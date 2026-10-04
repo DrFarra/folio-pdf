@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cli = path.join(root, 'node_modules/@tauri-apps/cli/tauri.js');
@@ -40,7 +41,46 @@ function verifySwiftLocks(tauriRoot) {
   fs.mkdirSync(path.join(root, 'test-results/ios'), { recursive: true });
   fs.writeFileSync(path.join(root, 'test-results/ios/swift-package-locks.json'), JSON.stringify({ verified: true, packages: reports }, null, 2));
 }
-try {
+export function syncIosIcons(workspaceRoot = root, project = path.join(workspaceRoot, 'src-tauri/gen/apple')) {
+  const source = path.join(workspaceRoot, 'src-tauri/icons/ios');
+  const destination = path.join(project, 'Assets.xcassets/AppIcon.appiconset');
+  const contents = fs.readFileSync(path.join(source, 'Contents.json'));
+  const catalog = JSON.parse(contents);
+  const requiredSlots = [
+    ...['20x20', '29x29', '40x40', '60x60'].flatMap(size => ['2x', '3x'].map(scale => `iphone:${size}:${scale}`)),
+    ...['20x20', '29x29', '40x40', '76x76'].flatMap(size => ['1x', '2x'].map(scale => `ipad:${size}:${scale}`)),
+    'ipad:83.5x83.5:2x', 'ios-marketing:1024x1024:1x',
+  ];
+  const slots = catalog.images?.map(icon => `${icon.idiom}:${icon.size}:${icon.scale}`) || [];
+  if (slots.length !== requiredSlots.length || new Set(slots).size !== slots.length || requiredSlots.some(slot => !slots.includes(slot))) {
+    fail('El catálogo original no cubre los 18 tamaños de iconos de iPhone, iPad y App Store.');
+  }
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  // ios init supplies Tauri's template icon. Replace its catalog after init and
+  // before every build, using the existing Folio artwork without redrawing it.
+  const originals = catalog.images.map(icon => {
+    if (typeof icon.filename !== 'string' || path.basename(icon.filename) !== icon.filename || !icon.filename.endsWith('.png')) fail('Nombre de icono no válido.');
+    const data = fs.readFileSync(path.join(source, icon.filename));
+    const expected = Number(icon.size.split('x')[0]) * Number(icon.scale.slice(0, -1));
+    if (data.length < 33 || !data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) ||
+        data.toString('ascii', 12, 16) !== 'IHDR' || data.readUInt32BE(16) !== expected || data.readUInt32BE(20) !== expected ||
+        data[24] !== 8 || data[25] !== 2) fail(`Icono iOS original inválido o con transparencia: ${icon.filename}`);
+    return { icon, data, sha256: hash(data) };
+  });
+  fs.mkdirSync(destination, { recursive: true });
+  for (const { icon, data, sha256 } of originals) {
+    const staged = path.join(destination, icon.filename);
+    fs.writeFileSync(staged, data);
+    if (hash(fs.readFileSync(staged)) !== sha256) fail(`El icono copiado no coincide: ${icon.filename}`);
+  }
+  fs.writeFileSync(path.join(destination, 'Contents.json'), contents);
+  const report = { verified: true, source: 'src-tauri/icons/ios', catalog: 'Assets.xcassets/AppIcon.appiconset',
+    catalogSha256: hash(contents), icons: originals.map(({ icon, sha256 }) => ({ ...icon, sha256 })) };
+  fs.mkdirSync(path.join(workspaceRoot, 'test-results/ios'), { recursive: true });
+  fs.writeFileSync(path.join(workspaceRoot, 'test-results/ios/icon-catalog-sync.json'), JSON.stringify(report, null, 2));
+  return report;
+}
+if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try {
   if (process.platform !== 'darwin') fail('La versión iPhone requiere macOS y Xcode completo. Este script no genera una IPA desde Windows. Usa el workflow privado ios.yml o un Mac.');
   if (Number(process.versions.node.split('.')[0]) < 22) fail('Se necesita Node.js 22 o posterior.');
   if (!fs.existsSync(cli)) fail('Ejecuta npm ci antes de compilar.');
@@ -76,6 +116,7 @@ try {
   } else if (fs.readFileSync(path.join(project, '.folio-scaffold-version'), 'utf8').trim() !== pkg.version) {
     fail('El scaffold iOS pertenece a otra versión. Usa una copia limpia de la fuente; no se borra un proyecto Xcode existente.');
   }
+  syncIosIcons(root, project);
   if (args.has('--init-only')) process.exit(0);
   const qa = args.has('--qa');
   if (qa && args.has('--device')) fail('La IPA para Feather se compila sin native-qa. Usa --simulator --qa para diagnósticos.');
@@ -83,6 +124,7 @@ try {
   const builds = path.join(root, 'test-results/ios-build');
   fs.mkdirSync(builds, { recursive: true });
   for (const target of targets) {
+    syncIosIcons(root, project);
     run('npm', ['run', 'tauri', '--', 'ios', 'build', '--target', target, '--no-sign', '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
     verifySwiftLocks(tauriRoot);
     const build = path.join(project, 'build');

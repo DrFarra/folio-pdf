@@ -1,6 +1,7 @@
 """Verify an unsigned DEVICE IPA and package it separately from simulator .app."""
 from pathlib import Path
 import argparse, hashlib, json, os, plistlib, shutil, stat, subprocess, sys, tempfile, zipfile
+from ios_icon_audit import verify_compiled_icons
 
 ROOT = Path(__file__).resolve().parent.parent
 MUPDF_SHA = 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3'
@@ -38,9 +39,15 @@ def verify_bundle(app, simulator=False):
     require(info.get('CFBundleShortVersionString') == version and info.get('CFBundleVersion') == version, 'El bundle pertenece a otra versión.')
     require(info.get('MinimumOSVersion') == '17.0', 'El bundle no declara iOS 17 mínimo.')
     require(set(info.get('UIDeviceFamily', [])) == {1, 2}, 'El bundle no admite iPhone e iPad.')
-    require(info.get('UIFileSharingEnabled') and info.get('LSSupportsOpeningDocumentsInPlace'), 'Faltan los ajustes de Archivos de iOS.')
+    require(info.get('UIFileSharingEnabled') is True and info.get('LSSupportsOpeningDocumentsInPlace') is False and
+            info.get('UISupportsDocumentBrowser') is False, 'El bundle no declara importación por copia y acceso desde Archivos.')
     supported = [kind for t in info.get('CFBundleDocumentTypes', []) for kind in t.get('LSItemContentTypes', [])]
     require('com.adobe.pdf' in supported, 'Falta la asociación pública de PDF.')
+    for key, expected_files in [('CFBundleIcons', {'AppIcon60x60'}), ('CFBundleIcons~ipad', {'AppIcon60x60', 'AppIcon76x76'})]:
+        primary = info.get(key, {}).get('CFBundlePrimaryIcon', {})
+        require(primary.get('CFBundleIconName') == 'AppIcon' and
+                expected_files.issubset(set(primary.get('CFBundleIconFiles', []))),
+                'El bundle no declara los iconos principales de Folio para iPhone e iPad.')
     require(not any(k.endswith('UsageDescription') for k in info), 'La aplicación solicita permisos de privacidad innecesarios.')
     exe = app / info['CFBundleExecutable']
     require(exe.is_file() and exe.stat().st_mode & 0o111, 'Falta el ejecutable de iOS.')
@@ -104,6 +111,8 @@ with tempfile.TemporaryDirectory(prefix='folio-ios-verify-') as directory:
         require((member.external_attr >> 16) & 0o111, 'La IPA no preserva permisos de ejecución.')
         (device_app / info['CFBundleExecutable']).chmod(0o755)
         device = verify_bundle(device_app)
+        icons = verify_compiled_icons(device_app, ROOT / 'src-tauri/icons/ios', ROOT / 'test-results/ios')
+        device['compiledIconsVerified'] = icons['passed']
         signed = subprocess.run(['codesign', '-d', '--verbose=4', str(device_app)], capture_output=True, text=True)
         require('Authority=' not in signed.stderr, 'La IPA tiene un certificado de Apple incorporado.')
 simulator = verify_bundle(simulator_app, simulator=True)
