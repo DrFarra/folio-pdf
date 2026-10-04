@@ -20,6 +20,26 @@ function find(dir, extension) {
     return entry.isDirectory() ? find(full, extension) : [];
   });
 }
+function swiftLock() {
+  const dependency = json('scripts/ios-swift-dependencies.json').SwiftRs;
+  return { pins: [{ identity: 'swift-rs', kind: 'remoteSourceControl', location: dependency.url,
+    state: { revision: dependency.revision, version: dependency.version } }], version: 2 };
+}
+function verifySwiftLocks(tauriRoot) {
+  const expected = json('scripts/ios-swift-dependencies.json').SwiftRs;
+  const reports = [];
+  for (const [name, file] of [['Tauri API', path.join(tauriRoot, 'mobile/ios-api/Package.resolved')],
+    ['Folio UIKit', path.join(root, 'src-tauri/plugins/folio-ios/ios/Package.resolved')]]) {
+    if (!fs.existsSync(file)) fail(`Falta el lock SwiftPM de ${name}.`);
+    const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const pins = lock.pins || lock.object?.pins || [];
+    const pin = pins.find(p => p.identity === 'swift-rs' || p.package === 'SwiftRs');
+    if (pin?.state?.revision !== expected.revision || pin?.state?.version !== expected.version) fail(`SwiftRs de ${name} no coincide con la revisión bloqueada.`);
+    reports.push({ package: name, swiftRsVersion: pin.state.version, swiftRsRevision: pin.state.revision });
+  }
+  fs.mkdirSync(path.join(root, 'test-results/ios'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'test-results/ios/swift-package-locks.json'), JSON.stringify({ verified: true, packages: reports }, null, 2));
+}
 try {
   if (process.platform !== 'darwin') fail('La versión iPhone requiere macOS y Xcode completo. Este script no genera una IPA desde Windows. Usa el workflow privado ios.yml o un Mac.');
   if (Number(process.versions.node.split('.')[0]) < 22) fail('Se necesita Node.js 22 o posterior.');
@@ -36,6 +56,16 @@ try {
   // provision, private key or paid distribution account is used in this build.
   for (const name of ['APPLE_DEVELOPMENT_TEAM', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH', 'APPLE_PROVISIONING_PROFILE']) delete env[name];
   run('rustup', ['target', 'add', 'aarch64-apple-ios', 'aarch64-apple-ios-sim'], true, env);
+  // Tauri builds its Swift API as an independent package before our plugin.
+  // Seed its SwiftPM resolution too, so neither package silently follows a
+  // newly published upstream tag. This adds a generated lock, without changing
+  // the locked Tauri SDK source or its Package.swift.
+  const metadata = JSON.parse(run('cargo', ['metadata', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--filter-platform', 'aarch64-apple-ios', '--format-version', '1'], false, env));
+  const tauriPackage = metadata.packages.find(p => p.name === 'tauri');
+  if (!tauriPackage) fail('No se encontró el SDK Tauri bloqueado.');
+  const tauriRoot = path.dirname(tauriPackage.manifest_path);
+  fs.writeFileSync(path.join(tauriRoot, 'mobile/ios-api/Package.resolved'), JSON.stringify(swiftLock(), null, 2));
+  fs.writeFileSync(path.join(root, 'src-tauri/plugins/folio-ios/ios/Package.resolved'), JSON.stringify(swiftLock(), null, 2));
   const project = path.join(root, 'src-tauri/gen/apple');
   if (!fs.existsSync(path.join(project, '.folio-scaffold-version'))) {
     // Invoke through the project's npm script. Tauri records this invocation
@@ -54,6 +84,7 @@ try {
   fs.mkdirSync(builds, { recursive: true });
   for (const target of targets) {
     run('npm', ['run', 'tauri', '--', 'ios', 'build', '--target', target, '--no-sign', '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
+    verifySwiftLocks(tauriRoot);
     const build = path.join(project, 'build');
     if (target === 'aarch64-sim') {
       const apps = find(path.join(build, 'arm64-sim'), '.app');

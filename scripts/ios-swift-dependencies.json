@@ -1,0 +1,18 @@
+{
+  "SwiftRs": {
+    "url": "https://github.com/Brendonovich/swift-rs",
+    "version": "1.0.7",
+    "revision": "f64a4514de07f450ec5b6aa297624cd3479d9579",
+    "licenses": {
+      "LICENSE-MIT": {
+        "path": "docs/licenses/swift-rs/LICENSE-MIT.txt",
+        "sha256": "f3c3e9f4febe81ff14ccc233c344e6e60051290d1c1e5a2c670d63cc3608a5bb"
+      },
+      "LICENSE-APACHE": {
+        "path": "docs/licenses/swift-rs/LICENSE-APACHE.txt",
+        "sha256": "908a661cf763bddfa04f2739bea561be62a246f03ad53fcb2272d3ddbd1d943f"
+      }
+    }
+  },
+  "swiftRsRustCrate": "1.0.8 (locked independently by Cargo.lock)"
+}

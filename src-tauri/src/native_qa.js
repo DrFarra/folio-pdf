@@ -29,7 +29,12 @@
     }
     return result;
   };
-  const activeName = () => document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('aria-label') || '';
+  const activeName = () => {
+    if (document.querySelector('.phone-layout')) {
+      return document.querySelector('.pdf-page') ? document.querySelector('.app-header h1')?.textContent || '' : '';
+    }
+    return document.querySelector('.document-tab-strip [role="tab"][aria-selected="true"]')?.getAttribute('aria-label') || '';
+  };
   const record = (kind, values) => {
     errors.push({ kind, at: now(), active: activeName(), values: values.map(value => describe(value)) });
     if (errors.length > 100) errors.shift();
@@ -79,7 +84,15 @@
   const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
   const search = async query => {
     let input = document.querySelector('[aria-label="Buscar texto en el PDF"]');
-    if (!input) document.querySelector('button[aria-label="Buscar en el PDF"]')?.click();
+    if (!input && document.querySelector('.phone-layout')) {
+      if (!document.querySelector('.mobile-drawer')) document.querySelector('.app-header button[aria-label="Explorar documento"]')?.click();
+      let searchTab;
+      for (let n = 0; n < 30 && !searchTab; n++) {
+        await pause(100);
+        searchTab = Array.from(document.querySelectorAll('.mobile-panel-tabs [role="tab"]')).find(tab => tab.textContent?.trim() === 'Buscar');
+      }
+      searchTab?.click();
+    } else if (!input) document.querySelector('button[aria-label="Buscar en el PDF"]')?.click();
     for (let n = 0; n < 30 && !input; n++) { await pause(100); input = document.querySelector('[aria-label="Buscar texto en el PDF"]'); }
     if (!input) return { query, found: false, error: 'Search input was not mounted.' };
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, query);

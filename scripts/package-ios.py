@@ -89,6 +89,15 @@ shutil.copy2(source_ipa, out / source_ipa.name)
 run('ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(simulator_app), str(out / f'Folio-{version}-ios-simulator-arm64.app.zip'))
 for name in ['LICENSE', 'THIRD-PARTY-NOTICES.txt', 'SOURCE-BUILD.txt', 'dependency-licenses.json']:
     shutil.copy2(ROOT / name, out / name)
+require((ROOT / 'SOURCE-BUILD.txt').read_text().startswith(f'Folio {version} — iOS source'), 'Las instrucciones de fuente no corresponden a esta entrega iOS.')
+require(f'folio-{version}-fuente.zip' in (ROOT / 'SOURCE-BUILD.txt').read_text(), 'Las instrucciones nombran una fuente de otra versión.')
+require(f'Folio {version}' in (ROOT / 'docs/ios.md').read_text(), 'La guía iPhone pertenece a otra versión.')
+swift_dependencies = json.loads((ROOT / 'scripts/ios-swift-dependencies.json').read_text())
+swift_locks = json.loads((ROOT / 'test-results/ios/swift-package-locks.json').read_text())
+require(swift_locks.get('verified'), 'No se verificó la revisión SwiftRs compilada.')
+for item in swift_dependencies['SwiftRs']['licenses'].values():
+    require(sha(ROOT / item['path']) == item['sha256'], 'La licencia SwiftRs no coincide.')
+    shutil.copy2(ROOT / item['path'], out / ('SwiftRs-' + Path(item['path']).name))
 shutil.copy2(ROOT / 'docs/ios.md', out / 'README_iPhone.md')
 shutil.copy2(args.mupdf_source, out / args.mupdf_source.name)
 source = out / f'folio-{version}-fuente.zip'
@@ -117,6 +126,7 @@ manifest = {'product': 'Folio', 'version': version, 'platform': 'iOS', 'device':
             'nativeSimulatorQA': qa['passed'], 'nativeSimulatorProduction': production['passed'],
             'gitCommit': run('git', 'rev-parse', 'HEAD'), 'sourceFiles': count,
             'correspondingMuPDFSourceSha256': MUPDF_SHA,
+            'swiftDependencies': swift_dependencies, 'swiftLocksVerified': True,
             'artifacts': [{'path': str(p.relative_to(out)).replace('\\', '/'), 'bytes': p.stat().st_size, 'sha256': sha(p)}
                           for p in sorted(out.rglob('*')) if p.is_file() and p.name not in {'release-manifest.json', 'SHA256SUMS.txt'}]}
 (out / 'release-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2))

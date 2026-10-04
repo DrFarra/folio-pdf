@@ -22,6 +22,7 @@ report = {'version': version, 'platform': 'iOS Simulator', 'nativeWKWebView': Tr
           'physicalDeviceTested': False, 'FeatherSigningTested': False,
           'UIKitDialogInteractionTested': False, 'AirPrintJobTested': False}
 device = None
+data = None
 
 def run(*cmd):
     return subprocess.run(cmd, cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -103,6 +104,7 @@ try:
         viewport = diagnostic['snapshot']['document']
         assert viewport['scrollWidth'] <= viewport['width'] + 1, 'La aplicación completa desborda horizontalmente.'
         report['documentDiagnostic'] = checked
+    time.sleep(2)
     screenshot = out / ('folio-iphone-qa.png' if args.qa else 'folio-iphone.png')
     run('xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot))
     # Relaunch the same sandbox with the fixture: real persistence and startup
@@ -112,7 +114,22 @@ try:
     wait_file(data, f'{digest}.json', lambda s: s.get('version') == 3)
     report['sandboxPersistenceVerified'] = True
     report['passed'] = True
+except Exception as error:
+    report['failure'] = f'{type(error).__name__}: {error}'
+    raise
 finally:
+    # Never delete the only useful failure evidence with the ephemeral device.
+    # A probe timeout must still retain the current rendered screen and partial
+    # diagnostics, even when no document reached checksCompleted.
+    if device and not report['passed']:
+        if args.qa and data:
+            for p in data.rglob('f' * 64 + '.json'):
+                try:
+                    (out / 'native-qa-ios-partial.json').write_bytes(p.read_bytes())
+                    break
+                except OSError: pass
+        screenshot = out / ('folio-iphone-qa-failure.png' if args.qa else 'folio-iphone-failure.png')
+        subprocess.run(['xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot)], capture_output=True)
     (out / ('native-smoke-ios-qa.json' if args.qa else 'native-smoke-ios.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2))
     if device:
         subprocess.run(['xcrun', 'simctl', 'shutdown', device], capture_output=True)

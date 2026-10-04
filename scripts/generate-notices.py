@@ -16,7 +16,7 @@ parser.add_argument('--platform', choices=['windows', 'macos', 'ios'], default='
 args = parser.parse_args()
 metadata = json.loads(args.cargo_metadata.read_text(encoding='utf-8-sig'))
 lock = json.loads((root/'package-lock.json').read_text(encoding='utf-8'))
-version = json.loads((root/'package.json').read_text(encoding='utf-8'))['version']
+app_version = json.loads((root/'package.json').read_text(encoding='utf-8'))['version']
 platform_name = {'windows': 'Windows', 'macos': 'macOS', 'ios': 'iOS'}[args.platform]
 runtime_notice = ("iOS uses Apple\'s system WKWebView and UIKit file import/export.\n"
                   "The device IPA is unsigned; Feather must sign it with a valid certificate\n"
@@ -27,7 +27,7 @@ runtime_notice = ("iOS uses Apple\'s system WKWebView and UIKit file import/expo
                   "Microsoft WebView2 is a separate runtime under Microsoft's license terms.\n"
                   "The installer downloads the official bootstrapper only if WebView2 is missing.\n"
                   "The installer is unsigned. Folio does not upload PDF documents.\n")
-parts = [f"""Folio {version} — Third-party notices
+parts = [f"""Folio {app_version} — Third-party notices
 Folio is licensed under AGPL-3.0-or-later; see LICENSE.
 No commercial PDF SDK or paid service is required for local reading/annotations.
 
@@ -46,7 +46,7 @@ MuPDF components. License alternatives are quoted as declared by each package.
 
 {runtime_notice}
 """]
-index = {'platform': args.platform, 'npm': [], 'cargo': [], 'mupdfSource': None}
+index = {'platform': args.platform, 'appVersion': app_version, 'npm': [], 'cargo': [], 'mupdfSource': None}
 
 def notice_name(p):
     return any(k in p.name.lower() for k in ('license', 'licence', 'copying', 'copyright', 'notice'))
@@ -108,6 +108,67 @@ if args.mupdf_source:
                     add_text('MuPDF source archive: '+member.name, archive.extractfile(member).read().decode('utf-8', errors='replace'))
 
 index['packagesWithoutSeparateNoticeFile'] = missing
+if args.platform == 'ios':
+    swift_dependencies = json.loads((root/'scripts/ios-swift-dependencies.json').read_text(encoding='utf-8'))
+    index['swiftPackages'] = swift_dependencies
+    for name, license_info in swift_dependencies['SwiftRs']['licenses'].items():
+        license_file = root/license_info['path']
+        if hashlib.sha256(license_file.read_bytes()).hexdigest() != license_info['sha256']:
+            raise SystemExit(f'SwiftRs: no coincide la licencia bloqueada {name}.')
+        add_text(f"SwiftRs Swift package {swift_dependencies['SwiftRs']['version']} ({swift_dependencies['SwiftRs']['revision']}) — {name}", license_file.read_text(encoding='utf-8'))
+    (root/'SOURCE-BUILD.txt').write_text(f"""Folio {app_version} — iOS source and build information
+
+Application source: folio-{app_version}-fuente.zip, provided beside the IPA.
+License: AGPL-3.0-or-later, full text in LICENSE.
+Locked dependency versions/integrities: package-lock.json and both Cargo.lock files.
+Local UIKit bridge source: src-tauri/plugins/folio-ios, AGPL-3.0-or-later.
+Swift Tauri API source: the locked tauri Cargo crate's mobile/ios-api directory.
+SwiftRs Swift package revision and licenses: scripts/ios-swift-dependencies.json
+and the SwiftRs license files included with the iOS delivery.
+
+Build iPhone/iPad: npm ci; node scripts/build-ios.mjs.
+Required host: macOS with full Xcode, iOS SDK, an iPhone Simulator runtime,
+Node 22+ and Rust stable. Minimum device OS: iOS 17.0.
+The CLI invocation uses npm run tauri -- ios init/build so the generated
+XcodeBuildRustScript invokes the same locked Tauri project CLI.
+Device target: aarch64-apple-ios, platform IOS, arm64 unsigned IPA.
+Simulator target: aarch64-apple-ios-sim, platform IOSSIMULATOR, separate .app.
+Device build uses --no-sign --ci with Cargo --locked. No Apple certificate,
+provisioning profile, account credential or private signing key is included.
+Feather must sign the device IPA with the user's valid certificate/profile
+before installation. A simulator .app cannot be installed on a physical iPhone.
+Read docs/ios.md and the native simulator and mobile WebKit release evidence.
+No physical-device or Feather-installation test is claimed by simulator tests.
+
+MuPDF.js 1.28.1 is used without modification from its published npm package.
+Complete official C/TypeScript/WASM build source, including thirdparty sources:
+  mupdf-1.28.1-source.tar.gz, provided beside the application source archive
+  https://mupdf.com/downloads/archive/mupdf-1.28.1-source.tar.gz
+SHA-256:
+  dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3
+Repository/tag: https://github.com/ArtifexSoftware/mupdf/tree/1.28.1
+
+Rebuild MuPDF.js independently from that source archive:
+  Install Node and the Emscripten SDK.
+  Extract the archive; cd mupdf-1.28.1-source/platform/wasm.
+  npm install
+  EMSDK=/path/to/emsdk bash tools/build.sh
+The upstream script installs/activates Emscripten 4.0.8, uses BUILD=small and
+default feature/define settings. It creates dist/mupdf.js, mupdf-wasm.js,
+mupdf-wasm.wasm and TypeScript declarations. See tools/build.sh for details.
+For a source build of Folio, use the rebuilt package through npm/local packaging,
+then run npm run build and node scripts/build-ios.mjs.
+Rebuilding that upstream source is documented but was not executed for this
+release; tested WASM is the unmodified npm package pinned by package-lock integrity.
+No byte-for-byte reproducibility claim is made for a build on another machine.
+
+Exact npm registry URLs and Cargo crate source-download URLs are recorded in
+dependency-licenses.json. Keep the corresponding source, build instructions and
+license notices available with redistributed binaries under their licenses.
+
+Existing desktop build instructions remain in README.md and docs/acceptance-windows.md.
+Desktop acceptance does not establish iOS runtime acceptance, and vice versa.
+""", encoding='utf-8')
 (root/'THIRD-PARTY-NOTICES.txt').write_text('\n'.join(parts), encoding='utf-8')
 (root/'dependency-licenses.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps({'npmPackages': len(index['npm']), 'cargoPackages': len(index['cargo']), 'withoutSeparateFile': missing, 'noticeBytes': (root/'THIRD-PARTY-NOTICES.txt').stat().st_size}))
