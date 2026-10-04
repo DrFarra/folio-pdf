@@ -56,6 +56,7 @@ jobs:
           node scripts/tests/native-pdf-adapter.mjs
           node scripts/tests/iphone-native-big-contract.mjs
       - name: Build real arm64 iPhone Simulator diagnostics
+        id: ios_qa_build
         run: |
           set -o pipefail
           node scripts/build-ios.mjs --simulator --qa 2>&1 | tee test-results/ios/ios-qa-build.log
@@ -63,6 +64,7 @@ jobs:
         run: |
           python3 scripts/tests/native-smoke-ios.py --qa --app test-results/ios-build/qa/Folio.app
       - name: Exercise actual UIKit PDF picker and cold and warm Open In
+        if: always() && !cancelled() && steps.ios_qa_build.outcome == 'success'
         run: |
           python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-build/qa/Folio.app
       - name: Build the production simulator and unsigned device IPA
@@ -95,6 +97,7 @@ jobs:
             test-results/ios/*.json
             test-results/ios/*.png
             test-results/ios/*.log
+            test-results/ios/native-pdfkit-failed-export-*.pdf
             test-results/ios/*.xcresult/**
             test-results/iphone/*.json
             test-results/iphone/*.png
