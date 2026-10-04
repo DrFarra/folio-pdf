@@ -333,8 +333,8 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
         return a.kind === 'highlight' ? a.quads?.length ? a.quads.map((q, index) => {
           const points = [0, 2, 4, 6].map(i => viewport.convertToViewportPoint(q[i], q[i + 1]));
           const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
-          return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), background: a.color }} />;
-        }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color }} /> :
+          return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), background: a.color, opacity: a.opacity ?? .35 }} />;
+        }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity: a.opacity ?? .35 }} /> :
           <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.max(0, Math.min(p1[0], viewport.width - (isMobile ? 44 : 28))), top: Math.max(0, Math.min(p1[1], viewport.height - (isMobile ? 44 : 28))) }} onPointerDown={e => e.stopPropagation()} onClick={() => onNoteClick(a.id)}><MessageSquare size={15} fill="currentColor" /></button>;
       })}
       {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}

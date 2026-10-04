@@ -43,7 +43,10 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         let reference = first["annotations"][0]["nativeSourceRef"].as_str().ok_or("No hay referencia estable del resaltado.")?.to_string();
         let folder = desktop.data.join("pdfkit-probe").join(uuid::Uuid::new_v4().to_string()); fs::create_dir_all(&folder).map_err(|_| "No se pudo preparar la exportación de prueba.")?;
         let output = folder.join("Folio modified.pdf");
-        let mut additions = vec![serde_json::json!({"id":"native-added-note","page":1,"kind":"note","rect":[420,600,420,600],"color":"#ff0000","text":"Folio native exported note","created":0})];
+        let mut additions = vec![
+            serde_json::json!({"id":"native-added-note","page":1,"kind":"note","rect":[420,600,420,600],"color":"#ff0000","text":"Folio native exported note","created":0}),
+            serde_json::json!({"id":"native-added-highlight","page":1,"kind":"highlight","rect":[80,580,200,600],"quads":[[80,600,200,600,80,580,200,580]],"color":"#ffff00","text":"Folio native exported highlight","created":0}),
+        ];
         // Including an unchanged original overlay must preserve its appearance,
         // original name and opacity rather than unnecessarily recreating it.
         additions.push(first["annotations"][1].clone());
@@ -52,7 +55,8 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":exported.token,"path":output,"id":exported.id,"revision":exported.revision,"size":exported.size,"password":""})).await?;
         let modified = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":exported.token,"page":1})).await?;
         let unseen = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":exported.token,"page":2})).await?;
-        if modified["annotations"].as_array().map(|a| a.len()) != Some(2) || !modified["annotations"].as_array().into_iter().flatten().any(|a| a["text"] == "Folio native exported note") || unseen["annotations"].as_array().map(|a| a.len()) != Some(1) { return Err("La copia no eliminó/añadió anotaciones o perdió las de la página no visitada.".into()); }
+        if modified["annotations"].as_array().map(|a| a.len()) != Some(3) || modified["annotations"].as_array().into_iter().flatten().any(|a| a["originalName"] == "source-highlight") || !modified["annotations"].as_array().into_iter().flatten().any(|a| a["text"] == "Folio native exported note") || unseen["annotations"].as_array().map(|a| a.len()) != Some(1) { return Err(format!("La copia no eliminó/añadió anotaciones o perdió las de la página no visitada: {modified}")); }
+        if !modified["annotations"].as_array().into_iter().flatten().any(|a| a["originalName"] == "native-added-highlight" && a["opacity"].as_f64().is_some_and(|v| (v - 0.35).abs() < 0.01)) { return Err(format!("El nuevo resaltado no conservó la transparencia predeterminada: {modified}")); }
         if !modified["annotations"].as_array().into_iter().flatten().any(|a| a["originalName"] == "source-note" && a["opacity"].as_f64().is_some_and(|v| (v - 0.35).abs() < 0.01)) || !unseen["sourceAnnotationTypes"].as_array().into_iter().flatten().any(|t| t == "Square") { return Err("La copia alteró la opacidad/nombre originales o perdió una anotación no editable.".into()); }
         // Only inspect page 2 after exporting, so the preservation assertion
         // above really covers original annotations absent from the overlays.
@@ -70,7 +74,7 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         if source.digest != info.id { return Err("La exportación nativa modificó el original.".into()); }
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":exported.token})).await?;
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":info.token})).await?;
-        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output}));
+        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"addedHighlightDefaultOpacity":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output}));
     }
     Ok(serde_json::json!({"swiftImportExecuted":true,"pdfKitExecuted":true,"wholeDocumentIPC":false,"UIKitInteractionTested":false,"documents":reports}))
 }

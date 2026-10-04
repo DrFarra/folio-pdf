@@ -33,7 +33,7 @@ try {
     Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' });
     const storage = key => JSON.parse(localStorage.getItem(key) || 'null');
     const sessions = storage('__bigSessions') || {}, recents = storage('__bigRecents') || {}, calls = storage('__bigCalls') || [];
-    const imported = { id: 'imported-a-page1', page: 1, kind: 'highlight', rect: [30, 450, 280, 470], quads: [[30, 470, 280, 470, 30, 450, 280, 450]], color: '#f5d164', text: 'Imported highlight A', created: 0, nativeSourceRef: 'pdfkit:1:0' };
+    const imported = { id: 'imported-a-page1', page: 1, kind: 'highlight', rect: [30, 450, 280, 470], quads: [[30, 470, 280, 470, 30, 450, 280, 450]], color: '#f5d164', text: 'Imported highlight A', created: 0, opacity: .25, nativeSourceRef: 'pdfkit:1:0' };
     const unseen = { id: 'imported-a-page20', page: 20, kind: 'note', rect: [30, 400, 30, 400], color: '#f5d164', text: 'Keep unseen original page 20', created: 0, nativeSourceRef: 'pdfkit:20:0' };
     const sources = {
       first: { token: 'first', name: 'Large first.pdf', size: 2 * 1024 ** 3, id: 'a'.repeat(64), revision: 'a'.repeat(64), annotations: [imported, unseen] },
@@ -128,6 +128,7 @@ try {
   const mark = id => results.push({ id, passed: true, bridgeMocked: true });
   await page.goto(origin); await readyDocument('Large first.pdf');
   await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').waitFor();
+  assert.equal(await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').evaluate(element => getComputedStyle(element).opacity), '0.25', 'Imported PDF highlight opacity must be preserved by the visible overlay.');
   let state = await capture(); assert(!state.calls.some(call => call.command === 'native_pdf_page_info' && call.args.page >= 10)); assert.deepEqual(state.workers, []);
   mark('native-2gib-metadata-opens-with-page-pixels-and-no-whole-file-read-or-js-worker');
 

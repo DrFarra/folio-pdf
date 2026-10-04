@@ -96,17 +96,43 @@ final class NativePDFService {
         let value = (annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "CA")) ?? annotation.value(forAnnotationKey: PDFAnnotationKey(rawValue: "/CA"))) as? NSNumber
         return min(1, max(0, value?.doubleValue ?? Double(annotation.color.cgColor.alpha)))
     }
+    private var opacityKey: PDFAnnotationKey {
+        PDFAnnotationKey(rawValue: (PDFAnnotationKey.name.rawValue.hasPrefix("/") ? "/" : "") + "CA")
+    }
+    private func sourceOpacity(_ page: PDFPage, _ index: Int) -> Double {
+        guard let reference = page.pageRef else { return opacity(page.annotations[index]) }
+        var array: CGPDFArrayRef?, dictionary: CGPDFDictionaryRef?
+        guard CGPDFDictionaryGetArray(reference.dictionary, "Annots", &array), let array = array else { return opacity(page.annotations[index]) }
+        if let name = page.annotations[index].value(forAnnotationKey: .name) as? String, !name.isEmpty {
+            // PDFKit can omit unsupported annotations from its public array.
+            // Prefer the source /NM identity before using the original index.
+            for candidate in 0..<CGPDFArrayGetCount(array) {
+                var item: CGPDFDictionaryRef?, pdfName: CGPDFStringRef?
+                if CGPDFArrayGetDictionary(array, candidate, &item), let item = item,
+                   CGPDFDictionaryGetString(item, "NM", &pdfName), let pdfName = pdfName,
+                   let actual = CGPDFStringCopyTextString(pdfName), actual as String == name { dictionary = item; break }
+            }
+        }
+        if dictionary == nil && index < CGPDFArrayGetCount(array) { _ = CGPDFArrayGetDictionary(array, index, &dictionary) }
+        guard let dictionary = dictionary else { return opacity(page.annotations[index]) }
+        // /CA is not exposed by PDFKit's annotationKeyValues on the iOS SDK.
+        // Read the immutable PDF annotation dictionary without materializing
+        // the document or changing an annotation's appearance/geometry.
+        var alpha: CGPDFReal = 1
+        if CGPDFDictionaryGetNumber(dictionary, "CA", &alpha) { return min(1, max(0, Double(alpha))) }
+        return 1
+    }
     private func annotationQuads(_ annotation: PDFAnnotation) -> [[Double]] {
         guard let points = annotation.quadrilateralPoints, points.count >= 4 else { return [] }
         return stride(from: 0, to: points.count - 3, by: 4).map { start in
             points[start..<start+4].flatMap { point -> [Double] in let p = point.cgPointValue; return [Double(p.x + annotation.bounds.minX), Double(p.y + annotation.bounds.minY)] }
         }
     }
-    private func matches(_ overlay: PDFOverlay, _ annotation: PDFAnnotation) -> Bool {
+    private func matches(_ overlay: PDFOverlay, _ annotation: PDFAnnotation, _ alpha: Double) -> Bool {
         guard overlay.kind == overlayKind(annotation), overlay.text == (annotation.contents ?? ""),
               (overlay.author ?? "") == (annotation.userName ?? ""),
               overlay.color.lowercased() == colorHex(annotation.color).lowercased(), overlay.rect.count == 4,
-              abs((overlay.opacity ?? opacity(annotation)) - opacity(annotation)) < 0.001 else { return false }
+              abs((overlay.opacity ?? alpha) - alpha) < 0.001 else { return false }
         if zip(overlay.rect, overlayRect(annotation)).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false }
         let existing = annotationQuads(annotation), requested = overlay.quads ?? []
         if existing.count != requested.count { return false }
@@ -123,7 +149,7 @@ final class NativePDFService {
                 var item: [String: Any] = ["id": reference, "nativeSourceRef": reference, "page": number, "kind": kind,
                     "rect": overlayRect(annotation), "color": colorHex(annotation.color), "text": annotation.contents ?? "",
                     "created": (annotation.modificationDate?.timeIntervalSince1970 ?? 0) * 1000,
-                    "author": annotation.userName ?? "", "opacity": opacity(annotation)]
+                    "author": annotation.userName ?? "", "opacity": sourceOpacity(page, index)]
                 if let name = annotation.value(forAnnotationKey: .name) as? String { item["originalName"] = name }
                 let quads = annotationQuads(annotation); if !quads.isEmpty { item["quads"] = quads }
                 annotations.append(item)
@@ -210,6 +236,17 @@ final class NativePDFService {
         guard let document = PDFDocument(url: URL(fileURLWithPath: value.args.path)) else { throw error("No se pudo preparar la copia del PDF.") }
         if document.isLocked { _ = document.unlock(withPassword: value.args.password ?? "") }
         guard !document.isLocked else { throw error("No se pudo desbloquear la copia del PDF.") }
+        // Preserve transparency omitted by PDFKit's public getter. Export can
+        // traverse pages lazily; opening/reading still never scans all pages.
+        for number in 0..<document.pageCount {
+            guard let page = document.page(at: number) else { continue }
+            for (index, annotation) in page.annotations.enumerated() {
+                let alpha = sourceOpacity(page, index)
+                if alpha < 1 {
+                    guard annotation.setValue(NSNumber(value: alpha), forAnnotationKey: opacityKey) else { throw error("PDFKit no permitió conservar la transparencia original de una anotación.") }
+                }
+            }
+        }
         // Resolve all source indices before removal. Other pages and annotation
         // types are left intact; never clear the annotation collection wholesale.
         var unchanged = Set<String>()
@@ -217,7 +254,7 @@ final class NativePDFService {
             guard let reference = overlay.nativeSourceRef else { continue }
             let parts = reference.split(separator: ":")
             if parts.count == 3, parts[0] == "pdfkit", let number = Int(parts[1]), let index = Int(parts[2]), number > 0,
-               let page = document.page(at: number - 1), index >= 0, index < page.annotations.count, matches(overlay, page.annotations[index]) {
+               let page = document.page(at: number - 1), index >= 0, index < page.annotations.count, matches(overlay, page.annotations[index], sourceOpacity(page, index)) {
                 unchanged.insert(reference)
             }
         }
@@ -240,11 +277,12 @@ final class NativePDFService {
             if overlay.kind == "note" { rect = CGRect(x: overlay.rect[0], y: overlay.rect[1] - 20, width: 20, height: 20) }
             guard rect.width > 0, rect.height > 0 else { throw error("La anotación tiene un tamaño inválido.") }
             let annotation = PDFAnnotation(bounds: rect, forType: overlay.kind == "highlight" ? .highlight : .text, withProperties: nil)
-            annotation.color = color(overlay.color, min(1, max(0, overlay.opacity ?? 1)))
+            let alpha = min(1, max(0, overlay.opacity ?? (overlay.kind == "highlight" ? 0.35 : 1)))
+            annotation.color = color(overlay.color, alpha)
             annotation.contents = overlay.text; annotation.userName = overlay.author ?? "Folio"
             annotation.modificationDate = Date(timeIntervalSince1970: overlay.created / 1000)
             _ = annotation.setValue(overlay.originalName ?? overlay.id, forAnnotationKey: .name)
-            _ = annotation.setValue(min(1, max(0, overlay.opacity ?? 1)), forAnnotationKey: PDFAnnotationKey(rawValue: "CA"))
+            guard annotation.setValue(NSNumber(value: alpha), forAnnotationKey: opacityKey) else { throw error("PDFKit no permitió guardar la transparencia de la anotación.") }
             if overlay.kind == "highlight", let quads = overlay.quads {
                 guard quads.allSatisfy({ $0.count == 8 && $0.allSatisfy({ $0.isFinite }) }) else { throw error("El resaltado contiene coordenadas inválidas.") }
                 annotation.quadrilateralPoints = quads.flatMap { quad in stride(from: 0, to: 8, by: 2).map { index in

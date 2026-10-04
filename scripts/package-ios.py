@@ -103,9 +103,10 @@ native_documents = native_files.get('documents', [])
 require(len(native_documents) == 2 and any(d.get('document', {}).get('size', 0) > 2 * 1024**3 for d in native_documents),
         'Falta la lectura real del fixture PDF de más de 2 GiB.')
 for document in native_documents:
-    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'unseenHighlightPreserved', 'unseenNonOverlayPreserved', 'originalOpacityAndNamePreserved', 'sourceUnchanged']) and
+    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'addedHighlightDefaultOpacity', 'unseenHighlightPreserved', 'unseenNonOverlayPreserved', 'originalOpacityAndNamePreserved', 'sourceUnchanged']) and
             document.get('independentExportVerification', {}).get('passed') is True and
             document.get('independentExportVerification', {}).get('unseenNonOverlayPreserved') is True and
+            document.get('independentExportVerification', {}).get('addedHighlightDefaultOpacity') is True and
             document.get('metadata', {}).get('numPages') == 2 and
             len(document.get('text', {}).get('lines', [])) > 1 and
             {r.get('rotation') for r in document.get('rasters', [])} == {0, 90, 180, 270} and
