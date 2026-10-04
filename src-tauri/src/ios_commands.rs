@@ -29,7 +29,8 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         let text = mobile_call(app.clone(), "pdfText", serde_json::json!({"token":info.token,"page":1})).await?;
         if !text["lines"].as_array().into_iter().flatten().filter_map(|v| v["text"].as_str()).collect::<String>().contains("Folio native PDFKit") { return Err("PDFKit no extrajo el texto del fixture.".into()); }
         let first = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":info.token,"page":1})).await?;
-        if first["annotations"].as_array().map(|a| a.len()) != Some(2) { return Err("No se reconocieron el resaltado y la nota originales de PDFKit.".into()); }
+        if first["annotations"].as_array().map(|a| a.len()) != Some(2) { return Err(format!("No se reconocieron el resaltado y la nota originales de PDFKit. metadata={metadata}; pageInfo={first}")); }
+        if !first["annotations"].as_array().into_iter().flatten().all(|a| a["opacity"].as_f64().is_some_and(|v| (v - 0.35).abs() < 0.01)) { return Err(format!("PDFKit no conservó la opacidad original de las anotaciones: {first}")); }
         let mut rasters = Vec::new();
         for rotation in [0, 90, 180, 270] {
             let (width, height) = if rotation % 180 == 0 { (572, 732) } else { (732, 572) };
@@ -37,23 +38,39 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
             let raster = PathBuf::from(response["path"].as_str().ok_or("PDFKit no generó el fixture PNG.")?);
             let evidence = desktop.data.join(format!("native-pdf-{}-{rotation}.png", if info.size > 2 * 1024 * 1024 * 1024 { "2gib" } else { "small" }));
             fs::rename(&raster, &evidence).map_err(|e| format!("No se pudo conservar la evidencia PNG: {e}"))?;
-            rasters.push(serde_json::json!({"rotation":rotation,"width":width,"height":height,"path":evidence}));
+            rasters.push(serde_json::json!({"page":1,"rotation":rotation,"width":width,"height":height,"path":evidence}));
         }
         let reference = first["annotations"][0]["nativeSourceRef"].as_str().ok_or("No hay referencia estable del resaltado.")?.to_string();
         let folder = desktop.data.join("pdfkit-probe").join(uuid::Uuid::new_v4().to_string()); fs::create_dir_all(&folder).map_err(|_| "No se pudo preparar la exportación de prueba.")?;
         let output = folder.join("Folio modified.pdf");
-        let additions = serde_json::json!([{"id":"native-added-note","page":1,"kind":"note","rect":[420,600,420,600],"color":"#ff0000","text":"Folio native exported note","created":0}]);
+        let mut additions = vec![serde_json::json!({"id":"native-added-note","page":1,"kind":"note","rect":[420,600,420,600],"color":"#ff0000","text":"Folio native exported note","created":0})];
+        // Including an unchanged original overlay must preserve its appearance,
+        // original name and opacity rather than unnecessarily recreating it.
+        additions.push(first["annotations"][1].clone());
         mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":info.token,"path":output,"annotations":additions,"removedSourceRefs":[reference]})).await?;
         let exported = register(&desktop, output.clone())?;
         mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":exported.token,"path":output,"id":exported.id,"revision":exported.revision,"size":exported.size,"password":""})).await?;
         let modified = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":exported.token,"page":1})).await?;
         let unseen = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":exported.token,"page":2})).await?;
         if modified["annotations"].as_array().map(|a| a.len()) != Some(2) || !modified["annotations"].as_array().into_iter().flatten().any(|a| a["text"] == "Folio native exported note") || unseen["annotations"].as_array().map(|a| a.len()) != Some(1) { return Err("La copia no eliminó/añadió anotaciones o perdió las de la página no visitada.".into()); }
+        if !modified["annotations"].as_array().into_iter().flatten().any(|a| a["originalName"] == "source-note" && a["opacity"].as_f64().is_some_and(|v| (v - 0.35).abs() < 0.01)) || !unseen["sourceAnnotationTypes"].as_array().into_iter().flatten().any(|t| t == "Square") { return Err("La copia alteró la opacidad/nombre originales o perdió una anotación no editable.".into()); }
+        // Only inspect page 2 after exporting, so the preservation assertion
+        // above really covers original annotations absent from the overlays.
+        let second = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":info.token,"page":2})).await?;
+        let second_text = mobile_call(app.clone(), "pdfText", serde_json::json!({"token":info.token,"page":2})).await?;
+        if second["rotation"] != 90 { return Err("No se reconoció la rotación intrínseca de la segunda página.".into()); }
+        for rotation in [90, 270] {
+            let response = mobile_call(app.clone(), "pdfRender", serde_json::json!({"token":info.token,"page":2,"width":792,"height":612,"rotation":rotation})).await?;
+            let raster = PathBuf::from(response["path"].as_str().ok_or("PDFKit no generó la página rotada.")?);
+            let evidence = desktop.data.join(format!("native-pdf-{}-page2-{rotation}.png", if info.size > 2 * 1024 * 1024 * 1024 { "2gib" } else { "small" }));
+            fs::rename(&raster, &evidence).map_err(|e| format!("No se pudo conservar la página rotada: {e}"))?;
+            rasters.push(serde_json::json!({"page":2,"rotation":rotation,"width":792,"height":612,"path":evidence}));
+        }
         let source = inspect_pdf_file(&path)?;
         if source.digest != info.id { return Err("La exportación nativa modificó el original.".into()); }
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":exported.token})).await?;
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":info.token})).await?;
-        reports.push(serde_json::json!({"document":info,"metadata":metadata,"pageInfo":first,"text":text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"unseenHighlightPreserved":true,"sourceUnchanged":true,"exportedPath":output}));
+        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output}));
     }
     Ok(serde_json::json!({"swiftImportExecuted":true,"pdfKitExecuted":true,"wholeDocumentIPC":false,"UIKitInteractionTested":false,"documents":reports}))
 }

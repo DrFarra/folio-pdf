@@ -103,16 +103,35 @@ native_documents = native_files.get('documents', [])
 require(len(native_documents) == 2 and any(d.get('document', {}).get('size', 0) > 2 * 1024**3 for d in native_documents),
         'Falta la lectura real del fixture PDF de más de 2 GiB.')
 for document in native_documents:
-    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'unseenHighlightPreserved', 'sourceUnchanged']) and
+    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'unseenHighlightPreserved', 'unseenNonOverlayPreserved', 'originalOpacityAndNamePreserved', 'sourceUnchanged']) and
+            document.get('independentExportVerification', {}).get('passed') is True and
+            document.get('independentExportVerification', {}).get('unseenNonOverlayPreserved') is True and
             document.get('metadata', {}).get('numPages') == 2 and
             len(document.get('text', {}).get('lines', [])) > 1 and
             {r.get('rotation') for r in document.get('rasters', [])} == {0, 90, 180, 270} and
+            {r.get('rotation') for r in document.get('rasters', []) if r.get('page') == 2 and r.get('intrinsicRotationVerified') == 90 and r.get('nonOverlayAnnotationVisible') is True} == {90,270} and
             all(r.get('geometryVerified') is True and (ROOT / 'test-results/ios' / r.get('inspectionFile', '')).is_file() for r in document.get('rasters', [])),
             'La evidencia PDFKit no demuestra texto, rotación, exportación y conservación del original.')
 memory = native_files.get('memory', {})
 require(type(memory.get('peakBytes')) is int and 0 < memory['peakBytes'] < 768*1024**2 and
         type(memory.get('samples')) is int and memory['samples'] > 0 and memory.get('physicalDeviceMeasured') is False,
         'Falta la medida acotada de memoria residente del lector de 2 GiB en simulador.')
+large_reader = qa.get('largeFrontendReader', {})
+require(all(large_reader.get(flag) is True for flag in ['actualWKWebView','fileBackedAdapter','selectionVerified','searchVerified','sessionVerified','nativeClipboardVerified']) and
+        large_reader.get('sourceBytes',0) > 2*1024**3 and
+        large_reader.get('freshDiagnosticAt',0) >= large_reader.get('startedAt',1) and
+        large_reader.get('checksStartedAt',0) >= large_reader.get('startedAt',1) and
+        0 < large_reader.get('peakNativeProcessRSSBytes',0) < 768*1024**2,
+        'Falta la apertura del PDF de 2 GiB en la interfaz WK/PDFKit real, con selección/búsqueda y memoria acotada.')
+ui_imports = report('iphone-native-import-ui-results.json')
+require(ui_imports.get('UIKitDialogInteractionTested') is True and ui_imports.get('OSOpenInInteractionTested') is True and
+        ui_imports.get('startupFixturePassedAsArgument') is False and ui_imports.get('pickerDelegateInjected') is False and
+        ui_imports.get('javascriptOpenEventInjected') is False and
+        ui_imports.get('xctest', {}).get('passed') == 2 and ui_imports.get('xctest', {}).get('failed') == 0 and
+        ui_imports.get('xctest', {}).get('skipped') == 0 and len(ui_imports.get('fixtures', [])) == 4 and
+        all(f.get('nativeImportCopies', 0) > 0 and f.get('nativeSessionVersion') == 3 and
+            f.get('nativeDocumentRevision') == f.get('sha256') for f in ui_imports.get('fixtures', [])),
+        'Faltan pruebas reales de selección con UIKit y Open In de iOS, con copias y sesiones persistidas.')
 with tempfile.TemporaryDirectory(prefix='folio-ios-verify-') as directory:
     directory = Path(directory)
     with zipfile.ZipFile(source_ipa) as ipa:
@@ -175,7 +194,9 @@ manifest = {'product': 'Folio', 'version': version, 'platform': 'iOS', 'device':
             'signing': 'unsigned device IPA; user signs with Feather and a valid certificate/profile',
             'AppleCertificateIncluded': False, 'ProvisioningProfileIncluded': False,
             'physicalDeviceTested': False, 'FeatherInstallationTested': False,
-            'UIKitDialogInteractionTested': False, 'AirPrintJobTested': False,
+            'UIKitDialogInteractionTested': ui_imports['UIKitDialogInteractionTested'],
+            'OSOpenInInteractionTested': ui_imports['OSOpenInInteractionTested'], 'AirPrintJobTested': False,
+            'nativeFileBackedPDFKitVerified': True, 'nativeTwoGiBFixtureVerified': True,
             'nativeSimulatorQA': qa['passed'], 'nativeSimulatorProduction': production['passed'],
             'gitCommit': run('git', 'rev-parse', 'HEAD'), 'sourceFiles': count,
             'correspondingMuPDFSourceSha256': MUPDF_SHA,

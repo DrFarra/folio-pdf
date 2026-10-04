@@ -12,6 +12,7 @@ import PDFPage, { Thumbnail } from './components/PDFPage';
 import Modal from './components/Modal';
 import { buildTextIndex, exportAnnotated, formatSize, getDocument, readOutline, searchText } from './pdf';
 import { openNativePdf, isNativePdfDocument, isNativePdfPasswordError, nativePdfPageAnnotations, subscribeNativePdfAnnotations } from './nativePdf';
+import { migrateLegacyNativePage } from './native-session';
 import type { Inspection } from './engine/mupdf-engine.mjs';
 import type { NativeDocument } from './platform';
 import { inspectPdf, processPdf } from './engine/client';
@@ -179,7 +180,7 @@ export default function App() {
   async function persistTab(tab: DocumentTab) {
     await draftSave.current;
     if (tab.doc.modified && !isNativePdfDocument(tab.doc.pdf)) await storeDraft(tab.doc.id, tab.doc.bytes);
-    const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations });
+    const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations, nativeLegacySession: tab.doc.nativeLegacySession });
     if (!saved) throw new Error('No se pudo conservar la sesión. Guarda el PDF antes de cerrar la pestaña.');
   }
   async function switchTab(key: string) {
@@ -335,6 +336,7 @@ export default function App() {
       setPage(initialPage); setPageInput(String(initialPage));
       const sessionMatches = session.documentRevision === revision || (!session.documentRevision && !modified) || context?.useSession === false;
       loaded.nativeKnownPages = fileBacked && sessionMatches ? session.nativeKnownPages || [] : [];
+      loaded.nativeLegacySession = fileBacked && sessionMatches && (session.nativeLegacySession || (session.version || 0) >= 2 && !session.nativeKnownPages && !session.nativeOriginalRefs);
       loaded.nativeOriginalRefs = fileBacked && sessionMatches ? session.nativeOriginalRefs || [] : [];
       if (fileBacked && sessionMatches && session.nativeSavedAnnotations) loaded.savedAnnotations = session.nativeSavedAnnotations;
       const restored = !sessionMatches ? inspection.annotations : (session.version || 0) >= 2 ? session.annotations : [...inspection.annotations, ...session.annotations.filter(a => !inspection.annotations.some(b => b.id === a.id))];
@@ -428,7 +430,7 @@ export default function App() {
   useEffect(() => {
     if (!doc) return;
     const timeout = setTimeout(() => {
-      void saveSession(doc.id, { annotations, bookmarks, lastPage: page, documentRevision: doc.revision, nativeKnownPages: doc.nativeKnownPages, nativeOriginalRefs: doc.nativeOriginalRefs, nativeSavedAnnotations: doc.savedAnnotations }).then(success => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setSessionFailed(!success); });
+      void saveSession(doc.id, { annotations, bookmarks, lastPage: page, documentRevision: doc.revision, nativeKnownPages: doc.nativeKnownPages, nativeOriginalRefs: doc.nativeOriginalRefs, nativeSavedAnnotations: doc.savedAnnotations, nativeLegacySession: doc.nativeLegacySession }).then(success => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setSessionFailed(!success); });
     }, 200);
     return () => clearTimeout(timeout);
   }, [doc, annotations, bookmarks, page]);
@@ -542,9 +544,13 @@ export default function App() {
       const additions = JSON.parse(annotationFingerprint(originals)) as unknown[][];
       doc.savedAnnotations = JSON.stringify([...baseline, ...additions.filter(item => !baseline.some(current => current[0] === item[0]))]);
       if (doc.nativeKnownPages?.includes(number)) return;
+      let nextAnnotations: Annotation[];
+      try { nextAnnotations = doc.nativeLegacySession ? migrateLegacyNativePage(annotationRef.current, number, originals) : [...annotationRef.current, ...originals.filter(item => !annotationRef.current.some(current => current.id === item.id))]; }
+      catch (error) { notify(error instanceof Error ? error.message : 'No se pudieron recuperar las anotaciones de la sesión anterior.', true); return; }
       doc.nativeKnownPages = [...doc.nativeKnownPages || [], number];
       doc.nativeOriginalRefs = [...new Set([...doc.nativeOriginalRefs || [], ...originals.flatMap(item => item.nativeSourceRef ? [item.nativeSourceRef] : [])])];
-      annotationRef.current = [...annotationRef.current, ...originals.filter(item => !annotationRef.current.some(current => current.id === item.id))];
+      annotationRef.current = nextAnnotations;
+      if (doc.nativeKnownPages.length === doc.pdf.numPages) doc.nativeLegacySession = false;
       setAnnotations([...annotationRef.current]);
     });
   }, [doc]);
@@ -967,7 +973,9 @@ export default function App() {
     commitAnnotations(noteDraft.id ? annotationRef.current.map(a => a.id === next.id ? next : a) : [...annotationRef.current, next]);
     setNoteDraft(null); setNotesOpen(true); setActiveNote(next.id); setTool('select');
   }
-  function presentFileBacked(current: LoadedDocument, action: 'save' | 'share' | 'print') {
+  async function presentFileBacked(current: LoadedDocument, action: 'save' | 'share' | 'print') {
+    if (current.nativeLegacySession) for (let number = 1; number <= current.pdf.numPages; number++) await nativePdfPageAnnotations(current.pdf, number);
+    if (current.nativeLegacySession) throw new Error('No se pudieron recuperar todas las anotaciones de la sesión anterior. La copia no se ha guardado.');
     const removed = (current.nativeOriginalRefs || []).filter(ref => !annotationRef.current.some(annotation => annotation.nativeSourceRef === ref));
     return presentNativePdf(current.nativeSource!, action === 'save' ? current.name.replace(/\.pdf$/i, '') + ' — copia.pdf' : current.name, action, annotationRef.current, removed);
   }

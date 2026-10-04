@@ -53,6 +53,8 @@ jobs:
           npx playwright-core install webkit
           npm run test:iphone
           node scripts/tests/iphone-native-contract.mjs
+          node scripts/tests/native-pdf-adapter.mjs
+          node scripts/tests/iphone-native-big-contract.mjs
       - name: Build real arm64 iPhone Simulator diagnostics
         run: |
           set -o pipefail
@@ -60,6 +62,9 @@ jobs:
       - name: Test actual iPhone WKWebView, selection, search and Rust persistence
         run: |
           python3 scripts/tests/native-smoke-ios.py --qa --app test-results/ios-build/qa/Folio.app
+      - name: Exercise actual UIKit PDF picker and cold and warm Open In
+        run: |
+          python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-build/qa/Folio.app
       - name: Build the production simulator and unsigned device IPA
         if: inputs.mode == 'full'
         run: |
@@ -90,6 +95,7 @@ jobs:
             test-results/ios/*.json
             test-results/ios/*.png
             test-results/ios/*.log
+            test-results/ios/*.xcresult/**
             test-results/iphone/*.json
             test-results/iphone/*.png
           if-no-files-found: ignore

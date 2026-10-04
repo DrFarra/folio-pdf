@@ -210,7 +210,7 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
           if (!context) throw new Error('No se pudo preparar la página del PDF.');
           const desiredWidth = canvas.width, desiredHeight = canvas.height;
           if (!desiredWidth || !desiredHeight) throw new Error('La superficie de la página está vacía.');
-          const ratio = Math.min(1, Math.sqrt(4_000_000 / (desiredWidth * desiredHeight)));
+          const ratio = Math.min(1, 4096 / desiredWidth, 4096 / desiredHeight, Math.sqrt(4_000_000 / (desiredWidth * desiredHeight)));
           const width = Math.max(1, Math.floor(desiredWidth * ratio)), height = Math.max(1, Math.floor(desiredHeight * ratio));
           const response = await bridge<ArrayBuffer | number[] | Uint8Array>('native_pdf_render', { token: source.token, page, width, height, rotation: rotationDegrees(parameters.viewport.rotation) });
           if (controller.signal.aborted || destroyed) throw renderCancelled();

@@ -246,8 +246,11 @@ async fn recent_documents(app: tauri::AppHandle) -> Result<Vec<Value>, String> {
     // Identity checks of large files must not block UIKit/the webview thread.
     tauri::async_runtime::spawn_blocking(move || {
         let desktop = app.state::<Desktop>();
-        let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
-        Ok(read_recents(&desktop).into_iter().filter_map(|r| {
+        let recents = {
+            let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+            read_recents(&desktop)
+        };
+        Ok(recents.into_iter().filter_map(|r| {
             register(&desktop, r.path).ok().map(|d| serde_json::json!({"id":r.id,"name":r.name,"size":r.size,"pages":r.pages,"openedAt":r.opened_at,"nativeSource":d.token,"draft":r.draft}))
         }).collect())
     }).await.map_err(|_| "No se pudo leer la lista de recientes.".to_string())?

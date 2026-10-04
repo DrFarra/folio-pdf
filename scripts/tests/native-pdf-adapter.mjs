@@ -32,6 +32,7 @@ try {
   await page.addStyleTag({ path: 'src/styles.css' }); await page.addStyleTag({ path: 'src/components/PDFPage.css' });
   const result = await page.evaluate(async fixtureBytes => {
     const { openNativePdf, nativePdfMetadata, isNativePdfDocument, subscribeNativePdfAnnotations, nativePdfPageAnnotations, isNativePdfPasswordError } = await import('/src/nativePdf.ts');
+    const { migrateLegacyNativePage } = await import('/src/native-session.ts');
     const { getDocument, TextLayer, readOutline } = await import('/src/pdf.ts');
     const actual = await getDocument({ data: new Uint8Array(fixtureBytes) }).promise, originalPage = await actual.getPage(1);
     const info = { view: originalPage.view, rotation: originalPage.rotate, annotations: [{ id: 'original-one', page: 1, kind: 'note', rect: [40, 40, 40, 40], color: '#f5d164', text: 'Original', created: 0, nativeSourceRef: '1:0' }] };
@@ -46,6 +47,7 @@ try {
       if (command === 'native_pdf_outline') return [{ title: 'Parent', page: 1, depth: 0 }, { title: 'Child', page: 50000, depth: 1 }];
       if (command === 'native_pdf_close') return null;
       if (command === 'native_pdf_render') {
+        if (args.width > 4096 || args.height > 4096 || args.width * args.height > 4_000_000) throw new Error('Native raster dimensions exceeded the service bounds.');
         if (delayRender) await new Promise(resolve => setTimeout(resolve, 120));
         const canvas = document.createElement('canvas'); canvas.width = args.width; canvas.height = args.height;
         const ctx = canvas.getContext('2d'); ctx.fillStyle = '#18ab42'; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -55,6 +57,25 @@ try {
     };
     const { pdf } = await openNativePdf({ token: 'large-file', name: '2GiB.pdf', size: metadata.size }, undefined, undefined, { bridge });
     const check = (condition, message) => { if (!condition) throw new Error(message); };
+    const originalHighlight = { id: 'native-highlight', page: 1, kind: 'highlight', rect: [10, 20, 110, 40], color: '#f5d164', text: 'Original', created: 0, nativeSourceRef: 'pdfkit:1:0' };
+    const originalNote = { id: 'native-note', page: 1, kind: 'note', rect: [150, 150, 170, 170], color: '#f5d164', text: 'Original note', created: 0, nativeSourceRef: 'pdfkit:1:1', originalName: 'note-NM' };
+    const deletedOriginal = { ...originalHighlight, id: 'native-deleted', rect: [220, 20, 320, 40], nativeSourceRef: 'pdfkit:1:2' };
+    const legacyHighlight = { ...originalHighlight, id: 'pdf-1-18', sourceRef: 18, nativeSourceRef: undefined, rect: [10.25, 20.25, 110.25, 40.25], color: '#3d9dea', text: 'Edited' };
+    const legacyNote = { ...originalNote, id: 'pdf-1-19', sourceRef: 19, nativeSourceRef: undefined, rect: [800, 850, 800, 850], text: 'Moved/edited named note' };
+    const custom = { ...originalHighlight, id: 'my-highlight', nativeSourceRef: undefined };
+    const otherPage = { ...legacyHighlight, id: 'other-page', page: 2 };
+    const migrated = migrateLegacyNativePage([legacyHighlight, legacyNote, custom, otherPage], 1, [originalHighlight, originalNote, deletedOriginal]);
+    check(migrated.length === 4 && migrated[0].id === 'native-highlight' && migrated[0].nativeSourceRef === 'pdfkit:1:0' && migrated[0].text === 'Edited' && migrated[0].color === '#3d9dea', 'legacy numeric refs/user edits');
+    check(migrated[1].id === 'native-note' && migrated[1].rect[0] === 800 && migrated[1].text === legacyNote.text, 'legacy annotation NM identity must take priority over changed geometry');
+    check(migrated[2] === custom && migrated[3] === otherPage && !migrated.some(annotation => annotation.id === deletedOriginal.id), 'legacy session is authoritative and custom/other pages stay intact');
+    check(JSON.stringify(migrateLegacyNativePage(migrated, 1, [originalHighlight, originalNote, deletedOriginal])) === JSON.stringify(migrated), 'migration must be idempotent');
+    const unnamedNote = { ...legacyNote, originalName: '', rect: [150, 170, 150, 170] };
+    check(migrateLegacyNativePage([unnamedNote], 1, [originalNote])[0].nativeSourceRef === 'pdfkit:1:1', 'MuPDF note point must match the raw PDFKit bounds corner');
+    const farAway = { ...legacyHighlight, rect: [11, 21, 111, 41] };
+    check(migrateLegacyNativePage([farAway], 1, [originalHighlight])[0] === farAway, 'geometry outside tolerance must not edit an unrelated original');
+    let rejectedAmbiguity = false;
+    try { migrateLegacyNativePage([legacyHighlight], 1, [originalHighlight, { ...originalHighlight, id: 'other-overlap', nativeSourceRef: 'pdfkit:1:9' }]); } catch { rejectedAmbiguity = true; }
+    check(rejectedAmbiguity, 'ambiguous original matches must not create duplicates');
     check(isNativePdfDocument(pdf) && nativePdfMetadata(pdf).size === metadata.size, 'native metadata');
     const unsubscribe = subscribeNativePdfAnnotations(pdf, (page, annotations) => annotated.push({ page, annotations }));
     const nativePage = await pdf.getPage(1), geometry = [];
@@ -71,6 +92,17 @@ try {
     const canvas = document.createElement('canvas'); canvas.width = viewport.width; canvas.height = viewport.height;
     await nativePage.render({ canvas, viewport }).promise;
     const pixel = [...canvas.getContext('2d').getImageData(0, 0, 1, 1).data]; check(pixel.join(',') === '24,171,66,255', 'PNG did not draw into canvas');
+    const rasterBounds = [];
+    for (const [width, height] of [[12000, 200], [200, 12000], [3000, 3000]]) {
+      const surface = document.createElement('canvas'); surface.width = width; surface.height = height;
+      await nativePage.render({ canvas: surface, viewport }).promise;
+      const request = calls.at(-1).args;
+      check(request.width <= 4096 && request.height <= 4096 && request.width * request.height <= 4_000_000, 'extreme aspect raster bounds');
+      check(Math.abs(request.width / request.height - width / height) < Math.max(width / height, 1) * .02, 'raster aspect ratio must remain consistent');
+      check(surface.getContext('2d').getImageData(width - 1, height - 1, 1, 1).data[3] === 255, 'bounded PNG must cover the original target');
+      rasterBounds.push({ requested: [width, height], native: [request.width, request.height] });
+      surface.width = surface.height = 1;
+    }
     const layer = document.createElement('div'); layer.className = 'textLayer'; layer.style.setProperty('--total-scale-factor', '1'); layer.style.setProperty('--scale-factor', '1');
     const frame = document.createElement('div'); frame.style.cssText = `position:fixed;left:0;top:0;width:${viewport.width}px;height:${viewport.height}px;`; frame.append(layer); document.body.append(frame);
     await new TextLayer({ textContentSource: await nativePage.getTextContent(), container: layer, viewport }).render();
@@ -97,7 +129,7 @@ try {
     try { await openNativePdf({ token: 'locked', name: 'locked.pdf', size: 1 }, undefined, undefined, { bridge: async command => command === 'native_pdf_open' ? { ...metadata, locked: true } : (lockedClosed = true) }); throw new Error('locked PDF opened'); }
     catch (error) { check(isNativePdfPasswordError(error) && !error.retry && lockedClosed, 'password contract/cache cleanup'); }
     await actual.loadingTask.destroy();
-    return { passed: true, bridgeMocked: true, PDFKitExecuted: false, geometry, pixel, selectableText: selection.toString(), originalPdfBytesFetched: false, simulatedDocumentBytes: metadata.size, commands: [...new Set(calls.map(call => call.command))], lazyPages: [...new Set(calls.filter(call => call.command === 'native_pdf_page_info').map(call => call.args.page))], closeCount: 1 };
+    return { passed: true, bridgeMocked: true, PDFKitExecuted: false, geometry, pixel, rasterBounds, legacySessionMigration: { numericRefs: true, namedRefs: true, userEditsPreserved: true, deletedOriginalNotAppended: true, customAnnotationNotMatched: true, noteBoundsCorner: true, ambiguousMatchRejected: true, idempotent: true }, selectableText: selection.toString(), originalPdfBytesFetched: false, simulatedDocumentBytes: metadata.size, commands: [...new Set(calls.map(call => call.command))], lazyPages: [...new Set(calls.filter(call => call.command === 'native_pdf_page_info').map(call => call.args.page))], closeCount: 1 };
   }, bytes);
   assert(result.passed);
   report = { version, capturedAt: new Date().toISOString(), ...result, scope: 'Native PDF adapter with explicitly mocked IPC; real WebKit text layer, image decoding and PDF.js viewport reference.', limitations: ['PDFKit was not executed by this test.', 'The 2 GiB value is metadata; real large-file opening and native memory use require the iOS simulator/device tests.'] };

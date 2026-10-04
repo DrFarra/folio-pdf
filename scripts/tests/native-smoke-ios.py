@@ -53,10 +53,12 @@ def validate_pdfkit_rasters(result):
     sys.path.insert(0, str(root / 'scripts'))
     from ios_icon_audit import decode_png
     for item in result['documents']:
-        view = item['pageInfo']['view']
-        boxes = [line['bounds'] for line in item['text']['lines']]
-        assert boxes, 'PDFKit no devolvió coordenadas de texto.'
+        item['independentExportVerification'] = json.loads(run('node', 'scripts/tests/verify-pdfkit-export.mjs', item['exportedPath']))
         for raster in item['rasters']:
+            page = raster.get('page', 1)
+            view = item['pageInfo' if page == 1 else 'secondPageInfo']['view']
+            boxes = [line['bounds'] for line in item['text' if page == 1 else 'secondPageText']['lines']]
+            assert boxes, 'PDFKit no devolvió coordenadas de texto.'
             source = Path(raster['path'])
             destination = out / source.name
             shutil.copy2(source, destination)
@@ -70,10 +72,19 @@ def validate_pdfkit_rasters(result):
             expected = [min(p[0] for p in corners), min(p[1] for p in corners), max(p[0] for p in corners), max(p[1] for p in corners)]
             dark = [(index % width, index // width) for index in range(width*height)
                     if max(rgba[index*4:index*4+3]) < 140]
+            colored = sum(max(rgba[i*4:i*4+3]) - min(rgba[i*4:i*4+3]) > 30 for i in range(width*height))
+            if page == 1:
+                assert colored < 10, 'El bitmap conserva el color del resaltado/nota que se debe editar como overlay.'
+            else:
+                blue = sum(rgba[i*4] < 100 and rgba[i*4+1] < 100 and rgba[i*4+2] > 140 for i in range(width*height))
+                cyan = sum(rgba[i*4] < 100 and rgba[i*4+1] > 140 and rgba[i*4+2] > 140 for i in range(width*height))
+                assert blue > 10 and cyan < 10, 'El renderizado no conserva la anotación no editable o no suprime el resaltado editable.'
             assert len(dark) > 300, 'PDFKit generó una página vacía.'
             actual = [min(p[0] for p in dark), min(p[1] for p in dark), max(p[0] for p in dark), max(p[1] for p in dark)]
             assert all(abs(a-b) < 25 for a,b in zip(actual,expected)), f'Bitmap y texto no coinciden con crop/rotación {rotation}: {actual} versus {expected}'
-            raster.update({'inspectionFile':destination.name,'textPixelBounds':actual,'expectedTextBounds':expected,'geometryVerified':True})
+            raster.update({'inspectionFile':destination.name,'textPixelBounds':actual,'expectedTextBounds':expected,'geometryVerified':True,
+                           'editableSourceAnnotationsSuppressed':True,'coloredPixels':colored})
+            if page == 2: raster.update({'intrinsicRotationVerified':90,'nonOverlayAnnotationVisible':True})
 
 def fresh_diagnostic(started_at):
     diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d:
@@ -156,7 +167,7 @@ try:
         report['nativeBridge'] = native
         report['nativeClipboardVerified'] = True
         report['documentDiagnostic'] = checked
-        file_diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d: d.get('nativeFiles', {}).get('completed'), timeout=240)
+        file_diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d: (d.get('nativeFiles') or {}).get('completed'), timeout=240)
         files = file_diagnostic['nativeFiles']
         assert not files.get('error'), json.dumps(files.get('error'), ensure_ascii=False)
         result = files['result']
@@ -167,6 +178,7 @@ try:
         result['memory'] = {'kind':'Simulator process resident memory sampled once per second', 'peakBytes':max(rss_samples),
                             'samples':len(rss_samples),'physicalDeviceMeasured':False, 'limitBytes':768*1024**2}
         assert max(rss_samples) < 768*1024**2, 'El lector excedió 768MiB de memoria residente con el fixture de 2GiB.'
+        result.update({'version':version,'passed':True})
         report['nativeFileProbe'] = result
         (out / 'native-pdfkit-ios.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
     time.sleep(2)
@@ -209,6 +221,28 @@ try:
                                   'nativeBridgeVerified': native['uiAvailable'], 'nativeClipboardVerified': True})
     time.sleep(2)
     run('xcrun', 'simctl', 'io', device, 'screenshot', str(out / ('folio-iphone-qa-relaunch.png' if args.qa else 'folio-iphone-relaunch.png')))
+    if args.qa:
+        # Exercise the production frontend adapter with the large source too.
+        # The dedicated UIKit tests cover picker/Open In, so this reader check
+        # explicitly uses a launch argument and never claims user selection.
+        run('xcrun', 'simctl', 'terminate', device, 'org.folio.pdf')
+        large = next(d for d in report['nativeFileProbe']['documents'] if d['document']['size'] > 2*1024**3)
+        large_started = int(time.time() * 1000)
+        rss_samples = []
+        launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', large['sourcePath'])
+        process_id = int(re.search(r':\s*(\d+)\s*$', launch).group(1))
+        large_session = wait_file(data, large['document']['id'] + '.json', lambda s:
+            s.get('version') == 3 and s.get('documentRevision') == large['document']['revision'], timeout=150)
+        diagnostic, checked, native = fresh_diagnostic(large_started)
+        assert diagnostic['snapshot']['textSpanCount'] > 1 and checked['selectionMatchesSpan'] and checked['search']['found']
+        assert rss_samples and max(rss_samples) < 768*1024**2, 'El lector WK/PDFKit excedió la memoria residente acotada del simulador.'
+        report['largeFrontendReader'] = {'sourceBytes':large['document']['size'], 'sourceId':large['document']['id'],
+            'freshDiagnosticAt':diagnostic['snapshot']['at'], 'checksStartedAt':checked['startedAt'], 'startedAt':large_started,
+            'actualWKWebView':True, 'fileBackedAdapter':True, 'selectionVerified':True,'searchVerified':True,
+            'sessionVerified':True,'nativeClipboardVerified':True, 'launchArgumentUsed':True,
+            'peakNativeProcessRSSBytes':max(rss_samples),'rssSamples':len(rss_samples),'physicalDeviceMeasured':False}
+        (out / 'native-qa-ios-large-reader.json').write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2))
+        run('xcrun', 'simctl', 'io', device, 'screenshot', str(out / 'folio-iphone-2gib-reader.png'))
     report['sandboxPersistenceVerified'] = True
     report['passed'] = True
 except Exception as error:

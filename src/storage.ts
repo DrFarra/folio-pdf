@@ -30,9 +30,10 @@ function parseSession(raw: Partial<Session> | null): Session {
         typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color)),
       bookmarks: normalizeBookmarks(raw.bookmarks),
       lastPage: Number.isInteger(raw.lastPage) && Number(raw.lastPage) > 0 ? Number(raw.lastPage) : 1,
-      nativeKnownPages: Array.isArray(raw.nativeKnownPages) ? raw.nativeKnownPages.filter(page => Number.isInteger(page) && page > 0) : [],
-      nativeOriginalRefs: Array.isArray(raw.nativeOriginalRefs) ? raw.nativeOriginalRefs.filter(ref => typeof ref === 'string') : [],
+      nativeKnownPages: Array.isArray(raw.nativeKnownPages) ? raw.nativeKnownPages.filter(page => Number.isInteger(page) && page > 0) : undefined,
+      nativeOriginalRefs: Array.isArray(raw.nativeOriginalRefs) ? raw.nativeOriginalRefs.filter(ref => typeof ref === 'string') : undefined,
       nativeSavedAnnotations: nativeBaseline(raw.nativeSavedAnnotations),
+      nativeLegacySession: raw.nativeLegacySession === true,
     };
 }
 export async function readSession(id: string): Promise<Session> {

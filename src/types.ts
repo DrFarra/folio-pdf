@@ -35,6 +35,7 @@ export type Session = {
   nativeKnownPages?: number[];
   nativeOriginalRefs?: string[];
   nativeSavedAnnotations?: string;
+  nativeLegacySession?: boolean;
 };
 export type LoadedDocument = {
   pdf: PDFDocumentProxy;
@@ -47,6 +48,7 @@ export type LoadedDocument = {
   nativeSource?: string;
   nativeKnownPages?: number[];
   nativeOriginalRefs?: string[];
+  nativeLegacySession?: boolean;
   canAnnotate: boolean;
   signed: boolean;
   initialPage: number;

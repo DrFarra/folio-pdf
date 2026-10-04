@@ -229,6 +229,7 @@ async function check(id, action, options = {}) {
       selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed, highlightTapEvents: window.__iphoneHighlightTapEvents,
       draftSummaries: window.__iphoneDraftSummaries,
       navigation: window.__iphoneNavigation,
+      chromeNoteEvents: window.__iphoneChromeNoteEvents,
       activeElement: document.activeElement?.outerHTML?.slice(0, 500), alerts: [...document.querySelectorAll('[role=alert], .toast')].map(node => node.textContent),
     })).catch(() => null) });
     await page.screenshot({ path: path.join(output, `failure-${id}.png`), animations: 'disabled' }).catch(() => {});
@@ -455,6 +456,113 @@ try {
     await page.reload(); await open(page); await panel(page, 'Marcadores'); await row('Clinical page').waitFor();
     assert.deepEqual((await stored()).bookmarks, final);
     return { pageBookmarkImmediatelyNames: true, nestedGroupsCreatedThroughUi: true, pointerDragDedicatedHandle: true, touchMoveDialogCompleted: true, branchChildrenAndColorPreserved: true, compactTreeFits320: true, childLabelsVisiblyIndented: true, entireTreePersistsAfterReload: true, physicalTouchDragNotAutomated: true };
+  });
+
+  await check('reader-short-touch-chrome-and-gesture-exclusions', async page => {
+    const shell = page.locator('.app-shell'), header = page.locator('.app-header');
+    const visibleChrome = async message => {
+      // The toggle is intentionally delayed to distinguish a double tap. Wait
+      // past that threshold before accepting any exclusion as a success.
+      await page.waitForTimeout(500);
+      assert.equal(await shell.evaluate(element => element.classList.contains('reader-chrome-hidden')), false, message);
+      assert(await header.isVisible(), message);
+      assert(await page.locator('.mobile-reading-status').isVisible(), message);
+    };
+    const blankPoint = async () => {
+      const canvas = await page.locator('.pdf-page-wrap[data-page-number="1"] .page-content > canvas').boundingBox();
+      const view = await reader(page).boundingBox(); assert(canvas && view);
+      const point = { x: Math.min(canvas.x + canvas.width * .9, view.x + view.width - 30), y: Math.min(canvas.y + canvas.height * .8, view.y + view.height - 100) };
+      assert(point.x > Math.max(view.x, canvas.x) && point.x < Math.min(view.x + view.width, canvas.x + canvas.width));
+      assert(point.y > Math.max(view.y, canvas.y) && point.y < Math.min(view.y + view.height, canvas.y + canvas.height));
+      return point;
+    };
+    const dispatchPointer = async (type, point, extra = {}) => page.evaluate(({ type, point, extra }) => {
+      const target = document.elementFromPoint(point.x, point.y);
+      if (!target?.closest('.page-content')) throw new Error('Touch target must be the rendered PDF, not its controls.');
+      target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'touch',
+        pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+        clientX: point.x, clientY: point.y, ...extra }));
+    }, { type, point, extra });
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    const initial = await reader(page).boundingBox(), blank = await blankPoint();
+    await page.touchscreen.tap(blank.x, blank.y);
+    await page.waitForFunction(() => document.querySelector('.app-shell')?.classList.contains('reader-chrome-hidden'));
+    assert.equal(await header.isVisible(), false); assert.equal(await page.locator('.mobile-reading-status').isVisible(), false);
+    const expanded = await reader(page).boundingBox(); assert(expanded.height >= initial.height + 50, 'Hidden chrome must give its space to the PDF.');
+    await page.screenshot({ path: path.join(output, 'iphone-reader-chrome-hidden.png'), animations: 'disabled' });
+    const restore = await blankPoint(); await page.touchscreen.tap(restore.x, restore.y);
+    await visibleChrome('A second short touch must restore the complete reader controls.');
+
+    const double = await blankPoint(); await page.touchscreen.tap(double.x, double.y); await page.touchscreen.tap(double.x, double.y);
+    await visibleChrome('A double tap must not toggle reader chrome.');
+
+    const scrolling = await blankPoint(); await dispatchPointer('pointerdown', scrolling);
+    await reader(page).evaluate(element => { element.scrollTop += 60; });
+    await dispatchPointer('pointermove', { x: scrolling.x, y: scrolling.y - 30 });
+    await dispatchPointer('pointerup', { x: scrolling.x, y: scrolling.y - 30 });
+    assert(await reader(page).evaluate(element => element.scrollTop) >= 50, 'The scrolling exclusion must actually move the PDF.');
+    await visibleChrome('A scrolling touch must not hide controls.'); await goToPage(page, 1);
+
+    const holding = await blankPoint(); await dispatchPointer('pointerdown', holding);
+    const range = await selection(page); assert.equal(range.text, copiedPhrase);
+    await page.waitForTimeout(550); await dispatchPointer('pointerup', holding);
+    await selectionMenu(page).waitFor();
+    await visibleChrome('Long press and a real browser text selection must preserve controls.');
+    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), copiedPhrase);
+    await page.evaluate(() => window.getSelection()?.removeAllRanges()); await selectionMenu(page).waitFor({ state: 'detached' });
+
+    const pinch = await blankPoint(); await dispatchPointer('pointerdown', pinch);
+    const expected = await page.evaluate(async point => {
+      const target = document.elementFromPoint(point.x, point.y), canvas = target.closest('.page-content').querySelector('canvas');
+      const initial = Number(canvas.dataset.renderScale);
+      const fingers = distance => [{ identifier: 1, target, clientX: point.x - distance / 2, clientY: point.y }, { identifier: 2, target, clientX: point.x + distance / 2, clientY: point.y }];
+      const touch = (type, touches) => { const event = new Event(type, { bubbles: true, cancelable: true }); for (const key of ['touches', 'targetTouches', 'changedTouches']) Object.defineProperty(event, key, { value: touches }); target.dispatchEvent(event); };
+      touch('touchstart', fingers(80)); touch('touchmove', fingers(88));
+      await new Promise(resolve => requestAnimationFrame(resolve)); touch('touchend', []);
+      return Math.round(initial * 1.1 * 1000) / 1000;
+    }, pinch);
+    await dispatchPointer('pointerup', pinch);
+    await page.waitForFunction(expected => Number(document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas')?.dataset.renderScale) === expected, expected);
+    await visibleChrome('A two finger zoom must cancel the pending reader tap.');
+
+    await annotateMode(page); await page.getByRole('button', { name: 'Resaltado automático', exact: true }).tap();
+    await page.locator('.page-content.tool-highlight').first().waitFor();
+    const highlighting = await blankPoint(); await page.touchscreen.tap(highlighting.x, highlighting.y);
+    await visibleChrome('The active highlight tool must preserve its visible controls.');
+    await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
+    await page.locator('.page-content.tool-note').first().waitFor();
+    await page.evaluate(() => {
+      window.__iphoneChromeNoteEvents = [];
+      const capture = event => window.__iphoneChromeNoteEvents.push({ type: event.type, pointerType: event.pointerType,
+        button: event.button, pointerId: event.pointerId, at: Date.now(), x: event.clientX, y: event.clientY, target: event.target?.className,
+        text: event.target?.textContent?.slice(0, 80), note: event.target?.closest?.('.page-content')?.className });
+      for (const name of ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click']) document.addEventListener(name, capture, { capture: true });
+      let hasModal = false;
+      const observer = new MutationObserver(() => {
+        const current = !!document.querySelector('.note-modal');
+        if (current !== hasModal) window.__iphoneChromeNoteEvents.push({ type: current ? 'note-modal-added' : 'note-modal-removed', at: Date.now() });
+        hasModal = current;
+      });
+      observer.observe(document.body, { subtree: true, childList: true });
+    });
+    const note = await blankPoint(); await page.touchscreen.tap(note.x, note.y);
+    await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
+    assert.equal(await shell.evaluate(element => element.classList.contains('reader-chrome-hidden')), false, 'Note creation must keep reader chrome visible.');
+    const dialog = page.getByRole('dialog', { name: 'Añadir nota', exact: true }), dialogBox = await dialog.boundingBox(); assert(dialogBox);
+    const padding = { x: dialogBox.x + 3, y: dialogBox.y + dialogBox.height / 2 };
+    assert(await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.matches('.note-modal'), padding), 'The padding regression must tap the dialog itself.');
+    await page.touchscreen.tap(padding.x, padding.y); await page.waitForTimeout(350);
+    assert(await dialog.isVisible(), 'Tapping inside dialog padding must not be mistaken for backdrop dismissal.');
+    const outside = { x: Math.max(2, dialogBox.x - 8), y: dialogBox.y + dialogBox.height / 2 };
+    assert(outside.x < dialogBox.x, 'The backdrop regression must actually tap outside the dialog.');
+    await page.touchscreen.tap(outside.x, outside.y); await dialog.waitFor({ state: 'detached' });
+    await visibleChrome('Closing an unsaved note must preserve reader chrome.');
+    await page.screenshot({ path: path.join(output, 'iphone-reader-chrome-restored.png'), animations: 'disabled' });
+    return { actualTouchscreenTapHidesAndRestores: true, reclaimedReaderHeight: expanded.height - initial.height,
+      doubleTapDoesNotHide: true, scrollingDoesNotHide: true, browserTextSelectionDoesNotHide: true,
+      twoFingerZoomDoesNotHide: true, activeHighlightAndNoteToolsDoNotHide: true,
+      modalPaddingTapDoesNotClose: true, actualBackdropTapCloses: true,
+      gestureContractEventsSynthetic: true, physicalLongPressAndPinchNotAutomated: true };
   });
 
   await check('pinch-compositor-bitmap-retention-and-cancel', async page => {

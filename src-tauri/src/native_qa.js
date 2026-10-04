@@ -135,7 +135,7 @@
           }).catch(error => { nativeFiles = { ...nativeFiles, completed: true, finishedAt: now(), error: describe(error) }; void persist(); });
         }
         if (report.selectedText) {
-          await window.__TAURI_INTERNALS__.invoke('copy_text', { text: report.selectedText });
+          await window.__TAURI_INTERNALS__.invoke('copy_text', { text: report.selectedText.trim() });
           report.nativeClipboardWritten = true;
         }
       }
