@@ -259,6 +259,20 @@ finally:
                     (out / 'native-qa-ios-partial.json').write_bytes(p.read_bytes())
                     break
                 except OSError: pass
+            # Keep bounded output copies when a native assertion fails after
+            # export; inspecting actual /CA and /AP beats guessing SDK state.
+            report['failedExportEvidence'] = []
+            for index, p in enumerate(data.rglob('Folio modified.pdf')):
+                if p.parent.parent.name != 'pdfkit-probe': continue
+                try:
+                    size = p.stat().st_size
+                    item = {'size': size, 'copied': False}
+                    if size <= 32 * 1024**2:
+                        destination = out / f'native-pdfkit-failed-export-{index}.pdf'
+                        shutil.copyfile(p, destination)
+                        item.update({'copied': True, 'file': destination.name})
+                    report['failedExportEvidence'].append(item)
+                except OSError: pass
         screenshot = out / ('folio-iphone-qa-failure.png' if args.qa else 'folio-iphone-failure.png')
         subprocess.run(['xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot)], capture_output=True)
     (out / ('native-smoke-ios-qa.json' if args.qa else 'native-smoke-ios.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2))
