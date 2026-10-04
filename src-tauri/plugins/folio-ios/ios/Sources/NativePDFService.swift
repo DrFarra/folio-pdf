@@ -26,7 +26,7 @@ final class NativePDFService {
         init(_ args: PDFOpenArgs, _ document: PDFDocument, _ signed: Bool) { self.args = args; self.document = document; self.signed = signed }
         // PDFKit declares PDFAccessPermissions as an enum carrying a bit mask,
         // rather than a Swift OptionSet (including on the iOS 18 SDK).
-        var canAnnotate: Bool { !signed && !document.isLocked && (!document.isEncrypted || document.permissions == .owner || (document.accessPermissions.rawValue & PDFAccessPermissions.allowsCommenting.rawValue) != 0) }
+        var canAnnotate: Bool { !signed && !document.isLocked && (!document.isEncrypted || (document.accessPermissions.rawValue & PDFAccessPermissions.allowsCommenting.rawValue) != 0) }
     }
     private var entries = [String: Entry]()
     private var opened = [String: PDFOpenArgs]()

@@ -197,8 +197,9 @@ final class FolioPlugin: Plugin {
     }
     @objc public func pdfExport(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PDFExportArgs.self)
-        let target = URL(fileURLWithPath: args.path).standardizedFileURL
-        guard target.path.hasPrefix(NSHomeDirectory() + "/"), !FileManager.default.fileExists(atPath: target.path) else { invoke.reject("Destino de copia inválido."); return }
+        let target = URL(fileURLWithPath: args.path).standardizedFileURL.resolvingSymlinksInPath()
+        let sandbox = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.resolvingSymlinksInPath()
+        guard target.path.hasPrefix(sandbox.path + "/"), !FileManager.default.fileExists(atPath: target.path) else { invoke.reject("Destino de copia inválido."); return }
         pdfOperation(invoke) { try self.pdf.export(args) }
     }
 
