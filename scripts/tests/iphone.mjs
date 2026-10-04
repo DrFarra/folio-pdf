@@ -97,6 +97,13 @@ async function settings(page) {
   await actions(page); await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).tap();
   await page.getByRole('dialog', { name: 'Preferencias de lectura', exact: true }).waitFor();
 }
+async function annotateMode(page) {
+  await actions(page); await page.getByRole('button', { name: 'Anotar documento', exact: true }).tap();
+  await page.getByRole('button', { name: 'Resaltado automático', exact: true }).waitFor();
+}
+async function noteMode(page) {
+  await annotateMode(page); await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
+}
 async function closeDialog(page) {
   await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap();
   await page.locator('dialog[open]').waitFor({ state: 'detached' });
@@ -195,6 +202,7 @@ async function check(id, action, options = {}) {
   } catch (error) {
     process.exitCode = 1; results.push({ id, status: 'failed', error: error.stack, diagnostics, uiState: await page.evaluate(() => ({
       selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed, highlightTapEvents: window.__iphoneHighlightTapEvents,
+      draftSummaries: window.__iphoneDraftSummaries,
       activeElement: document.activeElement?.outerHTML?.slice(0, 500), alerts: [...document.querySelectorAll('[role=alert], .toast')].map(node => node.textContent),
     })).catch(() => null) });
     await page.screenshot({ path: path.join(output, `failure-${id}.png`), animations: 'disabled' }).catch(() => {});
@@ -223,10 +231,11 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Abrir PDF', exact: true }).count(), 1);
       const before = await geometry(page); assertScreen(before);
       assert(before.reader.height >= viewport.height * .62, `Reader wastes space: ${JSON.stringify(before.reader)}`);
+      await page.screenshot({ path: path.join(output, `iphone-reading-${viewport.width}x${viewport.height}.png`), animations: 'disabled' });
       await reader(page).evaluate(element => { element.scrollTop = 180; });
       await page.waitForFunction(() => document.querySelector('.reading-area').scrollTop > 0);
       assertScreen(await geometry(page));
-      await page.screenshot({ path: path.join(output, `iphone-reading-${viewport.width}x${viewport.height}.png`), animations: 'disabled' });
+      await page.screenshot({ path: path.join(output, `iphone-reading-scrolled-${viewport.width}x${viewport.height}.png`), animations: 'disabled' });
       await actions(page); assertScreen(await geometry(page)); await closeDialog(page);
       await panel(page, 'Páginas'); const drawer = await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).boundingBox();
       assert(drawer && drawer.width <= viewport.width && drawer.height <= viewport.height, 'The drawer must fit the screen.');
@@ -283,6 +292,9 @@ try {
   });
 
   await check('automatic-highlight-custom-color-and-reopen-persistence', async page => {
+    await annotateMode(page);
+    assertScreen(await geometry(page));
+    await page.screenshot({ path: path.join(output, 'iphone-annotation-tools.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
     const palette = page.getByRole('dialog', { name: 'Colores del resaltador', exact: true }); await palette.waitFor();
     assert.equal(await palette.locator('.highlight-color-presets button').count(), 12); assertScreen(await geometry(page));
@@ -313,7 +325,9 @@ try {
   }, { file: external });
 
   await check('readonly-copy-and-highlight-permission-enforced', async page => {
-    assert(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).isDisabled());
+    await actions(page);
+    assert(await page.getByRole('button', { name: 'Anotar documento', exact: true }).isDisabled());
+    await closeDialog(page);
     await selection(page); await selectionMenu(page).waitFor(); assert.equal(await selectionMenu(page).getByRole('button').count(), 1);
     const saved = await save(page, 'iphone-readonly-export.pdf'), originalBytes = new Uint8Array(fs.readFileSync(readOnly));
     // Folio's editable-annotation inspection intentionally excludes a PDF whose
@@ -326,6 +340,7 @@ try {
   }, { file: readOnly });
 
   await check('copy-protection-does-not-expose-text-actions', async page => {
+    await annotateMode(page);
     await selection(page); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await selectionMenu(page).count(), 0); assert(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).isDisabled());
     return { copyPermissionEnforced: true, forbiddenTextActionsAbsent: true };
@@ -393,10 +408,15 @@ try {
     assertScreen(await geometry(page)); await page.getByRole('button', { name: 'Mover', exact: true }).tap();
     const final = await waitTree(nodes => nodes.find(node => node.id === medicine.id)?.parentId === null);
     assert.equal(final.find(node => node.id === kidney.id).color, '#4579ba'); assert.equal(final.find(node => node.id === child.id).page, 1);
+    await page.setViewportSize({ width: 320, height: 568 });
+    assertScreen(await geometry(page));
+    const branchLabels = await Promise.all(['Medicine', 'Kidney', 'Clinical page'].map(title => row(title).locator('.bookmark-label').boundingBox()));
+    assert(branchLabels.every(Boolean));
+    assert(branchLabels[1].x > branchLabels[0].x && branchLabels[2].x > branchLabels[1].x, 'Each child must visibly indent beyond its parent.');
     await page.screenshot({ path: path.join(output, 'iphone-bookmarks.png'), animations: 'disabled' }); await closePanel(page);
     await page.reload(); await open(page); await panel(page, 'Marcadores'); await row('Clinical page').waitFor();
     assert.deepEqual((await stored()).bookmarks, final);
-    return { pageBookmarkImmediatelyNames: true, nestedGroupsCreatedThroughUi: true, pointerDragDedicatedHandle: true, touchMoveDialogCompleted: true, branchChildrenAndColorPreserved: true, entireTreePersistsAfterReload: true, physicalTouchDragNotAutomated: true };
+    return { pageBookmarkImmediatelyNames: true, nestedGroupsCreatedThroughUi: true, pointerDragDedicatedHandle: true, touchMoveDialogCompleted: true, branchChildrenAndColorPreserved: true, compactTreeFits320: true, childLabelsVisiblyIndented: true, entireTreePersistsAfterReload: true, physicalTouchDragNotAutomated: true };
   });
 
   await check('pinch-compositor-bitmap-retention-and-cancel', async page => {
@@ -488,6 +508,84 @@ try {
     assert.equal(images, 1);
     return { pageOrderSavedThroughMobileUi: [3, 1], toolSheetTouchTargetsSized: true, imagePdfCreatedThroughMobileUi: true, actualEmbeddedImages: images };
   }, { viewport: { width: 320, height: 568 } });
+
+  await check('note-tool-pinch-does-not-create-notes-and-short-touch-tap-does', async page => {
+    await noteMode(page);
+    await page.locator('.page-content.tool-note').first().waitFor();
+    const expected = await page.evaluate(async () => {
+      const root = document.querySelector('.reading-area'), target = document.querySelector('.page-content.tool-note'), canvas = target.querySelector('canvas');
+      const box = root.getBoundingClientRect(), x = (box.left + box.right) / 2, y = Math.min(box.top + 180, box.bottom - 100), initial = Number(canvas.dataset.renderScale);
+      const fingers = distance => [{ identifier: 1, target, clientX: x - distance / 2, clientY: y }, { identifier: 2, target, clientX: x + distance / 2, clientY: y }];
+      const touch = (type, touches) => { const event = new Event(type, { bubbles: true, cancelable: true }); for (const name of ['touches', 'targetTouches', 'changedTouches']) Object.defineProperty(event, name, { value: touches }); target.dispatchEvent(event); };
+      const pointer = (type, finger) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'touch', pointerId: finger.identifier, button: 0, buttons: type === 'pointerdown' ? 1 : 0, clientX: finger.clientX, clientY: finger.clientY }));
+      const initialFingers = fingers(100); pointer('pointerdown', initialFingers[0]); touch('touchstart', [initialFingers[0]]);
+      pointer('pointerdown', initialFingers[1]); touch('touchstart', initialFingers); touch('touchmove', fingers(125));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      touch('touchend', []); pointer('pointerup', initialFingers[0]); pointer('pointerup', initialFingers[1]);
+      return Math.round(initial * 1.25 * 1000) / 1000;
+    });
+    await page.waitForFunction(expected => Number(document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas')?.dataset.renderScale) === expected, expected);
+    assert.equal(await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).count(), 0, 'A second finger converting the touch into a pinch must not add a note.');
+    assert.equal(await page.locator('.note-marker').count(), 0);
+    const bounds = await reader(page).boundingBox();
+    await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + Math.min(180, bounds.height / 2));
+    await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
+    await page.getByLabel('Texto de la nota', { exact: true }).fill('Created by one short touch tap.');
+    await page.getByRole('button', { name: 'Guardar nota', exact: true }).tap(); await page.getByRole('button', { name: 'Cerrar anotaciones', exact: true }).tap();
+    assert.equal(await page.locator('.note-marker').count(), 1); assertScreen(await geometry(page));
+    const saved = await save(page, 'iphone-short-touch-note.pdf'); assert.equal(saved.inspection.annotations.length, 1);
+    assert.equal(saved.inspection.annotations[0].kind, 'note'); assert.equal(saved.inspection.annotations[0].text, 'Created by one short touch tap.');
+    return { pendingNoteCanceledByTwoFingerPinchContract: true, twoFingerEventsSynthetic: true, actualTouchscreenShortTapCreatesOneNote: true, standardPdfNoteSaved: true };
+  });
+
+  await check('webkit-recent-file-and-real-pdf-draft-survive-reload', async page => {
+    const identity = originals.get(source);
+    const storageSnapshot = () => page.evaluate(async identity => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const get = store => new Promise((resolve, reject) => { const request = db.transaction(store, 'readonly').objectStore(store).get(identity); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      try {
+        const [draft, recent] = await Promise.all([get('drafts'), get('documents')]);
+        const asBytes = async value => value ? [...new Uint8Array(value instanceof Blob ? await value.arrayBuffer() : value)] : [];
+        return { draft: await asBytes(draft), recent: await asBytes(recent?.data), recentName: recent?.name, recentId: recent?.id, session: JSON.parse(localStorage.getItem(`folio.session.${identity}`) || 'null') };
+      } finally { db.close(); }
+    }, identity);
+    await page.waitForFunction(async identity => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      try { return await new Promise(resolve => { const request = db.transaction('documents', 'readonly').objectStore('documents').get(identity); request.onsuccess = () => resolve(!!request.result?.data); }); }
+      finally { db.close(); }
+    }, identity);
+    await actions(page); await page.getByRole('button', { name: 'Herramientas', exact: true }).tap(); await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
+    await page.getByLabel('Orden o intervalo de páginas', { exact: true }).fill('2,1'); await page.getByRole('button', { name: 'Usar orden', exact: true }).tap();
+    await page.getByRole('button', { name: 'Aplicar orden', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.waitForFunction(async identity => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      try { return await new Promise(resolve => { const request = db.transaction('drafts', 'readonly').objectStore('drafts').get(identity); request.onsuccess = () => resolve(!!request.result?.byteLength); }); }
+      finally { db.close(); }
+    }, identity);
+    const before = await storageSnapshot(), beforeDraft = new Uint8Array(before.draft);
+    assert.equal(operateDocument(beforeDraft, { operation: 'text' }).length, 2, 'The stored draft must contain the two edited pages before reload.');
+    const snapshotSummary = (value, stage) => ({ stage, draftPages: value.draft.length ? operateDocument(new Uint8Array(value.draft), { operation: 'text' }).length : 0,
+      draftHash: createHash('sha256').update(new Uint8Array(value.draft)).digest('hex'), recentHash: createHash('sha256').update(new Uint8Array(value.recent)).digest('hex'),
+      recentId: value.recentId, recentName: value.recentName, sessionRevision: value.session?.documentRevision });
+    const beforeSummary = snapshotSummary(before, 'before-reload');
+    await page.reload(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    const afterSummary = snapshotSummary(await storageSnapshot(), 'after-reload-before-open');
+    await page.evaluate(summaries => { window.__iphoneDraftSummaries = summaries; }, [beforeSummary, afterSummary]);
+    assert.equal(afterSummary.draftPages, 2, 'The stored draft must remain two pages after reload.');
+    assert.equal(afterSummary.recentHash, identity, 'The recent document must remain the original PDF bytes.');
+    await actions(page); await page.getByRole('button', { name: 'Mis documentos', exact: true }).tap();
+    const row = page.locator('.recent-row').filter({ has: page.locator('strong', { hasText: /^iphone-reading\.pdf$/ }) }); await row.waitFor();
+    assertScreen(await geometry(page)); await row.locator('button').first().tap();
+    await heading(page, source).waitFor({ state: 'attached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    const reopenedSummary = snapshotSummary(await storageSnapshot(), 'after-open');
+    await page.evaluate(summary => window.__iphoneDraftSummaries.push(summary), reopenedSummary);
+    assert.equal(await page.locator('.pdf-page-wrap').count(), 2);
+    await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'FIRST PAGE 2' }).waitFor();
+    const saved = await save(page, 'iphone-recovered-draft.pdf'), text = operateDocument(saved.bytes, { operation: 'text' });
+    assert.equal(text.length, 2); assert(text[0].includes('FIRST PAGE 2')); assert(text[1].includes('FIRST PAGE 1'));
+    assert.equal(await page.locator('.toast.error').count(), 0, 'A restored document must not report a library or draft failure.');
+    return { originalFileRememberedInWebKit: true, reopenFromRecentUi: true, modifiedPdfBytesRecoveredAfterReload: true, recoveredPageOrder: [2, 1], storageSnapshots: [beforeSummary, afterSummary, reopenedSummary], storageErrorToast: false };
+  });
 } finally {
   await browser?.close(); server.kill();
   if (snapshot) { assert(snapshot.startsWith(snapshotRoot + path.sep)); fs.rmSync(snapshot, { recursive: true, force: true }); }

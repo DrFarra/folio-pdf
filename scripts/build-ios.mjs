@@ -8,7 +8,7 @@ const cli = path.join(root, 'node_modules/@tauri-apps/cli/tauri.js');
 const args = new Set(process.argv.slice(2));
 function fail(message) { throw new Error(message); }
 function run(command, parameters, inherit = true, env = process.env) {
-  const result = spawnSync(command, parameters, { cwd: root, env, encoding: 'utf8', stdio: inherit ? 'inherit' : 'pipe' });
+  const result = spawnSync(command, parameters, { cwd: root, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: inherit ? 'inherit' : 'pipe' });
   if (result.error || result.status !== 0) fail(`${command} falló: ${result.error?.message || result.stderr || result.status}`);
   return result.stdout?.trim() || '';
 }
