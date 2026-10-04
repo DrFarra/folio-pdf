@@ -71,12 +71,25 @@ final class ImportTests: XCTestCase {
         // WKWebView reports the dialog-opening document selector as Other.
         let documents = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Documentos abiertos'")).firstMatch
         XCTAssertTrue(documents.waitForExistence(timeout: 10)); documents.tap()
-        func tab(_ filename: String) -> XCUIElement {
-            let label = "Abrir pestaña " + filename
-            return folio.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", label.precomposedStringWithCanonicalMapping, label.decomposedStringWithCanonicalMapping)).firstMatch
+        attach("picker-two-tabs-before-assert", app: folio)
+        func tabExists(_ filename: String) -> Bool {
+            let expected = ("Abrir pestaña " + filename).precomposedStringWithCanonicalMapping
+            let deadline = Date().addingTimeInterval(10)
+            repeat {
+                // The real AX label mixes a composed web prefix with an APFS
+                // decomposed filename. Normalize the fetched label, preserving
+                // exact names and accents; neither whole-label form alone is
+                // an exact raw string match for that mixed representation.
+                let matches = folio.buttons.allElementsBoundByIndex.filter {
+                    $0.label.precomposedStringWithCanonicalMapping == expected
+                }
+                if !matches.isEmpty { return matches.count == 1 && matches[0].exists }
+                Thread.sleep(forTimeInterval: 0.15)
+            } while Date() < deadline
+            return false
         }
-        XCTAssertTrue(tab("Folio selección uno.PDF").waitForExistence(timeout: 10))
-        XCTAssertTrue(tab("Folio selección dos.pdf").exists)
+        XCTAssertTrue(tabExists("Folio selección uno.PDF"), "The exact canonical first PDF tab is missing or duplicated")
+        XCTAssertTrue(tabExists("Folio selección dos.pdf"), "The exact canonical second PDF tab is missing or duplicated")
         attach("picker-two-tabs", app: folio)
         folio.buttons["Cerrar diálogo"].firstMatch.tap()
     }
