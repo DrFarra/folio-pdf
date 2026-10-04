@@ -274,6 +274,12 @@ try:
     report['passed'] = True
 except Exception as error:
     report['failure'] = f'{type(error).__name__}: {error}'
+    if isinstance(error, subprocess.CalledProcessError):
+        # Preserve the bounded inspector error as well as its exit code. The
+        # simulator will be deleted below, so this is the only useful detail
+        # when a native/host validator rejects an exported fixture.
+        report['subprocessFailure'] = {'exitCode':error.returncode,
+            'stdout':(error.stdout or '')[-8192:], 'stderr':(error.stderr or '')[-8192:]}
     raise
 finally:
     # Never delete the only useful failure evidence with the ephemeral device.

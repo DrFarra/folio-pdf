@@ -103,27 +103,38 @@ def main():
                 fixtures.append({'name': filename, 'text': text, 'sha256': digest, 'bytes': fixture.stat().st_size})
             run('xcodegen', 'generate', '--spec', str(project / 'project.yml'), '--project', str(project), cwd=project)
             result_path = OUT / ('import-ui-' + uuid.uuid4().hex + '.xcresult')
-            command = ['xcodebuild', 'test', '-project', str(project / 'FolioImportUI.xcodeproj'), '-scheme', 'FolioImportUI',
+            arguments = ['-project', str(project / 'FolioImportUI.xcodeproj'), '-scheme', 'FolioImportUI',
                        '-sdk', 'iphonesimulator', '-destination', 'platform=iOS Simulator,id=' + device,
-                       '-derivedDataPath', str(directory / 'DerivedData'), '-resultBundlePath', str(result_path),
+                       '-derivedDataPath', str(directory / 'DerivedData'),
                        '-parallel-testing-enabled', 'NO', '-maximum-concurrent-test-simulator-destinations', '1',
                        'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'ARCHS=arm64']
+            # Verify the actual compiled provider configuration before any UI
+            # test. Xcode silently omitted UIFileSharingEnabled when supplied
+            # only as an INFOPLIST_KEY build setting in the first real run.
+            build_process = subprocess.run(['xcodebuild', 'build-for-testing', *arguments], cwd=project, capture_output=True, text=True)
+            (OUT / 'iphone-native-import-ui-build.log').write_text(build_process.stdout + '\n' + build_process.stderr)
+            report['xcodebuildBuildExitCode'] = build_process.returncode
+            assert build_process.returncode == 0, 'The actual UIKit host/test build failed; see iphone-native-import-ui-build.log.'
+            host_app = directory / 'DerivedData/Build/Products/Debug-iphonesimulator/FolioImportHost.app'
+            assert host_app.is_dir(), 'The UIKit build did not produce the independent provider host.'
+            host_info = plistlib.loads((host_app / 'Info.plist').read_bytes())
+            report['hostProviderConfiguration'] = {key: host_info.get(key) for key in (
+                'CFBundleIdentifier', 'CFBundleName', 'CFBundleDisplayName',
+                'UIFileSharingEnabled', 'LSSupportsOpeningDocumentsInPlace', 'UISupportsDocumentBrowser')}
+            assert host_info.get('CFBundleIdentifier') == 'org.folio.import-ui-host'
+            assert host_info.get('UIFileSharingEnabled') is True and host_info.get('LSSupportsOpeningDocumentsInPlace') is True and host_info.get('UISupportsDocumentBrowser') is False, 'The compiled UIKit host must expose its real Documents through the Apple local file provider.'
+            bundled = list(host_app.iterdir())
+            report['hostBundledFixtures'] = []
+            for fixture in fixtures:
+                same = [p for p in bundled if p.is_file() and unicodedata.normalize('NFC', p.name) == unicodedata.normalize('NFC', fixture['name'])]
+                report['hostBundledFixtures'].append({'name': fixture['name'], 'present': len(same) == 1,
+                    'originalBytesVerified': len(same) == 1 and hashlib.sha256(same[0].read_bytes()).hexdigest() == fixture['sha256']})
+            assert len(report['hostBundledFixtures']) == 4 and all(item['present'] and item['originalBytesVerified'] for item in report['hostBundledFixtures']), 'The compiled provider must contain all four original fixture PDFs.'
+            command = ['xcodebuild', 'test-without-building', *arguments, '-resultBundlePath', str(result_path)]
             process = subprocess.run(command, cwd=project, capture_output=True, text=True)
             (OUT / 'iphone-native-import-ui.log').write_text(process.stdout + '\n' + process.stderr)
             report['xcodebuildExitCode'] = process.returncode
             report['resultBundle'] = result_path.name
-            host_app = directory / 'DerivedData/Build/Products/Debug-iphonesimulator/FolioImportHost.app'
-            if host_app.is_dir():
-                host_info = plistlib.loads((host_app / 'Info.plist').read_bytes())
-                report['hostProviderConfiguration'] = {key: host_info.get(key) for key in (
-                    'CFBundleIdentifier', 'CFBundleName', 'CFBundleDisplayName',
-                    'UIFileSharingEnabled', 'LSSupportsOpeningDocumentsInPlace', 'UISupportsDocumentBrowser')}
-                bundled = list(host_app.iterdir())
-                report['hostBundledFixtures'] = []
-                for fixture in fixtures:
-                    same = [p for p in bundled if p.is_file() and unicodedata.normalize('NFC', p.name) == unicodedata.normalize('NFC', fixture['name'])]
-                    report['hostBundledFixtures'].append({'name': fixture['name'], 'present': len(same) == 1,
-                        'originalBytesVerified': len(same) == 1 and hashlib.sha256(same[0].read_bytes()).hexdigest() == fixture['sha256']})
             if result_path.exists():
                 try:
                     summary = json.loads(run('xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', str(result_path)))

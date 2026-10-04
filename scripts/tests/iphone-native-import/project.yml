@@ -17,16 +17,19 @@ targets:
       - Host.swift
       - path: Fixtures
         buildPhase: resources
+    info:
+      path: Host-Info.plist
+      properties:
+        CFBundleDisplayName: Folio Import Host
+        UILaunchScreen: {}
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportsDocumentBrowser: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.folio.import-ui-host
         PRODUCT_NAME: FolioImportHost
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Folio Import Host
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIFileSharingEnabled: YES
-        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
-        INFOPLIST_KEY_UISupportsDocumentBrowser: NO
+        GENERATE_INFOPLIST_FILE: NO
   ImportUITests:
     type: bundle.ui-testing
     platform: iOS

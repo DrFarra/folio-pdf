@@ -73,7 +73,9 @@ final class ImportTests: XCTestCase {
     private func send(_ identifier: String) {
         prepareHost(); let button = host.buttons[identifier].firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 10)); button.tap()
-        let folioAction = host.buttons.matching(NSPredicate(format: "label == 'Folio' OR label == 'Copy to Folio' OR label == 'Open in Folio'")).firstMatch
+        // The actual iOS 18 share sheet exposes app destinations as shareCell
+        // cells, not buttons. Tap the visible system cell, never a callback.
+        let folioAction = host.cells.matching(NSPredicate(format: "identifier == 'shareCell' AND label == 'Folio'")).firstMatch
         XCTAssertTrue(folioAction.waitForExistence(timeout: 15), "iOS Open In menu did not offer Folio")
         attach("openin-menu-" + identifier, app: host); folioAction.tap()
     }
