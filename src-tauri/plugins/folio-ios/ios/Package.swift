@@ -9,7 +9,9 @@ let package = Package(
         .package(url: "https://github.com/Brendonovich/swift-rs", exact: "1.0.7")
     ],
     targets: [
-        .binaryTarget(name: "FolioMuPDF", path: "Frameworks/FolioMuPDF.xcframework"),
+        // Tauri compiles this package through `swift build`. Publish the C ABI
+        // as an ordinary Clang target; Cargo links the prebuilt SDK slice.
+        .target(name: "FolioMuPDF", path: "NativeExport", exclude: ["FolioMuPDF.c"], sources: ["Bindings.c"], publicHeadersPath: "include"),
         .target(name: "tauri-plugin-folio-ios", dependencies: [.byName(name: "Tauri"), .product(name: "SwiftRs", package: "swift-rs"), .byName(name: "FolioMuPDF")], path: "Sources", linkerSettings: [.linkedFramework("PDFKit")])
     ]
 )

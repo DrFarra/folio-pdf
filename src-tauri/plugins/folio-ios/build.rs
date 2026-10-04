@@ -1,8 +1,8 @@
 fn main() {
     tauri_plugin::Builder::new(&[]).ios_path("ios").build();
     // SwiftPM makes the C module available while compiling Swift. Its static
-    // product does not embed binary-target archives, so Cargo also links the
-    // matching device or simulator slice into the final Rust application.
+    // bindings target only exposes the shared header, so Cargo links the
+    // matching device or simulator implementation into the final application.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
         let target = std::env::var("TARGET").expect("Cargo target");
         let slice = if target.ends_with("-sim") { "ios-arm64-simulator" } else { "ios-arm64" };
