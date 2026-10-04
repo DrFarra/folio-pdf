@@ -1,0 +1,10 @@
+[package]
+name = "folio-core"
+version = "0.2.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+sha2 = "0.10"
+tempfile = "3"
+same-file = "1"

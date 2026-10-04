@@ -1,0 +1,12 @@
+.settings-modal{max-width:560px}
+.settings-modal h3{margin:18px 0 9px}
+.settings-theme{gap:7px}
+.settings-theme button{padding:11px 9px;gap:6px}
+.reading-setting{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:44px;font-size:12px}
+.reading-setting select{width:180px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font:inherit}
+.reading-range{display:flex;align-items:center;gap:10px;width:180px}
+.reading-range input{min-width:0;flex:1;accent-color:var(--accent)}
+.reading-range output{font-size:10px;min-width:39px;text-align:right;color:var(--muted)}
+.settings-modal .settings-toggle{padding:7px 0;font-size:12px}
+.settings-modal .modal-actions{margin-top:15px}
+@media(max-width:480px){.reading-setting{gap:10px;font-size:11px}.reading-setting select,.reading-range{width:140px}.settings-theme button{font-size:10px}}

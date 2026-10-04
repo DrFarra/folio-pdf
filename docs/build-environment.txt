@@ -1,0 +1,67 @@
+Build environment used for Folio 0.4.0, 2026-10-04
+
+Host: Windows x64; Node 24.19.0, npm 11.17.0, Rust 1.99.0 MSVC.
+A project-local toolchain was used without changing the system PATH:
+  Rustup/Rust: official static.rust-lang.org downloads, SHA-256 checked.
+  xwin 0.10.0: official Jake-Shadle/xwin release, SHA-256 checked.
+  Microsoft CRT/SDK: xwin winsysroot, MSVC 14.44.17.14 / SDK 10.0.26100.
+  Resource compiler: Microsoft.Windows.SDK.BuildTools 10.0.26100.9169.
+  clang-cl / llvm-lib: LLVM 21.1.8 official Windows release.
+  LLVM download SHA-256:
+    7a5386c26497db1691f320121e5b113364dd0274b98e55f15f4dbc00c0450113
+  Linker: the lld-link executable supplied by the installed Rust toolchain.
+  NSIS 3.11 / nsis_tauri_utils 0.5.3: downloaded and checked by Tauri.
+
+scripts/windows-env.ps1 configures only the current PowerShell process.
+The .tools directory is local build tooling and is excluded from the source
+archive. A standard Visual Studio C++/SDK installation can build the project
+with npm ci followed by npm run desktop:build, without this adapter.
+
+Native file tests: four passing tests in Windows.
+UI layout tests: Windows/Chrome, five viewport sizes, independent scroll panes,
+Ctrl+wheel zoom and cursor anchoring. Reports are in the evidence directory.
+Runtime acceptance scope is recorded in docs/acceptance-windows.md.
+
+Original 0.2.0 build record follows:
+
+Build environment used for Folio 0.2.0, 2026-10-03
+
+Host: Debian 13 Linux x86_64, Node 24.19.0, Python 3.12.14,
+Rust 1.99.0 (b940084d7 2026-09-28). Tests: Chromium headless on Linux.
+Windows target: x86_64-pc-windows-msvc.
+Tauri CLI: 2.12.1, locked npm dependency.
+Native dependency graph: src-tauri/Cargo.lock.
+
+Cross-compile image: folio-windows-build, built from rust:slim-bookworm.
+Image ID: sha256:d13a6102ad6fa95938f6f2aa7329d97d1fe01ad792502f34c9aa5ad18e010e5b
+Dockerfile is supplied in docs/windows-build.Dockerfile.
+It installs clang/lld/llvm/NSIS, cargo-xwin and the MSVC Rust target.
+BuildKit secret ca_bundle supplies the environment's combined CA certificate.
+Keep proxy and TLS settings configured by the execution environment.
+
+Example image build, from a host with Docker and its trusted CA bundle:
+  docker build --secret id=ca_bundle,src=/path/to/combined-ca.crt \
+    -t folio-windows-build -f docs/windows-build.Dockerfile .
+The supplied scripts/cargo-windows.sh uses local Docker, mounts the workspace,
+its CA bundle and named caches, and accepts the Microsoft SDK/CRT terms required
+by cargo-xwin. Review these terms before independently using that build route.
+
+Command used from the application root:
+  npx tauri build --target x86_64-pc-windows-msvc --no-bundle \
+    --runner /workspace/sites/folio-pdf/scripts/cargo-windows.sh
+
+NSIS bundle generated with Linux NSIS 3.08, Tauri's downloaded
+nsis_tauri_utils-v0.5.3.dll, and Win/RestartManager.nsh from upstream NSIS.
+The additional header is supplied in docs/nsis/RestartManager.nsh.
+Tauri's latest template needs that header; NSIS 3.08 does not include it.
+The local makensis wrapper ran the tool inside the Docker image while mounting
+the workspace, Tauri cache and the supplied header. A normal Windows build uses
+Tauri's Windows bundling tools and does not need this Linux wrapper.
+
+Bundle command used:
+  npx tauri bundle --target x86_64-pc-windows-msvc --ci
+
+Cross-platform bundling is marked experimental by Tauri. The MSVC binary is
+PE32+ Windows x64. This verifies compilation and packaging, not Windows startup,
+dialogs, associations, installation or SmartScreen acceptance. No signing
+certificate, auto-updater or Windows CI execution was used for this release.

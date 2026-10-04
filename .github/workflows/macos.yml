@@ -1,0 +1,126 @@
+name: Folio macOS universal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  universal:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install locked dependencies and Rust targets
+        run: |
+          npm ci
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          mkdir -p test-results
+      - name: Download and verify the corresponding MuPDF source
+        run: |
+          curl --fail --location --retry 3 https://mupdf.com/downloads/archive/mupdf-1.28.1-source.tar.gz -o test-results/mupdf-1.28.1-source.tar.gz
+          echo 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3  test-results/mupdf-1.28.1-source.tar.gz' | shasum -a 256 -c -
+      - name: Generate macOS dependency notices
+        run: |
+          node scripts/prepare-resources.mjs
+          cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform aarch64-apple-darwin --format-version 1 > test-results/cargo-metadata-macos.json
+          python3 scripts/generate-notices.py --platform macos --cargo-metadata test-results/cargo-metadata-macos.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+          npm run build
+      - name: Native Mac unit tests
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --release --target aarch64-apple-darwin
+          cargo test --manifest-path crates/folio-core/Cargo.toml --locked
+      - name: Test selection, shortcuts and PDF rendering in Mac WebKit
+        run: |
+          npx playwright-core install webkit
+          FOLIO_MAC_PLATFORM_TEST=webkit npm run test:macos
+          FOLIO_TEST_BROWSER=webkit npm run test:reading-settings
+          FOLIO_TEST_BROWSER=webkit npm run test:remove-highlights
+          FOLIO_TEST_BROWSER=webkit npm run test:bookmark-drag
+      - name: Build a separate Mac diagnostics variant
+        run: |
+          set -o pipefail
+          npm run desktop:macos -- --features native-qa --bundles app 2>&1 | tee test-results/mac-qa-build.log
+      - name: Verify native text selection and search diagnostics
+        run: |
+          python3 scripts/tests/native-smoke-macos.py --qa --app src-tauri/target/universal-apple-darwin/release/bundle/macos/Folio.app
+      - name: Build the production universal application
+        run: |
+          set -o pipefail
+          npm run desktop:macos -- --bundles app 2>&1 | tee test-results/mac-build.log
+      - name: Test actual WKWebView and Finder file opening
+        id: production_smoke
+        run: |
+          python3 scripts/tests/native-smoke-macos.py --app src-tauri/target/universal-apple-darwin/release/bundle/macos/Folio.app
+      - name: Preserve the verified production application
+        run: |
+          mkdir -p test-results/recovery
+          ditto -c -k --sequesterRsrc --keepParent src-tauri/target/universal-apple-darwin/release/bundle/macos/Folio.app test-results/recovery/Folio.app.zip
+          cp THIRD-PARTY-NOTICES.txt dependency-licenses.json test-results/recovery/
+      - name: Create the production DMG without recompiling
+        run: |
+          set -o pipefail
+          npm run desktop:macos -- --bundle-only 2>&1 | tee -a test-results/mac-build.log
+      - name: Package the installer, application, licenses and corresponding source
+        run: |
+          python3 scripts/package-macos.py --out release/Folio-0.4.1-macos --build-dir src-tauri/target/universal-apple-darwin/release --build-logs test-results --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+      - name: Upload the completed Mac delivery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-0.4.1-macos
+          path: release/Folio-0.4.1-macos/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve verified bundles if packaging fails
+        if: failure() && steps.production_smoke.outcome == 'success'
+        run: |
+          if [ -f src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_0.4.1_universal.dmg ]; then
+            cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/Folio_0.4.1_universal.dmg test-results/recovery/
+          fi
+      - name: Upload verified bundles for recovery
+        if: failure() && steps.production_smoke.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-macos-verified-bundles
+          path: test-results/recovery/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-macos-build-evidence
+          path: |
+            test-results/mac-build.log
+            test-results/mac-qa-build.log
+            test-results/native-smoke-macos.json
+            test-results/native-smoke-macos-qa.json
+            test-results/native-qa-diagnostics.json
+            test-results/folio-macos.png
+            test-results/folio-macos-qa.png
+            test-results/mac-platform-results.json
+            test-results/mac-webkit.png
+            test-results/reading-settings-results.json
+            test-results/reading-settings.png
+            test-results/remove-highlights-results.json
+            test-results/remove-highlights-contextual-menu.png
+            test-results/remove-highlights-after-zoom.png
+            test-results/bookmark-drag-results.json
+            test-results/bookmark-drag-destination.png
+            test-results/bookmark-drag-restored.png
+          if-no-files-found: ignore
+          retention-days: 1

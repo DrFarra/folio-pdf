@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.DS_Store
+artifacts/
+**/target/
+.fixtures/
+test-results/
+entrega-original/
+.migration/
+.tools/
+release/

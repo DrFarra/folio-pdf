@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Ventana local de Folio, con archivos elegidos por diálogo o por el sistema","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-destroy","core:window:allow-minimize","core:window:allow-toggle-maximize","core:window:allow-close","core:window:allow-start-dragging"]}}

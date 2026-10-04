@@ -1,0 +1,69 @@
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+
+export type Tool = 'select' | 'highlight' | 'note' | 'add-text' | 'replace-text' | 'add-image' | 'remove-image' | 'redact' | 'crop' | 'create-field';
+export type SideTab = 'pages' | 'outline' | 'bookmarks';
+export type Annotation = {
+  id: string;
+  page: number;
+  kind: 'highlight' | 'note';
+  rect: [number, number, number, number];
+  color: string;
+  text: string;
+  created: number;
+  author?: string;
+  opacity?: number;
+  sourceRef?: number;
+  originalName?: string;
+  quads?: number[][];
+};
+export type BookmarkNode = {
+  id: string;
+  title: string;
+  page: number | null;
+  parentId: string | null;
+  color: string;
+  order: number;
+  collapsed?: boolean;
+};
+export type Session = {
+  version?: number;
+  documentRevision?: string;
+  annotations: Annotation[];
+  bookmarks: BookmarkNode[];
+  lastPage: number;
+};
+export type LoadedDocument = {
+  pdf: PDFDocumentProxy;
+  bytes: Uint8Array;
+  id: string;
+  name: string;
+  size: number;
+  sample: boolean;
+  password?: string;
+  nativeSource?: string;
+  canAnnotate: boolean;
+  signed: boolean;
+  initialPage: number;
+  hadAnnotations: boolean;
+  canEdit: boolean;
+  canAssemble: boolean;
+  canFill: boolean;
+  canCopy: boolean;
+  canPrint: boolean;
+  modified: boolean;
+  revision: string;
+  savedAnnotations: string;
+  draftSource: boolean;
+};
+export type RecentDocument = {
+  id: string;
+  name: string;
+  size: number;
+  pages: number;
+  openedAt: number;
+  data?: Blob;
+  nativeSource?: string;
+  draft?: boolean;
+};
+export type SearchResult = { page: number; text: string; count: number };
+export type OutlineEntry = { title: string; page: number; depth: number };
