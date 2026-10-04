@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
+import { watchDesktopModalViewport } from '../desktop-modal-viewport';
 
 export default function Modal({ title, children, onClose, className = '' }: { title: string; children: React.ReactNode; onClose: () => void; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -9,7 +10,8 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement;
     ref.current?.showModal();
-    return () => { ref.current?.close(); previousFocus.current?.focus(); };
+    const stopViewport = ref.current ? watchDesktopModalViewport(ref.current) : () => {};
+    return () => { stopViewport(); ref.current?.close(); previousFocus.current?.focus(); };
   }, []);
   return <dialog ref={ref} className={`modal ${className}`} onCancel={event => { event.preventDefault(); onClose(); }} onPointerDown={event => {
     const box = event.currentTarget.getBoundingClientRect();

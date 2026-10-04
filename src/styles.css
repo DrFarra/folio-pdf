@@ -57,6 +57,10 @@
 .sidebar-title{height:40px;min-height:40px;font-size:10px;letter-spacing:.4px;color:var(--muted)}
 .sidebar-tabs{background:var(--hover)}
 .sidebar-title .page-total{background:var(--hover);color:var(--muted)}
+/* The thumbnail column must fit even the narrowest reading-panel setting. */
+.sidebar-scroll{min-width:0;overflow-x:hidden;overflow-y:auto}
+.sidebar-scroll .thumbnails{min-width:0}
+.sidebar-scroll .thumbnail-item{max-width:100%}
 .reader-toolbar{padding:0 12px;background:var(--surface);gap:8px}
 .reader-toolbar .icon-button,.page-controls .icon-button{width:29px;height:29px}
 .pdf-stack{padding-top:12px;gap:16px}
@@ -109,6 +113,10 @@
 .tools-button:hover:not(:disabled){background:var(--hover)}
 .modified-dot{width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0}
 .workbench{width:min(640px,calc(100vw - 28px));color:var(--text)}
+/* Keep desktop dialogs inside the visible Windows work area, with their own
+   vertical scrollbar and a reachable title/close button on short screens. */
+html:not([data-phone]) .modal{position:fixed;inset:var(--modal-visible-top,0px) calc(100vw - var(--modal-visible-left,0px) - var(--modal-visible-width,100vw)) calc(100dvh - var(--modal-visible-top,0px) - var(--modal-visible-height,100dvh)) var(--modal-visible-left,0px);margin:auto;height:fit-content;max-width:calc(var(--modal-visible-width,100vw) - 28px);max-height:calc(var(--modal-visible-height,100dvh) - 48px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scroll-padding-top:52px;scroll-padding-bottom:16px}
+html:not([data-phone]) .workbench .modal-heading{position:sticky;top:0;z-index:3;background:var(--bg);box-shadow:0 -28px 0 0 var(--bg);padding-bottom:10px}
 .workbench.pages-workbench{width:min(940px,calc(100vw - 28px))}
 .operation-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .operation-grid>button{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:14px;padding:18px 14px;border:1px solid var(--line);border-radius:7px;font-size:12px;text-align:left;min-height:94px;background:var(--surface)}

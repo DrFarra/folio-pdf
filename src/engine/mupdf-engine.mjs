@@ -1,4 +1,5 @@
 import * as mupdf from 'mupdf';
+import { DEFAULT_HIGHLIGHT_OPACITY } from './highlight-style.mjs';
 
 const supported = new Set(['Highlight', 'Text']);
 const LOCKED = mupdf.PDFAnnotation.IS_READ_ONLY | mupdf.PDFAnnotation.IS_LOCKED | mupdf.PDFAnnotation.IS_LOCKED_CONTENTS;
@@ -114,6 +115,8 @@ function validate(annotations, pages) {
       throw new Error('Una anotación contiene datos inválidos. No se modificó el original.');
     if (a.quads && (!Array.isArray(a.quads) || a.quads.length > 5000 || a.quads.some(q => !Array.isArray(q) || q.length !== 8 || !q.every(Number.isFinite))))
       throw new Error('Las coordenadas del resaltado no son válidas.');
+    if (a.opacity !== undefined && (!Number.isFinite(a.opacity) || a.opacity < 0 || a.opacity > 1))
+      throw new Error('La opacidad del resaltado no es válida.');
     ids.add(a.id);
   }
 }
@@ -168,7 +171,7 @@ export function writeAnnotations(bytes, annotations, password = '') {
               for (let i = 0; i < 8; i += 2) transformed.push(...point(q[i], q[i + 1], transform));
               return transformed;
             }));
-            annotation.setOpacity(value.opacity ?? .35);
+            annotation.setOpacity(value.opacity ?? DEFAULT_HIGHLIGHT_OPACITY);
           }
           annotation.update();
         }

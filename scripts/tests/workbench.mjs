@@ -42,6 +42,19 @@ async function open(page, file) { await page.locator('.app-header input[type=fil
 async function tools(page, name) { await page.getByRole('button', { name: 'Herramientas', exact: true }).click(); await page.getByRole('button', { name, exact: true }).click(); }
 async function save(page, name) { const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Descargar', exact: true }).click(); const file = await download; const target = path.join(output, name); await file.saveAs(target); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); return new Uint8Array(fs.readFileSync(target)); }
 async function drawArea(page, box) { await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100'); await page.locator('.reading-area').evaluate(el => { el.scrollTop = 0; }); await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' }); const bounds = await page.locator('.pdf-page').first().boundingBox(); const a = { x: bounds.x + box[0], y: bounds.y + 500 - box[3] }, b = { x: bounds.x + box[2], y: bounds.y + 500 - box[1] }; await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); }
+const plannedOrder = page => page.locator('.page-plan .plan-label').allTextContents();
+async function dragPlannedPage(page, sourceLabel, targetLabel, side, release = true) {
+  const cards = page.locator('.page-plan>article');
+  const source = cards.filter({ has: page.locator('.plan-label').filter({ hasText: sourceLabel }) });
+  const target = cards.filter({ has: page.locator('.plan-label').filter({ hasText: targetLabel }) });
+  const a = await source.locator('.thumbnail-item, .plan-placeholder').boundingBox(), b = await target.boundingBox(); assert(a && b);
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await page.mouse.down();
+  await page.mouse.move(a.x + a.width / 2 + 8, a.y + a.height / 2, { steps: 3 });
+  await page.locator('.page-plan-drag-preview').waitFor();
+  await page.mouse.move(b.x + b.width * (side === 'before' ? .2 : .8), b.y + b.height / 2, { steps: 12 });
+  await target.locator(`xpath=self::*[contains(@class,"plan-drop-${side}")]`).waitFor();
+  if (release) { await page.mouse.up(); await page.locator('.page-plan-drag-preview').waitFor({ state: 'detached' }); }
+}
 try {
   for (let n = 0; n < 100; n++) { try { if ((await fetch(origin)).ok) break; } catch {} if (preview.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }
   browser = await chromium.launch({ executablePath: chrome, headless: true });
@@ -51,6 +64,48 @@ try {
     await tools(page, 'Organizar páginas'); await page.getByRole('textbox', { name: 'Orden o intervalo de páginas' }).fill('3,1'); await page.getByRole('button', { name: 'Usar orden', exact: true }).click();
     await page.getByRole('button', { name: 'Aplicar orden', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' }); assert.equal(await page.locator('.pdf-page-wrap').count(), 2);
     const bytes = await save(page, 'ui-organized.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('PAGE 3') && text[1].includes('PAGE 1')); return { duplicateControlsRemoved: true, savedOrder: [3, 1] };
+  });
+  await check('mouse-page-drag-group-cancel-and-content-history', async page => {
+    await tools(page, 'Organizar páginas');
+    await dragPlannedPage(page, 'Página 3', 'Página 1', 'before');
+    assert.deepEqual(await plannedOrder(page), ['Página 3', 'Página 1', 'Página 2']);
+    assert.equal(await page.locator('.page-plan input:checked').count(), 0, 'Dropping a thumbnail must not toggle its selection.');
+    await dragPlannedPage(page, 'Página 3', 'Página 2', 'after');
+    assert.deepEqual(await plannedOrder(page), ['Página 1', 'Página 2', 'Página 3']);
+    await dragPlannedPage(page, 'Página 3', 'Página 1', 'before', false);
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    assert.equal(await page.locator('dialog.workbench[open]').count(), 1, 'Escape cancels the drag while keeping the organizer open.');
+    assert.deepEqual(await plannedOrder(page), ['Página 1', 'Página 2', 'Página 3']);
+    await dragPlannedPage(page, 'Página 3', 'Página 1', 'before', false);
+    await page.mouse.move(3, 3, { steps: 8 }); await page.mouse.up();
+    assert.deepEqual(await plannedOrder(page), ['Página 1', 'Página 2', 'Página 3']);
+    const longOrder = Array(10).fill(['Página 1', 'Página 2', 'Página 3']).flat();
+    await page.getByRole('textbox', { name: 'Orden o intervalo de páginas' }).fill(Array(10).fill('1-3').join(','));
+    await page.getByRole('button', { name: 'Usar orden', exact: true }).click();
+    const grid = page.locator('.page-plan'), first = await grid.locator('.thumbnail-item').first().boundingBox(), bounds = await grid.boundingBox(); assert(first && bounds);
+    await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2); await page.mouse.down();
+    await page.mouse.move(first.x + first.width / 2 + 8, first.y + first.height / 2, { steps: 3 });
+    await page.locator('.page-plan-drag-preview').waitFor();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height - 5, { steps: 12 });
+    await page.waitForFunction(() => document.querySelector('.page-plan').scrollTop > 100);
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    assert.deepEqual(await plannedOrder(page), longOrder, 'Auto-scrolling followed by cancellation keeps the order.');
+    await page.getByRole('textbox', { name: 'Orden o intervalo de páginas' }).fill('1-3');
+    await page.getByRole('button', { name: 'Usar orden', exact: true }).click();
+    await page.getByLabel('Seleccionar posición 1', { exact: true }).check(); await page.getByLabel('Seleccionar posición 3', { exact: true }).check();
+    await dragPlannedPage(page, 'Página 3', 'Página 2', 'after');
+    assert.deepEqual(await plannedOrder(page), ['Página 2', 'Página 1', 'Página 3'], 'Selected pages retain their relative order.');
+    assert.equal(await page.locator('.page-plan input:checked').count(), 2);
+    await page.screenshot({ path: path.join(output, 'page-plan-mouse-reordered.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: 'Aplicar orden', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.locator('.pdf-page-wrap').first().locator('.textLayer span').filter({ hasText: 'PAGE 2' }).waitFor();
+    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.locator('.pdf-page-wrap').first().locator('.textLayer span').filter({ hasText: 'PAGE 1' }).waitFor();
+    await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.locator('.pdf-page-wrap').first().locator('.textLayer span').filter({ hasText: 'PAGE 2' }).waitFor();
+    const bytes = await save(page, 'ui-mouse-organized.pdf');
+    assert.deepEqual(operateDocument(bytes, { operation: 'text' }).map(text => text.match(/PAGE (\d)/)[1]), ['2', '1', '3']);
+    return { realMouseReorder: true, selectedGroupOrderPreserved: true, escapeAndOutsideCancel: true, edgeAutoScroll: true, exportedOrderAndUndoRedo: true };
   });
   await check('forms-fill-and-export', async page => {
     await tools(page, 'Rellenar formulario'); await page.locator('.form-fields label').filter({ hasText: 'name' }).locator('input').fill('Emilio González'); await page.locator('.form-fields label').filter({ hasText: 'agree' }).locator('input').check();

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
+import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
 
 // These tests use actual mouse drags through the PDF.js text layer. They do not
@@ -40,6 +40,28 @@ pixmap.destroy(); rasterNativePage.destroy(); rasterDocument.destroy();
 fs.writeFileSync(source, await fixture.save());
 const originalText = operateDocument(fs.readFileSync(source), { operation: 'text' });
 
+const fragmented = await PDFDocument.create(), regular = await fragmented.embedFont(StandardFonts.Helvetica), bold = await fragmented.embedFont(StandardFonts.HelveticaBold);
+const fragmentedPage = fragmented.addPage([600, 760]);
+const words = ['Professional', 'highlights', 'include', 'spaces.'];
+let wordX = 60;
+words.forEach((word, index) => {
+  const face = index % 2 ? bold : regular;
+  fragmentedPage.drawText(word, { x: wordX, y: 665, size: 14, font: face });
+  wordX += face.widthOfTextAtSize(word, 14) + 5;
+});
+fragmentedPage.drawText('LEFT COLUMN', { x: 60, y: 615, size: 14, font: regular });
+fragmentedPage.drawText('RIGHT COLUMN', { x: 350, y: 615, size: 14, font: bold });
+fragmentedPage.drawText('Long', { x: 60, y: 565, size: 14, font: regular });
+const spaceX = 60 + regular.widthOfTextAtSize('Long', 14);
+fragmentedPage.drawText('     ', { x: spaceX, y: 565, size: 14, font: bold });
+fragmentedPage.drawText('Whitespace', { x: spaceX + bold.widthOfTextAtSize('     ', 14), y: 565, size: 14, font: regular });
+const fragmentedSource = path.join(output, 'highlighting-fragmented-source.pdf');
+const fragmentedBytes = await fragmented.save(); fs.writeFileSync(fragmentedSource, fragmentedBytes);
+const importedSource = path.join(output, 'highlighting-imported-opacity.pdf');
+fs.writeFileSync(importedSource, writeAnnotations(fragmentedBytes, [{ id: 'imported-opacity', page: 1, kind: 'highlight',
+  rect: [60, 660, wordX - 5, 675], quads: [[60, 675, wordX - 5, 675, 60, 660, wordX - 5, 660]],
+  color: '#f5d164', text: words.join(' '), opacity: .25, created: Date.now() }]));
+
 const chrome = process.env.CHROME_PATH || [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -62,6 +84,10 @@ async function open(page, file) {
   await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).selectOption('100');
   await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
   await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').first().waitFor();
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas');
+    return canvas?.dataset.rendering === 'false' && canvas.dataset.renderScale === '1';
+  });
 }
 
 async function check(id, action, file = source) {
@@ -144,6 +170,16 @@ async function save(page, id, { original = originalText } = {}) {
     for (const annotation of native) if (annotation.getType() === 'Highlight') {
       standardHighlights++;
       assert(annotation.getObject().get('QuadPoints').length > 0 && annotation.getObject().get('QuadPoints').length % 8 === 0, 'The exported file must contain standard PDF QuadPoints.');
+      const quads = annotation.getQuadPoints(), xs = quads.flatMap(q => [q[0], q[2], q[4], q[6]]), ys = quads.flatMap(q => [q[1], q[3], q[5], q[7]]);
+      const thickness = Math.max(...quads.map(q => Math.hypot(q[0] - q[4], q[1] - q[5])));
+      const bounds = annotation.getBounds();
+      assert(bounds[2] - bounds[0] <= Math.max(...xs) - Math.min(...xs) + thickness + 3 &&
+        bounds[3] - bounds[1] <= Math.max(...ys) - Math.min(...ys) + thickness + 3,
+        'The saved appearance must not expand into adjacent lines when the view is rotated.');
+      const states = annotation.getObject().get('AP', 'N', 'Resources', 'ExtGState');
+      let multiply = false;
+      states.forEach(state => { if (state.get('BM').asName() === 'Multiply') multiply = true; });
+      assert(multiply, 'The exported highlight appearance must multiply its color with the PDF ink.');
     }
     for (const annotation of native) annotation.destroy(); pageNative.destroy();
   }
@@ -164,6 +200,15 @@ function textOnly(annotation, { maxHeight = 24, minimumLines = 1 } = {}) {
   return { quads: annotation.quads.length, lineBands: bands.length, selectedText: annotation.text };
 }
 
+function pixels(png) {
+  const image = new mupdf.Image(png), bitmap = image.toPixmap();
+  try { return { width: bitmap.getWidth(), components: bitmap.getNumberOfComponents(), stride: bitmap.getStride(), data: new Uint8Array(bitmap.getPixels()) }; }
+  finally { bitmap.destroy(); image.destroy(); }
+}
+
+const rgbAt = (bitmap, x, y) => [...bitmap.data.slice(Math.round(y) * bitmap.stride + Math.round(x) * bitmap.components,
+  Math.round(y) * bitmap.stride + Math.round(x) * bitmap.components + 3)];
+
 try {
   let ready = false;
   for (let i = 0; i < 100; i++) {
@@ -173,6 +218,60 @@ try {
   }
   assert(ready, log || 'Preview did not start.');
   browser = await chromium.launch({ executablePath: chrome, headless: true });
+
+  await check('fragmented-words-continuous-color-and-black-ink', async page => {
+    const content = page.locator('.pdf-page-wrap[data-page-number="1"] .page-content');
+    const before = pixels(await content.screenshot());
+    const from = await spanPoint(page, words[0], 0, 'start'), to = await spanPoint(page, words.at(-1), words.at(-1).length, 'end');
+    const firstWord = await page.locator('.textLayer span').filter({ hasText: words[0] }).first().boundingBox();
+    const secondWord = await page.locator('.textLayer span').filter({ hasText: words[1] }).first().boundingBox();
+    const frame = await content.boundingBox();
+    await highlight(page); await drag(page, from, to);
+    await page.waitForFunction(() => document.querySelectorAll('.highlight-annotation').length === 1);
+    const after = pixels(await content.screenshot());
+    const gapX = (firstWord.x + firstWord.width + secondWord.x) / 2 - frame.x, gapY = firstWord.y + firstWord.height / 2 - frame.y;
+    const gap = rgbAt(after, gapX, gapY);
+    assert(gap[2] < 130 && gap[0] > 220, `Inter-word space must have the selected yellow color: ${gap}`);
+    let ink = 0, preserved = 0;
+    for (let y = Math.ceil(firstWord.y - frame.y); y < firstWord.y + firstWord.height - frame.y; y++) {
+      for (let x = Math.ceil(firstWord.x - frame.x); x < firstWord.x + firstWord.width - frame.x; x++) {
+        if (rgbAt(before, x, y).every(value => value < 35)) { ink++; if (rgbAt(after, x, y).every(value => value < 35)) preserved++; }
+      }
+    }
+    assert(ink > 30 && preserved / ink > .98, `Black PDF ink must stay black instead of being painted over: ${preserved}/${ink}`);
+    await page.screenshot({ path: path.join(output, 'highlighting-professional-spaces.png'), animations: 'disabled' });
+    const overlay = page.locator('.highlight-annotation').first();
+    await overlay.focus(); await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Tab');
+    assert(await overlay.evaluate(node => node.matches(':focus-visible')), 'Highlights must retain keyboard focus.');
+    const focused = pixels(await content.screenshot());
+    assert(focused.data.filter((value, index) => value !== after.data[index]).length > 30, 'A clipped highlight must still show its keyboard focus indicator.');
+    await page.keyboard.press('Enter'); await page.getByRole('menuitem', { name: 'Eliminar resaltado', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    const annotations = await save(page, 'fragmented', { original: operateDocument(fragmentedBytes, { operation: 'text' }) });
+    assert.equal(annotations[0].quads.length, 1); assert.equal(annotations[0].opacity, 1);
+    return { continuousLineQuads: 1, coloredInterwordGap: gap, blackInkPreserved: preserved / ink, exportedOpacity: 1, visibleKeyboardFocus: true };
+  }, fragmentedSource);
+
+  await check('explicit-wide-spaces-are-included', async page => {
+    await highlight(page); await dragText(page, 'Long', 0, 'Whitespace', 'Whitespace'.length);
+    const annotations = await save(page, 'wide-spaces', { original: operateDocument(fragmentedBytes, { operation: 'text' }) });
+    assert.equal(annotations[0].quads.length, 1, 'Selected whitespace stays colored even when wider than a text height.');
+    return { continuousWideSpaceQuads: 1 };
+  }, fragmentedSource);
+
+  await check('wide-column-gap-stays-clear', async page => {
+    await highlight(page); await dragText(page, 'LEFT COLUMN', 0, 'RIGHT COLUMN', 'RIGHT COLUMN'.length);
+    const annotations = await save(page, 'columns', { original: operateDocument(fragmentedBytes, { operation: 'text' }) });
+    assert.equal(annotations[0].quads.length, 2, 'Separate columns must not become a single highlight band.');
+    return { separateColumnQuads: 2 };
+  }, fragmentedSource);
+
+  await check('imported-highlight-opacity-preserved-in-view-and-export', async page => {
+    assert.equal(Number(await page.locator('.highlight-annotation').first().evaluate(node => getComputedStyle(node).opacity)), .25);
+    const annotations = await save(page, 'imported-opacity', { original: operateDocument(fragmentedBytes, { operation: 'text' }) });
+    assert.equal(annotations[0].opacity, .25);
+    return { viewedOpacity: .25, exportedOpacity: .25 };
+  }, importedSource);
 
   await check('single-line-partial-word-selection', async page => {
     await highlight(page);

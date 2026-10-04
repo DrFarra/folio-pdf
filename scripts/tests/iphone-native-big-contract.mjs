@@ -217,6 +217,10 @@ try {
   assert.equal(legacySession.annotations.length, 3); assert(!legacySession.annotations.some(annotation => annotation.id === 'native-legacy-deleted'));
   const keptLegacy = legacySession.annotations.find(annotation => annotation.id === 'native-legacy-highlight');
   assert.equal(keptLegacy.color, '#3d9dea'); assert.equal(keptLegacy.text, 'Edited legacy highlight');
+  const legacyHighlight = page.locator('.highlight-annotation[data-annotation-id="native-legacy-highlight"]').first();
+  await legacyHighlight.waitFor();
+  assert.equal(Number(await legacyHighlight.evaluate(element => getComputedStyle(element).opacity)), .35,
+    'A legacy native highlight without explicit opacity must retain the opacity used by native export.');
   await page.reload(); await readyDocument('Legacy.pdf');
   await page.waitForFunction(() => window.__nativeBigContract.sessions['f'.repeat(64)]?.nativeLegacySession === true);
   await page.evaluate(() => { window.__nativeBigContract.cancelNextSave = false; });

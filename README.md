@@ -15,7 +15,10 @@ importa los PDF al almacenamiento de la aplicación; guardar y compartir incluye
 las anotaciones y cambios actuales.
 
 Cabecera de 44 px y herramientas de 40 px. La ventana permanece fija;
-PDF, miniaturas y anotaciones se desplazan por separado. Sin barra inferior,
+PDF, miniaturas y anotaciones se desplazan por separado. Las miniaturas solo
+se desplazan verticalmente. En Windows, los diálogos se ajustan al área útil
+del monitor para mantener las herramientas accesibles sobre la barra de tareas.
+Sin barra inferior,
 eslóganes ni entradas repetidas: abrir con el botón + de las pestañas, búsqueda y paneles en la
 barra lateral, guardar en lectura y operaciones en Herramientas. Ctrl+S guarda
 directamente. Ctrl+P prepara la impresión. Ctrl+rueda cambia el zoom conservando el punto bajo el cursor y la página visible durante el nuevo renderizado.
@@ -27,10 +30,10 @@ directamente. Ctrl+P prepara la impresión. Ctrl+rueda cambia el zoom conservand
 | Lectura | Miniaturas, índice, búsqueda, marcadores, zoom, giro de vista y pantalla completa. Renderiza las páginas próximas a la vista. |
 | Pestañas | Varios PDF abiertos en la misma ventana. Cada pestaña conserva cambios, anotaciones, historial, página, zoom y búsqueda. Abrir varios archivos a la vez; cambiar con Ctrl+Tab y cerrar con Ctrl+W. |
 | Marcadores | Árbol de páginas y grupos, con nombres, colores, orden y ramas plegables. Arrastrar ramas para cambiar el orden o el padre; deshacer y rehacer conserva sus hijos. Renombrar, crear hijos y eliminar desde el menú. Guardar marcador abre el panel y permite escribir su nombre. Se conservan en la sesión local y al guardar una copia desde Folio. |
-| Anotaciones | Notas Text y resaltados Highlight estándar, Unicode y apariencias PDF. El modo automático (H) resalta cada selección y se puede apagar. Doce colores y color personalizado; la elección se recuerda. Al seleccionar texto aparece un menú para copiar, resaltar o comentar. Clic o clic derecho sobre un resaltado permite eliminarlo, incluidos los importados; deshacer lo restaura. QuadPoints separados por fragmento de texto. Los escaneos necesitan OCR para seleccionar palabras. Importar, editar notas y eliminar comentarios. |
+| Anotaciones | Notas Text y resaltados Highlight estándar, Unicode y apariencias PDF. El modo automático (H) resalta cada selección y se puede apagar. Doce colores y color personalizado; la elección se recuerda. Al seleccionar texto aparece un menú para copiar, resaltar o comentar. Clic o clic derecho sobre un resaltado permite eliminarlo, incluidos los importados; deshacer lo restaura. Resaltado continuo entre palabras de una línea, sin unir columnas ni saltos de línea; composición Multiply que conserva el negro del texto, con la misma opacidad en vista y exportación. Conserva la opacidad de los resaltados importados y las coordenadas al girar la vista. Los escaneos necesitan OCR para seleccionar palabras. Importar, editar notas y eliminar comentarios. |
 | Ajustes de lectura | Zoom inicial, desplazamiento continuo o página individual, separación entre páginas, velocidad de rueda y desplazamiento suave. Tema claro, oscuro o del sistema; panel inicial y su ancho. Opción de recordar la última página. Las preferencias se conservan al reiniciar. |
 | Edición | Añadir texto o reemplazar texto dentro de un área conservando el contenido vecino. Añadir PNG/JPEG y eliminar píxeles de imágenes de un área. |
-| Páginas | Reordenar, duplicar, extraer, eliminar, girar permanentemente, insertar PDF o páginas en blanco y recortar. Conserva campos, comentarios y enlaces entre páginas importadas. |
+| Páginas | Reordenar, duplicar, extraer, eliminar, girar permanentemente, insertar PDF o páginas en blanco y recortar. En PC, arrastrar miniaturas con el mouse para elegir su posición; las páginas seleccionadas se mueven juntas. El organizador indica el destino, se desplaza al llegar a un borde y permite cancelar con Esc antes de aplicar el orden. Conserva campos, comentarios y enlaces entre páginas importadas. |
 | OCR | Español, inglés o ambos, local con Tesseract. Añade texto invisible seleccionable conservando el escaneo. Modelos incluidos para trabajar sin conexión. |
 | Formularios | Completar AcroForm: texto, casillas, radios y listas; generar apariencias y aplanar. Crear campos de texto, casillas y listas. |
 | Firmas | CMS/PDF RSA/SHA-256 con certificado P12/PFX. Verifica integridad, cobertura ByteRange, vigencia y cadena contra una raíz elegida. Distingue integridad y confianza; bloquea editar archivos firmados. |

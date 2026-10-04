@@ -4,10 +4,12 @@ import { LoaderCircle, MessageSquare } from 'lucide-react';
 import type { Annotation, Tool } from '../types';
 import { normalize, TextLayer } from '../pdf';
 import type { Area } from '../engine/operations.mjs';
+import { DEFAULT_HIGHLIGHT_OPACITY } from '../engine/highlight-style.mjs';
 import { highlightSelection, selectedTextRects, textCaretAtPoint } from '../text-selection';
 import type { AnnotationDraft, HighlightSelectionRequest, TextSelectionRequest } from '../text-selection';
 import HighlightAnnotationMenu from './HighlightAnnotationMenu';
 import { isMobile } from '../platform';
+import { isNativePdfDocument } from '../nativePdf';
 import './PDFPage.css';
 
 function useNearby(ref: React.RefObject<HTMLDivElement | null>, first = false) {
@@ -64,7 +66,7 @@ export default function PDFPage(props: Props) {
   </div>;
 }
 
-function PageContent({ page, scale, rotation, annotations, tool, color, query, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
+function PageContent({ pdf, page, scale, rotation, annotations, tool, color, query, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -141,13 +143,17 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
       const selection = selectedTextRects(textRef.current, request.range);
       if (!selection) return;
       const frame = frameRef.current.getBoundingClientRect();
-      const quads = selection.rects.map(rect => {
+      const quads = selection.rects.map((rect, index) => {
         const left = Math.max(0, rect.left - frame.left), top = Math.max(0, rect.top - frame.top);
         const right = Math.min(viewport.width, rect.right - frame.left), bottom = Math.min(viewport.height, rect.bottom - frame.top);
-        return [[left, top], [right, top], [left, bottom], [right, bottom]].flatMap(([x, y]) => viewport.convertToPdfPoint(x, y));
+        const corners = [[left, top], [right, top], [left, bottom], [right, bottom]];
+        // QuadPoints follow the text's upper/lower edges, even in a rotated view.
+        // Screen-corner order at 90° would make MuPDF's end caps span the line width.
+        const orders = [[0, 1, 2, 3], [1, 3, 0, 2], [3, 2, 1, 0], [2, 0, 3, 1]];
+        return orders[Math.round(selection.angles[index] / 90) % 4].flatMap(i => viewport.convertToPdfPoint(corners[i][0], corners[i][1]));
       });
       const points = quads.flat(), xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1);
-      request.annotations.push({ page: number, kind: 'highlight', rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], color, text: selection.text, quads });
+      request.annotations.push({ page: number, kind: 'highlight', rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], color, opacity: DEFAULT_HIGHLIGHT_OPACITY, text: selection.text, quads });
       request.commit ||= onAnnotate;
       request.applied = true;
     };
@@ -322,20 +328,30 @@ function PageContent({ page, scale, rotation, annotations, tool, color, query, c
   }} onPointerCancel={() => { dragRef.current = null; setDrag(null); pointerOrigin.current = null; }}>
     <canvas ref={canvasRef} aria-label={`Página ${number} del documento`} style={{ width: viewport.width, height: viewport.height }} />
     <div ref={textRef} className="textLayer" data-copy-allowed={canCopy} style={{ '--scale-factor': scale, '--total-scale-factor': scale, ...(canCopy ? {} : { userSelect: 'none', WebkitUserSelect: 'none' }) } as React.CSSProperties} />
+    <div className="highlight-layer">
+      {annotations.filter(a => a.kind === 'highlight').map(a => {
+        // Older native drafts omitted opacity; their native exporter uses .35.
+        // New selections carry an explicit opacity, and imported values survive.
+        const opacity = a.opacity ?? (isNativePdfDocument(pdf) ? .35 : DEFAULT_HIGHLIGHT_OPACITY);
+        const p1 = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
+        const p2 = viewport.convertToViewportPoint(a.rect[2], a.rect[3]);
+        return a.quads?.length ? a.quads.map((q, index) => {
+          const points = [0, 2, 4, 6].map(i => viewport.convertToViewportPoint(q[i], q[i + 1]));
+          const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+          const left = Math.min(...xs), top = Math.min(...ys), width = Math.max(...xs) - left, height = Math.max(...ys) - top;
+          const clipPath = width && height ? `polygon(${[0, 1, 3, 2].map(i => `${(points[i][0] - left) / width * 100}% ${(points[i][1] - top) / height * 100}%`).join(',')})` : undefined;
+          return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left, top, width, height, clipPath, background: a.color, opacity }} />;
+        }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
+      })}
+    </div>
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
         const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);
         return <div key={index} className="redaction-preview" style={{ left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) }}>Censurar</div>;
       })}
-      {annotations.map(a => {
-        const p1 = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
-        const p2 = viewport.convertToViewportPoint(a.rect[2], a.rect[3]);
-        return a.kind === 'highlight' ? a.quads?.length ? a.quads.map((q, index) => {
-          const points = [0, 2, 4, 6].map(i => viewport.convertToViewportPoint(q[i], q[i + 1]));
-          const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
-          return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), background: a.color, opacity: a.opacity ?? .35 }} />;
-        }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity: a.opacity ?? .35 }} /> :
-          <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.max(0, Math.min(p1[0], viewport.width - (isMobile ? 44 : 28))), top: Math.max(0, Math.min(p1[1], viewport.height - (isMobile ? 44 : 28))) }} onPointerDown={e => e.stopPropagation()} onClick={() => onNoteClick(a.id)}><MessageSquare size={15} fill="currentColor" /></button>;
+      {annotations.filter(a => a.kind === 'note').map(a => {
+        const p = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
+        return <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.max(0, Math.min(p[0], viewport.width - (isMobile ? 44 : 28))), top: Math.max(0, Math.min(p[1], viewport.height - (isMobile ? 44 : 28))) }} onPointerDown={e => e.stopPropagation()} onClick={() => onNoteClick(a.id)}><MessageSquare size={15} fill="currentColor" /></button>;
       })}
       {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}
     </div>
