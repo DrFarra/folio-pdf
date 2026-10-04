@@ -94,6 +94,25 @@ require(relaunch_diagnostic.get('buildMarker') == 'FOLIO_NATIVE_QA_BUILD' and
             d.get('nativeClipboardWritten') is True for d in relaunch_diagnostic.get('documents', {}).values()),
         'El diagnóstico QA de reapertura no coincide con las verificaciones declaradas.')
 require(source_ipa.is_file(), 'Falta la IPA de dispositivo compilada por Tauri.')
+native_files = qa.get('nativeFileProbe', {})
+native_files_evidence = report('native-pdfkit-ios.json')
+require(native_files == native_files_evidence and native_files.get('swiftImportExecuted') is True and
+        native_files.get('pdfKitExecuted') is True and native_files.get('wholeDocumentIPC') is False,
+        'Falta la importación Swift y la lectura PDFKit reales por archivo.')
+native_documents = native_files.get('documents', [])
+require(len(native_documents) == 2 and any(d.get('document', {}).get('size', 0) > 2 * 1024**3 for d in native_documents),
+        'Falta la lectura real del fixture PDF de más de 2 GiB.')
+for document in native_documents:
+    require(all(document.get(flag) is True for flag in ['removedSourceAnnotation', 'addedNote', 'unseenHighlightPreserved', 'sourceUnchanged']) and
+            document.get('metadata', {}).get('numPages') == 2 and
+            len(document.get('text', {}).get('lines', [])) > 1 and
+            {r.get('rotation') for r in document.get('rasters', [])} == {0, 90, 180, 270} and
+            all(r.get('geometryVerified') is True and (ROOT / 'test-results/ios' / r.get('inspectionFile', '')).is_file() for r in document.get('rasters', [])),
+            'La evidencia PDFKit no demuestra texto, rotación, exportación y conservación del original.')
+memory = native_files.get('memory', {})
+require(type(memory.get('peakBytes')) is int and 0 < memory['peakBytes'] < 768*1024**2 and
+        type(memory.get('samples')) is int and memory['samples'] > 0 and memory.get('physicalDeviceMeasured') is False,
+        'Falta la medida acotada de memoria residente del lector de 2 GiB en simulador.')
 with tempfile.TemporaryDirectory(prefix='folio-ios-verify-') as directory:
     directory = Path(directory)
     with zipfile.ZipFile(source_ipa) as ipa:

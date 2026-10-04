@@ -14,6 +14,9 @@ export type NativeDocument = { token: string; name: string; size: number; id?: s
 export async function presentNativePdf(token: string, name: string, action: 'save' | 'share' | 'print', annotations: Annotation[], removedSourceRefs: string[]): Promise<NativeDocument | boolean | null> {
   return invoke('native_pdf_present', { token, name, action, annotations, removedSourceRefs });
 }
+export async function nativeDraftDocument(id: string, name: string): Promise<NativeDocument | null> {
+  return invoke('native_draft_document', { id, name });
+}
 
 export async function pickNativeDocument(): Promise<NativeDocument | null> {
   return invoke<NativeDocument | null>('pick_document');

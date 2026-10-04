@@ -5,6 +5,7 @@
   const id = 'f'.repeat(64), errors = [], documents = {};
   let saving = false, lastRevision = Date.now(), persistError = null;
   let iosNative = null;
+  let nativeFiles = null;
   let activeSince = Date.now(), lastActive = '', probing = false;
   const now = () => Date.now();
   const text = (value, limit = 6000) => String(value ?? '').slice(0, limit);
@@ -76,7 +77,7 @@
     const revision = lastRevision = Math.max(now(), lastRevision + 1);
     try {
       await invoke('store_session', { id, session: { version: 1, nativeQA: true, buildMarker, revision,
-        snapshot: snapshot(), errors: errors.slice(), documents, persistError, iosNative } });
+        snapshot: snapshot(), errors: errors.slice(), documents, persistError, iosNative, nativeFiles } });
       persistError = null;
     } catch (error) { persistError = describe(error); }
     finally { saving = false; }
@@ -127,6 +128,12 @@
       report.search = await search('Folio');
       if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
         iosNative = await window.__TAURI_INTERNALS__.invoke('ios_native_status');
+        if (iosNative.fileProbeEnabled && !nativeFiles) {
+          nativeFiles = { startedAt: now(), completed: false };
+          window.__TAURI_INTERNALS__.invoke('ios_native_file_probe').then(result => {
+            nativeFiles = { ...nativeFiles, completed: true, finishedAt: now(), result }; void persist();
+          }).catch(error => { nativeFiles = { ...nativeFiles, completed: true, finishedAt: now(), error: describe(error) }; void persist(); });
+        }
         if (report.selectedText) {
           await window.__TAURI_INTERNALS__.invoke('copy_text', { text: report.selectedText });
           report.nativeClipboardWritten = true;

@@ -24,8 +24,8 @@ sirve para instalar en un iPhone ni se debe comprimir y renombrar como IPA.
 ## Archivos y privacidad
 
 Al abrir PDFs, Folio presenta el selector de Archivos de iOS. Puede importar
-varios documentos. Copia cada archivo seleccionado a su carpeta `Documents/Imports`
-mientras conserva la autorización de acceso del proveedor; las pestañas y los
+varios documentos. iOS entrega una copia autorizada y Folio la conserva en
+`Documents/Imports`; las pestañas y los
 recientes apuntan a esa copia durable. No depende de que un proveedor de iCloud
 o de terceros mantenga una URL temporal.
 
@@ -34,6 +34,15 @@ exportación de Archivos. Compartir usa la hoja nativa de iOS. Imprimir usa
 AirPrint con el PDF exportado, incluidas sus anotaciones. Cancelar cualquiera
 de estos diálogos no se presenta como guardado o impresión completados. Nunca
 se sobrescribe el PDF original al exportar una copia.
+
+Los PDFs de más de 32 MiB usan PDFKit y permanecen en disco. El lector solicita
+solo el texto y la imagen de las páginas visibles, con imágenes de hasta cuatro
+megapíxeles. No hay un límite de 100 MB para importar; la disponibilidad de
+espacio en el dispositivo y el contenido de cada página condicionan la apertura.
+Ese modo permite leer, buscar, copiar, usar marcadores y añadir o eliminar
+resaltados y notas. La edición estructural, los formularios y el OCR completo
+siguen disponibles en el motor de documentos pequeños; el lector de archivos
+grandes no expone esas operaciones.
 
 No se solicitan permisos de fotos, cámara, micrófono, ubicación, contactos ni
 tracking. Los accesos a Archivos se conceden por documento mediante iOS.
@@ -71,7 +80,13 @@ el modo `full` exige pruebas móviles y nativas antes de empaquetar.
 Las pruebas WebKit móviles cubren el diseño y las operaciones de lectura y
 edición. El smoke nativo instala y abre el bundle arm64 de simulador, verifica
 el PDF real y su capa de texto, búsqueda, el puente Swift/UIKit y la persistencia
-Rust, y toma una captura. El empaquetador inspecciona el Mach-O de la IPA de
+Rust, y toma una captura. La prueba PDFKit ejecuta la importación Swift, abre
+un PDF sintético válido de más de 2 GiB, extrae palabras y dibuja páginas con
+cuatro rotaciones. Comprueba las posiciones del texto, la eliminación y creación
+de anotaciones, la conservación de páginas no visitadas y la memoria residente
+del proceso de simulador. El tamaño del archivo de prueba proviene de una zona
+dispersa de espacio PDF; no simula la complejidad de un escaneo de 2 GiB.
+El empaquetador inspecciona el Mach-O de la IPA de
 dispositivo para comprobar que es arm64 con plataforma iOS y no iOS Simulator.
 
 Una prueba en simulador no verifica la firma del certificado particular del

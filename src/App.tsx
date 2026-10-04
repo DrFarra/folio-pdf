@@ -31,7 +31,7 @@ import './mac-platform.css';
 import './mobile.css';
 import { usePhoneLayout } from './mobile';
 import { assetUrl, pdfAssetSettings } from './assets';
-import { isDesktop, isNative, isIOS, isMac, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, sharePdf, printPdf, presentNativePdf, startupDocuments } from './platform';
+import { isDesktop, isNative, isIOS, isMac, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments } from './platform';
 import { clearSavedState, forgetDocument, listRecent, readSession, rememberDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, RecentDocument, Session, SideTab, Tool } from './types';
 
@@ -178,7 +178,7 @@ export default function App() {
   function setWorkBenchClosed() { setWorkbench(null); setInfo(false); setLibrary(false); setNoteDraft(null); }
   async function persistTab(tab: DocumentTab) {
     await draftSave.current;
-    if (tab.doc.modified) await storeDraft(tab.doc.id, tab.doc.bytes);
+    if (tab.doc.modified && !isNativePdfDocument(tab.doc.pdf)) await storeDraft(tab.doc.id, tab.doc.bytes);
     const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations });
     if (!saved) throw new Error('No se pudo conservar la sesión. Guarda el PDF antes de cerrar la pestaña.');
   }
@@ -234,10 +234,11 @@ export default function App() {
       if (priorDocument && !context?.preserveHistory && !context?.savedCopy) {
         const priorTab = captureTab(); if (priorTab) await persistTab(priorTab);
       }
-      const nativeFile = typeof source === 'object' && 'token' in source ? source : null;
+      const nativeInput = typeof source === 'object' && 'token' in source ? source : null;
+      let nativeFile = nativeInput;
       nativeSource = nativeFile?.token || nativeSource;
-      if (!context && nativeFile?.id) {
-        const existing = tabsRef.current.find(tab => tab.doc.id === nativeFile.id);
+      if (!context && nativeInput?.id) {
+        const existing = tabsRef.current.find(tab => tab.doc.id === nativeInput.id);
         if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
       }
       const fileBacked = isNative && isIOS && !!nativeFile && nativeFile.size > nativeReadingThreshold;
@@ -249,6 +250,10 @@ export default function App() {
       let documentPassword = context?.password || '';
       let size = 0;
       if (fileBacked) {
+        if (!context && nativeInput?.id) {
+          const draft = await nativeDraftDocument(nativeInput.id, name);
+          if (draft) { nativeFile = draft; nativeSource = draft.token; modified = true; notify('Borrador recuperado. Usa Guardar para crear el PDF.'); }
+        }
         let opened;
         while (!opened) {
           try { opened = await openNativePdf(nativeFile!, documentPassword, controller.signal); }
@@ -264,7 +269,7 @@ export default function App() {
         }
         pdf = opened.pdf;
         taskRef.current = pdf.loadingTask;
-        id = context?.id || opened.metadata.id; revision = opened.metadata.revision; size = opened.metadata.size;
+        id = context?.id || nativeInput?.id || opened.metadata.id; revision = opened.metadata.revision; size = opened.metadata.size;
         inspection = { ...opened.metadata.permissions, canEdit: false, canAssemble: false, canFill: false,
           signed: opened.metadata.signed, pages: opened.metadata.numPages, annotations: await nativePdfPageAnnotations(pdf, 1) };
       } else {
@@ -357,7 +362,7 @@ export default function App() {
       publishTabs();
       if (previous) setTimeout(() => { void previous.pdf.loadingTask.destroy(); }, 200);
       if (!loaded.sample) {
-        if (preferencesRef.current.rememberRecent && !context?.preserveHistory && !(context?.modified && nativeSource)) rememberDocument({ id, name, size, pages: pdf.numPages, openedAt: Date.now(), nativeSource, data: nativeSource ? undefined : new Blob([new Uint8Array(originalBytes).buffer], { type: 'application/pdf' }) })
+        if (preferencesRef.current.rememberRecent && !context?.preserveHistory && !(context?.modified && nativeSource)) rememberDocument({ id, name, size, pages: pdf.numPages, openedAt: Date.now(), nativeSource: nativeInput?.token || nativeSource, data: nativeSource ? undefined : new Blob([new Uint8Array(originalBytes).buffer], { type: 'application/pdf' }) })
           .catch(() => notify('No se pudo recordar este PDF en la biblioteca.', true));
         if (inspection.signed) notify('PDF firmado: modo lectura.');
         else if (!inspection.canAnnotate) notify('PDF abierto en modo lectura según sus permisos.');
@@ -383,7 +388,7 @@ export default function App() {
   }, [loadDocument]);
 
   useEffect(() => {
-    if (!doc?.modified) return;
+    if (!doc?.modified || isNativePdfDocument(doc.pdf)) return;
     draftSave.current = draftSave.current.catch(() => {}).then(async () => {
       await storeDraft(doc.id, doc.bytes);
       if (doc.draftSource && preferencesRef.current.rememberRecent && !forgottenIds.current.has(doc.id)) await rememberDocument({ id: doc.id, name: doc.name, size: doc.size, pages: doc.pdf.numPages, openedAt: Date.now(), draft: true });
@@ -975,7 +980,8 @@ export default function App() {
       if (isNativePdfDocument(current.pdf)) {
         const saved = await presentFileBacked(current, 'save');
         if (saved && typeof saved === 'object') {
-          await openDocument(saved, saved.name, false, saved.token, { savedCopy: true, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
+          const opened = await openDocument(saved, saved.name, false, saved.token, { savedCopy: true, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
+          if (opened) await discardDraft(current.id);
           notify('PDF guardado.');
         }
         return;

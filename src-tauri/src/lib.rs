@@ -175,6 +175,17 @@ fn load_draft(id: String, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Res
     let path = draft_path(&desktop, &id)?;
     Ok(tauri::ipc::Response::new(if path.exists() { read_pdf(&path)? } else { Vec::new() }))
 }
+
+#[tauri::command]
+fn native_draft_document(id: String, name: String, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
+    let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+    let path = draft_path(&desktop, &id)?;
+    if !path.exists() { return Ok(None); }
+    let mut info = register(&desktop, path)?;
+    info.name = Path::new(&name).file_name().ok_or("Nombre de borrador inválido.")?.to_string_lossy().into();
+    if let Some(source) = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.get_mut(&info.token) { source.info.name = info.name.clone(); }
+    Ok(Some(info))
+}
 #[tauri::command]
 fn store_draft(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<(), String> {
     let id = request.headers().get("x-folio-draft-id").and_then(|s| s.to_str().ok()).ok_or("Identificador de borrador ausente.")?;
@@ -231,11 +242,15 @@ fn save_recents(desktop: &Desktop, entries: &[Recent]) -> Result<(), String> {
     atomic_write(&path, &serde_json::to_vec(entries).map_err(|_| "No se pudo guardar la lista de recientes.")?, expected.as_deref())
 }
 #[tauri::command]
-fn recent_documents(desktop: State<'_, Desktop>) -> Result<Vec<Value>, String> {
-    let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
-    Ok(read_recents(&desktop).into_iter().filter_map(|r| {
-        register(&desktop, r.path).ok().map(|d| serde_json::json!({"id":r.id,"name":r.name,"size":r.size,"pages":r.pages,"openedAt":r.opened_at,"nativeSource":d.token,"draft":r.draft}))
-    }).collect())
+async fn recent_documents(app: tauri::AppHandle) -> Result<Vec<Value>, String> {
+    // Identity checks of large files must not block UIKit/the webview thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let desktop = app.state::<Desktop>();
+        let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+        Ok(read_recents(&desktop).into_iter().filter_map(|r| {
+            register(&desktop, r.path).ok().map(|d| serde_json::json!({"id":r.id,"name":r.name,"size":r.size,"pages":r.pages,"openedAt":r.opened_at,"nativeSource":d.token,"draft":r.draft}))
+        }).collect())
+    }).await.map_err(|_| "No se pudo leer la lista de recientes.".to_string())?
 }
 #[tauri::command]
 fn remember_document(id: String, token: String, pages: usize, opened_at: u64, desktop: State<'_, Desktop>) -> Result<(), String> {
@@ -342,11 +357,11 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(target_os = "ios"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, remember_document, remember_draft, forget_document, clear_saved_state]);
     builder
         .setup(|app| {
             let data = app.path().app_data_dir()?;

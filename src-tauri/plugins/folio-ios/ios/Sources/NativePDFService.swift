@@ -24,7 +24,9 @@ final class NativePDFService {
         let signed: Bool
         var used = Date()
         init(_ args: PDFOpenArgs, _ document: PDFDocument, _ signed: Bool) { self.args = args; self.document = document; self.signed = signed }
-        var canAnnotate: Bool { !signed && !document.isLocked && document.accessPermissions.contains(.allowsCommenting) }
+        // PDFKit declares PDFAccessPermissions as an enum carrying a bit mask,
+        // rather than a Swift OptionSet (including on the iOS 18 SDK).
+        var canAnnotate: Bool { !signed && !document.isLocked && (document.accessPermissions.rawValue & PDFAccessPermissions.allowsCommenting.rawValue) != 0 }
     }
     private var entries = [String: Entry]()
     private var opened = [String: PDFOpenArgs]()
@@ -168,6 +170,7 @@ final class NativePDFService {
         return result
     }
     func close(_ token: String) { entries.removeValue(forKey: token); opened.removeValue(forKey: token) }
+    func permissions(_ token: String) throws -> [String: Any] { let value = try entry(token); return ["canPrint": value.document.allowsPrinting] }
     private func color(_ hex: String, _ alpha: Double) -> UIColor {
         let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         let rgb = UInt32(clean, radix: 16) ?? 0xf5d76e

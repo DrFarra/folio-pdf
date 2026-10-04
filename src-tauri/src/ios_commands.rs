@@ -248,6 +248,10 @@ pub async fn native_pdf_present(token: String, name: String, action: String, ann
     if !["save", "share", "print"].contains(&action.as_str()) { return Err("Acción de PDF no admitida.".into()); }
     if !annotations.is_array() || annotations.to_string().len() > 4 * 1024 * 1024 { return Err("Las anotaciones de la copia son inválidas o demasiado numerosas.".into()); }
     let (source, _) = pdf_source(&desktop, &token)?;
+    if action == "print" {
+        let permission = mobile_call(app.clone(), "pdfPermissions", serde_json::json!({"token":token})).await?;
+        if permission["canPrint"] != true { return Err("Este PDF no permite imprimir.".into()); }
+    }
     let output_token = reserve_output(&desktop, Some(token.clone()), name, "pdf".into())?;
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(&output_token).ok_or("Destino vencido.")?;
     protect_original(&source, &output.path)?;

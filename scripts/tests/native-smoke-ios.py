@@ -4,7 +4,7 @@ This is a simulator smoke, never a physical-device/Feather installation claim.
 UIKit dialog and AirPrint availability are distinct from interaction testing.
 """
 from pathlib import Path
-import argparse, hashlib, json, os, plistlib, shutil, subprocess, sys, time, uuid
+import argparse, hashlib, json, os, plistlib, shutil, subprocess, sys, time, uuid, importlib.util, re
 
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
@@ -23,6 +23,16 @@ report = {'version': version, 'platform': 'iOS Simulator', 'nativeWKWebView': Tr
           'UIKitDialogInteractionTested': False, 'AirPrintJobTested': False}
 device = None
 data = None
+process_id = None
+rss_samples = []
+last_memory_sample = 0
+
+def observe_memory():
+    global last_memory_sample
+    if not process_id or time.monotonic() - last_memory_sample < 1: return
+    last_memory_sample = time.monotonic()
+    sample = subprocess.run(['ps', '-p', str(process_id), '-o', 'rss='], capture_output=True, text=True)
+    if sample.returncode == 0 and sample.stdout.strip().isdigit(): rss_samples.append(int(sample.stdout.strip()) * 1024)
 
 def run(*cmd):
     return subprocess.run(cmd, cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -30,6 +40,7 @@ def run(*cmd):
 def wait_file(folder, filename, condition, timeout=80):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        observe_memory()
         for p in folder.rglob(filename):
             try:
                 value = json.loads(p.read_text())
@@ -37,6 +48,32 @@ def wait_file(folder, filename, condition, timeout=80):
             except (OSError, ValueError): pass
         time.sleep(.3)
     raise AssertionError(f'El WKWebView no completó {filename}.')
+
+def validate_pdfkit_rasters(result):
+    sys.path.insert(0, str(root / 'scripts'))
+    from ios_icon_audit import decode_png
+    for item in result['documents']:
+        view = item['pageInfo']['view']
+        boxes = [line['bounds'] for line in item['text']['lines']]
+        assert boxes, 'PDFKit no devolvió coordenadas de texto.'
+        for raster in item['rasters']:
+            source = Path(raster['path'])
+            destination = out / source.name
+            shutil.copy2(source, destination)
+            width, height, rgba, _ = decode_png(destination.read_bytes())
+            assert [width, height] == [raster['width'], raster['height']]
+            rotation = raster['rotation']
+            def point(x, y):
+                return {0: (x-view[0], view[3]-y), 90: (y-view[1], x-view[0]),
+                        180: (view[2]-x, y-view[1]), 270: (view[3]-y, view[2]-x)}[rotation]
+            corners = [point(x,y) for box in boxes for x in [box[0],box[2]] for y in [box[1],box[3]]]
+            expected = [min(p[0] for p in corners), min(p[1] for p in corners), max(p[0] for p in corners), max(p[1] for p in corners)]
+            dark = [(index % width, index // width) for index in range(width*height)
+                    if max(rgba[index*4:index*4+3]) < 140]
+            assert len(dark) > 300, 'PDFKit generó una página vacía.'
+            actual = [min(p[0] for p in dark), min(p[1] for p in dark), max(p[0] for p in dark), max(p[1] for p in dark)]
+            assert all(abs(a-b) < 25 for a,b in zip(actual,expected)), f'Bitmap y texto no coinciden con crop/rotación {rotation}: {actual} versus {expected}'
+            raster.update({'inspectionFile':destination.name,'textPixelBounds':actual,'expectedTextBounds':expected,'geometryVerified':True})
 
 def fresh_diagnostic(started_at):
     diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d:
@@ -97,12 +134,19 @@ try:
     data = Path(run('xcrun', 'simctl', 'get_app_container', device, 'org.folio.pdf', 'data'))
     documents = data / 'Documents'
     documents.mkdir(exist_ok=True)
+    if args.qa:
+        spec = importlib.util.spec_from_file_location('native_pdf_fixture', root / 'scripts/tests/native-pdf-fixture.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        fixtures = documents / 'FolioNativeFixtures'
+        module.write_fixture(fixtures / 'Folio native pequeño.PDF')
+        module.write_fixture(fixtures / 'Folio native 2GiB.pdf', large=True)
     fixture = root / 'public/sample.pdf'
     copied = documents / 'Folio iPhone.pdf'
     shutil.copy2(fixture, copied)
     digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
     started = int(time.time() * 1000)
-    run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(copied))
+    launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(copied), *(['--folio-native-file-probe'] if args.qa else []))
+    process_id = int(re.search(r':\s*(\d+)\s*$', launch).group(1))
     session = wait_file(data, f'{digest}.json', lambda s: s.get('version') == 3 and s.get('documentRevision') == digest)
     report['session'] = {'version': session['version'], 'documentRevision': session['documentRevision']}
     assert hashlib.sha256(copied.read_bytes()).hexdigest() == digest, 'El original cambió al leerlo.'
@@ -112,6 +156,19 @@ try:
         report['nativeBridge'] = native
         report['nativeClipboardVerified'] = True
         report['documentDiagnostic'] = checked
+        file_diagnostic = wait_file(data, 'f' * 64 + '.json', lambda d: d.get('nativeFiles', {}).get('completed'), timeout=240)
+        files = file_diagnostic['nativeFiles']
+        assert not files.get('error'), json.dumps(files.get('error'), ensure_ascii=False)
+        result = files['result']
+        assert result['swiftImportExecuted'] and result['pdfKitExecuted'] and not result['wholeDocumentIPC']
+        assert len(result['documents']) == 2 and any(d['document']['size'] > 2 * 1024**3 for d in result['documents'])
+        validate_pdfkit_rasters(result)
+        assert rss_samples, 'No se obtuvo memoria residente del proceso nativo.'
+        result['memory'] = {'kind':'Simulator process resident memory sampled once per second', 'peakBytes':max(rss_samples),
+                            'samples':len(rss_samples),'physicalDeviceMeasured':False, 'limitBytes':768*1024**2}
+        assert max(rss_samples) < 768*1024**2, 'El lector excedió 768MiB de memoria residente con el fixture de 2GiB.'
+        report['nativeFileProbe'] = result
+        (out / 'native-pdfkit-ios.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
     time.sleep(2)
     screenshot = out / ('folio-iphone-qa.png' if args.qa else 'folio-iphone.png')
     run('xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot))

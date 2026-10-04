@@ -191,6 +191,10 @@ final class FolioPlugin: Plugin {
         let args = try invoke.parseArgs(PDFTokenArgs.self)
         pdfOperation(invoke) { self.pdf.close(args.token); return [:] }
     }
+    @objc public func pdfPermissions(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PDFTokenArgs.self)
+        pdfOperation(invoke) { try self.pdf.permissions(args.token) }
+    }
     @objc public func pdfExport(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PDFExportArgs.self)
         let target = URL(fileURLWithPath: args.path).standardizedFileURL
