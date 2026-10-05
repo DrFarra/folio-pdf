@@ -1,0 +1,18 @@
+.drawing-settings-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex-shrink:0;width:44px;height:36px;border-radius:8px;color:var(--muted)}
+.drawing-settings-trigger>span{width:15px;height:15px;border-radius:50%;border:1px solid #0002}
+.drawing-settings-trigger:hover,.drawing-settings-trigger[aria-expanded=true]{background:var(--hover)}
+.drawing-settings-popup{position:fixed;z-index:85;width:244px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;padding:14px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px #15223524;user-select:none}
+.drawing-settings-popup>strong{display:block;font-size:13px;font-weight:600;margin:0 4px 8px}
+.drawing-colors{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.drawing-colors>button,.drawing-custom-color{height:44px;min-width:44px;display:grid;place-items:center;border-radius:10px}
+.drawing-colors>button>span{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;color:white}
+.drawing-colors>button[aria-pressed=true]{background:var(--hover)}
+.drawing-custom-color input{width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer}
+.drawing-widths,.drawing-eraser-sizes{display:flex;gap:4px;margin:10px 0}
+.drawing-widths>button,.drawing-eraser-sizes>button{display:flex;flex:1;min-width:44px;min-height:52px;flex-direction:column;align-items:center;justify-content:center;gap:7px;border-radius:9px;color:var(--muted)}
+.drawing-widths>button[aria-pressed=true],.drawing-eraser-sizes>button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent)}
+.drawing-widths span{width:25px;border-radius:10px}.drawing-eraser-sizes span{border:1.5px solid currentColor;border-radius:50%}
+.drawing-settings-popup small{font-size:11px}.drawing-settings-popup p{font-size:11px;line-height:1.5;color:var(--muted);margin:6px 4px}
+.drawing-finger-toggle{display:flex;align-items:center;justify-content:space-between;min-height:44px;border-top:1px solid var(--line);margin-top:8px;padding:4px;font-size:13px;gap:12px;cursor:pointer}
+.drawing-finger-toggle input{width:20px;height:20px;accent-color:var(--accent)}
+html[data-touch] .drawing-settings-trigger{height:44px;min-width:44px}

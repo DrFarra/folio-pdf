@@ -58,7 +58,8 @@
     "test:drive": "node scripts/tests/drive.mjs",
     "test:android": "node scripts/tests/ink.mjs && node scripts/tests/android-ui.mjs",
     "test:file-picker": "node scripts/tests/file-picker-ui.mjs",
-    "test:ink": "node scripts/tests/ink.mjs"
+    "test:ink": "node scripts/tests/ink.mjs",
+    "test:drawing": "node scripts/tests/drawing-gestures.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

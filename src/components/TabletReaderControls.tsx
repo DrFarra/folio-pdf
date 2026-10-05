@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2, Settings2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Tool } from '../types';
 
@@ -27,14 +27,13 @@ export function TabletReaderHeader({ name, nameAdornment, count, page, documents
   </>;
 }
 
-export function TabletAnnotationDock({ tool, setTool, disabled, canCopy, color, onSettings, onHighlight }: { tool: Tool; setTool: (tool: Tool) => void; disabled: boolean; canCopy: boolean; color: string; onSettings: () => void; onHighlight: () => void }) {
+export function TabletAnnotationDock({ tool, setTool, disabled, canCopy, settings, onHighlight }: { tool: Tool; setTool: (tool: Tool) => void; disabled: boolean; canCopy: boolean; settings?: ReactNode; onHighlight: () => void }) {
   return <div className="tablet-annotation-dock" role="toolbar" aria-label="Herramientas de anotación">
     <Button label="Seleccionar texto" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={21} /></Button>
     <Button label="Dibujar" active={tool === 'draw'} disabled={disabled} onClick={() => setTool('draw')}><PenLine size={22} /></Button>
     <Button label="Borrar dibujo" active={tool === 'eraser'} disabled={disabled} onClick={() => setTool('eraser')}><Eraser size={22} /></Button>
     <Button label="Resaltado automático" active={tool === 'highlight'} disabled={disabled || !canCopy} onClick={onHighlight}><Highlighter size={22} /></Button>
     <Button label="Añadir nota" active={tool === 'note'} disabled={disabled} onClick={() => setTool('note')}><StickyNote size={21} /></Button>
-    <span className="tablet-dock-divider" />
-    <button className="tablet-ink-options" aria-label="Opciones de lápiz y resaltador" title="Opciones de lápiz y resaltador" onClick={onSettings}><span style={{ background: color }} /><Settings2 size={17} /></button>
+    {settings && <><span className="tablet-dock-divider" />{settings}</>}
   </div>;
 }

@@ -35,7 +35,7 @@ type Props = {
   tool: Tool;
   color: string;
   inkColor?: string;
-  inkWidth?: number;
+  inkWidth?: number; eraserSize?: number;
   penOnly?: boolean;
   query: string;
   activeSearch?: SearchResult | null;
@@ -45,7 +45,7 @@ type Props = {
   canAnnotate: boolean;
   onAnnotate: (annotation: AnnotationDraft | AnnotationDraft[]) => void;
   onNoteClick: (id: string) => void;
-  onRemoveAnnotation: (id: string) => void;
+  onRemoveAnnotation: (id: string, gesture?: string) => void;
   onUpdateAnnotation?: (id: string, patch: Partial<Pick<Annotation, 'color' | 'text'>>) => void;
   onCommentHighlight?: (annotation: Annotation) => void;
   onArea: (area: Area) => void;
@@ -75,7 +75,7 @@ export default function PDFPage(props: Props) {
   </div>;
 }
 
-function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
+function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -245,12 +245,12 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
       if (timer) clearTimeout(timer);
-      if (fingers || rendering.current) return;
+      if (fingers || rendering.current || selectionCleanup.current) return;
       const selection = window.getSelection();
       if (!selection?.rangeCount || selection.isCollapsed ||
           !textRef.current?.contains(selection.getRangeAt(0).startContainer)) return;
       timer = setTimeout(() => {
-        if (!fingers && !rendering.current && !document.querySelector('dialog[open]')) highlightSelection();
+        if (!fingers && !selectionCleanup.current && !rendering.current && !document.querySelector('dialog[open]')) highlightSelection();
       }, 450);
     };
     const touched = (event: TouchEvent) => { fingers = event.touches.length; schedule(); };
@@ -283,6 +283,10 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       if (!canCopy || !textRef.current?.contains(event.target as Node) || !(event.target as Element).closest('span')) return;
       const anchor = textCaretAtPoint(event.clientX, event.clientY, event.target as Element);
       if (!anchor) return;
+      const pointerId = event.pointerId;
+      // Pen input does not reliably synthesize mouseup on Android. Own its
+      // selection gesture and finish on the matching pointerup instead.
+      if (event.pointerType === 'pen') event.preventDefault();
       const origin = { x: event.clientX, y: event.clientY };
       let point = origin, moved = false, frame = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -293,22 +297,29 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         if (end) window.getSelection()?.setBaseAndExtent(anchor.startContainer, anchor.startOffset, end.startContainer, end.startOffset);
       };
       const move = (next: PointerEvent) => {
+        if (next.pointerId !== pointerId) return;
+        if (!(next.buttons & 1)) { cleanup(); return; }
         point = { x: next.clientX, y: next.clientY };
         moved ||= Math.hypot(point.x - origin.x, point.y - origin.y) > 3;
         if (!frame) frame = requestAnimationFrame(update);
       };
-      const finish = (up: MouseEvent) => {
+      const finish = (up: PointerEvent) => {
+        if (up.pointerId !== pointerId) return;
         point = { x: up.clientX, y: up.clientY };
         if (frame) { cancelAnimationFrame(frame); frame = 0; }
         update();
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', finish, true);
         if (tool === 'select') { window.dispatchEvent(new Event('folio:text-selection-finished')); cleanup(); return; }
-        timer = setTimeout(() => { update(); if (tool === 'highlight') highlightSelection(); cleanup(); }, 0);
+        timer = setTimeout(() => { if (tool === 'highlight') highlightSelection(); cleanup(); }, 0);
       };
-      const cleanup = () => { document.removeEventListener('pointermove', move); document.removeEventListener('mouseup', finish); document.removeEventListener('pointercancel', cleanup); if (timer) clearTimeout(timer); if (frame) cancelAnimationFrame(frame); selectionCleanup.current = null; };
+      const cancelled = (next: PointerEvent) => { if (next.pointerId === pointerId) { cleanup(); window.getSelection()?.removeAllRanges(); } };
+      const cleanup = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', finish, true); document.removeEventListener('pointercancel', cancelled); window.removeEventListener('blur', cleanup); if (timer) clearTimeout(timer); if (frame) cancelAnimationFrame(frame); selectionCleanup.current = null; };
       selectionCleanup.current = cleanup;
       document.addEventListener('pointermove', move);
-      document.addEventListener('mouseup', finish, { once: true });
-      document.addEventListener('pointercancel', cleanup, { once: true });
+      document.addEventListener('pointerup', finish, true);
+      document.addEventListener('pointercancel', cancelled);
+      window.addEventListener('blur', cleanup);
       return;
     }
     const p = localPoint(event);
@@ -426,7 +437,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
       })}
     </div>
-    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} penOnly={penOnly} enabled={canAnnotate && rendered && !failed} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
+    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate && rendered && !failed} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
         const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);

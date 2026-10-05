@@ -1,8 +1,8 @@
 /* Tablet: one app bar; navigation and editing tools appear only when needed. */
 html[data-tablet] .app-shell.tablet-layout{--app-header-height:56px;--toolbar-height:0px;height:var(--visible-height,100dvh);padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px)}
 html[data-tablet] .app-shell .app-header{height:56px;min-height:56px;padding:4px 8px;gap:4px;background:var(--surface);border-bottom:1px solid var(--line)}
-.tablet-icon-button,.tablet-ink-options{width:48px;height:48px;min-width:48px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;color:var(--muted);flex-shrink:0}
-.tablet-icon-button:hover:not(:disabled),.tablet-ink-options:hover{background:var(--hover);color:var(--text)}
+.tablet-icon-button{width:48px;height:48px;min-width:48px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;color:var(--muted);flex-shrink:0}
+.tablet-icon-button:hover:not(:disabled){background:var(--hover);color:var(--text)}
 .tablet-icon-button.active{background:var(--accent-soft);color:var(--accent)}
 .tablet-document-selector{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:48px;text-align:left;padding:0 8px;color:var(--text);font-size:14px;font-weight:550}
 .tablet-document-selector>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -19,8 +19,6 @@ html[data-tablet] .app-shell .page-caption{font-size:11px;height:22px}
 .tablet-annotation-dock,.tablet-search-controls{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:15;display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 4px 20px #0000001f;max-width:calc(100% - 24px)}
 .tablet-annotation-dock{width:max-content}
 .tablet-dock-divider{width:1px;height:24px;background:var(--line);margin:0 3px}
-.tablet-ink-options{gap:4px;width:60px}
-.tablet-ink-options>span{height:20px;width:20px;box-shadow:inset 0 0 0 1px #0002;border-radius:50%}
 html[data-tablet] .app-shell .tablet-search-controls .icon-button{width:48px;height:48px}
 .tablet-search-controls>span{font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
 html[data-tablet] .app-shell .desktop-return-location{bottom:16px;left:12px;min-height:48px}
@@ -55,10 +53,6 @@ html[data-tablet] .modal{max-height:calc(var(--visible-height,100dvh) - 32px);ma
 html[data-tablet] .modal :is(button,input:not([type=checkbox]),select){min-height:48px}
 html[data-tablet] .modal :is(input,textarea,select){font-size:16px}
 html[data-tablet] .modal-heading .icon-button{width:48px;height:48px}
-html[data-tablet] .tablet-ink-modal{width:400px}
-html[data-tablet] .tablet-ink-modal .ink-settings{display:flex;flex-direction:column;align-items:stretch;padding:0;background:transparent;border:0;gap:10px}
-html[data-tablet] .tablet-ink-modal label{justify-content:space-between;font-size:14px}
-html[data-tablet] .tablet-ink-modal p{font-size:13px;line-height:1.5;color:var(--muted)}
 html[data-touch] .mobile-annotation-toolbar{overflow-x:auto;justify-content:flex-start;gap:4px;padding-left:8px;padding-right:8px}
 html[data-touch] .mobile-annotation-toolbar>.icon-button{flex:0 0 44px}
 @media(max-width:700px){.tablet-document-selector{padding:0 4px;font-size:13px}.tablet-page-jump{min-width:56px;padding:0 4px}}

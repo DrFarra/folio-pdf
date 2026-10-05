@@ -1,11 +1,20 @@
 # Folio 0.8.10
 
-Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
+Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior, Android e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
 constan en docs/acceptance-windows.md; la entrega actual acredita sus comprobaciones
 y hashes en windows-manifest.json. La entrega original 0.2.0 se conserva aparte.
 
 ## Interfaz
+
+La versión 0.8.10 comparte Drive y las herramientas de anotación en todas las plataformas.
+Drive se indica junto al nombre del documento y desaparece con los controles de lectura.
+Lápiz, resaltador y goma tienen desplegables independientes. En móviles se puede activar
+«Usar el dedo»; en escritorio esta opción aparece después de detectar un lápiz.
+El resaltador termina al levantar el lápiz. La goma borra todos los trazos cruzados
+durante una pasada continua, que se puede deshacer de una sola vez.
+`npm run test:drawing` verifica estos gestos con entrada de lápiz y dedo de Chromium;
+no sustituye una prueba con el lápiz físico del dispositivo.
 
 La biblioteca es la pantalla inicial en iPhone y PC: importar, continuar leyendo,
 buscar por nombre y consultar Todas o Recientes. Volver a la biblioteca conserva

@@ -84,7 +84,7 @@ try {
   await page.waitForFunction(() => window.__iphoneNativeContract.writes.filter(write => write.command === 'write_pdf_copy').length === 1);
   await idle();
   assert.equal(await page.locator('.highlight-annotation').count(), 1);
-  assert.match(await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).textContent(), /iphone-native-source/);
+  assert.match(await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).textContent(), /iphone-native-source/);
   assert.equal(await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).count(), 0, 'A canceled native export must not claim it was saved.');
   results.push({ id: 'native-files-cancel-keeps-current-document-and-unsaved-highlight', passed: true, bridgeMocked: true, uiKitPickerExercised: false });
 

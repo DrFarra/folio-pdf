@@ -6,8 +6,8 @@ import './InkLayer.css';
 
 type Props = {
   viewport: PageViewport; page: number; annotations: Annotation[]; tool: Tool;
-  color: string; width: number; penOnly: boolean; enabled: boolean;
-  onAdd: (draft: AnnotationDraft) => void; onRemove: (id: string) => void;
+  color: string; width: number; eraserSize?: number; penOnly: boolean; enabled: boolean;
+  onAdd: (draft: AnnotationDraft) => void; onRemove: (id: string, gesture?: string) => void;
 };
 
 function distance(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
@@ -16,9 +16,9 @@ function distance(x: number, y: number, ax: number, ay: number, bx: number, by: 
   return Math.hypot(x - ax - t * dx, y - ay - t * dy);
 }
 
-export default function InkLayer({ viewport, page, annotations, tool, color, width, penOnly, enabled, onAdd, onRemove }: Props) {
+export default function InkLayer({ viewport, page, annotations, tool, color, width, eraserSize = 16, penOnly, enabled, onAdd, onRemove }: Props) {
   const [preview, setPreview] = useState<number[]>([]);
-  const active = useRef<{ id: number; points: number[]; erase: boolean; target?: string } | null>(null);
+  const active = useRef<{ id: number; points: number[]; erase: boolean; erased: Set<string>; group: string } | null>(null);
   const pan = useRef<{ id: number; x: number; y: number } | null>(null);
   const frame = useRef(0);
   const stylus = useRef(0);
@@ -33,12 +33,26 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
     const box = svg.getBoundingClientRect();
     return viewport.convertToPdfPoint(Math.max(0, Math.min(viewport.width, (event.clientX - box.left) * viewport.width / box.width)), Math.max(0, Math.min(viewport.height, (event.clientY - box.top) * viewport.height / box.height)));
   }
-  function targetAt(p: number[]) {
-    const tolerance = 10 / viewport.scale;
-    return [...annotations].reverse().find(a => a.kind === 'ink' && a.inkPaths?.some(path => {
-      for (let i = 0; i < path.length - 2; i += 2) if (distance(p[0], p[1], path[i], path[i + 1], path[i + 2], path[i + 3]) <= tolerance + (a.strokeWidth || 2) / 2) return true;
-      return false;
-    }))?.id;
+  function eraseBetween(from: number[], to: number[], stroke: NonNullable<typeof active.current>) {
+    const radius = eraserSize / (2 * viewport.scale);
+    for (const annotation of annotations) {
+      if (annotation.kind !== 'ink' || stroke.erased.has(annotation.id)) continue;
+      const tolerance = radius + (annotation.strokeWidth || 2) / 2;
+      const hit = annotation.inkPaths?.some(path => {
+        for (let i = 0; i < path.length - 2; i += 2) {
+          const [ax, ay, bx, by] = path.slice(i, i + 4);
+          // Sweep the complete segment between samples, including fast moves.
+          const cross = (x: number, y: number, a: number[], b: number[]) => (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+          const a = [ax, ay], b = [bx, by];
+          const crosses = cross(ax, ay, from, to) * cross(bx, by, from, to) < 0 && cross(from[0], from[1], a, b) * cross(to[0], to[1], a, b) < 0;
+          if (crosses || Math.min(distance(from[0], from[1], ax, ay, bx, by), distance(to[0], to[1], ax, ay, bx, by), distance(ax, ay, from[0], from[1], to[0], to[1]), distance(bx, by, from[0], from[1], to[0], to[1])) <= tolerance) {
+            stroke.erased.add(annotation.id); onRemove(annotation.id, stroke.group); return true;
+          }
+        }
+        return false;
+      });
+      if (hit) continue;
+    }
   }
   function append(event: React.PointerEvent<SVGSVGElement>) {
     const stroke = active.current;
@@ -46,7 +60,7 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
     const events = event.nativeEvent.getCoalescedEvents?.() || [];
     for (const sample of events.length ? events : [event]) {
       const p = point(sample, event.currentTarget);
-      if (stroke.erase) { stroke.target = targetAt(p) || stroke.target; continue; }
+      if (stroke.erase) { eraseBetween(stroke.points, p, stroke); stroke.points = p; continue; }
       const points = stroke.points;
       if (points.length < 20000 && (points.length < 2 || Math.hypot(p[0] - points.at(-2)!, p[1] - points.at(-1)!) >= .3 / viewport.scale)) points.push(...p);
     }
@@ -67,7 +81,8 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
       if (active.current || event.button !== 0 && event.button !== 5) return;
       event.preventDefault(); window.getSelection()?.removeAllRanges();
       const points = point(event, event.currentTarget), erase = tool === 'eraser' || event.button === 5 || !!(event.buttons & 32);
-      active.current = { id: event.pointerId, points, erase, target: erase ? targetAt(points) : undefined };
+      active.current = { id: event.pointerId, points, erase, erased: new Set(), group: crypto.randomUUID() };
+      if (erase) eraseBetween(points, points, active.current);
       event.currentTarget.setPointerCapture(event.pointerId); setPreview(erase ? [] : [...points]);
     }} onPointerMove={event => {
       event.stopPropagation();
@@ -83,8 +98,7 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
       const stroke = active.current;
       if (!stroke || stroke.id !== event.pointerId) return;
       append(event);
-      if (stroke.erase) { if (stroke.target) onRemove(stroke.target); }
-      else {
+      if (!stroke.erase) {
         const points = stroke.points;
         if (points.length === 2) points.push(points[0] + .01, points[1]);
         const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1);

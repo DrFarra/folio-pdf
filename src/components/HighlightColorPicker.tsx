@@ -74,11 +74,11 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
       event.preventDefault(); event.stopPropagation();
       const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.highlight-color-presets button')];
       const current = buttons.indexOf(document.activeElement as HTMLButtonElement), index = Math.max(0, current);
-      const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -4 : 4) + buttons.length) % buttons.length;
+      const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -6 : 6) + buttons.length) % buttons.length;
       buttons[target]?.focus({ preventScroll: true });
     }}>
-      <div className="highlight-color-presets">{PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
-      <label className="highlight-color-custom"><span>Personalizado</span><code>{chosen.toUpperCase()}</code><input type="color" aria-label="Color personalizado del resaltador" value={chosen} onChange={event => choose(event.target.value, false)} /></label>
+      <strong>Resaltador</strong><div className="highlight-color-presets">{PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
+      <label className="highlight-color-custom"><span>Personalizado</span><input type="color" aria-label="Color personalizado del resaltador" value={chosen} onChange={event => choose(event.target.value, false)} /></label>
     </div>, document.body)}
   </>;
 }

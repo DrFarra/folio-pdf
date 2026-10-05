@@ -71,6 +71,7 @@ try {
         if (['read_document', 'load_draft', 'store_draft', 'write_pdf_copy', 'share_pdf_copy', 'print_pdf_copy'].includes(command)) throw new Error('Forbidden whole-file command: ' + command);
         if (command === 'plugin:event|listen') { const listener = ++id; listeners.set(listener, args); return listener; }
         if (command === 'plugin:event|unlisten') { listeners.delete(args.eventId); return null; }
+        if (command === 'drive_lookup') return null;
         if (command === 'startup_documents') return [sourceInfo(storage('__ambiguousSessionFixture') ? sources.ambiguous : storage('__legacySessionFixture') ? sources.legacy : sources.first)];
         if (command === 'native_draft_document') return storage('__recoverNativeDraft') && args.id === sources.first.id ? sourceInfo(sources.migration) : null;
         if (command === 'pick_documents') { const chosen = api.pickNext.splice(0); return chosen.map(token => sourceInfo(sources[token])); }
@@ -159,8 +160,8 @@ try {
   state = await capture(); assert(!state.calls.some(call => call.command === 'native_pdf_open' && call.args.token === 'second'));
   await page.getByRole('dialog', { name: 'Acciones del documento', exact: true }).getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap();
   await readyDocument('Large second.pdf');
-  await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).tap();
-  await page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }).getByRole('button', { name: 'Abrir pestaña Large first.pdf', exact: true }).tap();
+  await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap();
+  await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Abrir pestaña Large first.pdf', exact: true }).tap();
   await readyDocument('Large first.pdf'); assert.equal(await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').count(), 0);
   await page.waitForFunction(() => { const session = window.__nativeBigContract.sessions['a'.repeat(64)]; return session?.nativeKnownPages?.includes(1) && session?.nativeOriginalRefs?.includes('pdfkit:1:0') && !session.annotations.some(annotation => annotation.id === 'imported-a-page1'); });
   mark('system-open-event-waits-for-modal-and-deleted-original-does-not-return-on-tab-switch');
@@ -187,7 +188,7 @@ try {
   await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).waitFor();
   mark('native-save-uses-removal-refs-preserves-other-originals-and-reopens-file-backed-copy');
 
-  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }).getByRole('button', { name: 'Importar otro PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
+  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Importar PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
   await chooseLocked(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).getByRole('button', { name: 'Cancelar', exact: true }).tap();
   await readyDocument('Large first — copia.pdf'); assert.equal(await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).count(), 0);
   await chooseLocked(); let password = page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true });
