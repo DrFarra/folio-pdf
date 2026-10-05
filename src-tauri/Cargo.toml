@@ -1,6 +1,6 @@
 [package]
 name = "folio-pdf"
-version = "0.8.10"
+version = "0.8.11"
 description = "Folio: lector PDF local con anotaciones estándar"
 edition = "2021"
 license = "AGPL-3.0-or-later"

@@ -38,6 +38,7 @@ void folio_pdf_free_annotations(FolioSourceAnnotation *items, size_t count)
     for (size_t index = 0; index < count; ++index) {
         free(items[index].name); free(items[index].contents);
         free(items[index].author); free(items[index].quads);
+        free(items[index].path_sizes); free(items[index].ink_points);
     }
     free(items);
 }
@@ -66,7 +67,7 @@ int folio_pdf_read_annotations(const char *path, const char *password, int32_t p
         for (int index = 0; index < length; ++index) {
             pdf_obj *object = pdf_array_get(ctx, array, index);
             const char *type = pdf_dict_get_name(ctx, object, PDF_NAME(Subtype));
-            int kind = !strcmp(type, "Highlight") ? 1 : !strcmp(type, "Text") ? 2 : 0;
+            int kind = !strcmp(type, "Highlight") ? 1 : !strcmp(type, "Text") ? 2 : !strcmp(type, "Ink") ? 3 : 0;
             if (!kind) continue;
             FolioSourceAnnotation *item = &items[count++];
             item->index = index; item->kind = kind;
@@ -95,6 +96,38 @@ int folio_pdf_read_annotations(const char *path, const char *password, int32_t p
                 item->quad_count = (size_t)points / 8; budget -= bytes;
                 for (int n = 0; n < points; ++n) item->quads[n] = pdf_array_get_real(ctx, quads, n);
             }
+            if (kind == 3) {
+                pdf_obj *paths = pdf_dict_get(ctx, object, PDF_NAME(InkList));
+                int path_count = pdf_array_len(ctx, paths);
+                if (path_count < 1 || path_count > 20000) fz_throw(ctx, FZ_ERROR_LIMIT, "Invalid or excessive ink paths.");
+                size_t sizes_bytes = (size_t)path_count * sizeof(int32_t), total = 0;
+                if (sizes_bytes > budget) fz_throw(ctx, FZ_ERROR_LIMIT, "Ink geometry exceeds the bounded reader payload.");
+                item->path_sizes = malloc(sizes_bytes);
+                if (!item->path_sizes) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory reading ink paths.");
+                item->path_count = (size_t)path_count; budget -= sizes_bytes;
+                for (int n = 0; n < path_count; ++n) {
+                    int length = pdf_array_len(ctx, pdf_array_get(ctx, paths, n));
+                    if (length < 4 || length > 20000 || length % 2) fz_throw(ctx, FZ_ERROR_LIMIT, "Invalid ink path geometry.");
+                    item->path_sizes[n] = length; total += (size_t)length;
+                    if (total > budget / sizeof(float)) fz_throw(ctx, FZ_ERROR_LIMIT, "Ink geometry exceeds the bounded reader payload.");
+                }
+                item->ink_points = malloc(total * sizeof(float));
+                if (!item->ink_points) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory reading ink geometry.");
+                budget -= total * sizeof(float);
+                size_t offset = 0;
+                for (int n = 0; n < path_count; ++n) {
+                    pdf_obj *path = pdf_array_get(ctx, paths, n);
+                    for (int k = 0; k < item->path_sizes[n]; ++k) {
+                        float point = pdf_array_get_real(ctx, path, k);
+                        if (!isfinite(point)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid ink coordinate.");
+                        item->ink_points[offset++] = point;
+                    }
+                }
+                pdf_obj *border = pdf_dict_get(ctx, object, PDF_NAME(BS));
+                item->stroke_width = border ? pdf_dict_get_real_default(ctx, border, PDF_NAME(W), 1) :
+                    pdf_array_len(ctx, pdf_dict_get(ctx, object, PDF_NAME(Border))) >= 3 ? pdf_array_get_real(ctx, pdf_dict_get(ctx, object, PDF_NAME(Border)), 2) : 1;
+                if (!isfinite(item->stroke_width) || item->stroke_width <= 0) item->stroke_width = 1;
+            }
         }
         *out_items = items; *out_count = count; items = NULL; status = 0;
     }
@@ -122,7 +155,7 @@ static void edit_page(fz_context *ctx, pdf_document *document, int number,
             if (raw_index < 0 || raw_index >= pdf_array_len(ctx, array)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A source annotation no longer matches the PDF.");
             pdf_obj *object = pdf_array_get(ctx, array, raw_index);
             const char *type = pdf_dict_get_name(ctx, object, PDF_NAME(Subtype));
-            if (strcmp(type, "Highlight") && strcmp(type, "Text")) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This source annotation cannot be edited in Folio.");
+            if (strcmp(type, "Highlight") && strcmp(type, "Text") && strcmp(type, "Ink")) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This source annotation cannot be edited in Folio.");
             targets[target_count++] = pdf_keep_obj(ctx, object);
         }
         /* Resolve all raw indices before mutation; deleting Popup children may
@@ -137,12 +170,12 @@ static void edit_page(fz_context *ctx, pdf_document *document, int number,
         }
         for (size_t index = 0; index < overlay_count; ++index) if (overlays[index].page == number) {
             const FolioOverlay *item = &overlays[index];
-            if ((item->kind != 1 && item->kind != 2) || !item->name || !item->contents || !item->author ||
+            if ((item->kind != 1 && item->kind != 2 && item->kind != 3) || !item->name || !item->contents || !item->author ||
                 !isfinite(item->opacity) || item->opacity < 0 || item->opacity > 1 || item->quad_count > 131072)
                 fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid PDF annotation payload.");
             for (int n = 0; n < 4; ++n) if (!isfinite(item->rect[n])) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid PDF annotation coordinates.");
             if (item->rect[2] <= item->rect[0] || item->rect[3] <= item->rect[1]) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid PDF annotation bounds.");
-            pdf_annot *annotation = pdf_create_annot_raw(ctx, page, item->kind == 1 ? PDF_ANNOT_HIGHLIGHT : PDF_ANNOT_TEXT);
+            pdf_annot *annotation = pdf_create_annot_raw(ctx, page, item->kind == 1 ? PDF_ANNOT_HIGHLIGHT : item->kind == 3 ? PDF_ANNOT_INK : PDF_ANNOT_TEXT);
             pdf_obj *object = pdf_annot_obj(ctx, annotation);
             pdf_dict_put_rect(ctx, object, PDF_NAME(Rect), fz_make_rect(item->rect[0], item->rect[1], item->rect[2], item->rect[3]));
             pdf_set_annot_color(ctx, annotation, 3, item->color);
@@ -159,6 +192,25 @@ static void edit_page(fz_context *ctx, pdf_document *document, int number,
                 for (size_t n = 0; n < item->quad_count * 8; ++n) {
                     if (!isfinite(item->quads[n])) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid highlight geometry.");
                     pdf_array_push_real(ctx, quads, item->quads[n]);
+                }
+            }
+            if (item->kind == 3) {
+                if (!isfinite(item->stroke_width) || item->stroke_width <= 0 || item->stroke_width > 50 ||
+                    !item->path_count || item->path_count > 20000 || !item->path_sizes || !item->ink_points)
+                    fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid ink annotation payload.");
+                pdf_set_annot_border_width(ctx, annotation, item->stroke_width);
+                pdf_obj *paths = pdf_dict_put_array(ctx, object, PDF_NAME(InkList), (int)item->path_count);
+                size_t offset = 0;
+                for (size_t n = 0; n < item->path_count; ++n) {
+                    int length = item->path_sizes[n];
+                    if (length < 4 || length > 20000 || length % 2 || offset + (size_t)length > 1048576)
+                        fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid ink path geometry.");
+                    pdf_obj *path = pdf_array_push_array(ctx, paths, length);
+                    for (int k = 0; k < length; ++k) {
+                        float point = item->ink_points[offset++];
+                        if (!isfinite(point)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid ink coordinate.");
+                        pdf_array_push_real(ctx, path, point);
+                    }
                 }
             }
             /* Synthesise only this newly created appearance. Unvisited widgets,

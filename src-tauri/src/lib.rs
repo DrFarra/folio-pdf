@@ -2,6 +2,7 @@ use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Manager, State};
+mod binary_ipc;
 mod drive;
 mod drive_auth;
 use drive::*;
@@ -124,12 +125,12 @@ async fn choose_output(source: Option<String>, name: String, app: tauri::AppHand
 #[tauri::command]
 fn write_pdf_copy(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<DocumentInfo, String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("No se eligió un destino de guardado.")?;
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("El contenido del PDF no es binario.".into()); };
-    validate_pdf(bytes)?;
+    let bytes = crate::binary_ipc::bytes(request.body())?;
+    validate_pdf(&bytes)?;
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("El destino venció. Elige nuevamente dónde guardar.")?;
     if output.format != "pdf" { return Err("Destino de PDF inválido.".into()); }
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
-    atomic_write(&output.path, bytes, output.fingerprint.as_deref())?;
+    atomic_write(&output.path, &bytes, output.fingerprint.as_deref())?;
     register(&desktop, output.path)
 }
 
@@ -154,12 +155,12 @@ async fn choose_export(source: Option<String>, name: String, format: String, app
 #[tauri::command]
 fn write_export(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<(), String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Contenido inválido.".into()); };
+    let bytes = crate::binary_ipc::bytes(request.body())?;
     if bytes.is_empty() || bytes.len() > 128 * 1024 * 1024 { return Err("El archivo está vacío o excede 128 MiB.".into()); }
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("Destino vencido.")?;
     if output.format == "pdf" { return Err("Usa el guardado de PDF.".into()); }
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
-    atomic_write(&output.path, bytes, output.fingerprint.as_deref())
+    atomic_write(&output.path, &bytes, output.fingerprint.as_deref())
 }
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
@@ -235,12 +236,12 @@ fn native_draft_document(id: String, name: String, desktop: State<'_, Desktop>) 
 #[tauri::command]
 fn store_draft(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<(), String> {
     let id = request.headers().get("x-folio-draft-id").and_then(|s| s.to_str().ok()).ok_or("Identificador de borrador ausente.")?;
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Borrador inválido.".into()); };
-    validate_pdf(bytes)?;
+    let bytes = crate::binary_ipc::bytes(request.body())?;
+    validate_pdf(&bytes)?;
     let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
     let path = draft_path(&desktop, id)?;
     fs::create_dir_all(path.parent().unwrap()).map_err(|_| "No se pudo crear la carpeta de borradores.")?;
-    atomic_write(&path, bytes, fingerprint(&path)?.as_deref())
+    atomic_write(&path, &bytes, fingerprint(&path)?.as_deref())
 }
 #[tauri::command]
 fn discard_draft(id: String, desktop: State<'_, Desktop>) -> Result<(), String> {

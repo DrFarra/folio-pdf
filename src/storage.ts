@@ -1,3 +1,4 @@
+import { invokeBinary } from './binary';
 import type { RecentDocument, Session } from './types';
 import { invoke } from '@tauri-apps/api/core';
 import { isNative } from './platform';
@@ -75,7 +76,7 @@ export async function readDraft(id: string): Promise<Uint8Array | null> {
   });
 }
 export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
-  if (isNative) { await invoke('store_draft', new Uint8Array(bytes), { headers: { 'x-folio-draft-id': id } }); return; }
+  if (isNative) { await invokeBinary('store_draft', bytes, { headers: { 'x-folio-draft-id': id } }); return; }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put(new Uint8Array(bytes).buffer, id);

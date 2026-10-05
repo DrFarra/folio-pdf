@@ -11,6 +11,7 @@ struct PDFRenderArgs: Decodable { let token: String; let page: Int; let width: I
 struct PDFOverlay: Decodable {
     let id: String; let page: Int; let kind: String; let rect: [Double]; let color: String; let text: String
     let created: Double; let author: String?; let opacity: Double?; let nativeSourceRef: String?; let originalName: String?; let quads: [[Double]]?
+    let inkPaths: [[Double]]?; let strokeWidth: Double?
 }
 struct PDFExportArgs: Decodable { let token: String; let path: String; let annotations: [PDFOverlay]; let removedSourceRefs: [String] }
 
@@ -83,6 +84,7 @@ final class NativePDFService {
         let type = annotation.type?.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
         if type == "highlight" { return "highlight" }
         if type == "text" { return "note" }
+        if type == "ink" { return "ink" }
         return nil
     }
     private func overlayRect(_ annotation: PDFAnnotation) -> [Double] {
@@ -114,7 +116,7 @@ final class NativePDFService {
             for index in 0..<count {
                 let item = pointer[index]
                 if item.flags & (1 | 2 | 32) != 0 { continue }
-                let kind = item.kind == 1 ? "highlight" : "note", raw = floats(item.rect, 4), rgb = floats(item.color, 3)
+                let kind = item.kind == 1 ? "highlight" : item.kind == 3 ? "ink" : "note", raw = floats(item.rect, 4), rgb = floats(item.color, 3)
                 let rect = kind == "note" ? [raw[0], raw[3], raw[0], raw[3]] : raw
                 let reference = "pdfkit:\(number):\(item.index)"
                 var dto: [String: Any] = ["id": reference, "nativeSourceRef": reference, "page": number, "kind": kind,
@@ -125,6 +127,14 @@ final class NativePDFService {
                 if let name = item.name, name.pointee != 0 { dto["originalName"] = String(cString: name) }
                 if let quads = item.quads, item.quad_count > 0 {
                     dto["quads"] = (0..<item.quad_count).map { number in (0..<8).map { Double(quads[number * 8 + $0]) } }
+                }
+                if item.kind == 3, let sizes = item.path_sizes, let points = item.ink_points {
+                    var offset = 0, paths = [[Double]]()
+                    for number in 0..<item.path_count {
+                        let count = Int(sizes[number])
+                        paths.append((0..<count).map { Double(points[offset + $0]) }); offset += count
+                    }
+                    dto["inkPaths"] = paths; dto["strokeWidth"] = Double(item.stroke_width)
                 }
                 result.append(dto)
             }
@@ -143,6 +153,12 @@ final class NativePDFService {
         let existing = source["quads"] as? [[Double]] ?? [], requested = overlay.quads ?? []
         if existing.count != requested.count { return false }
         for (a, b) in zip(existing, requested) { if a.count != b.count || zip(a,b).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false } }
+        if overlay.kind == "ink" {
+            guard let width = source["strokeWidth"] as? Double, abs((overlay.strokeWidth ?? 2) - width) < 0.01 else { return false }
+            let paths = source["inkPaths"] as? [[Double]] ?? [], requestedPaths = overlay.inkPaths ?? []
+            if paths.count != requestedPaths.count { return false }
+            for (a, b) in zip(paths, requestedPaths) { if a.count != b.count || zip(a,b).contains(where: { abs($0.0 - $0.1) > 0.01 }) { return false } }
+        }
         return true
     }
     func pageInfo(_ token: String, _ number: Int) throws -> [String: Any] {
@@ -270,14 +286,15 @@ final class NativePDFService {
             var removal = FolioRemoval(); removal.page = Int32(number); removal.index = Int32(index); removals.append(removal)
         }
         var nativeOverlays = [FolioOverlay](), strings = [UnsafeMutablePointer<CChar>](), geometries = [UnsafeMutablePointer<Float>]()
-        defer { for pointer in strings { free(pointer) }; for pointer in geometries { pointer.deallocate() } }
+        var pathSizes = [UnsafeMutablePointer<Int32>]()
+        defer { for pointer in strings { free(pointer) }; for pointer in geometries { pointer.deallocate() }; for pointer in pathSizes { pointer.deallocate() } }
         func string(_ text: String) throws -> UnsafePointer<CChar> {
             guard let pointer = strdup(text) else { throw error("No hay memoria para preparar las anotaciones.") }
             strings.append(pointer); return UnsafePointer(pointer)
         }
         for overlay in args.annotations {
             if let reference = overlay.nativeSourceRef, unchanged.contains(reference), !args.removedSourceRefs.contains(reference) { continue }
-            guard ["highlight", "note"].contains(overlay.kind), overlay.rect.count == 4, overlay.rect.allSatisfy({ $0.isFinite }),
+            guard ["highlight", "note", "ink"].contains(overlay.kind), overlay.rect.count == 4, overlay.rect.allSatisfy({ $0.isFinite }),
                   overlay.page > 0, overlay.page <= value.document.pageCount, overlay.created.isFinite,
                   abs(overlay.created / 1000) < Double(Int64.max) else { throw error("La anotación no tiene una página o posición válida.") }
             var rect = overlay.rect
@@ -288,7 +305,7 @@ final class NativePDFService {
                 rect = [overlay.rect[0], overlay.rect[1] - height, overlay.rect[0] + width, overlay.rect[1]]
             }
             guard rect[2] > rect[0], rect[3] > rect[1] else { throw error("La anotación tiene un tamaño inválido.") }
-            var item = FolioOverlay(); item.page = Int32(overlay.page); item.kind = overlay.kind == "highlight" ? 1 : 2
+            var item = FolioOverlay(); item.page = Int32(overlay.page); item.kind = overlay.kind == "highlight" ? 1 : overlay.kind == "ink" ? 3 : 2
             item.rect = (Float(rect[0]), Float(rect[1]), Float(rect[2]), Float(rect[3]))
             let alpha = min(1, max(0, overlay.opacity ?? (overlay.kind == "highlight" ? 0.35 : 1)))
             item.opacity = Float(alpha); item.modified_seconds = Int64(overlay.created / 1000)
@@ -301,6 +318,19 @@ final class NativePDFService {
                 let flat = quads.flatMap { $0.map(Float.init) }, pointer = UnsafeMutablePointer<Float>.allocate(capacity: flat.count)
                 flat.withUnsafeBufferPointer { if let base = $0.baseAddress { pointer.initialize(from: base, count: flat.count) } }
                 geometries.append(pointer); item.quads = UnsafePointer(pointer); item.quad_count = quads.count
+            }
+            if overlay.kind == "ink" {
+                let width = overlay.strokeWidth ?? 2
+                guard width.isFinite, width > 0, width <= 50, let paths = overlay.inkPaths, !paths.isEmpty, paths.count <= 20000,
+                      paths.allSatisfy({ $0.count >= 4 && $0.count <= 20000 && $0.count % 2 == 0 && $0.allSatisfy({ $0.isFinite && Float($0).isFinite }) }),
+                      paths.reduce(0, { $0 + $1.count }) <= 1048576 else { throw error("El dibujo contiene coordenadas o grosor inválidos.") }
+                let flat = paths.flatMap { $0.map(Float.init) }, pointer = UnsafeMutablePointer<Float>.allocate(capacity: flat.count)
+                flat.withUnsafeBufferPointer { pointer.initialize(from: $0.baseAddress!, count: flat.count) }
+                geometries.append(pointer)
+                let sizes = paths.map { Int32($0.count) }, sizePointer = UnsafeMutablePointer<Int32>.allocate(capacity: sizes.count)
+                sizes.withUnsafeBufferPointer { sizePointer.initialize(from: $0.baseAddress!, count: sizes.count) }
+                pathSizes.append(sizePointer)
+                item.ink_points = UnsafePointer(pointer); item.path_sizes = UnsafePointer(sizePointer); item.path_count = paths.count; item.stroke_width = Float(width)
             }
             nativeOverlays.append(item)
         }

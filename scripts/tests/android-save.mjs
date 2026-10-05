@@ -40,6 +40,7 @@ try {
       if (command === 'pick_documents') return [latest];
       if (command === 'open_library_document') return sources.get(catalog.get(args.id).nativeSource).doc;
       if (command === 'read_document') return [...sources.get(args.token).bytes];
+      if (command === 'read_document_range') return [...sources.get(args.token).bytes.subarray(args.offset, args.offset + args.length)];
       if (command === 'load_draft') return [];
       if (command === 'load_session') return sessions.get(args.id) || null;
       if (command === 'store_session') { sessions.set(args.id, args.session); return; }
@@ -50,7 +51,8 @@ try {
         const reservation = outputs.get(options.headers['x-folio-output-token']); assert(reservation);
         if (mode === 'cancel') return null;
         if (mode === 'error') throw new Error('El PDF cambió fuera de Folio. Usa Guardar una copia.');
-        const bytes = Buffer.from(args); assert(inspectDocument(bytes).pages === 1);
+        assert.equal(typeof args.base64, 'string', 'Android uses compact binary transport');
+        const bytes = Buffer.from(args.base64, 'base64'); assert(inspectDocument(bytes).pages === 1);
         let path;
         if (command === 'write_pdf_original') {
           assert.equal(options.headers['x-folio-source-token'], reservation.source);

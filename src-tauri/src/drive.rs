@@ -219,9 +219,9 @@ fn stage(d:&Desktop,binding:String,path:PathBuf)->Result<Pending,String> {
 pub fn drive_stage(request:tauri::ipc::Request<'_>,desktop:State<'_,Desktop>)->Result<Pending,String> {
     let binding=request.headers().get("x-folio-drive-binding").and_then(|h|h.to_str().ok()).ok_or("No se identificó el archivo de Drive.")?.to_string();
     let _:Binding=json_read(&binding_path(&desktop,&binding)?)?;
-    let tauri::ipc::InvokeBody::Raw(bytes)=request.body() else{return Err("El PDF no contiene datos binarios.".into())};folio_core::validate_pdf(bytes)?;
+    let bytes = crate::binary_ipc::bytes(request.body())?;folio_core::validate_pdf(&bytes)?;
     let path=root(&desktop).join("edits").join(format!("{}.pdf",uuid::Uuid::new_v4()));fs::create_dir_all(path.parent().unwrap()).map_err(ioerr)?;
-    folio_core::atomic_write(&path,bytes,None)?;stage(&desktop,binding,path)
+    folio_core::atomic_write(&path,&bytes,None)?;stage(&desktop,binding,path)
 }
 fn queue(d:&Desktop,a:Option<&str>)->Result<Vec<Pending>,String> {
     let mut result=vec![];if let Ok(dir)=fs::read_dir(root(d).join("pending")){for p in dir.flatten(){if let Ok(p)=json_read::<Pending>(&p.path()){if a==Some(p.account.as_str()){result.push(p);}}}}

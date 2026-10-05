@@ -73,9 +73,29 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         }
         let source = inspect_pdf_file(&path)?;
         if source.digest != info.id { return Err("La exportación nativa modificó el original.".into()); }
+        // Exercise InkList with both the small fixture and a file-backed 2 GiB PDF.
+        let ink_paths = serde_json::json!([[80,300,120,325,170,310],[190,320,230,345]]);
+        let ink_path = folder.join("ink-added.pdf");
+        let mut ink_annotations = modified["annotations"].as_array().ok_or("Faltan las anotaciones exportadas.")?.clone();
+        ink_annotations.push(serde_json::json!({"id":"native-ink","page":1,"kind":"ink","rect":[77,297,233,348],"color":"#2357a1","text":"","created":1700000000000i64,"strokeWidth":3,"inkPaths":ink_paths}));
+        mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":exported.token,"path":ink_path,"annotations":ink_annotations,"removedSourceRefs":[]})).await?;
+        let ink_info = register(&desktop, ink_path.clone())?;
+        mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":ink_info.token,"path":ink_path,"id":ink_info.id,"revision":ink_info.revision,"size":ink_info.size,"password":""})).await?;
+        let ink_page = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":ink_info.token,"page":1})).await?;
+        let ink = ink_page["annotations"].as_array().into_iter().flatten().find(|a| a["kind"] == "ink").ok_or("El dibujo no se guardó en el PDF nativo.")?;
+        if ink["inkPaths"] != ink_paths || ink["strokeWidth"].as_f64() != Some(3.0) { return Err(format!("El dibujo nativo cambió sus trazos o grosor: {ink}")); }
+        let erased_path = folder.join("ink-erased.pdf");
+        let retained: Vec<_> = ink_page["annotations"].as_array().into_iter().flatten().filter(|a| a["kind"] != "ink").cloned().collect();
+        mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":ink_info.token,"path":erased_path,"annotations":retained,"removedSourceRefs":[ink["nativeSourceRef"]]})).await?;
+        let erased = register(&desktop, erased_path.clone())?;
+        mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":erased.token,"path":erased_path,"id":erased.id,"revision":erased.revision,"size":erased.size,"password":""})).await?;
+        let erased_page = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":erased.token,"page":1})).await?;
+        if erased_page["annotations"].as_array().map(|a| a.len()) != Some(3) || erased_page["annotations"].as_array().into_iter().flatten().any(|a| a["kind"] == "ink") { return Err("La goma nativa no eliminó el dibujo conservando las otras anotaciones.".into()); }
+        mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":erased.token})).await?;
+        mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":ink_info.token})).await?;
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":exported.token})).await?;
         mobile_call(app.clone(), "pdfClose", serde_json::json!({"token":info.token})).await?;
-        reports.push(serde_json::json!({"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"addedHighlightDefaultOpacity":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output,"annotationWriter":writer["annotationWriter"],"incremental":writer["incremental"]}));
+        reports.push(serde_json::json!({"nativeInkRoundTrip":true,"nativeInkErased":true,"document":info,"sourcePath":path,"metadata":metadata,"pageInfo":first,"text":text,"secondPageInfo":second,"secondPageText":second_text,"rasters":rasters,"removedSourceAnnotation":true,"addedNote":true,"addedHighlightDefaultOpacity":true,"unseenHighlightPreserved":true,"unseenNonOverlayPreserved":true,"originalOpacityAndNamePreserved":true,"sourceUnchanged":true,"exportedPath":output,"annotationWriter":writer["annotationWriter"],"incremental":writer["incremental"]}));
     }
     Ok(serde_json::json!({"swiftImportExecuted":true,"pdfKitExecuted":true,"wholeDocumentIPC":false,"UIKitInteractionTested":false,"documents":reports}))
 }
@@ -150,13 +170,13 @@ pub fn choose_export(source: Option<String>, name: String, format: String, deskt
 
 fn write_reserved(request: tauri::ipc::Request<'_>, desktop: &Desktop, pdf: bool) -> Result<PathBuf, String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Contenido binario inválido.".into()); };
-    if pdf { validate_pdf(bytes)?; }
+    let bytes = crate::binary_ipc::bytes(request.body())?;
+    if pdf { validate_pdf(&bytes)?; }
     else if bytes.is_empty() || bytes.len() > 128 * 1024 * 1024 { return Err("El archivo está vacío o excede 128 MiB.".into()); }
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("Destino vencido.")?;
     if (output.format == "pdf") != pdf { return Err("El tipo de archivo no coincide con el destino.".into()); }
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
-    atomic_write(&output.path, bytes, output.fingerprint.as_deref())?;
+    atomic_write(&output.path, &bytes, output.fingerprint.as_deref())?;
     Ok(output.path)
 }
 

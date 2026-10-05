@@ -1,3 +1,4 @@
+import { invokeBinary } from './binary';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { downloadBytes } from './pdf';
 import type { Annotation } from './types';
@@ -37,6 +38,18 @@ export async function pickNativeDocuments(): Promise<NativeDocument[]> {
   return invoke<NativeDocument[]>('pick_documents');
 }
 export async function readNativeDocument(document: NativeDocument): Promise<Uint8Array> {
+  if (isAndroid) {
+    // Android's JSON response bridge must never materialize the entire PDF as
+    // millions of numbers at once. Yield between bounded reads on that bridge.
+    const bytes = new Uint8Array(document.size);
+    for (let offset = 0; offset < bytes.length;) {
+      const length = Math.min(256 * 1024, bytes.length - offset);
+      const chunk = new Uint8Array(await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }));
+      if (chunk.length !== length) throw new Error('El PDF cambió durante la lectura. Vuelve a abrirlo.');
+      bytes.set(chunk, offset); offset += length;
+    }
+    return bytes;
+  }
   return new Uint8Array(await invoke<ArrayBuffer>('read_document', { token: document.token }));
 }
 export async function startupDocument(): Promise<NativeDocument | null> {
@@ -49,13 +62,13 @@ export async function savePdf(bytes: Uint8Array, name: string, source?: string):
   if (!isNative) { downloadBytes(bytes, name); return true; }
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
-  return await invoke<NativeDocument | null>('write_pdf_copy', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } }) || false;
+  return await invokeBinary<NativeDocument | null>('write_pdf_copy', bytes, { headers: { 'x-folio-output-token': token } }) || false;
 }
 
 export async function saveOriginalPdf(bytes: Uint8Array, name: string, source: string): Promise<NativeDocument | false> {
   const token = await invoke<string | null>('choose_output', { source, name });
   if (!token) return false;
-  return await invoke<NativeDocument | null>('write_pdf_original', new Uint8Array(bytes), {
+  return await invokeBinary<NativeDocument | null>('write_pdf_original', bytes, {
     headers: { 'x-folio-output-token': token, 'x-folio-source-token': source },
   }) || false;
 }
@@ -63,7 +76,7 @@ export async function saveOriginalPdf(bytes: Uint8Array, name: string, source: s
 async function presentMobilePdf(command: 'share_pdf_copy' | 'print_pdf_copy', bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
-  return invoke<boolean>(command, new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
+  return invokeBinary<boolean>(command, bytes, { headers: { 'x-folio-output-token': token } });
 }
 export async function sharePdf(bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
   if (isNative && isMobile) return presentMobilePdf('share_pdf_copy', bytes, name, source);
@@ -88,6 +101,6 @@ export async function saveExport(bytes: Uint8Array, name: string, format: 'txt' 
   }
   const token = await invoke<string | null>('choose_export', { source: source || null, name, format });
   if (!token) return false;
-  const saved = await invoke<boolean | null>('write_export', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
+  const saved = await invokeBinary<boolean | null>('write_export', bytes, { headers: { 'x-folio-output-token': token } });
   return saved !== false;
 }

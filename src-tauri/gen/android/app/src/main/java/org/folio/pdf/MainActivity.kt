@@ -3,15 +3,28 @@ import android.os.Bundle
 import android.graphics.Color
 import android.os.Build
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import org.folio.android.prepareAppWebView
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 class MainActivity : TauriActivity() {
+  override val handleBackNavigation = false
+  private var readerBack: OnBackPressedCallback? = null
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     prepareAppWebView(webView, BuildConfig.VERSION_CODE)
+    readerBack?.remove()
+    readerBack = object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        // Folio has an in-memory reader, not a browser history. Going back in
+        // WebView or destroying the activity re-imports/reloads the document.
+        webView.evaluateJavascript("window.dispatchEvent(new Event('folio:android-back', {cancelable: true}))") { unhandled ->
+          if (unhandled == "true") moveTaskToBack(true)
+        }
+      }
+    }.also { onBackPressedDispatcher.addCallback(this, it) }
   }
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)

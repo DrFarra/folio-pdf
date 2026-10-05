@@ -43,6 +43,7 @@ try {
         if(['startup_documents','list_library','recent_documents','pick_documents'].includes(command))return [];
         if(command==='load_draft')return new ArrayBuffer(0);
         if(command==='read_document')return new Uint8Array(state.savedBytes).buffer;
+        if(command==='read_document_range')return new Uint8Array(state.savedBytes.slice(args.offset,args.offset+args.length)).buffer;
         if(command==='drive_status')return {account:state.account,pending:state.pending};
         if(command==='drive_connect'){state.account=account;return account;}
         if(command==='drive_disconnect'){state.account=null;return;}
@@ -51,6 +52,7 @@ try {
         if(command==='drive_open'||command==='drive_pending_open')return {...opened,offline:args.offline||false};
         if(command==='drive_lookup')return null;
         if(command==='drive_stage'){
+          if(args?.base64)args=Uint8Array.from(atob(args.base64),char=>char.charCodeAt(0));
           if(!(args instanceof Uint8Array)||options.headers['x-folio-drive-binding']!=='binding-one')throw Error('Drive must receive binary PDF and original binding');
           state.savedBytes=[...args];const p={id:'pending-one',binding:'binding-one',account:account.id,fileId:file.id,name:file.title,created:Date.now(),size:args.length};state.pending=[p];return p;
         }

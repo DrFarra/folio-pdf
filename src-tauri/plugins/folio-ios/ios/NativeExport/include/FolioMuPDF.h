@@ -10,7 +10,7 @@ extern "C" {
  * user space (y up); index refers to the original raw /Annots array. */
 typedef struct {
     int32_t index;
-    int32_t kind; /* 1 Highlight, 2 Text */
+    int32_t kind; /* 1 Highlight, 2 Text, 3 Ink */
     int32_t flags;
     float rect[4];
     float color[3];
@@ -21,6 +21,10 @@ typedef struct {
     char *author;
     size_t quad_count;
     float *quads; /* quad_count * 8 floats, UL UR LL LR */
+    float stroke_width;
+    size_t path_count;
+    int32_t *path_sizes; /* number of floats (x,y pairs) in each path */
+    float *ink_points;
 } FolioSourceAnnotation;
 
 typedef struct {
@@ -35,6 +39,10 @@ typedef struct {
     const char *author;
     size_t quad_count;
     const float *quads;
+    float stroke_width;
+    size_t path_count;
+    const int32_t *path_sizes;
+    const float *ink_points;
 } FolioOverlay;
 
 typedef struct { int32_t page; int32_t index; } FolioRemoval;

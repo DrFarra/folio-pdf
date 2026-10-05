@@ -76,13 +76,13 @@ pub fn choose_export(source: Option<String>, name: String, format: String, deskt
 
 fn write_reserved(request: tauri::ipc::Request<'_>, desktop: &Desktop, pdf: bool) -> Result<PathBuf, String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Contenido binario inválido.".into()); };
-    if pdf { validate_pdf(bytes)?; }
+    let bytes = crate::binary_ipc::bytes(request.body())?;
+    if pdf { validate_pdf(&bytes)?; }
     else if bytes.is_empty() || bytes.len() > 128 * 1024 * 1024 { return Err("El archivo está vacío o excede 128 MiB.".into()); }
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("Destino vencido.")?;
     if (output.format == "pdf") != pdf { return Err("El tipo de archivo no coincide con el destino.".into()); }
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
-    atomic_write(&output.path, bytes, output.fingerprint.as_deref())?;
+    atomic_write(&output.path, &bytes, output.fingerprint.as_deref())?;
     Ok(output.path)
 }
 

@@ -26,8 +26,10 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
   const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; setPreview([]); };
   useEffect(() => { clear(); }, [tool, enabled, viewport, penOnly]);
   useEffect(() => {
+    const background = () => { if (document.visibilityState === 'hidden') clear(); };
     window.addEventListener('folio:pinch-start', clear);
-    return () => { cancelAnimationFrame(frame.current); window.removeEventListener('folio:pinch-start', clear); };
+    window.addEventListener('blur', clear); window.addEventListener('pagehide', clear); document.addEventListener('visibilitychange', background);
+    return () => { cancelAnimationFrame(frame.current); window.removeEventListener('folio:pinch-start', clear); window.removeEventListener('blur', clear); window.removeEventListener('pagehide', clear); document.removeEventListener('visibilitychange', background); };
   }, []);
   function point(event: { clientX: number; clientY: number }, svg: SVGSVGElement) {
     const box = svg.getBoundingClientRect();

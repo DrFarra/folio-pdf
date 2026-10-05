@@ -178,6 +178,9 @@ export default function App() {
   const undoStack = useRef<History[]>([]);
   const redoStack = useRef<History[]>([]);
   const draftSave = useRef<Promise<void>>(Promise.resolve());
+  const draftWrites = useRef(new WeakMap<LoadedDocument, Promise<void>>());
+  const tabWrites = useRef(new Map<string, { signature: string; promise: Promise<void> }>());
+  const driveWrites = useRef(new Map<string, { signature: string; promise: Promise<void> }>());
   const librarySave = useRef<Promise<void>>(Promise.resolve());
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -233,19 +236,52 @@ export default function App() {
     if (focusSelectedTab) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.document-tab[data-tab-key="${CSS.escape(tab.key)}"] [role=tab]`)?.focus({ preventScroll: true }));
   }
   function setWorkBenchClosed() { setWorkbench(null); setInfo(false); setLibrary(false); setNoteDraft(null); setPageJump(false); setViewSettings(false); setAnnotationOptions(false); setCapabilityNotice(false); }
-  async function persistTab(tab: DocumentTab) {
-    await draftSave.current;
-    if (forgottenIds.current.has(tab.doc.id)) return;
-    if (tab.doc.modified && !isNativePdfDocument(tab.doc.pdf)) await storeDraft(tab.doc.id, tab.doc.bytes);
-    const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations, nativeLegacySession: tab.doc.nativeLegacySession });
-    if (!saved) throw new Error('No se pudo conservar la sesión. Guarda el PDF antes de cerrar la pestaña.');
-    if (tab.doc.drive?.editable && (tab.doc.modified || annotationFingerprint(tab.annotations) !== tab.doc.savedAnnotations)) {
-      if (isNativePdfDocument(tab.doc.pdf)) {
-        if (tab.doc.nativeLegacySession) throw new Error('Guarda el PDF de Drive antes de cerrar para recuperar todas las anotaciones anteriores.');
-        const removed = (tab.doc.nativeOriginalRefs || []).filter(ref => !tab.annotations.some(a => a.nativeSourceRef === ref));
-        await driveStageNative(tab.doc.drive.binding, tab.doc.nativeSource!, tab.annotations, removed);
-      } else await driveStage(tab.doc.drive.binding, tab.doc.canAnnotate ? await exportAnnotated(tab.doc.bytes, tab.annotations, tab.doc.password, undefined, true) : tab.doc.bytes);
-    }
+  function ensureDraft(document: LoadedDocument): Promise<void> {
+    if (!document.modified || isNativePdfDocument(document.pdf) || forgottenIds.current.has(document.id)) return Promise.resolve();
+    const existing = draftWrites.current.get(document); if (existing) return existing;
+    const operation = draftSave.current.catch(() => {}).then(async () => {
+      if (forgottenIds.current.has(document.id)) return;
+      await storeDraft(document.id, document.bytes);
+      if (document.draftSource && !forgottenIds.current.has(document.id)) {
+        await rememberDocument({ id: document.id, name: document.name, size: document.size, pages: document.pdf.numPages, openedAt: Date.now(), draft: true });
+        if (!preferencesRef.current.rememberRecent) await hideRecent(document.id);
+      }
+    });
+    draftSave.current = operation; draftWrites.current.set(document, operation);
+    void operation.catch(() => { draftWrites.current.delete(document); });
+    return operation;
+  }
+  function persistTab(tab: DocumentTab, stageDrive = true): Promise<void> {
+    if (forgottenIds.current.has(tab.doc.id)) return Promise.resolve();
+    const fingerprint = annotationFingerprint(tab.annotations);
+    const signature = JSON.stringify([tab.doc.revision, fingerprint, tab.page, tab.bookmarks, tab.doc.nativeKnownPages, tab.doc.nativeOriginalRefs, tab.doc.nativeLegacySession]);
+    const key = `${tab.key}:${stageDrive}`;
+    const previous = tabWrites.current.get(key);
+    if (previous?.signature === signature) return previous.promise;
+    const operation = (previous?.promise || Promise.resolve()).catch(() => {}).then(async () => {
+      // Session metadata is small. Persist it before any PDF export, including
+      // on Android background events; an earlier failed draft is retryable.
+      const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations, nativeLegacySession: tab.doc.nativeLegacySession });
+      if (!saved) throw new Error('No se pudo conservar la sesión. Guarda el PDF antes de cerrar la pestaña.');
+      await ensureDraft(tab.doc);
+      if (!stageDrive || !tab.doc.drive?.editable || !tab.doc.modified && fingerprint === tab.doc.savedAnnotations) return;
+      const binding = tab.doc.drive.binding, edit = `${tab.doc.revision}:${fingerprint}`;
+      const staged = driveWrites.current.get(binding);
+      if (staged?.signature === edit) { await staged.promise; return; }
+      const stage = (staged?.promise || Promise.resolve()).catch(() => {}).then(async () => {
+        if (isNativePdfDocument(tab.doc.pdf)) {
+          if (tab.doc.nativeLegacySession) throw new Error('Guarda el PDF de Drive antes de cerrar para recuperar todas las anotaciones anteriores.');
+          const removed = (tab.doc.nativeOriginalRefs || []).filter(ref => !tab.annotations.some(a => a.nativeSourceRef === ref));
+          await driveStageNative(binding, tab.doc.nativeSource!, tab.annotations, removed);
+        } else await driveStage(binding, tab.doc.canAnnotate ? await exportAnnotated(tab.doc.bytes, tab.annotations, tab.doc.password, undefined, true) : tab.doc.bytes);
+      });
+      driveWrites.current.set(binding, { signature: edit, promise: stage });
+      void stage.catch(() => { if (driveWrites.current.get(binding)?.promise === stage) driveWrites.current.delete(binding); });
+      await stage;
+    });
+    tabWrites.current.set(key, { signature, promise: operation });
+    void operation.catch(() => { if (tabWrites.current.get(key)?.promise === operation) tabWrites.current.delete(key); });
+    return operation;
   }
   async function switchTab(key: string) {
     if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de cambiar de documento.'); return; }
@@ -473,12 +509,7 @@ export default function App() {
 
   useEffect(() => {
     if (!doc?.modified || isNativePdfDocument(doc.pdf) || forgottenIds.current.has(doc.id)) return;
-    draftSave.current = draftSave.current.catch(() => {}).then(async () => {
-      if (forgottenIds.current.has(doc.id)) return;
-      await storeDraft(doc.id, doc.bytes);
-      if (doc.draftSource && !forgottenIds.current.has(doc.id)) { await rememberDocument({ id: doc.id, name: doc.name, size: doc.size, pages: doc.pdf.numPages, openedAt: Date.now(), draft: true }); if (!preferencesRef.current.rememberRecent) await hideRecent(doc.id); }
-    });
-    void draftSave.current.then(() => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setDraftFailed(false); })
+    void ensureDraft(doc).then(() => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setDraftFailed(false); })
       .catch(() => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) { setDraftFailed(true); notify('No se pudo conservar el borrador. Guarda el PDF antes de cerrar.', true); } });
   }, [doc, notify]);
 
@@ -522,7 +553,7 @@ export default function App() {
     if (isDesktop) return;
     const preserve = () => {
       retainCurrentTab();
-      for (const tab of tabsRef.current) void persistTab(tab).catch(() => { setSessionFailed(true); });
+      for (const tab of tabsRef.current) void persistTab(tab, false).catch(() => { setSessionFailed(true); });
     };
     const background = () => { if (document.visibilityState === 'hidden') preserve(); };
     window.addEventListener('beforeunload', preserve);
@@ -784,7 +815,7 @@ export default function App() {
 
   useEffect(() => {
     const root = viewer.current;
-    if (!touchLayout || !root) return;
+    if (!touchLayout || !root || library) return;
     type Pinch = { stack: HTMLElement; distance: number; scale: number; next: number; originX: number; originY: number; centerX: number; centerY: number; pointerX: number; pointerY: number; page: number; x: number; y: number; id: string; frame: number };
     let gesture: Pinch | null = null;
     const geometry = (event: TouchEvent) => {
@@ -828,9 +859,11 @@ export default function App() {
       currentScale.current = next; setCustomScale(next); setZoomMode('custom');
     };
     const cancel = () => { if (gesture) { clearPreview(gesture); gesture = null; } };
+    const background = () => { if (document.visibilityState === 'hidden') cancel(); };
     root.addEventListener('touchstart', start, { passive: false }); root.addEventListener('touchmove', move, { passive: false }); root.addEventListener('touchend', finish, { passive: false }); root.addEventListener('touchcancel', cancel);
-    return () => { cancel(); root.removeEventListener('touchstart', start); root.removeEventListener('touchmove', move); root.removeEventListener('touchend', finish); root.removeEventListener('touchcancel', cancel); };
-  }, [touchLayout]);
+    window.addEventListener('blur', cancel); window.addEventListener('pagehide', cancel); document.addEventListener('visibilitychange', background);
+    return () => { cancel(); root.removeEventListener('touchstart', start); root.removeEventListener('touchmove', move); root.removeEventListener('touchend', finish); root.removeEventListener('touchcancel', cancel); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); document.removeEventListener('visibilitychange', background); };
+  }, [touchLayout, library]);
 
   useEffect(() => {
     if (!touchLayout || !(sidebar || notesOpen)) return;
@@ -1369,9 +1402,29 @@ export default function App() {
   async function returnToLibrary() {
     if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de salir del editor.'); return; }
     if (busyRef.current || loadingRef.current) return;
-    try { const current = captureTab(); if (current) await persistTab(current); retainCurrentTab(); publishTabs(); closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); setLibrary(true); }
-    catch (error) { notify(errorMessage(error), true); }
+    const current = captureTab();
+    retainCurrentTab(); publishTabs(); closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); setLibrary(true);
+    // The document stays open in memory. Navigation never waits for encoding,
+    // disk IO or Drive staging, and a failure leaves the reader recoverable.
+    if (current) void persistTab(current).catch(error => { setSessionFailed(true); notify(`${errorMessage(error)} El documento sigue abierto; vuelve a él para reintentar Guardar.`, true); });
   }
+  useEffect(() => {
+    if (!isNative || !isAndroid) return;
+    const back = (event: Event) => {
+      const modal = document.querySelector('dialog[open]');
+      if (!modal && library && !driveLibrary) return; // Android backgrounds the existing activity.
+      event.preventDefault();
+      if (modal) { modal.dispatchEvent(new Event('cancel', { cancelable: true })); return; }
+      if (document.querySelector('.drawing-settings-popup,.highlight-color-palette')) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return; }
+      if (mobileTabs) { setMobileTabs(false); return; }
+      if (sidebar || notesOpen || searchOpen) { closeMobilePanel(); return; }
+      if (library) { setDriveLibrary(false); return; }
+      if (workbench) { if (editorDraftRef.current) notify('Aplica o descarta el borrador antes de salir del editor.'); else void closeWorkbench(); return; }
+      void returnToLibrary();
+    };
+    window.addEventListener('folio:android-back', back);
+    return () => window.removeEventListener('folio:android-back', back);
+  });
   async function removeFromRecents(recent: RecentDocument) {
     try { await librarySave.current; await hideRecent(recent.id); setRecents(await listLibrary()); notify('Quitado de recientes. El documento y sus cambios siguen en la biblioteca.'); }
     catch (error) { notify(errorMessage(error), true); }

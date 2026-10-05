@@ -78,7 +78,7 @@ final class ImportTests: XCTestCase {
         openPicker(); select("Folio selección dos.pdf")
         reading("FOLIO PICKER DOS", screenshot: "picker-open-two")
         // WKWebView reports the dialog-opening document selector as Other.
-        let documents = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Documentos abiertos'")).firstMatch
+        let documents = folio.descendants(matching: .any).matching(NSPredicate(format: "label == 'Documentos abiertos y recientes'")).firstMatch
         XCTAssertTrue(documents.waitForExistence(timeout: 10)); documents.tap()
         attach("picker-two-tabs-before-assert", app: folio)
         func tabExists(_ filename: String) -> Bool {

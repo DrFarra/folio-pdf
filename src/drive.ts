@@ -1,3 +1,4 @@
+import { invokeBinary } from './binary';
 import { invoke } from '@tauri-apps/api/core';
 import type { NativeDocument } from './platform';
 import type { Annotation } from './types';
@@ -15,7 +16,7 @@ export const driveList = (folder: string, search = '', pageToken?: string) => in
 export const driveCached = () => invoke<{ items: DriveItem[] }>('drive_cached');
 export const driveOpen = (fileId: string, offline = false) => invoke<DriveOpened>('drive_open', { fileId, offline });
 export const driveLookup = (token: string) => invoke<DriveBinding | null>('drive_lookup', { token });
-export const driveStage = (binding: string, bytes: Uint8Array) => invoke<DrivePending>('drive_stage', bytes, { headers: { 'x-folio-drive-binding': binding } });
+export const driveStage = (binding: string, bytes: Uint8Array) => invokeBinary<DrivePending>('drive_stage', bytes, { headers: { 'x-folio-drive-binding': binding } });
 export const driveStageNative = (binding: string, token: string, annotations: Annotation[], removedSourceRefs: string[]) => invoke<DrivePending>('drive_stage_native', { binding, token, annotations, removedSourceRefs });
 export const driveSync = (id: string, conflictCopy = false) => invoke<DriveSync>('drive_sync', { id, conflictCopy });
 export const drivePendingOpen = (id: string) => invoke<DriveOpened>('drive_pending_open', { id });
