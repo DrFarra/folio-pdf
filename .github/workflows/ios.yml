@@ -46,6 +46,7 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform aarch64-apple-ios --format-version 1 > test-results/ios/cargo-metadata-ios.json
           python3 scripts/generate-notices.py --platform ios --cargo-metadata test-results/ios/cargo-metadata-ios.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
           npm run build
+          node scripts/tests/native-qa-readiness.mjs
           cargo test --manifest-path crates/folio-core/Cargo.toml --locked
       - name: Capture the exact source and frontend tested by the delivery suites
         if: inputs.mode == 'full'

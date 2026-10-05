@@ -60,6 +60,8 @@
       textLayerCount: layers.length, textSpanCount: spans.length,
       textLayerTexts: spans.slice(0, 40).map(span => text(span.textContent, 300)),
       canvasCount: document.querySelectorAll('.pdf-page canvas').length,
+      renderedCanvasCount: document.querySelectorAll('.pdf-page canvas[data-rendering="false"]').length,
+      renderingCanvasCount: document.querySelectorAll('.pdf-page canvas[data-rendering="true"]').length,
       loading: !!document.querySelector('.loading-overlay'),
       search: { query: document.querySelector('[aria-label="Buscar texto en el PDF"]')?.value || '',
         summary: text(document.querySelector('.search-summary')?.textContent, 1000),
@@ -110,11 +112,15 @@
     if (!name || state.loading || probing || documents[name]?.checksCompleted) return;
     if (name !== lastActive) { lastActive = name; activeSince = now(); return; }
     if (now() - activeSince < 1800) return;
-    // Record absent layers too. Waiting forever for text would hide the failure
-    // this QA build exists to diagnose.
+    // The reader mounts before PDF rasterization and text layout finish. A
+    // fixed startup delay can consume the one-shot selection probe too early
+    // on a cold simulator. Wait for actual content, with a bounded failure.
+    const ready = state.textSpanCount > 0 && state.renderedCanvasCount > 0 && state.renderingCanvasCount === 0;
+    if (!ready && now() - activeSince < 30000) return;
     probing = true;
     const report = documents[name] = { startedAt: now(), before: state, checksCompleted: false };
     try {
+      if (!ready) throw new Error('PDF text and raster did not become ready within 30 seconds.');
       const span = Array.from(document.querySelectorAll('.textLayer span')).find(node => node.textContent?.trim());
       if (span?.firstChild) {
         const range = document.createRange(); range.selectNodeContents(span);
