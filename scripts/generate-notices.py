@@ -23,13 +23,13 @@ runtime_notice = ("iOS uses Apple\'s system WKWebView, PDFKit file-backed readin
                   "incrementally without regenerating existing annotations. The local C shim\n"
                   "and exact native build flags are in scripts/build-mupdf-ios.mjs and the source ZIP.\n"
                   "The device IPA is unsigned; Feather must sign it with a valid certificate\n"
-                  "and provisioning profile before installation. Folio does not upload PDF documents.\n"
+                  "and provisioning profile before installation. PDF processing is local; optional Google Drive sync uploads selected documents.\n"
                   if args.platform == 'ios' else "macOS uses Apple's system WKWebView. This development build has ad-hoc\n"
-                  "code signing and is not notarized by Apple. Folio does not upload PDF documents.\n"
+                  "code signing and is not notarized by Apple. PDF processing is local; optional Google Drive sync uploads selected documents.\n"
                   if args.platform == 'macos' else
                   "Microsoft WebView2 is a separate runtime under Microsoft's license terms.\n"
                   "The installer downloads the official bootstrapper only if WebView2 is missing.\n"
-                  "The installer is unsigned. Folio does not upload PDF documents.\n")
+                  "The installer is unsigned. PDF processing is local; optional Google Drive sync uploads selected documents.\n")
 parts = [f"""Folio {app_version} — Third-party notices
 Folio is licensed under AGPL-3.0-or-later; see LICENSE.
 No commercial PDF SDK or paid service is required for local reading/annotations.
