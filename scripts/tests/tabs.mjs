@@ -12,7 +12,7 @@ import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
 const root = process.cwd(), output = path.join(root, 'test-results');
 fs.mkdirSync(output, { recursive: true });
 const sources = [];
-for (const letter of ['A', 'B']) {
+for (const letter of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']) {
   const document = await PDFDocument.create(), font = await document.embedFont(StandardFonts.Helvetica);
   for (let i = 1; i <= 3; i++) {
     const page = document.addPage([600, 760]);
@@ -23,7 +23,7 @@ for (const letter of ['A', 'B']) {
   fs.writeFileSync(file, bytes);
   sources.push({ letter, file, name: path.basename(file), hash: createHash('sha256').update(bytes).digest('hex') });
 }
-const [a, b] = sources;
+const [a, b, c] = sources;
 const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
 assert(chrome, 'An installed Chrome or Edge is required.');
 const origin = 'http://127.0.0.1:4178';
@@ -81,6 +81,17 @@ async function rename(page, title) { const editor = page.getByRole('textbox', { 
 async function session(page, source = a) { return page.evaluate(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null'), source.hash); }
 async function waitSession(page, source, title) { await page.waitForFunction(({ hash, title }) => (localStorage.getItem(`folio.session.${hash}`) || '').includes(title), { hash: source.hash, title }); }
 const children = (nodes, parentId) => nodes.filter(node => node.parentId === parentId).sort((left, right) => left.order - right.order);
+const tabOrder = page => page.locator('.document-tab [role=tab]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')));
+async function beginTabDrag(page, source) {
+  const bounds = await tab(page, source).boundingBox(); assert(bounds);
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2 + 12, bounds.y + bounds.height / 2, { steps: 3 });
+  await page.locator('.document-tab-drag-preview').waitFor();
+}
+async function moveTabDrag(page, target, side = 'before') {
+  const bounds = await tab(page, target).locator('..').boundingBox(); assert(bounds);
+  await page.mouse.move(bounds.x + bounds.width * (side === 'before' ? .2 : .8), bounds.y + bounds.height / 2, { steps: 12 });
+}
 
 try {
   let ready = false;
@@ -109,6 +120,93 @@ try {
     assert(operateDocument(bytesB, { operation: 'text' })[0].includes('B CONTENT ONLY'));
     assert.equal(await page.getByRole('tab').count(), 2);
     return { annotationIsolation: true, undoRedoIsolation: true, exportedMatchingDocuments: true };
+  });
+
+  await check('extract-selection-opens-new-tab-and-retains-source-state', async page => {
+    await page.setViewportSize({ width: 1360, height: 690 });
+    await page.getByRole('button', { name: 'Marcadores', exact: true }).click();
+    await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click(); await rename(page, 'First source page');
+    await go(page, 3); await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click(); await rename(page, 'Third source page');
+    await annotate(page, a); await zoom(page).selectOption('125'); await go(page, 2);
+    await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.lastPage === 2, a.hash);
+    const before = await session(page), scrollTop = await page.locator('.reading-area').evaluate(node => node.scrollTop);
+    const sourceKey = await tab(page, a).locator('..').getAttribute('data-tab-key');
+    await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
+    await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
+    await page.getByRole('checkbox', { name: 'Seleccionar posición 1', exact: true }).check();
+    await page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true }).check();
+    await page.getByRole('button', { name: 'Extraer selección', exact: true }).click();
+    const extracted = { name: 'tabs-A — páginas extraídas.pdf' }; await active(page, extracted);
+    assert.equal(await page.getByRole('tab').count(), 2); assert.equal(await tab(page, a).locator('..').getAttribute('data-tab-key'), sourceKey);
+    assert.notEqual(await tab(page, extracted).locator('..').getAttribute('data-tab-key'), sourceKey);
+    assert.equal(await input(page).inputValue(), '1'); assert.equal(await page.locator('.pdf-page-wrap').count(), 2);
+    await page.locator('.highlight-annotation').first().waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).isDisabled(), true, 'The extracted PDF starts with its own history.');
+    await page.getByRole('button', { name: 'Marcadores', exact: true }).click(); await row(page, 'Third source page').waitFor();
+    await page.waitForFunction(hash => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && key !== `folio.session.${hash}` && JSON.parse(localStorage.getItem(key)).bookmarks.some(node => node.title === 'Third source page' && node.page === 2)), a.hash);
+    const extractedSession = await page.evaluate(hash => Object.keys(localStorage).filter(key => key.startsWith('folio.session.') && key !== `folio.session.${hash}`).map(key => JSON.parse(localStorage.getItem(key))).find(value => value.bookmarks.some(node => node.title === 'Third source page')), a.hash);
+    assert.deepEqual(extractedSession.bookmarks.map(node => [node.title, node.page]), [['First source page', 1], ['Third source page', 2]]);
+    await switchTo(page, a); assert.equal(await zoom(page).inputValue(), '125'); assert.equal(await input(page).inputValue(), '2');
+    await page.waitForFunction(expected => Math.abs(document.querySelector('.reading-area').scrollTop - expected) < 3, scrollTop);
+    const after = await session(page); assert.deepEqual(after.annotations, before.annotations); assert.deepEqual(after.bookmarks, before.bookmarks);
+    assert.equal(after.documentRevision, before.documentRevision); assert.equal(after.lastPage, 2);
+    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); assert.equal(await page.locator('.highlight-annotation').count(), 0);
+    await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await go(page, 1); await page.locator('.highlight-annotation').first().waitFor();
+    await page.getByRole('button', { name: `Cerrar ${extracted.name}`, exact: true }).click(); await tab(page, extracted).waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Mis documentos', exact: true }).click();
+    await page.getByRole('button', { name: `Abrir ${extracted.name}`, exact: true }).click(); await active(page, extracted);
+    await page.locator('.highlight-annotation').first().waitFor(); assert.equal(await page.locator('.pdf-page-wrap').count(), 2);
+    await page.getByRole('button', { name: 'Marcadores', exact: true }).click(); await row(page, 'Third source page').waitFor();
+    const extractedBytes = await download(page, 'tabs-extracted-selection.pdf'), extractedText = operateDocument(extractedBytes, { operation: 'text' });
+    assert.equal(extractedText.length, 2); assert(extractedText[0].includes('TAB A PAGE 1')); assert(extractedText[1].includes('TAB A PAGE 3'));
+    assert.equal(inspectDocument(extractedBytes).annotations.length, 1);
+    await switchTo(page, a); const sourceBytes = await download(page, 'tabs-extraction-source.pdf');
+    assert.equal(operateDocument(sourceBytes, { operation: 'text' }).length, 3); assert.equal(inspectDocument(sourceBytes).annotations.length, 1);
+    assert.equal(createHash('sha256').update(fs.readFileSync(a.file)).digest('hex'), a.hash, 'Extraction must leave the original file untouched.');
+    return { extractedName: extracted.name, opensSeparateTab: true, retainedSourcePages: 3, extractedPages: [1, 3], annotationCopied: true, bookmarksRemapped: true, sourceSessionAndHistoryPreserved: true, sourceViewRestored: true, derivedDraftReopened: true, originalFileUnchanged: true };
+  });
+
+  await check('mouse-tab-drag-retains-active-document-history-and-view', async page => {
+    await page.setViewportSize({ width: 1360, height: 690 }); await annotate(page, a); await zoom(page).selectOption('125'); await go(page, 2);
+    const scrollTop = await page.locator('.reading-area').evaluate(node => node.scrollTop);
+    await open(page, b); await open(page, c); await switchTo(page, a);
+    const activeKey = await tab(page, a).locator('..').getAttribute('data-tab-key');
+    await beginTabDrag(page, c); await moveTabDrag(page, a); await page.mouse.up();
+    await page.locator('.document-tab-drag-preview').waitFor({ state: 'detached' });
+    assert.deepEqual(await tabOrder(page), [c.name, a.name, b.name]); await active(page, a);
+    assert.equal(await tab(page, a).locator('..').getAttribute('data-tab-key'), activeKey);
+    assert.equal(await zoom(page).inputValue(), '125'); assert.equal(await input(page).inputValue(), '2');
+    await page.waitForFunction(expected => Math.abs(document.querySelector('.reading-area').scrollTop - expected) < 3, scrollTop);
+    await page.keyboard.press('Control+Tab'); await active(page, b); await page.keyboard.press('Control+Tab'); await active(page, c);
+    await page.keyboard.press('Control+Tab'); await active(page, a);
+    await beginTabDrag(page, a); await moveTabDrag(page, b, 'after'); await page.mouse.up();
+    await page.locator('.document-tab-drag-preview').waitFor({ state: 'detached' });
+    assert.deepEqual(await tabOrder(page), [c.name, b.name, a.name]); await active(page, a);
+    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); assert.equal(await page.locator('.highlight-annotation').count(), 0);
+    await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await go(page, 1); await page.locator('.highlight-annotation').first().waitFor();
+    await beginTabDrag(page, c); await moveTabDrag(page, b, 'after'); await page.keyboard.press('Escape'); await page.mouse.up();
+    assert.deepEqual(await tabOrder(page), [c.name, b.name, a.name]); await active(page, a);
+    await beginTabDrag(page, c); await page.mouse.move(500, 400, { steps: 10 }); await page.mouse.up();
+    assert.deepEqual(await tabOrder(page), [c.name, b.name, a.name]); await active(page, a);
+    await tab(page, b).click(); await active(page, b); await tab(page, a).dblclick(); await active(page, a);
+    await page.getByRole('button', { name: `Cerrar ${c.name}`, exact: true }).click(); await tab(page, c).waitFor({ state: 'detached' }); await active(page, a);
+    assert.deepEqual(await tabOrder(page), [b.name, a.name]); assert.equal(await page.locator('.document-tab-drag-preview').count(), 0);
+    return { realMouseReorder: true, activeAndInactiveTabsDraggable: true, activeTabUnchanged: true, historyAndViewPreserved: true, ctrlTabFollowsNewOrder: true, escapeAndOutsideCancel: true, normalClickDoubleClickAndClose: true };
+  });
+
+  await check('mouse-tab-drag-autoscrolls-overflowing-strip', async page => {
+    await page.setViewportSize({ width: 1000, height: 690 });
+    await page.locator('.app-header input[type=file]').setInputFiles(sources.slice(1).map(source => source.file)); await active(page, sources.at(-1));
+    const strip = page.locator('.document-tab-strip'); assert(await strip.evaluate(node => node.scrollWidth > node.clientWidth));
+    await strip.evaluate(node => { node.scrollLeft = 0; }); await beginTabDrag(page, a);
+    const bounds = await strip.boundingBox(); assert(bounds);
+    await page.mouse.move(bounds.x + bounds.width - 3, bounds.y + bounds.height / 2, { steps: 12 });
+    await page.waitForFunction(() => { const strip = document.querySelector('.document-tab-strip'); return strip.scrollLeft > 40; });
+    await page.waitForFunction(() => { const strip = document.querySelector('.document-tab-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 3; });
+    await page.mouse.up(); await page.locator('.document-tab-drag-preview').waitFor({ state: 'detached' });
+    assert.deepEqual(await tabOrder(page), [...sources.slice(1).map(source => source.name), a.name]); await active(page, sources.at(-1));
+    await page.keyboard.press('Control+Tab'); await active(page, a);
+    return { edgeAutoScroll: true, movedFirstTabToLastPosition: true, activeDocumentPreserved: true, keyboardOrderAfterScroll: true };
   });
 
   await check('each-tab-restores-page-zoom-and-scroll', async page => {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows } from 'lucide-react';
 import Modal from './Modal';
 import { Thumbnail } from './PDFPage';
-import { inspectPdf, readFields } from '../engine/client';
+import { inspectPdf, processPdf, readFields } from '../engine/client';
 import type { Area, Field, Operation, PageEntry } from '../engine/operations.mjs';
 import type { LoadedDocument, Tool } from '../types';
 import { formatSize } from '../pdf';
@@ -16,7 +16,7 @@ import CompareDocuments from './CompareDocuments';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onApply: (operation: Operation, signal?: AbortSignal) => Promise<void>; getBytes: () => Promise<Uint8Array>; onReplace: (bytes: Uint8Array) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onApply: (operation: Operation, signal?: AbortSignal) => Promise<void>; getBytes: () => Promise<Uint8Array>; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
 
@@ -28,12 +28,13 @@ export default function Workbench(props: Props) {
   const [busy, setBusy] = useState(false);
   const [compareBusy, setCompareBusy] = useState(false);
   const [plan, setPlan] = useState<PlannedPage[]>(() => Array.from({ length: doc.pdf.numPages }, (_, i) => entry(i + 1)));
+  const initialPlan = useRef(plan);
   const [selected, setSelected] = useState<string[]>([]);
+  const selectionAnchor = useRef<string | null>(null);
   const pageDrag = usePagePlanDrag(plan, selected, busy, setPlan);
   const [sources, setSources] = useState<{ bytes: Uint8Array; password?: string }[]>([]);
   const [pendingSource, setPendingSource] = useState<{ bytes: Uint8Array; name: string } | null>(null);
   const [sourcePassword, setSourcePassword] = useState('');
-  const [range, setRange] = useState('');
   const [fields, setFields] = useState<Field[] | null>(null);
   const fieldsSource = useRef<Uint8Array | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
@@ -62,6 +63,9 @@ export default function Workbench(props: Props) {
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => { controller.current?.abort(); }, []);
   useEffect(() => () => { pfx?.fill(0); }, [pfx]);
+  useEffect(() => {
+    if (selectionAnchor.current && !plan.some(page => page.key === selectionAnchor.current)) selectionAnchor.current = null;
+  }, [plan]);
 
   useEffect(() => {
     if (section !== 'forms' || fieldsSource.current === doc.bytes) return;
@@ -105,17 +109,30 @@ export default function Workbench(props: Props) {
     const next = [...plan], target = index + delta; if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]]; setPlan(next);
   }
-  function useRange() {
-    try {
-      const numbers: number[] = [];
-      for (const token of range.split(',')) {
-        const match = token.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/); if (!match) throw new Error('Usa números o intervalos, por ejemplo: 1-3, 6, 5.');
-        const a = Number(match[1]), b = Number(match[2] || match[1]);
-        if (a < 1 || a > doc.pdf.numPages || b < 1 || b > doc.pdf.numPages || numbers.length + Math.abs(a - b) > 10000) throw new Error('El intervalo contiene páginas que no existen.');
-        for (let n = a; n !== b + (a <= b ? 1 : -1); n += a <= b ? 1 : -1) numbers.push(n);
-      }
-      setPlan(numbers.map(entry)); setSelected([]); setError('');
-    } catch (err) { setError((err as Error).message); }
+  function selectPage(key: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }, checked?: boolean) {
+    if (busy) return;
+    const index = plan.findIndex(page => page.key === key);
+    if (index < 0) return;
+    if (modifiers.shiftKey) {
+      let anchor = plan.findIndex(page => page.key === selectionAnchor.current);
+      if (anchor < 0) { selectionAnchor.current = key; anchor = index; }
+      const range = new Set(plan.slice(Math.min(anchor, index), Math.max(anchor, index) + 1).map(page => page.key));
+      setSelected(previous => plan.filter(page => range.has(page.key) || (modifiers.ctrlKey || modifiers.metaKey) && previous.includes(page.key)).map(page => page.key));
+    } else {
+      selectionAnchor.current = key;
+      setSelected(previous => {
+        const include = checked ?? !previous.includes(key);
+        return plan.filter(page => page.key === key ? include : previous.includes(page.key)).map(page => page.key);
+      });
+    }
+  }
+  async function extractSelection() {
+    const selectedPlan = plan.filter(page => selected.includes(page.key));
+    if (!selectedPlan.length || busy) return;
+    await task(async signal => {
+      const bytes = await processPdf(await props.getBytes(), { operation: 'pages', plan: selectedPlan, sources }, doc.password, signal);
+      if (!signal.aborted) await props.onReplace(bytes, { extraction: { name: `${doc.name.replace(/\.pdf$/i, '')} — páginas extraídas.pdf`, plan: selectedPlan } });
+    });
   }
   async function appendSource(bytes: Uint8Array, name: string, password = '') {
     setBusy(true); setError('');
@@ -189,6 +206,7 @@ export default function Workbench(props: Props) {
     setError(''); setSection('home');
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.workbench [data-tool-key="${CSS.escape(previous)}"]`)?.focus());
   };
+  const planChanged = plan.length !== initialPlan.current.length || plan.some((page, index) => page.key !== initialPlan.current[index].key || (page.rotation || 0) !== (initialPlan.current[index].rotation || 0));
   return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}`}>
     {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button></div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
@@ -206,16 +224,15 @@ export default function Workbench(props: Props) {
         <button title="Eliminar selección" aria-label="Eliminar páginas seleccionadas" disabled={!selected.length || busy || selected.length === plan.length} onClick={() => { setPlan(plan.filter(p => !selected.includes(p.key))); setSelected([]); }}><Trash2 size={18} /></button>
       </div>
       {pendingSource && <form className="security-form" onSubmit={e => { e.preventDefault(); void appendSource(pendingSource.bytes, pendingSource.name, sourcePassword); }}><label>Contraseña de {pendingSource.name}<input type="password" autoFocus value={sourcePassword} onChange={e => setSourcePassword(e.target.value)} /></label><div className="operation-actions"><button type="button" className="secondary-button" onClick={() => { setPendingSource(null); setSourcePassword(''); setError(''); }}>Cancelar inserción</button><button className="primary-button" disabled={busy || !sourcePassword}>Desbloquear e insertar</button></div></form>}
-      <div className="page-range"><input aria-label="Orden o intervalo de páginas" placeholder="Orden o extracción: 1-3, 6, 5" value={range} onChange={e => setRange(e.target.value)} /><button className="secondary-button" disabled={!range || busy} onClick={useRange}>Usar orden</button></div>
-      {pageDrag.enabled && <p className="page-plan-drag-help" role="status" aria-live="polite">{pageDrag.draggingKeys.length ? `${pageDrag.label}${pageDrag.destinationPosition ? ` → posición ${pageDrag.destinationPosition}` : ''}. Suelta para colocar; Esc cancela.` : 'Arrastra las miniaturas para cambiar el orden. Las páginas seleccionadas se mueven juntas.'}</p>}
+      {pageDrag.enabled && <p className="page-plan-drag-help" role="status" aria-live="polite">{pageDrag.draggingKeys.length ? `${pageDrag.label}${pageDrag.destinationPosition ? ` → posición ${pageDrag.destinationPosition}` : ''}. Suelta para colocar; Esc cancela.` : 'Arrastra para reordenar. Ctrl+clic añade páginas; Shift+clic selecciona un rango.'}</p>}
       <div className={`page-plan${pageDrag.enabled ? ' drag-enabled' : ''}${pageDrag.draggingKeys.length ? ' is-dragging' : ''}`} ref={pageDrag.grid} onClickCapture={pageDrag.clickCapture} onDragStart={event => { if (pageDrag.enabled) event.preventDefault(); }}>{plan.map((p, i) => <article key={p.key} data-plan-key={p.key} className={`${selected.includes(p.key) ? 'selected' : ''}${pageDrag.draggingKeys.includes(p.key) ? ' plan-dragging' : ''}${pageDrag.drop?.key === p.key ? ` plan-drop-${pageDrag.drop.side}` : ''}`} onPointerDown={event => pageDrag.begin(event, p.key)}>
-        <label><input type="checkbox" checked={selected.includes(p.key)} onChange={e => setSelected(e.target.checked ? [...selected, p.key] : selected.filter(key => key !== p.key))} aria-label={`Seleccionar posición ${i + 1}`} /><span>{i + 1}</span></label>
+        <label><input type="checkbox" checked={selected.includes(p.key)} disabled={busy} onChange={event => selectPage(p.key, event.nativeEvent as MouseEvent, event.target.checked)} aria-label={`Seleccionar posición ${i + 1}`} /><span>{i + 1}</span></label>
         {pageDrag.enabled && <button className="plan-drag-handle" title="Arrastrar para mover" aria-label={`Arrastrar posición ${i + 1}`} disabled={busy} tabIndex={-1}><GripVertical size={16} /></button>}
-        {p.page && p.source == null ? <div style={{ transform: `rotate(${p.rotation || 0}deg)` }}><Thumbnail pdf={doc.pdf} number={p.page} selected={false} onClick={() => setSelected(selected.includes(p.key) ? selected.filter(key => key !== p.key) : [...selected, p.key])} /></div> : <div className="plan-placeholder"><FileText size={32} /></div>}
+        {p.page && p.source == null ? <div style={{ transform: `rotate(${p.rotation || 0}deg)` }} onClick={event => selectPage(p.key, event)}><Thumbnail pdf={doc.pdf} number={p.page} selected={false} onClick={() => {}} /></div> : <div className="plan-placeholder" onClick={event => selectPage(p.key, event)}><FileText size={32} /></div>}
         <span className="plan-label" title={p.label}>{p.label}</span><div className="plan-move"><button aria-label={`Mover posición ${i + 1} antes`} disabled={i === 0 || busy} onClick={() => move(i, -1)}><ArrowUp size={15} /></button><button aria-label={`Mover posición ${i + 1} después`} disabled={i === plan.length - 1 || busy} onClick={() => move(i, 1)}><ArrowDown size={15} /></button></div>
       </article>)}</div>
       {!!pageDrag.draggingKeys.length && <div className="page-plan-drag-preview" aria-hidden="true" style={{ left: Math.max(8, Math.min(pageDrag.location.x + 16, window.innerWidth - 220)), top: Math.max(8, Math.min(pageDrag.location.y + 16, window.innerHeight - 54)) }}><Files size={17} /><span>{pageDrag.label}</span></div>}
-      <div className="operation-actions"><span>{plan.length} páginas</span><button className="primary-button" disabled={!plan.length || busy} onClick={() => void apply({ operation: 'pages', plan, sources })}>{busy ? <LoaderCircle size={16} className="spin" /> : null}Aplicar orden</button></div>
+      <div className="operation-actions page-plan-footer"><span>{plan.length} páginas · {selected.length} seleccionadas{planChanged ? ' · Cambios pendientes' : ''}</span><button className="secondary-button" disabled={!selected.length || busy} onClick={() => void extractSelection()}>Extraer selección</button><button className="primary-button" disabled={!planChanged || !plan.length || busy} onClick={() => void apply({ operation: 'pages', plan, sources })}>{busy ? <LoaderCircle size={16} className="spin" /> : null}Aplicar cambios</button></div>
     </>}
     {section === 'forms' && <>
       {fields === null && !error && <p className="operation-loading"><LoaderCircle size={18} className="spin" />Leyendo campos…</p>}

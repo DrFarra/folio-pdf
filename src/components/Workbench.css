@@ -37,3 +37,31 @@ html:not([data-phone]) .app-shell .workbench .operation-actions .primary-button,
 @media(max-width:700px){html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:58px;padding:10px;font-size:13px}}
 @media(max-width:430px){html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid{grid-template-columns:1fr}html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:48px}}
 @media(max-height:400px){html:not([data-phone]) .app-shell .workbench .tool-categories{gap:16px}html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:50px}html:not([data-phone]) .app-shell .workbench .modal-heading{padding-bottom:7px}}
+
+/* The organizer owns one bounded layout: controls and actions stay in place,
+   while only the thumbnail grid consumes and scrolls the remaining space. */
+html:not([data-phone]) dialog.pages-workbench[open]{display:flex;flex-direction:column;min-height:0;height:min(780px,calc(var(--modal-visible-height,100dvh) - 48px));overflow:hidden}
+html[data-phone] dialog.pages-workbench[open]{display:flex;flex-direction:column;min-height:0;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px);overflow:hidden}
+dialog.pages-workbench>*{flex-shrink:0}
+html:not([data-phone]) dialog.pages-workbench>.modal-heading{position:relative;top:auto;box-shadow:none}
+html[data-phone] dialog.pages-workbench>.modal-heading{position:relative;top:auto}
+html dialog.pages-workbench>.page-plan{flex:1 1 0;min-height:0;max-height:none;grid-auto-rows:max-content;align-content:start;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+dialog.pages-workbench>.page-plan-footer{margin-top:14px;flex-wrap:wrap;gap:10px;background:var(--bg)}
+dialog.pages-workbench>.page-plan-footer>span{white-space:nowrap}
+html[data-phone] dialog.pages-workbench>.page-plan-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:12px;margin-top:12px}
+html[data-phone] dialog.pages-workbench>.page-plan-footer>span{grid-column:1/-1;margin:0}
+html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:100%;min-width:0;white-space:normal}
+@media(max-height:500px){
+  html:not([data-phone]) dialog.pages-workbench{padding:14px 20px}
+  html:not([data-phone]) dialog.pages-workbench>.workbench-navigation{margin-bottom:8px}
+  html:not([data-phone]) dialog.pages-workbench>.page-plan-actions{margin-bottom:8px}
+  html:not([data-phone]) dialog.pages-workbench>.page-plan-footer{margin-top:8px;padding-top:8px}
+  html[data-phone] dialog.pages-workbench>.modal-heading{min-height:44px;margin-bottom:4px;padding-top:0;padding-bottom:0}
+  html[data-phone] dialog.pages-workbench>.workbench-navigation{margin-bottom:4px}
+  html[data-phone] dialog.pages-workbench>.page-plan-actions{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;margin-bottom:4px;gap:4px;min-height:44px}
+  html[data-phone] dialog.pages-workbench>.page-plan-actions>*{flex-shrink:0}
+  html[data-phone] dialog.pages-workbench>.page-plan-drag-help{display:none}
+  html[data-phone] dialog.pages-workbench>.page-plan-footer{display:flex;flex-wrap:nowrap;margin-top:6px;padding-top:6px;gap:6px}
+  html[data-phone] dialog.pages-workbench>.page-plan-footer>span{font-size:10px;flex-shrink:0}
+  html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:auto;flex:1;font-size:12px;padding:6px;min-height:44px}
+}

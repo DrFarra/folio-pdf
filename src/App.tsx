@@ -19,7 +19,7 @@ import { migrateLegacyNativePage } from './native-session';
 import type { Inspection } from './engine/mupdf-engine.mjs';
 import type { NativeDocument } from './platform';
 import { inspectPdf, processPdf } from './engine/client';
-import type { Area, Operation } from './engine/operations.mjs';
+import type { Area, Operation, PageEntry } from './engine/operations.mjs';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
 import BookmarkTree from './components/BookmarkTree';
@@ -35,6 +35,7 @@ import './mac-platform.css';
 import './mobile.css';
 import './desktop.css';
 import { usePhoneLayout } from './mobile';
+import { useDocumentTabDrag } from './useDocumentTabDrag';
 import { assetUrl, pdfAssetSettings } from './assets';
 import { isDesktop, isNative, isIOS, isMac, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl } from './platform';
 import { clearSavedState, forgetDocument, listLibrary, readLibrarySource, hideRecent, readSession, rememberDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
@@ -141,6 +142,7 @@ export default function App() {
   const openQueue = useRef<Promise<unknown>>(Promise.resolve());
   const loadingRef = useRef(loading); loadingRef.current = loading;
   const restoreScroll = useRef<{ key: string; top: number; left: number } | null>(null);
+  const scrollRestoreFrame = useRef<number | null>(null);
   const taskRef = useRef<PDFDocumentLoadingTask | null>(null);
   const engineRef = useRef<AbortController | null>(null);
   const docRef = useRef<LoadedDocument | null>(null);
@@ -164,6 +166,15 @@ export default function App() {
   const wheelAnchor = useRef<{ id: string; page: number; x: number; y: number; pointerX: number; pointerY: number } | null>(null);
   const activeView = useRef<TabView>(null!);
   activeView.current = { page, dimensions, zoomMode, customScale, rotation, readingMode, annotating: mobileAnnotating, tool, color, sidebar, sideTab, notesOpen, outline, textIndex, indexing, searchOpen, query, resultIndex, activeNote, redactions, editArea, sessionFailed, draftFailed };
+  const tabDrag = useDocumentTabDrag({ keys: tabs.map(tab => tab.key), activeKey: activeTabKey, disabled: phone || !!busy || loading,
+    onReorder: keys => {
+      if (busyRef.current || loadingRef.current || keys.length !== tabsRef.current.length || new Set(keys).size !== keys.length ||
+          keys.some(key => !tabsRef.current.some(tab => tab.key === key))) return;
+      retainCurrentTab();
+      const current = new Map(tabsRef.current.map(tab => [tab.key, tab]));
+      tabsRef.current = keys.map(key => current.get(key)!); publishTabs();
+    } });
+  const draggedTab = tabs.find(tab => tab.key === tabDrag.draggingKey);
 
   function captureTab(): DocumentTab | null {
     // Commit an inline bookmark name before a keyboard switch, close or open.
@@ -788,9 +799,10 @@ export default function App() {
     return map;
   }, [annotations]);
 
-  const goToPage = useCallback((number: number, smooth = true) => {
+  const goToPage = useCallback((number: number, smooth = true, preserveScrollRestore = false) => {
     const pdf = docRef.current?.pdf;
     if (!pdf || !viewer.current) return;
+    if (!preserveScrollRestore && scrollRestoreFrame.current !== null) { cancelAnimationFrame(scrollRestoreFrame.current); scrollRestoreFrame.current = null; }
     pageInputDirty.current = false;
     const next = Math.max(1, Math.min(pdf.numPages, number));
     setPage(next); setPageInput(String(next));
@@ -812,7 +824,7 @@ export default function App() {
     if (readingMode === 'single' && viewer.current) viewer.current.scrollTop = 0;
   }, [page, readingMode]);
   useEffect(() => {
-    if (docRef.current) goToPage(readingState.current.page, false);
+    if (docRef.current) goToPage(readingState.current.page, false, true);
   }, [readingMode, goToPage]);
 
   useEffect(() => {
@@ -840,10 +852,12 @@ export default function App() {
     const restored = restoreScroll.current;
     restoreScroll.current = null;
     const frame = requestAnimationFrame(() => {
+      scrollRestoreFrame.current = null;
       if (restored?.key === activeTabRef.current && viewer.current) viewer.current.scrollTo({ top: restored.top, left: restored.left, behavior: 'instant' });
       else goToPage(doc.initialPage, false);
     });
-    return () => cancelAnimationFrame(frame);
+    scrollRestoreFrame.current = frame;
+    return () => { cancelAnimationFrame(frame); if (scrollRestoreFrame.current === frame) scrollRestoreFrame.current = null; };
   }, [doc, goToPage]);
 
   function trimHistory(stack: History[], maxEntries = 50) {
@@ -966,6 +980,11 @@ export default function App() {
         catch (error) { const draft = await nativeDraftDocument(recent.id, recent.name); if (!draft) throw error; source = draft; recoveredDraft = true; }
         await openDocument(source, recent.name, false, source.token, recent.draft || recoveredDraft ? { id: recent.id, modified: true, draftSource: true } : undefined);
       }
+      else if (recent.draft) {
+        const draft = await readDraft(recent.id);
+        if (!draft && !recent.data) throw new Error('No se pudo recuperar el borrador.');
+        await openDocument(draft || recent.data!, recent.name, false, undefined, { id: recent.id, modified: true, draftSource: true });
+      }
       else if (recent.data) await openDocument(recent.data, recent.name);
       else notify('El archivo no está disponible. Vuelve a importarlo desde Archivos; sus cambios locales siguen conservados.', true);
     } catch { notify('No se pudo reabrir el archivo. Vuelve a elegirlo desde Abrir PDF.', true); }
@@ -1023,11 +1042,21 @@ export default function App() {
     if (isNativePdfDocument(current.pdf)) throw new Error('Este PDF se guarda directamente desde el lector nativo.');
     return current.canAnnotate ? exportAnnotated(current.bytes, annotationRef.current, current.password) : current.bytes;
   }
-  async function replaceDocument(bytes: Uint8Array) {
+  async function replaceDocument(bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) {
     const current = docRef.current; if (!current) return;
     setBusy('edit');
     try {
       const before = snapshot();
+      if (context?.extraction) {
+        const { name, plan } = context.extraction;
+        // A derived PDF owns its session and draft. Loading it retains the source
+        // tab, including its annotation history, bookmarks and reading view.
+        const opened = await openDocument(bytes, name, false, undefined, { id: uid(), modified: true, draftSource: true,
+          useSession: false, page: 1, bookmarks: remapBookmarks(before.bookmarks || [], plan) });
+        if (!opened) throw new Error('No se pudo abrir el PDF con las páginas extraídas.');
+        setWorkbench(null); notify('Páginas extraídas en una pestaña nueva.');
+        return;
+      }
       const opened = await openDocument(bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, modified: true,
         useSession: false, preserveHistory: true, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
       if (!opened) throw new Error('No se pudo abrir el documento firmado.');
@@ -1250,14 +1279,15 @@ export default function App() {
         <button className="mobile-document-selector" aria-label="Documentos abiertos" aria-haspopup="dialog" disabled={!!busy || loading || !tabs.length} onClick={() => setMobileTabs(true)}><span>{doc?.name || 'Folio'}</span>{tabs.length > 1 && <span className="mobile-tab-count">{tabs.length}</span>}<ChevronDown size={16} /></button>
         {mobileAnnotating ? <><IconButton label="Deshacer" disabled={!!busy || !undoStack.current.length} onClick={undo}><Undo2 size={21} /></IconButton><button className="mobile-done" aria-label="Terminar anotación" onClick={() => { setMobileAnnotating(false); setTool('select'); }}>Listo</button></> : <IconButton label="Más acciones" onClick={() => setMobileActions(true)}><MoreHorizontal size={23} /></IconButton>}
       </> : <>
-      <div className="document-tab-strip" role="tablist" aria-label="Documentos abiertos">
-        {tabs.map(tab => <div className={`document-tab ${tab.key === activeTabKey ? 'selected' : ''}`} key={tab.key} data-tab-key={tab.key}>
+      <div className={`document-tab-strip${tabDrag.enabled ? ' drag-enabled' : ''}${tabDrag.draggingKey ? ' is-dragging' : ''}`} ref={tabDrag.strip} onClickCapture={tabDrag.clickCapture} onDragStart={event => { if (tabDrag.enabled) event.preventDefault(); }} role="tablist" aria-label="Documentos abiertos">
+        {tabs.map(tab => <div className={`document-tab ${tab.key === activeTabKey ? 'selected' : ''}${tabDrag.draggingKey === tab.key ? ' plan-tab-dragging' : ''}${tabDrag.drop?.key === tab.key ? ` tab-drop-${tabDrag.drop.side}` : ''}`} key={tab.key} data-tab-key={tab.key} onPointerDown={event => tabDrag.begin(event, tab.key)}>
           <button role="tab" aria-selected={tab.key === activeTabKey} aria-controls="document-reader" aria-label={tab.doc.name} title={tab.doc.name} tabIndex={tab.key === activeTabKey ? 0 : -1} disabled={!!busy || loading} onClick={() => { if (tab.key === activeTabKey) setLibrary(false); else void switchTab(tab.key); }} onKeyDown={event => {
             if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const i = tabs.findIndex(item => item.key === tab.key); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (i + (event.key === 'ArrowLeft' ? tabs.length - 1 : 1)) % tabs.length; void switchTab(tabs[next].key); }
           }}><FileText size={14} /><span>{tab.doc.name}</span>{(tab.doc.modified || annotationFingerprint(tab.key === activeTabKey ? annotations : tab.annotations) !== tab.doc.savedAnnotations) && <span className="modified-dot" title="Cambios sin guardar en un PDF" aria-label="Documento modificado" />}</button>
           <button className="document-tab-close" aria-label={`Cerrar ${tab.doc.name}`} title={`Cerrar pestaña (${shortcutLabel('W')})`} disabled={!!busy || loading} onClick={() => void closeTab(tab.key)}><X size={13} /></button>
         </div>)}
       </div>
+      {draggedTab && <div className="document-tab-drag-preview" aria-hidden="true" style={{ left: Math.max(8, Math.min(tabDrag.location.x + 16, window.innerWidth - 270)), top: Math.max(8, Math.min(tabDrag.location.y + 16, window.innerHeight - 48)) }}><FileText size={16} /><span>{draggedTab.doc.name}</span></div>}
       <IconButton label="Abrir PDF" disabled={!!busy || loading} onClick={() => void chooseFile()} className="new-document-tab"><Plus size={19} /></IconButton>
       <div className="header-drag-space" data-tauri-drag-region />
       <div className="header-actions">

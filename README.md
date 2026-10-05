@@ -1,4 +1,4 @@
-# Folio 0.6.0
+# Folio 0.6.1
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas de Windows y sus límites
@@ -23,6 +23,11 @@ conserva el contexto y permite añadir otra sin salir de la herramienta.
 Los documentos abiertos se eligen desde la cabecera; Más acciones contiene
 Vista del documento, guardar una copia, imprimir y herramientas avanzadas.
 La vista actual se separa de los ajustes predeterminados de la biblioteca.
+En escritorio, las pestañas se pueden arrastrar para cambiar su posición.
+Organizar páginas permite seleccionar rangos con Shift y reordenar miniaturas;
+Aplicar cambios confirma la organización. Extraer selección crea otra pestaña
+y conserva el original. Los botones permanecen visibles mientras se desplazan
+las miniaturas.
 Un toque breve oculta o muestra los controles sin cambiar escala ni posición.
 La página única admite flechas directas y swipe horizontal cuando cabe en ancho.
 Los controles táctiles tienen al menos 44 px;

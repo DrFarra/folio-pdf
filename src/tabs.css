@@ -1,5 +1,13 @@
 .document-tab-strip{display:flex;align-items:stretch;gap:4px;height:34px;min-width:0;flex:0 1 auto;max-width:calc(100% - 180px);overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior:contain}
 .document-tab-strip::-webkit-scrollbar{display:none}
+.document-tab-strip.drag-enabled .document-tab>[role=tab]{cursor:grab;user-select:none;touch-action:pan-y}
+.document-tab-strip.is-dragging,.document-tab-strip.is-dragging .document-tab>[role=tab]{cursor:grabbing;user-select:none}
+.document-tab.plan-tab-dragging{opacity:.5}
+.document-tab{position:relative}
+.document-tab.tab-drop-before::before,.document-tab.tab-drop-after::after{content:'';position:absolute;top:1px;bottom:1px;width:3px;border-radius:2px;background:var(--accent);pointer-events:none;z-index:2}
+.document-tab.tab-drop-before::before{left:-4px}
+.document-tab.tab-drop-after::after{right:-4px}
+.document-tab-drag-preview{position:fixed;z-index:45;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--accent);border-radius:7px;background:var(--surface);color:var(--text);padding:8px 12px;font-size:11px;box-shadow:0 4px 15px #0003}
 .document-tab{display:flex;align-items:center;flex:0 0 auto;width:clamp(120px,17vw,228px);min-width:0;border:1px solid transparent;border-radius:7px;background:var(--panel);color:var(--muted)}
 .document-tab.selected{border-color:var(--line);background:var(--surface);color:var(--text)}
 .document-tab:hover{background:var(--hover)}

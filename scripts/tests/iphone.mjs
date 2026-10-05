@@ -722,10 +722,12 @@ try {
     await page.getByRole('dialog', { name: 'Herramientas', exact: true }).waitFor(); assertScreen(await geometry(page));
     await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
     await page.getByRole('dialog', { name: 'Organizar páginas', exact: true }).waitFor(); assertScreen(await geometry(page));
-    await page.getByLabel('Orden o intervalo de páginas', { exact: true }).fill('3,1');
-    await page.getByRole('button', { name: 'Usar orden', exact: true }).tap();
+    await page.getByRole('button', { name: 'Mover posición 3 antes', exact: true }).tap();
+    await page.getByRole('button', { name: 'Mover posición 2 antes', exact: true }).tap();
+    await page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true }).check();
+    await page.getByRole('button', { name: 'Eliminar páginas seleccionadas', exact: true }).tap();
     await page.screenshot({ path: path.join(output, 'iphone-organize-pages.png'), animations: 'disabled' });
-    await page.getByRole('button', { name: 'Aplicar orden', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
     const organized = await save(page, 'iphone-organized-export.pdf'), text = operateDocument(organized.bytes, { operation: 'text' });
     assert.equal(text.length, 2); assert(text[0].includes('FIRST PAGE 3')); assert(text[1].includes('FIRST PAGE 1'));
     await library(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
@@ -788,8 +790,10 @@ try {
       finally { db.close(); }
     }, identity);
     await actions(page); await page.getByRole('button', { name: 'Herramientas', exact: true }).tap(); await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
-    await page.getByLabel('Orden o intervalo de páginas', { exact: true }).fill('2,1'); await page.getByRole('button', { name: 'Usar orden', exact: true }).tap();
-    await page.getByRole('button', { name: 'Aplicar orden', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Mover posición 2 antes', exact: true }).tap();
+    await page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true }).check();
+    await page.getByRole('button', { name: 'Eliminar páginas seleccionadas', exact: true }).tap();
+    await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
     await page.waitForFunction(async identity => {
       const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
       try { return await new Promise(resolve => { const request = db.transaction('drafts', 'readonly').objectStore('drafts').get(identity); request.onsuccess = () => resolve(!!request.result?.byteLength); }); }

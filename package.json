@@ -1,6 +1,6 @@
 {
   "name": "folio-pdf",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "node scripts/prepare-resources.mjs && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "demo": "node scripts/create-demo.mjs",
-    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics",
+    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:focus-modality && npm run test:organizer-layout && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:windows": "tauri build --target x86_64-pc-windows-msvc",
@@ -36,6 +36,8 @@
     "iphone:build": "node scripts/build-ios.mjs",
     "test:iphone": "node scripts/tests/iphone.mjs",
     "test:reader-ergonomics": "node scripts/tests/reader-ergonomics.mjs",
+    "test:focus-modality": "node scripts/tests/focus-modality.mjs",
+    "test:organizer-layout": "node scripts/tests/organizer-layout.mjs",
     "test:search-navigation": "node scripts/tests/search-navigation.mjs",
     "test:library-storage": "node scripts/tests/library-storage.mjs",
     "test:mobile-architecture": "node scripts/tests/mobile-architecture.mjs",
