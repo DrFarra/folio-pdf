@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -23,7 +23,9 @@ const imageFile = path.join(output, 'pdf-editing-picture.png'); fs.writeFileSync
 let original = operateDocument(await fixture.save(), { operation: 'add-image', page: 1, rect: [40, 150, 140, 250], image: imageBytes, fit: 'stretch' });
 original = writeAnnotations(original, [{ id: 'editing-note', page: 1, kind: 'note', rect: [340, 420, 360, 440], color: '#ffcc00', text: 'KEEP NOTE', created: 1 }]);
 const source = path.join(output, 'pdf-editing-source.pdf'); fs.writeFileSync(source, original);
-const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync); assert(chrome);
+const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
+const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+if (!useWebKit) assert(chrome, 'Chrome or Edge is required, or set CHROME_PATH.');
 const port = process.env.FOLIO_EDITING_UI_PORT || '4251', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
 let browser, log = '', frontendEntry; const results = [], errors = [];
@@ -65,7 +67,12 @@ async function commit(page, number = 1) { await ready(page); await page.getByRol
 async function save(page, name) { await page.getByRole('button', { name: 'Listo', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Descargar', exact: true }).click({ trial: true }); const download = page.waitForEvent('download'); void download.catch(() => {}); await page.getByRole('button', { name: 'Descargar', exact: true }).click(); const target = path.join(output, name); await (await download).saveAs(target); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); return new Uint8Array(fs.readFileSync(target)); }
 async function check(id, run, viewport = { width: 1360, height: 720 }) {
   if (process.env.FOLIO_EDITING_TEST && !new RegExp(process.env.FOLIO_EDITING_TEST).test(id)) return;
-  const context = await browser.newContext({ viewport, acceptDownloads: true }), page = await context.newPage(); page.setDefaultTimeout(25000);
+  const context = await browser.newContext({ viewport, acceptDownloads: true });
+  if (useWebKit) await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'macOS' } });
+  });
+  const page = await context.newPage(); page.setDefaultTimeout(25000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
   try { await open(page); results.push({ id, status: 'passed', frontendEntry, inlineWorkspace: true, ...await run(page) }); }
   catch (error) { results.push({ id, status: 'failed', frontendEntry, error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, 'failure-editing-' + id + '.png') }); }
@@ -74,7 +81,8 @@ async function check(id, run, viewport = { width: 1360, height: 720 }) {
 try {
   for (let n = 0; n < 100; n++) { try { if ((await fetch(origin)).ok) break; } catch {} if (server.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }
   frontendEntry = (await (await fetch(origin)).text()).match(/src="([^"]+\.js)"/)?.[1];
-  browser = await chromium.launch({ executablePath: chrome, headless: true });
+  assert(frontendEntry, 'The report must identify the tested frontend build.');
+  browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: chrome, headless: true });
   await check('direct-selection-continuous-history', async page => {
     await selectText(page);
     assert.equal(await page.getByRole('textbox', { name: 'Texto', exact: true }).inputValue(), 'ORIGINAL 1');
@@ -183,13 +191,14 @@ try {
       await page.locator('.content-inspector-scroll').evaluate(element => { element.scrollTop = 0; });
       value.propertiesScrollable = true; value.inspectorHeadingAndFooterFixed = true;
       assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), originalArea); metrics.push({ ...value, workspace });
-      if (width === 800 || width === 900) await page.screenshot({ path: path.join(output, `pdf-editing-medium-${width}x600.png`) });
+      if ([800, 900, 1024].includes(width)) await page.screenshot({ path: path.join(output, `pdf-editing-medium-${width}x600.png`) });
       if (width === 1360) await page.screenshot({ path: path.join(output, 'pdf-editing-wide-low-1360x600.png') });
     }
     return { resizingKeepsDraft: true, selectedAreaReadableAndVisible: true, sameReaderView: true, appHeaderAndTabsVisible: true, noDialog: true, metrics };
   });
 } finally {
-  await browser?.close(); server.kill();
-  fs.writeFileSync(path.join(output, 'pdf-editing-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), frontendEntry, results, errors }, null, 2));
+  await browser?.close();
+  if (server.exitCode === null) { const stopped = new Promise(resolve => server.once('exit', resolve)); server.kill(); await stopped; }
+  fs.writeFileSync(path.join(output, 'pdf-editing-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), platform: process.platform, browser: browserName, frontendEntry, results, errors }, null, 2));
   if (errors.length) process.exitCode = 1;
 }

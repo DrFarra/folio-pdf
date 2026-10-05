@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -29,8 +29,10 @@ let original = operateDocument(await fixture.save(), { operation: 'add-image', p
 original = writeAnnotations(original, [{ id: 'actions-note', kind: 'note', page: 1, rect: [500, 600, 520, 620], text: 'KEEP NOTE', color: '#ffcc00', created: 1 }]);
 const source = path.join(output, 'content-actions-source.pdf'); fs.writeFileSync(source, original);
 const sourceHash = createHash('sha256').update(original).digest('hex');
-const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
-assert(chrome, 'Chrome or Edge is required.');
+const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
+const saveShortcut = (useWebKit ? 'Meta' : 'Control') + '+s';
+const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+if (!useWebKit) assert(chrome, 'Chrome or Edge is required, or set CHROME_PATH.');
 const port = process.env.FOLIO_CONTENT_ACTIONS_PORT || '4261', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
 let browser, log = '', frontendEntry; const results = [], errors = [];
@@ -82,7 +84,7 @@ async function savedIdle(page, number = 1) {
 }
 async function save(page, name, keyboard = false, number = 1) {
   const event = page.waitForEvent('download'); void event.catch(() => {});
-  if (keyboard) await page.keyboard.press('Control+s'); else await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click();
+  if (keyboard) await page.keyboard.press(saveShortcut); else await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click();
   const target = path.join(output, name); await (await event).saveAs(target); await savedIdle(page, number);
   return new Uint8Array(fs.readFileSync(target));
 }
@@ -94,9 +96,9 @@ async function history(page, direction, number = 1) {
   await picker(page, number);
 }
 async function nativeBridge(context) {
-  await context.addInitScript(({ bytes, name }) => {
-    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'Win32' });
-    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'Windows' } });
+  await context.addInitScript(({ bytes, name, mac }) => {
+    Object.defineProperty(navigator, 'platform', { configurable: true, value: mac ? 'MacIntel' : 'Win32' });
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: mac ? 'macOS' : 'Windows' } });
     globalThis.isTauri = true;
     const callbacks = new Map(), listeners = new Map(); let id = 0;
     const state = globalThis.__contentActionsNative = { source: bytes, outputs: [null, 'output-copy-token'], chosen: [], writes: [], remembered: [], sessions: [], drafts: [] };
@@ -124,11 +126,15 @@ async function nativeBridge(context) {
       },
     };
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event, eventId) => { const item = listeners.get(eventId); if (item) callbacks.delete(item.handler); } };
-  }, { bytes: [...original], name: path.basename(source) });
+  }, { bytes: [...original], name: path.basename(source), mac: useWebKit });
 }
 async function check(id, run, native = false) {
   if (process.env.FOLIO_CONTENT_ACTIONS_TEST && !new RegExp(process.env.FOLIO_CONTENT_ACTIONS_TEST).test(id)) return;
   const context = await browser.newContext({ viewport: { width: 1360, height: 720 }, acceptDownloads: true });
+  if (useWebKit) await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'macOS' } });
+  });
   if (native) await nativeBridge(context);
   const page = await context.newPage(); page.setDefaultTimeout(30000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
@@ -146,7 +152,7 @@ try {
   for (let n = 0; n < 100; n++) { try { if ((await fetch(origin)).ok) { listening = true; break; } } catch {} if (server.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }
   assert(listening, 'Vite preview did not start: ' + log);
   frontendEntry = (await (await fetch(origin)).text()).match(/src="([^"]+\.js)"/)?.[1]; assert(frontendEntry);
-  browser = await chromium.launch({ executablePath: chrome, headless: true });
+  browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: chrome, headless: true });
   await check('duplicate-delete-text-history', async page => {
     await selectText(page); await intent(page, 'duplicate');
     await page.getByLabel('Posición Y', { exact: true }).fill('280'); await commit(page, 'duplicate');
@@ -174,7 +180,7 @@ try {
     let downloads = 0; page.on('download', () => downloads++);
     await selectText(page); const frame = await page.locator('.content-editor').getAttribute('data-destination-rect');
     await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('DRAFT 1');
-    await page.keyboard.press('Control+s');
+    await page.keyboard.press(saveShortcut);
     await page.getByText('Aplica o descarta el borrador antes de guardar el PDF.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Guardar una copia', exact: true }).isDisabled(), true); assert.equal(downloads, 0);
     await intent(page, 'duplicate'); await page.getByLabel('Posición X', { exact: true }).fill('220');
@@ -204,7 +210,7 @@ try {
     await history(page, 'Rehacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: SAVED 2', exact: true }).count(), 1);
     const redone = await save(page, 'content-actions-inline-redo.pdf', true, 2); assert.equal(textCount(redone, 'SAVED 2', 2), 1); preserved(redone);
     await page.screenshot({ path: path.join(output, 'content-actions-inline-save.png') });
-    return { buttonAndCtrlSDownloadRealPdf: true, remainsInlineOnPage2: true, tabIdentityPreserved: true, savedCopyRecordedInLibrary: true, historySurvivesEverySave: true, annotationsExported: true };
+    return { [useWebKit ? 'buttonAndCmdSDownloadRealPdf' : 'buttonAndCtrlSDownloadRealPdf']: true, remainsInlineOnPage2: true, tabIdentityPreserved: true, savedCopyRecordedInLibrary: true, historySurvivesEverySave: true, annotationsExported: true };
   });
   await check('native-save-cancel-and-success-contract', async page => {
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
@@ -212,7 +218,7 @@ try {
     const key = await page.locator('.document-tab.selected').getAttribute('data-tab-key');
     await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click(); await savedIdle(page, 2);
     assert.equal(await page.evaluate(() => globalThis.__contentActionsNative.writes.length), 0, 'Cancelling output selection writes no PDF.');
-    await page.keyboard.press('Control+s');
+    await page.keyboard.press(saveShortcut);
     await page.waitForFunction(() => globalThis.__contentActionsNative.writes.length === 1); await savedIdle(page, 2);
     const state = await page.evaluate(() => globalThis.__contentActionsNative);
     assert.equal(state.chosen.length, 2); assert.equal(state.chosen[0].source, 'source-token');
@@ -229,6 +235,6 @@ try {
 } finally {
   await browser?.close();
   if (server.exitCode === null) { const stopped = new Promise(resolve => server.once('exit', resolve)); server.kill(); await stopped; }
-  fs.writeFileSync(path.join(output, 'content-actions-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), frontendEntry, syntheticFixturesOnly: true, results, errors }, null, 2));
+  fs.writeFileSync(path.join(output, 'content-actions-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), platform: process.platform, browser: browserName, saveShortcut, frontendEntry, syntheticFixturesOnly: true, results, errors }, null, 2));
   if (errors.length || !results.length) process.exitCode = 1;
 }

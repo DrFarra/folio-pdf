@@ -23,7 +23,19 @@ MAC_EVIDENCE = ['native-smoke-macos.json', 'native-smoke-macos-qa.json', 'mac-pl
                 'folio-macos.png', 'folio-macos-qa.png', 'mac-webkit.png',
                 'reading-settings-results.json', 'reading-settings.png',
                 'remove-highlights-results.json', 'remove-highlights-contextual-menu.png', 'remove-highlights-after-zoom.png',
-                'bookmark-drag-results.json', 'bookmark-drag-destination.png', 'bookmark-drag-restored.png']
+                'bookmark-drag-results.json', 'bookmark-drag-destination.png', 'bookmark-drag-restored.png',
+                'operations-results.json', 'page-content-engine-results.json', 'content-editor-engine-results.json',
+                'content-actions-engine-results.json', 'pdf-editing-ui-results.json',
+                'pdf-editing-low-height.png', 'pdf-editing-medium-800x600.png', 'pdf-editing-medium-900x600.png',
+                'pdf-editing-medium-1024x600.png', 'pdf-editing-wide-low-1360x600.png',
+                'content-actions-ui-results.json', 'content-actions-inline-save.png', 'content-editor-layout-results.json',
+                'content-editor-layout-desktop-1360x720.png', 'content-editor-layout-desktop-1360x600.png',
+                'content-editor-layout-desktop-1024x600.png', 'content-editor-layout-desktop-760x600.png',
+                'content-editor-layout-phone-390x844.png', 'content-editor-layout-phone-844x390.png']
+ENGINE_REPORTS = {'operations-results.json': 13, 'page-content-engine-results.json': 10,
+                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 13}
+EDITOR_REPORTS = {'pdf-editing-ui-results.json': 6, 'content-actions-ui-results.json': 5,
+                  'content-editor-layout-results.json': 6}
 
 
 class PackageError(Exception):
@@ -109,6 +121,67 @@ def passed_report(data, name, native=False):
                             for case in values), f'{name} contiene pruebas fallidas.')
 
 
+def frontend_identity():
+    distribution = ROOT / 'dist'
+    try:
+        html = (distribution / 'index.html').read_text(encoding='utf-8')
+    except OSError as error:
+        raise PackageError(f'Falta la interfaz compilada que se probó: {error}') from error
+    entries = re.findall(r'<script\b[^>]*\bsrc=["\']([^"\']+\.js)["\']', html)
+    require(len(entries) == 1 and entries[0].startswith('/assets/'),
+            'dist/index.html no identifica una única entrada JavaScript de producción.')
+    assets = [{'path': path.relative_to(distribution).as_posix(), 'bytes': path.stat().st_size, 'sha256': sha256(path)}
+              for path in sorted(distribution.rglob('*')) if path.is_file() and path.suffix in {'.js', '.css'}]
+    require(any('/' + asset['path'] == entries[0] for asset in assets), 'La entrada de producción no existe en dist.')
+    return {'entry': entries[0], 'assets': assets}
+
+
+def editor_validation(logs, frontend):
+    backend, webkit, simulated_phone_cases = [], [], 0
+    for reports, destination in ((ENGINE_REPORTS, backend), (EDITOR_REPORTS, webkit)):
+        for name, expected_count in reports.items():
+            report = read_json(logs / name)
+            passed_report(report, name)
+            cases = report.get('results')
+            require(isinstance(cases, list) and len(cases) == expected_count and
+                    all(isinstance(case, dict) and case.get('status') == 'passed' for case in cases),
+                    f'{name} no acredita todos los {expected_count} casos de esta entrega.')
+            suite = {'report': name, 'caseCount': len(cases), 'passed': True}
+            if destination is webkit:
+                require(report.get('browser') == 'WebKit', f'{name} no corresponde a una prueba WebKit.')
+                require(report.get('platform', report.get('hostPlatform')) == 'darwin',
+                        f'{name} no se ejecutó en el runner macOS de esta entrega.')
+                require(report.get('frontendEntry') == frontend['entry'] and
+                        all(case.get('frontendEntry') == frontend['entry'] for case in cases),
+                        f'{name} se probó con una interfaz distinta de la compilación final.')
+                suite['frontendEntry'] = frontend['entry']
+                simulated_phone_cases += sum(case.get('simulatedPhone') is True for case in cases)
+            destination.append(suite)
+    require(simulated_phone_cases == 2, 'El informe de layout debe identificar exactamente las dos vistas de teléfono simuladas.')
+    for name in MAC_EVIDENCE:
+        if name.startswith(('pdf-editing-', 'content-actions-', 'content-editor-layout-')) and name.endswith('.png'):
+            require((logs / name).is_file(), f'Falta la captura de interfaz {name} de esta entrega.')
+    legacy = read_json(logs / 'mac-platform-results.json')
+    passed_report(legacy, 'mac-platform-results.json')
+    legacy_cases = legacy.get('results', [])
+    require(len(legacy_cases) == 3 and all(case.get('status') == 'passed' and
+            str(case.get('id', '')).startswith('webkit-') for case in legacy_cases),
+            'Las tres comprobaciones WebKit previas de Mac no están completas.')
+    return {
+        'backend': {'scope': 'MuPDF.js PDF bytes and pixels in Node on macOS',
+                    'caseCount': sum(suite['caseCount'] for suite in backend), 'suites': backend},
+        'webkitEditor': {'browser': 'WebKit', 'scope': 'HTTP production preview; not native WKWebView',
+                         'nativeWKWebView': False, 'nativeAppleDeviceTested': False,
+                         'caseCount': sum(suite['caseCount'] for suite in webkit),
+                         'simulatedPhoneCaseCount': simulated_phone_cases,
+                         'desktopCaseCount': sum(suite['caseCount'] for suite in webkit) - simulated_phone_cases,
+                         'suites': webkit},
+        'webkitLegacy': {'browser': 'WebKit', 'scope': 'HTTP preview selection, shortcuts, local OCR and multi-document search',
+                         'nativeWKWebView': False, 'caseCount': len(legacy_cases),
+                         'report': 'mac-platform-results.json', 'passed': True},
+    }
+
+
 def source_build(version):
     return f'''Folio {version} — macOS source and build information
 
@@ -178,6 +251,13 @@ Las comprobaciones de esta entrega están en `evidence` y `docs`. Las pruebas de
 Windows no se presentan como validación de macOS; el informe Mac identifica las
 comprobaciones realizadas. Impresora física, Gatekeeper tras una descarga y
 pruebas completas en ambos tipos de Mac requieren su validación correspondiente.
+
+El motor del editor se comprueba con 48 casos de PDF real y sus píxeles. Sus
+acciones, edición integrada y diseño se comprueban con 17 casos en WebKit
+mediante la interfaz HTTP de producción, incluidos dos tamaños de teléfono
+simulados. Estas comprobaciones del editor no son pruebas de sus acciones en
+la aplicación nativa WKWebView ni en un iPhone físico. El manifiesto separa
+estos resultados de las pruebas nativas de apertura, selección y búsqueda.
 '''
 
 
@@ -223,6 +303,10 @@ def main():
     require(not output.exists() or output.is_dir() and not any(output.iterdir()),
             'La carpeta de entrega debe estar vacía. Elige una carpeta nueva para evitar incluir archivos o evidencias anteriores.')
     version = read_json(ROOT / 'package.json')['version']
+    commit = command(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'])
+    require(re.fullmatch(r'[0-9a-f]{40}', commit), 'No se pudo identificar el commit correspondiente a la entrega.')
+    frontend = frontend_identity()
+    validation = editor_validation(logs, frontend)
     require(version == read_json(ROOT / 'src-tauri/tauri.conf.json')['version'], 'La versión de Tauri no coincide con la fuente.')
     app = build / 'bundle/macos/Folio.app'
     require(app.is_dir(), 'Falta bundle/macos/Folio.app. Compila la versión universal antes de empaquetar.')
@@ -261,6 +345,16 @@ def main():
                 'El ejecutable final cambió después de la prueba nativa. No se empaqueta una aplicación diferente a la verificada.')
     if smoke.get('platform'):
         require(str(smoke['platform']).lower().startswith(('darwin', 'macos')), 'La evidencia nativa corresponde a otro sistema operativo.')
+    qa_smoke = read_json(logs / 'native-smoke-macos-qa.json')
+    passed_report(qa_smoke, 'native-smoke-macos-qa.json', native=True)
+    require(qa_smoke.get('version') == version and qa_smoke.get('nativeQA') is True and
+            qa_smoke.get('nativeWKWebView') is True and smoke.get('nativeWKWebView') is True and
+            smoke.get('nativeQA') is False, 'Las evidencias QA y de producción no corresponden a las variantes Mac esperadas.')
+    validation['native'] = {'scope': 'Actual WKWebView Finder opening/session persistence; QA text selection/search diagnostics',
+                            'productionSmokePassed': True, 'qaSmokePassed': True, 'nativeWKWebView': True,
+                            'testedArchitecture': smoke.get('testedArchitecture'),
+                            'editorActionsVerifiedInNativeWKWebView': False,
+                            'reports': ['native-smoke-macos.json', 'native-smoke-macos-qa.json']}
     notices = read_json(ROOT / 'dependency-licenses.json')
     cargo_names = {item.get('name') for item in notices.get('cargo', [])}
     require({'objc2-app-kit', 'objc2-web-kit'}.issubset(cargo_names),
@@ -318,7 +412,8 @@ def main():
     records = [{'path': path.relative_to(output).as_posix(), 'bytes': path.stat().st_size, 'sha256': sha256(path)}
                for path in sorted(output.rglob('*')) if path.is_file()]
     (output / 'SHA256SUMS.txt').write_text(''.join(f"{record['sha256']}  {record['path']}\n" for record in records), encoding='utf-8')
-    manifest = {'version': version, 'platform': 'macOS', 'architectures': architectures,
+    manifest = {'version': version, 'commit': commit, 'frontend': frontend, 'validation': validation,
+                'platform': 'macOS', 'architectures': architectures,
                 'identifier': 'org.folio.pdf', 'adHocSigned': True, 'notarized': False,
                 'macOSFullAcceptanceComplete': False, 'nativeSmokePassed': True,
                 'dmgVerified': True, 'dmgPayloadMatchesApplication': True, 'applicationExecutableSha256': sha256(executable),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -13,8 +13,9 @@ const sheet = document.addPage([500, 400]);
 sheet.drawText('CONTENT EDITOR LAYOUT', { x: 32, y: 350, size: 18, font });
 sheet.drawText('An original PDF page stays visible while adjusting the draft.', { x: 32, y: 315, size: 12, font });
 fs.writeFileSync(fixture, await document.save());
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
-assert(chrome, 'A Chromium executable is required.');
+const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
+const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+if (!useWebKit) assert(chrome, 'A Chromium executable is required.');
 const port = process.env.FOLIO_EDITOR_LAYOUT_PORT || '4202', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
 let log = '', browser, frontendEntry; const results = [], errors = [];
@@ -74,12 +75,16 @@ try {
   assert(ready, log || 'The preview server did not start.');
   const html = await (await fetch(origin)).text();
   frontendEntry = html.match(/src="([^"]+\.js)"/)?.[1]; assert(frontendEntry, 'The report must identify the tested frontend build.');
-  browser = await chromium.launch({ executablePath: chrome, headless: true });
+  browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: chrome, headless: true });
   for (const specification of cases) {
     const { phone = false, width, height } = specification, id = (phone ? 'phone-' : 'desktop-') + width + 'x' + height;
     if (process.env.FOLIO_EDITOR_LAYOUT_TEST && !new RegExp(process.env.FOLIO_EDITOR_LAYOUT_TEST).test(id)) continue;
     const context = await browser.newContext({ viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: iphoneAgent } : {}) });
     if (phone) await context.addInitScript(() => { Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }); Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: undefined }); });
+    else if (useWebKit) await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+      Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'macOS' } });
+    });
     const page = await context.newPage(); page.setDefaultTimeout(20000);
     page.on('pageerror', error => errors.push({ id, error: error.message }));
     try {
@@ -132,6 +137,6 @@ try {
 } finally {
   await browser?.close();
   if (server.exitCode === null) { const stopped = new Promise(resolve => server.once('exit', resolve)); server.kill(); await stopped; }
-  fs.writeFileSync(path.join(output, 'content-editor-layout-results.json'), JSON.stringify({ platform: process.platform, browser: 'Chromium', frontendEntry, nativeAppleDeviceTested: false, results, errors }, null, 2) + '\n');
+  fs.writeFileSync(path.join(output, 'content-editor-layout-results.json'), JSON.stringify({ platform: process.platform, browser: browserName, frontendEntry, nativeAppleDeviceTested: false, results, errors }, null, 2) + '\n');
   if (errors.length) { console.log(JSON.stringify({ errors })); process.exitCode = 1; }
 }

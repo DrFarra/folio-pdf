@@ -40,6 +40,12 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform aarch64-apple-darwin --format-version 1 > test-results/cargo-metadata-macos.json
           python3 scripts/generate-notices.py --platform macos --cargo-metadata test-results/cargo-metadata-macos.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
           npm run build
+      - name: Test the PDF content engine used by the 0.8.2 editor
+        run: |
+          npm run test:operations
+          npm run test:page-content:engine
+          npm run test:content-editor:engine
+          npm run test:content-actions:engine
       - name: Native Mac unit tests
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --release --target aarch64-apple-darwin
@@ -51,6 +57,11 @@ jobs:
           FOLIO_TEST_BROWSER=webkit npm run test:reading-settings
           FOLIO_TEST_BROWSER=webkit npm run test:remove-highlights
           FOLIO_TEST_BROWSER=webkit npm run test:bookmark-drag
+      - name: Test integrated editing, object actions and inspector layout in Mac WebKit
+        run: |
+          FOLIO_TEST_BROWSER=webkit npm run test:pdf-editing:ui
+          FOLIO_TEST_BROWSER=webkit npm run test:content-actions:ui
+          FOLIO_TEST_BROWSER=webkit npm run test:content-editor:layout
       - name: Build a separate Mac diagnostics variant
         run: |
           set -o pipefail
@@ -123,5 +134,24 @@ jobs:
             test-results/bookmark-drag-results.json
             test-results/bookmark-drag-destination.png
             test-results/bookmark-drag-restored.png
+            test-results/operations-results.json
+            test-results/page-content-engine-results.json
+            test-results/content-editor-engine-results.json
+            test-results/content-actions-engine-results.json
+            test-results/pdf-editing-ui-results.json
+            test-results/pdf-editing-low-height.png
+            test-results/pdf-editing-medium-800x600.png
+            test-results/pdf-editing-medium-900x600.png
+            test-results/pdf-editing-medium-1024x600.png
+            test-results/pdf-editing-wide-low-1360x600.png
+            test-results/content-actions-ui-results.json
+            test-results/content-actions-inline-save.png
+            test-results/content-editor-layout-results.json
+            test-results/content-editor-layout-desktop-1360x720.png
+            test-results/content-editor-layout-desktop-1360x600.png
+            test-results/content-editor-layout-desktop-1024x600.png
+            test-results/content-editor-layout-desktop-760x600.png
+            test-results/content-editor-layout-phone-390x844.png
+            test-results/content-editor-layout-phone-844x390.png
           if-no-files-found: ignore
           retention-days: 1
