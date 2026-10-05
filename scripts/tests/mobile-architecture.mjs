@@ -354,7 +354,7 @@ try {
     await open(page); await visibleButton(page, 'Herramientas').click();
     const catalog = page.getByRole('dialog', { name: 'Herramientas', exact: true }); await catalog.waitFor();
     assert.equal(await catalog.locator('.tool-category').count(), 6);
-    assert.equal(await catalog.locator('.operation-grid > button').count(), 16, 'The catalog must retain every existing operation.');
+    assert.equal(await catalog.locator('.operation-grid > button').count(), 17, 'The catalog must retain existing operations and expose image replacement.');
     for (const name of ['Páginas', 'Contenido', 'Formularios', 'Revisión y firmas', 'Exportación y OCR', 'Protección']) assert.equal(await catalog.getByRole('heading', { name, exact: true }).count(), 1);
     await visibleButton(page, 'Organizar páginas').click(); await visibleButton(page, 'Página en blanco').click();
     assert.equal(await page.locator('.page-plan > article').count(), 6);
@@ -395,7 +395,7 @@ try {
     }
     await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
     assert.equal(await page.locator('.pdf-page-wrap').count(), 5, 'Leaving tools must not apply the six-page plan.');
-    return { sixPurposeGroups: true, allSixteenOperations: true, unappliedPlanFormSecurityAndComparisonPreserved: true, keyboardFocusRestored: true, documentUnchanged: true, comparisonBackWaitsForActiveTask: !process.env.FOLIO_TEST_SKIP_COMPARE_BUSY };
+    return { sixPurposeGroups: true, allSeventeenOperations: true, unappliedPlanFormSecurityAndComparisonPreserved: true, keyboardFocusRestored: true, documentUnchanged: true, comparisonBackWaitsForActiveTask: !process.env.FOLIO_TEST_SKIP_COMPARE_BUSY };
   }, { desktop: true });
   await check('desktop-narrow-window-keeps-actions-and-legible-labels', async page => {
     await open(page);

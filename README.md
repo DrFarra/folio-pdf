@@ -1,4 +1,4 @@
-# Folio 0.6.2
+# Folio 0.7.0
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas de Windows y sus límites
@@ -28,6 +28,17 @@ Organizar páginas permite seleccionar rangos con Shift y reordenar miniaturas;
 Aplicar cambios confirma la organización. Extraer selección crea otra pestaña
 y conserva el original. Los botones permanecen visibles mientras se desplazan
 las miniaturas.
+En escritorio, añadir o reemplazar texto e imágenes abre un editor con la página
+visible, una caja movible y redimensionable y una vista previa del PDF real.
+El texto ofrece fuentes disponibles, tamaño, color, alineación, interlineado y
+ajuste de líneas. Las imágenes ofrecen proporción, encajar/cubrir/estirar,
+opacidad y giro. El reemplazo actúa sobre la región original; el destino puede
+moverse de forma independiente. Aplicar confirma un paso de deshacer; cancelar
+conserva el documento. Guardar una copia conserva el historial de deshacer y rehacer.
+Esta edición por región no reconstruye párrafos complejos ni garantiza reutilizar
+fuentes embebidas o editar aisladamente objetos de imagen solapados.
+La revisión de todos los apartados y las mejoras pendientes está en
+[docs/product-review.html](docs/product-review.html).
 Un toque breve oculta o muestra los controles sin cambiar escala ni posición.
 La página única admite flechas directas y swipe horizontal cuando cabe en ancho.
 Los controles táctiles tienen al menos 44 px;
@@ -113,7 +124,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.5.0_x64-setup.exe.
+Salida: src-tauri/target/release/bundle/nsis/Folio_0.7.0_x64-setup.exe.
 Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
 Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
 las herramientas portátiles de esta estación; .tools no se distribuye.

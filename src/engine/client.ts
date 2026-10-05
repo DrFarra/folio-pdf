@@ -1,6 +1,6 @@
 import type { Annotation } from '../types';
 import type { Inspection } from './mupdf-engine.mjs';
-import type { Operation, Field } from './operations.mjs';
+import type { Operation, Field, Area, AreaContentInfo } from './operations.mjs';
 
 function run<T>(operation: 'inspect' | 'annotate' | 'operate', bytes: Uint8Array, password?: string, annotations?: Annotation[], signal?: AbortSignal, options?: Operation): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -21,3 +21,4 @@ export const exportAnnotated = (bytes: Uint8Array, annotations: Annotation[], pa
 export const processPdf = (bytes: Uint8Array, options: Operation, password?: string, signal?: AbortSignal) => run<Uint8Array>('operate', bytes, password, undefined, signal, options);
 export const readFields = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<Field[]>('operate', bytes, password, undefined, signal, { operation: 'fields' });
 export const extractText = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<string[]>('operate', bytes, password, undefined, signal, { operation: 'text' });
+export const readAreaContent = (bytes: Uint8Array, area: Area, password?: string, signal?: AbortSignal) => run<AreaContentInfo>('operate', bytes, password, undefined, signal, { operation: 'area-info', ...area });

@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
-export type Tool = 'select' | 'highlight' | 'note' | 'add-text' | 'replace-text' | 'add-image' | 'remove-image' | 'redact' | 'crop' | 'create-field';
+export type Tool = 'select' | 'highlight' | 'note' | 'add-text' | 'replace-text' | 'add-image' | 'replace-image' | 'remove-image' | 'redact' | 'crop' | 'create-field';
 export type SideTab = 'pages' | 'outline' | 'bookmarks';
 export type Annotation = {
   id: string;

@@ -375,7 +375,7 @@ export default function App() {
       const restoredBookmarks = normalizeBookmarks(session.bookmarks, pdf.numPages);
       setBookmarks(restoredBookmarks);
       readingState.current = { page: Math.max(1, Math.min(pdf.numPages, session.lastPage)), bookmarks: restoredBookmarks };
-      if (!context?.preserveHistory) { undoStack.current = []; redoStack.current = []; }
+      if (!context?.preserveHistory && !context?.savedCopy) { undoStack.current = []; redoStack.current = []; }
       setHistoryTick(v => v + 1); setRedactions([]); setEditArea(null);
       const initialZoom = preferencesRef.current.defaultZoom;
       const initialScale = Number(initialZoom) ? Math.max(.25, Math.min(3, Number(initialZoom) / 100)) : 1;

@@ -179,7 +179,7 @@ try {
     const bytes = await save(page, 'ui-filled.pdf'), fields = operateDocument(bytes, { operation: 'fields' }); assert.equal(fields.find(f => f.name === 'name').value, 'Emilio González'); assert(fields.find(f => f.name === 'agree').checked); return { actualFieldsSaved: true };
   });
   await check('text-replacement-and-content-history', async page => {
-    await tools(page, 'Reemplazar texto'); await drawArea(page, [35, 344, 210, 372]); await page.getByRole('textbox', { name: 'Texto del PDF' }).fill('UI REPLACED'); await page.getByRole('button', { name: 'Aplicar texto', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await tools(page, 'Reemplazar texto'); await drawArea(page, [35, 344, 210, 372]); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('UI REPLACED'); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     const bytes = await save(page, 'ui-edited.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('UI REPLACED')); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE THIS TEXT')); return { originalTextRemoved: true, undoRedoContent: true };
   });

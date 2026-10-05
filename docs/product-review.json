@@ -1,0 +1,1150 @@
+{
+  "title": "Folio: revisión de producto y mejoras propuestas",
+  "date": "2026-10-04",
+  "baseline_commit": "df6a70ab58b80bdda571cafff09d9d9bf085fb4d",
+  "baseline_short": "df6a70a",
+  "scope": "Auditoría del código del programa completo. Las capacidades existentes y las carencias describen exclusivamente el commit base; los cambios en curso se indican por separado.",
+  "method": "Lectura de componentes, flujos de aplicación y operaciones del motor. Cada referencia se verificó sobre el contenido de git show df6a70a:ruta. No se realizó una nueva validación visual, de instalación o en un iPhone físico para este informe.",
+  "assessment": "El programa ya dispone de lectura, anotaciones, pestañas, historial y numerosas operaciones PDF. La principal mejora pendiente es transformar operaciones puntuales en flujos visuales con selección, controles, revisión del resultado y aplicación explícita.",
+  "priority_definitions": {
+    "P1": "Mejora prioritaria del control, la utilidad o la claridad de una función central.",
+    "P2": "Ampliación posterior o trabajo de mayor alcance; conviene abordar después de consolidar el editor.",
+    "P0": "No se confirmó un defecto crítico P0 en esta auditoría de código. Esto no equivale a una certificación del programa."
+  },
+  "effort_definitions": {
+    "bajo": "Cambio localizado, con poca lógica o interfaz nueva.",
+    "medio": "Nuevo flujo o controles que requieren integración y pruebas de documentos reales.",
+    "alto": "Trabajo del motor PDF, persistencia compleja o compatibilidad entre formatos y lectores."
+  },
+  "implementation": {
+    "id": "first-text-image-editor",
+    "title": "Primer editor de texto e imágenes",
+    "status": "verificado",
+    "label": "Editor 0.7.0 verificado",
+    "verification": "Verificado en Folio 0.7.0: 9 pruebas del motor, 8 de edición/guardado y 6 de diseño de ventana, con cero errores de navegador. Las pruebas móviles usan Chromium y no equivalen a una instalación física en Apple.",
+    "scope": "Edición por región de texto e imágenes con página visible, caja movible/redimensionable, propiedades numéricas, formato, ajuste de líneas, proporción, opacidad, giro y vista previa generada con el motor PDF. Aplicar confirma un paso de deshacer; cancelar conserva el documento.",
+    "baseline_distinction": "Este editor no forma parte de las capacidades atribuidas al commit df6a70a. Las filas de edición describen el estado anterior y las mejoras necesarias.",
+    "limits": "No se promete editar cualquier objeto o recuperar la estructura original de todos los PDF. Las fuentes, imágenes compartidas, máscaras, formularios y páginas escaneadas requieren cobertura específica.",
+    "version": "0.7.0"
+  },
+  "deliveries_in_progress": [
+    {
+      "id": "save-history",
+      "title": "Conservar Deshacer y Rehacer después de guardar una copia",
+      "status": "verificado",
+      "label": "Implementado y verificado en 0.7.0",
+      "addresses": [
+        "save"
+      ],
+      "note": "El cambio actual evita limpiar el historial al reabrir una copia guardada. La fila Guardar sigue describiendo el defecto del commit base, para poder comparar ambos estados.",
+      "evidence_scope": "Código de trabajo posterior a df6a70a; no corresponde a la auditoría del commit base.",
+      "evidence": [
+        {
+          "path": "src/App.tsx",
+          "line": 378,
+          "note": "El reinicio del historial excluye context.savedCopy."
+        }
+      ],
+      "verification": "Prueba real de reemplazo, guardar copia, deshacer, volver a guardar y conservar Rehacer."
+    }
+  ],
+  "roadmap": [
+    {
+      "phase": 1,
+      "title": "Editor de texto e imágenes",
+      "priority": "P1",
+      "goal": "Atender primero la prioridad del usuario: seleccionar lo que se quiere cambiar, modificarlo con controles claros y revisar el resultado antes de aplicarlo.",
+      "exit_criteria": "Ediciones verificadas en documentos de prueba, cancelación coherente, historial funcional y explicación clara de los límites de edición."
+    },
+    {
+      "phase": 2,
+      "title": "Control de las herramientas y del documento",
+      "priority": "P1",
+      "goal": "Añadir ajustes, alcance de páginas, vistas previas e informes de resultado donde la herramienta actual ejecuta una operación con poco control. Mejorar búsqueda, anotaciones y guardado.",
+      "exit_criteria": "Cada operación permite entender qué cambiará, controlar su alcance y reconocer su resultado; los flujos centrales funcionan con documentos grandes."
+    },
+    {
+      "phase": 3,
+      "title": "Objetos PDF complejos e interoperabilidad",
+      "priority": "P2",
+      "goal": "Ampliar la edición de objetos, fuentes, imágenes con máscaras o reutilizadas, formularios y estructura del documento. Abordar conversión con maquetación y firma avanzada como proyectos propios.",
+      "exit_criteria": "Cobertura explícita por tipo de objeto y pruebas de interoperabilidad; los casos incompatibles se detectan y se explican sin resultados engañosos."
+    }
+  ],
+  "sections": [
+    {
+      "id": "documentos",
+      "title": "Biblioteca, creación y pestañas",
+      "items": [
+        {
+          "id": "library",
+          "title": "Biblioteca",
+          "existing": "Vistas Todas y Recientes, búsqueda por nombre, importación y continuación de lectura. Los recientes se limitan a 20 y se ordenan por última apertura.",
+          "gap": "El orden es fijo; faltan favoritos, clasificación y una identificación más clara de los borradores con cambios.",
+          "proposal": "Añadir orden por nombre, fecha y tamaño, favoritos e indicador de borrador. Después, etiquetas o carpetas y selección por lotes.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "bajo",
+            "reason": "Principalmente interfaz y metadatos locales; conservar la distinción entre ocultar un reciente y eliminar una copia."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/DocumentLibrary.tsx",
+              "line": 35,
+              "note": "Orden fijo, límite de recientes y filtro por nombre en las líneas siguientes."
+            }
+          ]
+        },
+        {
+          "id": "create-pdf",
+          "title": "Crear PDF",
+          "existing": "Crea un PDF A4 vacío o una página por imagen PNG/JPEG. Ajusta proporcionalmente las imágenes, decide orientación automáticamente y permite quitar archivos de la lista.",
+          "gap": "Solo se ven nombres; no se puede revisar o cambiar el orden, el papel, la orientación ni los márgenes antes de crear.",
+          "proposal": "Mostrar miniaturas y permitir reordenarlas. Añadir papel, orientación, márgenes y ajuste de imagen con una vista previa sencilla.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La geometría debe coincidir con la vista previa y preservar la proporción y resolución de las imágenes."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/CreatePDF.tsx",
+              "line": 9,
+              "note": "Nombre y archivos; lista sin miniaturas en la línea 11."
+            },
+            {
+              "path": "src/conversion.ts",
+              "line": 49,
+              "note": "Orientación A4 automática y ajuste con márgenes fijos."
+            }
+          ]
+        },
+        {
+          "id": "tabs",
+          "title": "Pestañas y recuperación del espacio de trabajo",
+          "existing": "Cada pestaña conserva vista, posición, anotaciones, marcadores e historial durante la sesión. Hay arrastre de pestañas, navegación por teclado e indicador de cambios; cerrar conserva el borrador local.",
+          "gap": "No hay menú para cerrar otras o las de la derecha, reabrir la última cerrada ni recuperar la lista y el orden de pestañas tras reiniciar.",
+          "proposal": "Añadir menú contextual y reabrir pestaña cerrada. Ofrecer restauración opcional del espacio de trabajo, separada de los borradores de cada documento.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La recuperación debe respetar la identidad del documento, los permisos y los errores de persistencia."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 179,
+              "note": "Captura y restauración del estado de cada pestaña."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 209,
+              "note": "Persistencia del borrador y sesión al cambiar o cerrar."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1282,
+              "note": "Barra con arrastre, teclado e indicador de cambios."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lectura",
+      "title": "Lectura, navegación y búsqueda",
+      "items": [
+        {
+          "id": "navigation",
+          "title": "Navegación y números de página",
+          "existing": "Miniaturas, índice, marcadores, enlaces PDF, búsqueda y retorno a una ubicación previa. Las etiquetas de página del PDF se muestran en el explorador.",
+          "gap": "El retorno conserva una sola ubicación y se sobrescribe. El campo de salto solo admite números físicos, aunque el PDF use etiquetas como iv o A-7.",
+          "proposal": "Añadir historial Atrás/Adelante por pestaña y salto por etiqueta o número físico, mostrando claramente la correspondencia.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Debe conservar la posición y distinguir etiquetas duplicadas, destinos internos y números físicos."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1164,
+              "note": "Una única ubicación de retorno."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1334,
+              "note": "Las miniaturas ya reciben etiquetas PDF."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1351,
+              "note": "El salto elimina todos los caracteres no numéricos."
+            }
+          ]
+        },
+        {
+          "id": "reading-view",
+          "title": "Vista y ampliación",
+          "existing": "Lectura continua o de una página, ajuste de página/ancho, giro de vista y zoom hasta 300 %. El renderizado se activa cerca de la zona visible y limita los píxeles del lienzo.",
+          "gap": "No hay vista de doble página con portada separada; el límite de ampliación restringe el trabajo de detalle.",
+          "proposal": "Añadir doble página y portada. Evaluar mayor ampliación con renderizado por regiones y límites de memoria antes de elevar el máximo.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "medio",
+            "reason": "Las páginas grandes y el zoom alto pueden afectar memoria, selección y posición de desplazamiento."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/ReadingSettings.tsx",
+              "line": 26,
+              "note": "Dos modos de lectura."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1353,
+              "note": "Controles y máximo de zoom."
+            },
+            {
+              "path": "src/components/PDFPage.tsx",
+              "line": 20,
+              "note": "Renderizado por proximidad; presupuesto de píxeles en la línea 130."
+            }
+          ]
+        },
+        {
+          "id": "search-controls",
+          "title": "Opciones de búsqueda",
+          "existing": "Busca palabras y frases entre fragmentos del PDF, conserva posiciones originales y permite recorrer las coincidencias. No distingue mayúsculas ni acentos.",
+          "gap": "Las reglas son fijas: no se puede pedir palabra completa, distinguir mayúsculas o acentos ni limitar la búsqueda a un intervalo.",
+          "proposal": "Añadir opciones explícitas de palabra completa, mayúsculas y acentos, más alcance por páginas, manteniendo el resultado señalado en el documento.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La normalización y los límites Unicode deben mantener correctos los desplazamientos de selección."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/pdf.ts",
+              "line": 51,
+              "note": "Normalización fija de mayúsculas y acentos."
+            },
+            {
+              "path": "src/pdf.ts",
+              "line": 97,
+              "note": "Búsqueda de subcadenas con offsets originales."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1327,
+              "note": "Interfaz sin controles de alcance o coincidencia."
+            }
+          ]
+        },
+        {
+          "id": "search-large",
+          "title": "Búsqueda en documentos grandes",
+          "existing": "El PC prepara un índice de texto de todas las páginas. La búsqueda muestra cada coincidencia y su contexto; el lector nativo publica progresivamente bloques del índice.",
+          "gap": "En PC el índice se publica al finalizar; una página fallida impide disponer de los resultados parciales. Cada pulsación vuelve a buscar y todos los resultados se montan en la interfaz.",
+          "proposal": "Publicar progreso y resultados parciales, tolerar fallos por página y permitir reintentar. Reutilizar el índice normalizado, retrasar brevemente la búsqueda y virtualizar resultados extensos.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Se debe cancelar el documento anterior y mantener estable la coincidencia activa al actualizar resultados."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/pdf.ts",
+              "line": 41,
+              "note": "Indexación secuencial sin recuperación por página."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 556,
+              "note": "Publicación del índice PC solo al terminar."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 793,
+              "note": "Búsqueda dependiente de cada cambio del texto."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1329,
+              "note": "Todos los resultados se renderizan mediante map."
+            }
+          ]
+        },
+        {
+          "id": "search-scanned",
+          "title": "Búsqueda en PDF escaneado",
+          "existing": "Si no hay texto seleccionable, la búsqueda explica que necesita texto y que no incluye OCR. La aplicación tiene una herramienta OCR separada.",
+          "gap": "El usuario recibe una explicación, pero no una acción directa para resolver el problema y volver a la búsqueda.",
+          "proposal": "Ofrecer Reconocer texto desde el estado vacío, con alcance e idioma; al finalizar, reconstruir el índice y recuperar la consulta anterior.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "El OCR puede cometer errores y debe respetar permisos, cancelación e historial."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1329,
+              "note": "Estado vacío informativo sin acceso directo al OCR."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 274,
+              "note": "OCR separado con selección de páginas e idioma."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "anotaciones",
+      "title": "Resaltados, notas y revisión",
+      "items": [
+        {
+          "id": "annotation-review",
+          "title": "Organizar anotaciones",
+          "existing": "Resaltados, notas, selección en varias páginas como una sola acción del historial, colores predefinidos y personalizados, edición y eliminación. El panel ordena por página y fecha.",
+          "gap": "No hay búsqueda o filtros del panel, selección múltiple, operaciones por lotes ni exportación de un resumen de revisión.",
+          "proposal": "Filtrar por texto, tipo, color y página; permitir recolorear o eliminar una selección y exportar citas, comentarios y referencias de página.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Las acciones múltiples deben ser una operación deshacible y conservar el vínculo con cada página."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 992,
+              "note": "Anotación multipágina como una acción."
+            },
+            {
+              "path": "src/components/HighlightColorPicker.tsx",
+              "line": 80,
+              "note": "Paleta y color personalizado."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1399,
+              "note": "Lista completa ordenada sin filtros o selección múltiple."
+            }
+          ]
+        },
+        {
+          "id": "highlight-comments",
+          "title": "Comentarios vinculados al resaltado",
+          "existing": "El menú de un resaltado permite comentar. Se abre una nota en la misma página y posición del resaltado.",
+          "gap": "La nota se crea como anotación independiente, sin identificador del resaltado ni cita enlazada; el vínculo visual puede perderse al editar o borrar.",
+          "proposal": "Relacionar comentario, resaltado y texto citado. Mostrar el hilo desde ambos elementos y mantener una acción clara para volver a la cita.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Los vínculos deben sobrevivir a guardado, importación y cambios de página sin inventar compatibilidad entre lectores."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/HighlightAnnotationMenu.tsx",
+              "line": 48,
+              "note": "Acción Comentar."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1198,
+              "note": "Crea una nota independiente usando solo página, posición y color."
+            }
+          ]
+        },
+        {
+          "id": "annotation-style",
+          "title": "Propiedades de anotación",
+          "existing": "Hay color personalizado. La vista conserva la opacidad importada y aplica un valor predeterminado cuando no existe.",
+          "gap": "No hay control de opacidad u otras propiedades de revisión; la detección de cambios y el editor actual de anotaciones solo cubren un conjunto limitado de campos.",
+          "proposal": "Añadir un inspector de propiedades cuando sea útil, empezando por opacidad y autor. Extender antes la detección de cambios, el historial y la exportación para esos campos.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Una propiedad visible sin persistencia completa produciría cambios que desaparecen al guardar o reabrir."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/PDFPage.tsx",
+              "line": 410,
+              "note": "Conservación de la opacidad importada."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 46,
+              "note": "Huella de cambios sin opacidad o autor."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1194,
+              "note": "Actualización limitada a color y texto."
+            },
+            {
+              "path": "src/engine/mupdf-engine.mjs",
+              "line": 146,
+              "note": "Para anotaciones existentes, la rama de actualización solo modifica Contents; un control de opacidad requerirá escritura explícita."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "estructura",
+      "title": "Marcadores e índice",
+      "items": [
+        {
+          "id": "bookmark-control",
+          "title": "Marcadores personales",
+          "existing": "Árbol con grupos, renombrado, colores, arrastre, mover a un destino, teclado y eliminación conservando hijos. No es una lista básica sin organización.",
+          "gap": "Faltan búsqueda por título, expandir/contraer todo y cambiar el destino de un marcador existente.",
+          "proposal": "Buscar conservando los ancestros, añadir controles de expansión y Cambiar destino. Permitir copiar el índice PDF como punto de partida editable.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "bajo",
+            "reason": "Conservar la estructura, evitar ciclos y distinguir grupos sin página de marcadores con destino."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/BookmarkTree.tsx",
+              "line": 224,
+              "note": "Árbol y grupos."
+            },
+            {
+              "path": "src/components/BookmarkTree.tsx",
+              "line": 247,
+              "note": "Menú de renombrado, movimiento, color y eliminación."
+            }
+          ]
+        },
+        {
+          "id": "bookmark-export",
+          "title": "Marcadores dentro del PDF guardado",
+          "existing": "Los marcadores personales se conservan en la sesión local y se remapean al reorganizar páginas.",
+          "gap": "La exportación de bytes incorpora anotaciones, pero no convierte los marcadores personales en el índice del archivo PDF.",
+          "proposal": "Ofrecer Incluir marcadores en el PDF, con una decisión explícita para combinar o sustituir el índice existente. Como alternativa de menor alcance, exportar los marcadores por separado.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "medio",
+            "reason": "Hay que conservar destinos, jerarquía y etiquetas y comprobar la apertura en otros lectores."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/storage.ts",
+              "line": 53,
+              "note": "Marcadores guardados en la sesión local."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1028,
+              "note": "Remapeo al cambiar páginas."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1040,
+              "note": "Exportación de bytes sin marcadores."
+            }
+          ]
+        },
+        {
+          "id": "pdf-outline",
+          "title": "Índice del documento",
+          "existing": "Índice jerárquico plegable, capítulo activo y navegación. Conserva encabezados del PDF que agrupan hijos aunque no tengan destino propio.",
+          "gap": "Es de lectura: no hay búsqueda, expansión global ni edición del índice PDF.",
+          "proposal": "Primero añadir búsqueda y expandir/contraer todo. Después, un editor del índice con destinos verificables y guardado dentro del PDF.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La búsqueda es localizada; escribir el índice requiere una fase adicional del motor y pruebas de destinos."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/pdf.ts",
+              "line": 25,
+              "note": "Lectura de jerarquía y encabezados sin destino."
+            },
+            {
+              "path": "src/components/DocumentOutline.tsx",
+              "line": 70,
+              "note": "Árbol navegable y plegable, sin búsqueda o edición."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paginas-formularios",
+      "title": "Organización de páginas y formularios",
+      "items": [
+        {
+          "id": "page-organizer",
+          "title": "Organizar páginas",
+          "existing": "Arrastre con ratón, selección múltiple y por rango, giro, duplicado, borrado, inserción de PDF/página A4, extracción a otro documento y aplicación explícita de cambios.",
+          "gap": "Los PDF insertados tienen iconos genéricos; se añaden todas sus páginas al final y las páginas vacías tienen tamaño fijo.",
+          "proposal": "Renderizar miniaturas importadas; elegir páginas de origen y posición de inserción. Ofrecer tamaño y orientación de la página vacía, conservando el borrador visual actual.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "El plan debe mantener claves, fuentes, contraseñas, selección y remapeo de marcadores coherentes."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 137,
+              "note": "Importa todas las páginas y las añade al final."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 221,
+              "note": "Página vacía A4 fija."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 231,
+              "note": "Icono genérico para páginas importadas."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 235,
+              "note": "Extracción y aplicación separadas."
+            }
+          ]
+        },
+        {
+          "id": "form-fill",
+          "title": "Rellenar formularios",
+          "existing": "Lista de campos con página, texto, varias líneas, listas, casillas, radios, solo lectura y longitud máxima. Permite convertirlos a contenido fijo.",
+          "gap": "No hay búsqueda, salto al campo, comparación con valores originales ni validación de obligatorios. En PC los campos no se rellenan directamente sobre la página.",
+          "proposal": "Añadir búsqueda, Ver en página, contador de cambios y restablecimiento de valores. Después incorporar edición sobre la página y validación explícita de campos obligatorios.",
+          "priority": "P1",
+          "effort": "alto",
+          "risk": {
+            "level": "alto",
+            "reason": "Apariencias, radios, listas y cálculos de formularios requieren compatibilidad y pruebas con documentos variados."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 237,
+              "note": "Formulario en una lista externa al documento."
+            },
+            {
+              "path": "src/components/PDFPage.tsx",
+              "line": 108,
+              "note": "La capa interactiva recupera enlaces, no widgets de formulario."
+            }
+          ]
+        },
+        {
+          "id": "form-create",
+          "title": "Crear campos",
+          "existing": "Permite dibujar una región y crear un campo de texto, casilla o lista desplegable; admite varias líneas y opciones.",
+          "gap": "Faltan valor inicial, obligatoriedad, estilo, orden de tabulación y ajuste posterior del tamaño o posición del campo.",
+          "proposal": "Añadir inspector con propiedades y vista previa del campo, edición de geometría y orden de tabulación. Separar claramente crear un campo de rellenarlo.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Los nombres, apariencias y opciones de exportación deben mantenerse consistentes con otros lectores."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 266,
+              "note": "Formulario de creación y conjunto actual de propiedades."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "herramientas",
+      "title": "Edición y herramientas PDF",
+      "items": [
+        {
+          "id": "tool-workflow",
+          "title": "Flujo común de herramientas",
+          "existing": "Las herramientas espaciales cierran el diálogo para dibujar una región y lo reabren. Existe cancelación del procesamiento e historial de las operaciones aplicadas.",
+          "gap": "El flujo pasa entre selección y formulario; no dispone de inspector común o previsualización transaccional. Cerrar el diálogo descarta los borradores de sus controles.",
+          "proposal": "Unificar selección, controles, vista previa, Aplicar y Cancelar en un editor visible. Mantener el borrador mientras se cambia de herramienta y explicar el alcance de cada operación.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Evitar doble aplicación, estados de herramienta incoherentes o una vista previa confundida con cambios ya guardados."
+          },
+          "phase": 1,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 192,
+              "note": "Cambio de diálogo a selección espacial."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 304,
+              "note": "Cancelación del proceso."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1019,
+              "note": "Aplicación con historial y remapeo."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1441,
+              "note": "Cierre desmonta Workbench y limpia la región."
+            }
+          ]
+        },
+        {
+          "id": "text-edit",
+          "title": "Añadir y reemplazar texto",
+          "existing": "Introduce texto en una región con tamaño y color. Usa DM Sans regular fija; reemplazar elimina texto de la región y añade el texto nuevo.",
+          "gap": "No selecciona el texto original para editarlo con sus propiedades; faltan controles de fuente, estilo, alineación, ajuste y previsualización sobre la página.",
+          "proposal": "Priorizar selección y edición visual con inspector de texto, contenido original, controles tipográficos y revisión antes de aplicar. Detectar los casos incompatibles con edición fiel.",
+          "priority": "P1",
+          "effort": "alto",
+          "risk": {
+            "level": "alto",
+            "reason": "Fuentes incrustadas, codificación, transformaciones y fragmentación del texto pueden impedir conservar la apariencia original."
+          },
+          "phase": 1,
+          "implementation_ref": "first-text-image-editor",
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 84,
+              "note": "Fuente fija cargada para aplicar texto."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 248,
+              "note": "Controles limitados a texto, tamaño y color."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 411,
+              "note": "Reemplazo regional por eliminación y adición."
+            }
+          ]
+        },
+        {
+          "id": "image-edit",
+          "title": "Insertar y editar imágenes",
+          "existing": "Inserta un PNG/JPEG en la región dibujada. La imagen se adapta a todo el rectángulo con opacidad completa.",
+          "gap": "No hay previsualización, preservación opcional de proporción, controles de encaje ni selección de una imagen existente para moverla o reemplazarla.",
+          "proposal": "Priorizar selección de imágenes y controles de posición/tamaño, mantener proporción, encajar/rellenar, reemplazar y eliminar con vista previa. Ampliar después a recursos compartidos y máscaras.",
+          "priority": "P1",
+          "effort": "alto",
+          "risk": {
+            "level": "alto",
+            "reason": "Imágenes reutilizadas, máscaras y transformaciones del PDF requieren evitar cambios involuntarios en otras apariciones."
+          },
+          "phase": 1,
+          "implementation_ref": "first-text-image-editor",
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 253,
+              "note": "Selección de archivo y aplicación sin controles de imagen."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 403,
+              "note": "Dibujo que estira la imagen al rectángulo y usa opacidad 1."
+            }
+          ]
+        },
+        {
+          "id": "image-remove",
+          "title": "Eliminar imágenes",
+          "existing": "Elimina píxeles de imágenes dentro de una región y conserva el texto y los gráficos vectoriales fuera de esa operación.",
+          "gap": "Es una eliminación regional de píxeles; no identifica una imagen como objeto ni muestra qué imagen o apariciones se verán afectadas.",
+          "proposal": "Añadir revisión visual del área antes de aplicar. Integrar eliminación del objeto seleccionado en el editor y reservar los objetos complejos para una fase posterior.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La interfaz debe distinguir borrar píxeles de eliminar un objeto y conservar contenido que el usuario no seleccionó."
+          },
+          "phase": 1,
+          "implementation_ref": "first-text-image-editor",
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 254,
+              "note": "Descripción y aplicación de la eliminación regional."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 406,
+              "note": "Redacción de píxeles de imagen, sin eliminar texto ni líneas."
+            }
+          ]
+        },
+        {
+          "id": "crop",
+          "title": "Recortar páginas",
+          "existing": "Cambia el área visible de la página mediante CropBox; el diálogo explica que el contenido exterior permanece en el PDF.",
+          "gap": "Se aplica a una sola región/página; faltan márgenes numéricos, tamaños predefinidos, restauración y alcance sobre varias páginas.",
+          "proposal": "Añadir márgenes y unidades, formatos predefinidos, previsualización y alcance actual/selección/intervalo. Mantener la diferencia clara entre recortar y eliminar contenido.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Respetar MediaBox, giro y tamaños diferentes; no presentar CropBox como eliminación irreversible de contenido."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 254,
+              "note": "Solo revisión textual y Aplicar."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 399,
+              "note": "Carga una página y cambia CropBox en la línea 402."
+            }
+          ]
+        },
+        {
+          "id": "redact",
+          "title": "Eliminar contenido sensible",
+          "existing": "Selecciona varias áreas, permite quitar la última y muestra un resumen por página. El diálogo explica que elimina texto/imágenes/gráficos y convierte formularios, además de quitar datos privados e índice.",
+          "gap": "No se puede editar o eliminar cualquier área desde la lista, navegar a ella o revisar visualmente el conjunto y los efectos secundarios antes de aplicar.",
+          "proposal": "Añadir lista navegable, edición y eliminación de cada región, vista previa y resumen de alcance. Mantener una aplicación explícita y verificar que el contenido eliminado no se recupera del resultado.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "alto",
+            "reason": "Una redacción incorrecta puede dejar información recuperable; requiere pruebas del contenido y de recursos relacionados, no solo de la apariencia."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1392,
+              "note": "Quitar última área y abrir revisión."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 255,
+              "note": "Lista estática y explicación de efectos secundarios."
+            }
+          ]
+        },
+        {
+          "id": "ocr",
+          "title": "Reconocer texto (OCR)",
+          "existing": "OCR local con páginas, español/inglés, progreso y cancelación. Evita duplicar texto si detecta texto en la selección.",
+          "gap": "Una sola página con texto bloquea toda la selección mixta. No hay omisión de páginas ya reconocidas, revisión de confianza o corrección asistida del resultado.",
+          "proposal": "Clasificar las páginas, omitir las que ya tienen texto cuando el usuario lo elija y mostrar el alcance real. Añadir revisión de resultados y errores antes de usarlos para buscar o exportar.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Detectar texto nativo no garantiza que toda la página esté reconocida; los documentos mixtos necesitan una política explícita."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 274,
+              "note": "Controles de páginas e idioma."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 281,
+              "note": "Cualquier página con texto rechaza la selección completa."
+            }
+          ]
+        },
+        {
+          "id": "convert",
+          "title": "Convertir y exportar",
+          "existing": "Exporta TXT, DOCX de texto editable separado por páginas y PNG por página en ZIP. Permite un intervalo y explica que Word no conserva imágenes ni maquetación.",
+          "gap": "El PNG usa hasta 144 ppp, limitado por tamaño; no hay control de calidad o selección visual. DOCX solo crea párrafos, sin reconstruir tablas o estructura.",
+          "proposal": "Añadir resolución y vista previa del alcance para imágenes. Mantener TXT/DOCX de texto claramente identificados; tratar la conversión con maquetación como un proyecto posterior específico.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "medio",
+            "reason": "La reconstrucción de maquetación puede producir un documento editable que no conserve la estructura original; las imágenes grandes consumen memoria."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 275,
+              "note": "Formatos y descripción de los límites."
+            },
+            {
+              "path": "src/conversion.ts",
+              "line": 10,
+              "note": "DOCX construido a partir de párrafos de texto."
+            },
+            {
+              "path": "src/conversion.ts",
+              "line": 25,
+              "note": "Resolución máxima y límite de píxeles de PNG."
+            }
+          ]
+        },
+        {
+          "id": "compare",
+          "title": "Comparar documentos",
+          "existing": "Compara texto o imágenes de la misma página física y muestra original, segundo PDF y diferencias. Admite contraseña del segundo documento.",
+          "gap": "Faltan zoom, superposición, navegación a la siguiente diferencia y correspondencia de páginas cuando se insertan o eliminan páginas.",
+          "proposal": "Añadir zoom sincronizado, superposición y Siguiente cambio. Después, alinear páginas por similitud y mostrar claramente correspondencias ambiguas.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "medio",
+            "reason": "Un emparejamiento equivocado o un renderizado reducido puede ocultar cambios; debe distinguirse diferencia visual de cambio semántico."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/CompareDocuments.tsx",
+              "line": 43,
+              "note": "Emparejamiento por número físico y escala limitada."
+            },
+            {
+              "path": "src/components/CompareDocuments.tsx",
+              "line": 70,
+              "note": "Selección manual de página y modo."
+            },
+            {
+              "path": "src/components/CompareDocuments.tsx",
+              "line": 72,
+              "note": "Tres imágenes sin controles de zoom o superposición."
+            }
+          ]
+        },
+        {
+          "id": "compress",
+          "title": "Optimizar PDF",
+          "existing": "Optimiza objetos y comprime streams sin degradar imágenes. Si no reduce el tamaño, devuelve el original y lo informa.",
+          "gap": "No hay perfiles de imagen, resolución, calidad, estimación o tamaño objetivo; la herramienta no puede reducir mucho un PDF dominado por imágenes ya comprimidas.",
+          "proposal": "Conservar la optimización sin pérdida y ofrecer aparte perfiles de compresión de imágenes con calidad/DPI, estimación y comparación antes de aplicar.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "medio",
+            "reason": "La compresión con pérdida puede degradar texto escaneado o imágenes; se necesita previsualización y un original recuperable."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 256,
+              "note": "Optimización sin ajustes de imagen."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 436,
+              "note": "Preserva bytes originales si no se reduce tamaño."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1037,
+              "note": "Notificación del resultado."
+            }
+          ]
+        },
+        {
+          "id": "security",
+          "title": "Contraseñas y permisos",
+          "existing": "Protección AES-256 con contraseña de apertura/propietario, permisos de copia e impresión y retirada de protección con contraseña de propietario.",
+          "gap": "Falta un resumen del estado de protección y un flujo explícito para aportar la contraseña de propietario al quitar restricciones. No hay mostrar/ocultar contraseña.",
+          "proposal": "Mostrar cifrado, permisos y autenticación actual. Separar Proteger y Quitar protección, solicitando la contraseña adecuada y explicando el resultado antes de aplicarlo.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "No confundir contraseña de apertura con propietario ni prometer que todos los lectores harán cumplir los permisos."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 258,
+              "note": "Protección y retirada compartiendo formulario."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 429,
+              "note": "El motor exige autenticación de propietario para quitar protección."
+            }
+          ]
+        },
+        {
+          "id": "sanitize",
+          "title": "Eliminar datos ocultos",
+          "existing": "Quita metadatos, adjuntos y acciones automáticas, conservando contenido visible. El motor elimina categorías concretas de datos privados y multimedia.",
+          "gap": "Es una aplicación global sin inventario previo, selección de categorías ni informe de lo encontrado y eliminado.",
+          "proposal": "Inspeccionar primero, mostrar categorías y cantidades y permitir revisar el alcance. Informar al terminar qué se eliminó y qué categorías no se inspeccionan.",
+          "priority": "P2",
+          "effort": "medio",
+          "risk": {
+            "level": "alto",
+            "reason": "No presentar una limpieza parcial como garantía de ausencia total de información sensible; comprobar recursos y acciones relacionadas."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 257,
+              "note": "Una acción global sin inventario."
+            },
+            {
+              "path": "src/engine/operations.mjs",
+              "line": 26,
+              "note": "Categorías concretas eliminadas por clearPrivateData."
+            }
+          ]
+        },
+        {
+          "id": "signatures",
+          "title": "Firmas digitales",
+          "existing": "Verifica integridad, cobertura, vigencia y confianza con una raíz elegida. Firma RSA/SHA-256 con P12/PFX; informa que no comprueba revocación ni sello de tiempo.",
+          "gap": "No hay apariencia visual configurable, nuevas firmas sobre un documento ya firmado ni validación de revocación/sello de tiempo.",
+          "proposal": "Primero mejorar lectura del informe y apariencia de firma. Planificar aparte firmas incrementales, sellado de tiempo y validación de certificados con alcance y conectividad explícitos.",
+          "priority": "P2",
+          "effort": "alto",
+          "risk": {
+            "level": "alto",
+            "reason": "Las modificaciones pueden invalidar firmas anteriores; vigencia o integridad no equivalen por sí solas a confianza completa."
+          },
+          "phase": 3,
+          "evidence": [
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 294,
+              "note": "Resultados de verificación y límites explícitos."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 298,
+              "note": "Firma disponible solo si el documento no está firmado."
+            },
+            {
+              "path": "src/components/Workbench.tsx",
+              "line": 301,
+              "note": "Algoritmo y condiciones de firma."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guardado-ajustes",
+      "title": "Guardado, impresión, ajustes e información",
+      "items": [
+        {
+          "id": "save",
+          "title": "Guardar y conservar historial",
+          "existing": "El borrador local se conserva y el cierre de PC espera su persistencia. Guardar crea una copia del PDF con anotaciones; la exportación usa el diálogo nativo o la descarga del navegador.",
+          "gap": "Después de guardar se reabre el documento sin conservar el historial de deshacer. La confirmación de descarga web no demuestra que el usuario haya conservado el archivo.",
+          "proposal": "Mantener el historial tras guardar, identificar claramente Guardar una copia y mostrar por separado cambios en el PDF y borrador local. En web, informar que se inició la descarga sin afirmar su recepción.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "Mantener identidad, indicador de modificaciones y copias locales coherentes al guardar o cancelar el diálogo."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 378,
+              "note": "La reapertura limpia historial si no se pide preservarlo."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1104,
+              "note": "Guardado reabre sin preserveHistory."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 540,
+              "note": "Cierre nativo bloqueado hasta persistir."
+            },
+            {
+              "path": "src/platform.ts",
+              "line": 43,
+              "note": "Guardar copia nativa; la descarga web retorna éxito inmediato."
+            }
+          ]
+        },
+        {
+          "id": "print",
+          "title": "Imprimir",
+          "existing": "En PC prepara imágenes de todas las páginas con anotaciones y abre el diálogo de impresión. Limita el tamaño acumulado del trabajo.",
+          "gap": "Se rasteriza todo antes del diálogo: no se elige página actual o intervalo ni se puede cancelar la preparación. La calidad está fijada en escala 1,5 y JPEG 94 %.",
+          "proposal": "Añadir preparación con alcance actual/selección/intervalo, calidad y progreso cancelable antes de rasterizar. Mostrar límites y errores de preparación de forma útil.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "medio",
+            "reason": "La impresión y cancelación dependen de la plataforma; páginas grandes pueden consumir memoria o perder detalle al rasterizar."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1129,
+              "note": "Prepara todas las páginas con calidad fija antes de abrir el diálogo."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1135,
+              "note": "Límite acumulado del trabajo."
+            }
+          ]
+        },
+        {
+          "id": "settings",
+          "title": "Ajustes de lectura",
+          "existing": "Tema, zoom inicial, desplazamiento, velocidad de rueda, separación, animación, última página, panel inicial/ancho y gestión de copias locales. La eliminación exige un segundo clic de confirmación.",
+          "gap": "No hay restablecimiento de valores. En PC no se explica con suficiente claridad qué ajustes afectan al documento abierto y cuáles se usan al abrir el siguiente.",
+          "proposal": "Separar preferencias iniciales y vista actual, describir su alcance y añadir Restablecer. Incluir una opción de recuperación del espacio de trabajo cuando exista esa función.",
+          "priority": "P1",
+          "effort": "bajo",
+          "risk": {
+            "level": "bajo",
+            "reason": "Respetar preferencias guardadas y evitar cambios inesperados en documentos ya abiertos."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/components/ReadingSettings.tsx",
+              "line": 23,
+              "note": "La explicación de valores iniciales se limita a la vista de teléfono."
+            },
+            {
+              "path": "src/components/ReadingSettings.tsx",
+              "line": 25,
+              "note": "Conjunto de preferencias de lectura."
+            },
+            {
+              "path": "src/components/ReadingSettings.tsx",
+              "line": 37,
+              "note": "Confirmación de borrado local existente."
+            },
+            {
+              "path": "src/App.tsx",
+              "line": 1445,
+              "note": "En PC cambiar modo también modifica la vista actual."
+            }
+          ]
+        },
+        {
+          "id": "document-info",
+          "title": "Información del documento",
+          "existing": "Muestra nombre, páginas, tamaño, anotaciones, marcadores y procesamiento local.",
+          "gap": "Faltan metadatos del PDF, versión, cifrado, permisos, firmas y diferencia entre archivo guardado y borrador modificado.",
+          "proposal": "Ampliar el panel con información obtenida del PDF y estado del documento. Enlazar protección, firmas y guardado con las herramientas correspondientes.",
+          "priority": "P1",
+          "effort": "medio",
+          "risk": {
+            "level": "bajo",
+            "reason": "Mostrar valores desconocidos como tales y no atribuir a los metadatos una fiabilidad que no tienen."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1444,
+              "note": "Panel de información limitado a cantidades y procesamiento."
+            }
+          ]
+        },
+        {
+          "id": "help",
+          "title": "Ayuda y descubrimiento de funciones",
+          "existing": "Explica anotaciones, conservación local y atajos de teclado. Varias capacidades avanzadas existen dentro de las herramientas y los menús.",
+          "gap": "Faltan flujos guiados para editar, extraer, rellenar, reconocer texto o guardar; las diferencias entre borrador, aplicación de una operación y archivo exportado pueden resultar confusas.",
+          "proposal": "Añadir ayuda contextual por herramienta, ejemplos breves y un primer recorrido opcional. Actualizarla con el editor cuando se verifique, sin describir funciones aún pendientes como disponibles.",
+          "priority": "P1",
+          "effort": "bajo",
+          "risk": {
+            "level": "bajo",
+            "reason": "La ayuda debe mantenerse alineada con los límites reales del motor y de cada plataforma."
+          },
+          "phase": 2,
+          "evidence": [
+            {
+              "path": "src/App.tsx",
+              "line": 1446,
+              "note": "Ayuda centrada en anotaciones, guardado y atajos."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "benchmarks": [
+    {
+      "product": "Adobe Acrobat",
+      "capability": "Cajas de texto y propiedades de formato",
+      "sources": [
+        "https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/modify-text.html",
+        "https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/format-text.html"
+      ]
+    },
+    {
+      "product": "PDF Expert",
+      "capability": "Selección de párrafos y líneas",
+      "sources": [
+        "https://support.readdle.com/pdfexpert/en_US/edit-pdfs/edit-text-in-pdf-files"
+      ]
+    },
+    {
+      "product": "UPDF",
+      "capability": "Asas y dimensiones manuales de imagen",
+      "sources": [
+        "https://updf.com/updf-windows-user-guide-1/edit-image/"
+      ]
+    }
+  ]
+}

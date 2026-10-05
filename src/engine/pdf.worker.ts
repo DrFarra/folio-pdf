@@ -11,7 +11,7 @@ self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' 
       : request.operation === 'inspect'
       ? inspectDocument(request.bytes, request.password)
       : writeAnnotations(request.bytes, request.annotations || [], request.password);
-    const buffer = result instanceof Uint8Array ? result.buffer : !Array.isArray(result) ? result.previewBytes?.buffer : undefined;
+    const buffer = result instanceof Uint8Array ? result.buffer : !Array.isArray(result) && 'previewBytes' in result ? result.previewBytes?.buffer : undefined;
     self.postMessage({ result }, { transfer: buffer ? [buffer] : [] });
   } catch (error) { self.postMessage({ error: error instanceof Error ? error.message : 'El motor PDF no pudo completar la operación.' }); }
 };

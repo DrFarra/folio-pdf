@@ -143,11 +143,11 @@ function pruneFields(doc) {
 function appendDrawing(doc, page, draw) {
   const bounds = page.getBounds();
   const buffer = new mupdf.Buffer(), writer = new mupdf.DocumentWriter(buffer, 'pdf', 'compress=yes');
-  let generated;
+  let generated, closed = false;
   try {
     const device = writer.beginPage(bounds);
-    try { draw(device); } finally { writer.endPage(); }
-    writer.close(); generated = new mupdf.PDFDocument(buffer);
+    try { draw(device); } finally { try { writer.endPage(); } finally { device.destroy(); } }
+    writer.close(); closed = true; generated = new mupdf.PDFDocument(buffer);
     const object = generated.findPage(0);
     const content = object.get('Contents').readStream();
     let form;
@@ -167,35 +167,139 @@ function appendDrawing(doc, page, draw) {
     if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
     else if (!contents.isNull()) list.push(contents);
     list.push(stream); target.put('Contents', list);
-  } finally { generated?.destroy(); writer.destroy(); buffer.destroy(); }
+  } finally {
+    if (!closed) { try { writer.close(); } catch {} }
+    generated?.destroy(); writer.destroy(); buffer.destroy();
+  }
 }
 
 function textDrawing(device, box, options) {
   if (typeof options.text !== 'string' || options.text.length > 50000) fail('Texto inválido o demasiado largo.');
-  const size = Number(options.size || 12);
+  const size = Number(options.size ?? 12);
   if (!Number.isFinite(size) || size < 4 || size > 200) fail('Tamaño de letra inválido.');
-  const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font('Helvetica');
+  const align = options.align ?? 'left', lineHeight = options.lineHeight ?? 1.25, wrap = options.wrap ?? false;
+  if (!['left', 'center', 'right'].includes(align)) fail('Alineación de texto inválida.');
+  if (!Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3) fail('Interlineado inválido.');
+  if (typeof wrap !== 'boolean') fail('Ajuste de líneas inválido.');
+  const standardFonts = ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique', 'Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic', 'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'];
+  if (options.fontName !== undefined && !standardFonts.includes(options.fontName)) fail('Fuente de texto no disponible.');
+  const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font(options.fontName ?? 'Helvetica');
   const text = new mupdf.Text();
   try {
     for (const c of options.text) if (c !== '\n' && c !== '\r' && c !== '\t' && !font.encodeCharacter(c)) fail(`La fuente elegida no incluye el carácter «${c}».`);
-    let y = box[1] + size;
-    for (const line of options.text.replace(/\r/g, '').split('\n')) {
-      const width = [...line].reduce((n, c) => n + font.advanceGlyph(font.encodeCharacter(c)) * size, 0);
-      if (width > box[2] - box[0] + .5 || y > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
-      text.showString(font, [size, 0, 0, -size, box[0], y], line);
-      y += size * 1.25;
+    const limit = box[2] - box[0], measure = line => [...line].reduce((n, c) => n + font.advanceGlyph(font.encodeCharacter(c)) * size, 0);
+    const lines = [];
+    for (const paragraph of options.text.replace(/\r/g, '').split('\n')) {
+      if (!wrap || measure(paragraph) <= limit + .5) { lines.push(paragraph); continue; }
+      let line = '';
+      // Break at whitespace, then at glyph boundaries for a word wider than the box.
+      for (const token of paragraph.match(/\S+|\s+/gu) || []) {
+        if (measure(line + token) <= limit + .5) { line += token; continue; }
+        if (line.trim()) { lines.push(line.trimEnd()); line = ''; }
+        if (!token.trim()) continue;
+        for (const character of token) {
+          if (measure(line + character) > limit + .5) {
+            if (!line || measure(character) > limit + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
+            lines.push(line); line = '';
+          }
+          line += character;
+        }
+      }
+      lines.push(line.trimEnd());
     }
+    let y = box[1] + size;
+    for (const line of lines) {
+      const width = measure(line);
+      if (width > limit + .5 || y > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
+      const x = box[0] + (align === 'center' ? (limit - width) / 2 : align === 'right' ? limit - width : 0);
+      text.showString(font, [size, 0, 0, -size, x, y], line);
+      y += size * lineHeight;
+    }
+    // Wrapped text must fit its actual glyph ink, including descenders below the baseline.
+    // Legacy calls retain their original baseline-based fitting behavior.
+    if (wrap && options.text.trim() && text.getBounds(null, mupdf.Matrix.identity)[3] > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, rgb(options.color || '#202020'), 1);
   } finally { text.destroy(); font.destroy(); }
 }
 
-function redactPage(page, boxes, { black = true, images = true, graphics = true } = {}) {
-  for (const box of boxes) {
-    for (const a of [...page.getAnnotations()]) if (intersects(a.getBounds(), box)) page.deleteAnnotation(a);
-    const mark = page.createAnnotation('Redact'); mark.setRect(box); mark.update();
+function imagePlacement(image, box, options) {
+  const fit = options.fit ?? 'stretch', alpha = options.opacity ?? 1, rotation = options.rotation ?? 0;
+  if (!['contain', 'cover', 'stretch'].includes(fit)) fail('Ajuste de imagen inválido.');
+  if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
+  if (![0, 90, 180, 270].includes(rotation)) fail('Giro de imagen inválido.');
+  const width = box[2] - box[0], height = box[3] - box[1], turned = rotation === 90 || rotation === 270;
+  let w = turned ? height : width, h = turned ? width : height;
+  if (fit !== 'stretch') {
+    const iw = image.getWidth(), ih = image.getHeight();
+    const scale = (fit === 'contain' ? Math.min : Math.max)(width / (turned ? ih : iw), height / (turned ? iw : ih));
+    w = iw * scale; h = ih * scale;
   }
-  page.applyRedactions(black, images ? mupdf.PDFPage.REDACT_IMAGE_PIXELS : mupdf.PDFPage.REDACT_IMAGE_NONE,
-    graphics ? mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED : mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
+  const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+  const matrix = rotation === 90 ? [0, w, -h, 0, cx + h / 2, cy - w / 2]
+    : rotation === 180 ? [-w, 0, 0, -h, cx + w / 2, cy + h / 2]
+    : rotation === 270 ? [0, -w, h, 0, cx - h / 2, cy + w / 2]
+    : [w, 0, 0, h, cx - w / 2, cy - h / 2];
+  return { matrix, alpha, clip: fit === 'cover' };
+}
+
+function imageDrawing(device, box, image, placement) {
+  let path;
+  if (placement.clip) {
+    path = new mupdf.Path(); path.rect(...box);
+    try { device.clipPath(path, false, mupdf.Matrix.identity); } finally { path.destroy(); }
+  }
+  try { device.fillImage(image, placement.matrix, placement.alpha); }
+  finally { if (placement.clip) device.popClip(); }
+}
+
+function areaContent(page, box) {
+  const result = { text: '', size: 12, color: '#202020', fontName: 'Helvetica', mixedStyle: false, rotated: false };
+  const styles = new Map(), lines = [];
+  let selected = '', direction, structured;
+  try {
+    structured = page.toStructuredText('preserve-whitespace');
+    structured.walk({
+      beginLine: (_bounds, mode, vector) => { selected = ''; direction = mode !== 0 || Math.abs(vector[1]) > .01 || vector[0] < .99; },
+      onChar: (character, _origin, font, size, quad, color) => {
+        try {
+          const xs = [quad[0], quad[2], quad[4], quad[6]], ys = [quad[1], quad[3], quad[5], quad[7]];
+          if (!intersects(box, [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])) return;
+          selected += character; result.rotated ||= direction;
+          if (!character.trim()) return;
+          const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
+          const fontName = font.getName(), key = `${fontName}:${Math.round(size * 100)}:${hex}`;
+          const style = styles.get(key) || { size, color: hex, fontName, count: 0 }; style.count++; styles.set(key, style);
+        } finally { font.destroy(); }
+      },
+      endLine: () => { if (selected) lines.push(selected); },
+    });
+    result.text = lines.join('\n');
+    const predominant = [...styles.values()].sort((a, b) => b.count - a.count)[0];
+    if (predominant) { result.size = predominant.size; result.color = predominant.color; result.fontName = predominant.fontName; }
+    result.mixedStyle = styles.size > 1;
+    return result;
+  } finally { structured?.destroy(); }
+}
+
+function redactPage(doc, page, boxes, { black = true, images = true, graphics = true, text = true, preserveAnnotations = false } = {}) {
+  // Editing content must retain comments, links, widgets and pending redaction marks.
+  const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
+  let restored;
+  if (originals && !originals.isNull()) {
+    restored = doc.newArray();
+    for (let i = 0; i < originals.length; i++) restored.push(originals.get(i));
+    for (const annotation of [...page.getAnnotations()]) page.deleteAnnotation(annotation);
+  }
+  try {
+    for (const box of boxes) {
+      if (!preserveAnnotations) for (const a of [...page.getAnnotations()]) if (intersects(a.getBounds(), box)) page.deleteAnnotation(a);
+      const mark = page.createAnnotation('Redact'); mark.setRect(box); mark.update();
+    }
+    page.applyRedactions(black, images ? mupdf.PDFPage.REDACT_IMAGE_PIXELS : mupdf.PDFPage.REDACT_IMAGE_NONE,
+      graphics ? mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED : mupdf.PDFPage.REDACT_LINE_ART_NONE, text ? mupdf.PDFPage.REDACT_TEXT_REMOVE : mupdf.PDFPage.REDACT_TEXT_NONE);
+  } finally {
+    if (preserveAnnotations) { if (restored) object.put('Annots', restored); else object.delete('Annots'); }
+  }
 }
 
 export function operateDocument(bytes, options, password = '') {
@@ -203,6 +307,12 @@ export function operateDocument(bytes, options, password = '') {
   try {
     const operation = options.operation;
     if (operation === 'fields') return fields(doc);
+    if (operation === 'area-info') {
+      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
+      const page = doc.loadPage(pageIndex(doc, options.page));
+      try { return areaContent(page, mupdf.Rect.transform(rect(options.rect), page.getTransform())); }
+      finally { page.destroy(); }
+    }
     if (operation === 'text') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       return Array.from({ length: doc.countPages() }, (_, i) => {
@@ -380,7 +490,7 @@ export function operateDocument(bytes, options, password = '') {
           } finally { page.destroy(); }
         }
       } finally { font.destroy(); }
-    } else if (['add-text', 'replace-text', 'add-image', 'remove-image', 'redact', 'crop'].includes(operation)) {
+    } else if (['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image', 'redact', 'crop'].includes(operation)) {
       allowed(doc, 'edit');
       if (operation === 'redact') {
         if (!Array.isArray(options.areas) || !options.areas.length) fail('Selecciona al menos un área.');
@@ -392,7 +502,7 @@ export function operateDocument(bytes, options, password = '') {
         }
         for (const [index, boxes] of grouped) {
           const page = doc.loadPage(index);
-          try { redactPage(page, boxes.map(box => mupdf.Rect.transform(box, page.getTransform()))); } finally { page.destroy(); }
+          try { redactPage(doc, page, boxes.map(box => mupdf.Rect.transform(box, page.getTransform()))); } finally { page.destroy(); }
         }
         if (options.sanitize !== false) clearPrivateData(doc, true);
       } else {
@@ -400,16 +510,28 @@ export function operateDocument(bytes, options, password = '') {
         try {
           const box = mupdf.Rect.transform(rect(options.rect), page.getTransform());
           if (operation === 'crop') page.setPageBox('CropBox', box);
-          else if (operation === 'add-image') {
+          else if (operation === 'add-image' || operation === 'replace-image') {
             const image = new mupdf.Image(options.image);
-            try { appendDrawing(doc, page, device => device.fillImage(image, [box[2] - box[0], 0, 0, box[3] - box[1], box[0], box[1]], 1)); } finally { image.destroy(); }
+            let replacement;
+            try {
+              const placement = imagePlacement(image, box, options);
+              if (operation === 'replace-image') {
+                const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
+                // Image editing removes pixels in the source area; text and annotations remain.
+                redactPage(doc, page, [source], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
+                replacement = save(doc);
+              } else appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
+            } finally { image.destroy(); }
+            if (replacement) return operateDocument(replacement, { ...options, operation: 'add-image' }, password);
           } else if (operation === 'remove-image') {
             const a = page.createAnnotation('Redact'); a.setRect(box); a.update();
             page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_NONE);
           } else {
             // Fit validation happens before redaction; errors never return a modified PDF.
             if (operation === 'replace-text') {
-              redactPage(page, [box], { black: false, images: false, graphics: false });
+              textDrawing({ fillText() {} }, box, options);
+              const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
+              redactPage(doc, page, [source], { black: false, images: false, graphics: false, preserveAnnotations: true });
               // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
               return operateDocument(save(doc), { ...options, operation: 'add-text' }, password);
             }

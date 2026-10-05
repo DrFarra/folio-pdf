@@ -1,4 +1,3 @@
-import { assetUrl } from '../assets';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows } from 'lucide-react';
 import Modal from './Modal';
@@ -13,12 +12,14 @@ import { saveExport } from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
+import ContentEditor, { type ContentEditorKind } from './ContentEditor';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
 type Props = { doc: LoadedDocument; section: string; page: number; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onApply: (operation: Operation, signal?: AbortSignal) => Promise<void>; getBytes: () => Promise<Uint8Array>; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
+const contentKinds = ['add-text', 'replace-text', 'add-image', 'replace-image'];
 
 export default function Workbench(props: Props) {
   const { doc, onApply, onSelectTool } = props;
@@ -39,10 +40,6 @@ export default function Workbench(props: Props) {
   const fieldsSource = useRef<Uint8Array | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [flatten, setFlatten] = useState(false);
-  const [text, setText] = useState('');
-  const [size, setSize] = useState(12);
-  const [color, setColor] = useState('#202020');
-  const [image, setImage] = useState<Uint8Array | null>(null);
   const [userPassword, setUserPassword] = useState('');
   const [ownerPassword, setOwnerPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -80,13 +77,6 @@ export default function Workbench(props: Props) {
 
   async function apply(operation: Operation) {
     await task(signal => onApply(operation, signal));
-  }
-  async function applyText() {
-    await task(async signal => {
-      const response = await fetch(assetUrl('/fonts/dm-sans-regular.ttf'), { signal });
-      if (!response.ok) throw new Error('No se pudo cargar la fuente.');
-      await onApply({ operation: section as 'add-text' | 'replace-text', ...props.area!, text, size, color, font: new Uint8Array(await response.arrayBuffer()) }, signal);
-    });
   }
   function selectedPages(): number[] {
     const result = new Set<number>();
@@ -169,11 +159,12 @@ export default function Workbench(props: Props) {
       setPfx(new Uint8Array(await file.arrayBuffer())); setError('');
     } catch (err) { setPfx(null); setError((err as Error).message); }
   }
-  const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'add-text': 'Añadir texto', 'replace-text': 'Reemplazar texto', 'add-image': 'Añadir imagen', 'remove-image': 'Eliminar imagen', redact: 'Aplicar censura', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
+  const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'add-text': 'Añadir texto', 'replace-text': 'Reemplazar texto', 'add-image': 'Añadir imagen', 'replace-image': 'Reemplazar imagen', 'remove-image': 'Eliminar imagen', redact: 'Aplicar censura', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
   const actions = [
     ['pages', 'Organizar páginas', Files, doc.canAssemble], ['forms', 'Rellenar formulario', FormInput, doc.canFill],
     ['add-text', 'Añadir texto', Type, doc.canEdit], ['replace-text', 'Reemplazar texto', FileText, doc.canEdit],
     ['add-image', 'Añadir imagen', ImagePlus, doc.canEdit], ['remove-image', 'Eliminar imagen', FileImage, doc.canEdit],
+    ['replace-image', 'Reemplazar imagen', FileImage, doc.canEdit],
     ['crop', 'Recortar página', Scissors, doc.canEdit], ['redact', 'Censurar contenido', Highlighter, doc.canEdit],
     ['create-field', 'Crear campo', FormInput, doc.canEdit], ['ocr', 'Reconocer texto (OCR)', ScanText, doc.canEdit],
     ['convert', 'Convertir PDF', FileOutput, doc.canCopy], ['compare', 'Comparar documentos', GitCompareArrows, doc.canCopy],
@@ -183,7 +174,7 @@ export default function Workbench(props: Props) {
   ] as const;
   const categories = [
     { id: 'pages', title: 'Páginas', actions: ['pages', 'crop'] },
-    { id: 'content', title: 'Contenido', actions: ['add-text', 'replace-text', 'add-image', 'remove-image'] },
+    { id: 'content', title: 'Contenido', actions: ['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image'] },
     { id: 'forms', title: 'Formularios', actions: ['forms', 'create-field'] },
     { id: 'review', title: 'Revisión y firmas', actions: ['compare', 'signatures'] },
     { id: 'export', title: 'Exportación y OCR', actions: ['convert', 'ocr', 'compress'] },
@@ -192,7 +183,7 @@ export default function Workbench(props: Props) {
   const chooseAction = (key: string) => {
     if (busy || compareBusy) return;
     setError('');
-    if (['add-text', 'replace-text', 'add-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) {
+    if (['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) {
       // Revisit the already selected area without remounting this form or
       // clearing its text/image/field draft. A different tool needs a new area.
       if (props.section === key && (props.area || key === 'redact')) setSection(key);
@@ -207,7 +198,7 @@ export default function Workbench(props: Props) {
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.workbench [data-tool-key="${CSS.escape(previous)}"]`)?.focus());
   };
   const planChanged = plan.length !== initialPlan.current.length || plan.some((page, index) => page.key !== initialPlan.current[index].key || (page.rotation || 0) !== (initialPlan.current[index].rotation || 0));
-  return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}`}>
+  return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${contentKinds.includes(section) && props.area ? ' content-workbench' : ''}`}>
     {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button></div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
     {section === 'home' && <div className="tool-categories">{categories.map(category => <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}><h3 className="tool-category-heading" id={`tool-category-${category.id}`}>{category.title}</h3><div className="operation-grid">{category.actions.map(key => {
@@ -245,12 +236,7 @@ export default function Workbench(props: Props) {
       </label>)}</div>
       {!!fields?.length && <><label className="check-option"><input type="checkbox" checked={flatten} disabled={!doc.canEdit || busy} onChange={e => setFlatten(e.target.checked)} />Convertir los campos a contenido fijo</label><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'fill', values: Object.fromEntries(fields.filter(f => !f.readOnly && !['signature', 'button'].includes(f.type)).map(f => [f.id, values[f.id]])), flatten })}>Aplicar valores</button></div></>}
     </>}
-    {['add-text', 'replace-text'].includes(section) && props.area && <>
-      <p className="area-label">Página {props.area.page}</p><textarea className="edit-text-input" aria-label="Texto del PDF" value={text} onChange={e => setText(e.target.value)} placeholder="Texto" autoFocus />
-      <div className="edit-options"><label>Tamaño<input type="number" min="4" max="200" value={size} onChange={e => setSize(Number(e.target.value))} /></label><label>Color<input type="color" value={color} onChange={e => setColor(e.target.value)} /></label></div>
-      <div className="operation-actions"><button className="primary-button" disabled={!text.trim() || busy} onClick={() => void applyText()}>Aplicar texto</button></div>
-    </>}
-    {section === 'add-image' && props.area && <><label className="file-choice">Imagen PNG o JPEG<input type="file" accept="image/png,image/jpeg" onChange={async e => { const file = e.target.files?.[0]; if (file) setImage(new Uint8Array(await file.arrayBuffer())); }} /></label><div className="operation-actions"><button className="primary-button" disabled={!image || busy} onClick={() => void apply({ operation: 'add-image', ...props.area!, image: image! })}>Insertar imagen</button></div></>}
+    {contentKinds.includes(props.section) && props.area && <div className="content-editor-slot" hidden={section !== props.section}><ContentEditor doc={doc} area={props.area} kind={props.section as ContentEditorKind} active={section === props.section} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={props.onClose} /></div>}
     {['remove-image', 'crop'].includes(section) && props.area && <><p className="modal-description">{section === 'crop' ? 'El recorte cambia el área visible de esta página. El contenido exterior permanece en el PDF.' : 'Se eliminan los píxeles de imágenes dentro del área seleccionada; el texto permanece.'}</p><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: section as 'remove-image' | 'crop', ...props.area! })}>Aplicar</button></div></>}
     {section === 'redact' && <><p className="modal-description">Se eliminarán el texto, las imágenes y los gráficos de {props.redactions.length} áreas. Los formularios se convertirán a contenido fijo; se quitarán metadatos, adjuntos e índice del documento. Revisa la selección antes de aplicar.</p><div className="redaction-list">{props.redactions.map((area, index) => <span key={index}>Página {area.page} · Área {index + 1}</span>)}</div><div className="operation-actions"><button className="primary-button" disabled={busy || !props.redactions.length} onClick={() => void apply({ operation: 'redact', areas: props.redactions })}>Eliminar contenido seleccionado</button></div></>}
     {section === 'compress' && <><p className="modal-description">Optimiza objetos y comprime streams sin reducir la calidad de las imágenes. Tamaño actual: {formatSize(doc.size)}.</p><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'compress' })}>Optimizar PDF</button></div></>}
