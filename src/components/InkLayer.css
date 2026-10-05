@@ -1,0 +1,10 @@
+.ink-layer{position:absolute;inset:0;width:100%;height:100%;z-index:6;pointer-events:none;overflow:hidden;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.ink-layer.ink-interactive{pointer-events:auto;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
+.tool-draw .textLayer,.tool-eraser .textLayer{pointer-events:none;user-select:none;-webkit-user-select:none}
+.ink-settings{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);z-index:7;flex-shrink:0}
+.ink-settings label{display:flex;align-items:center;gap:8px;font-size:13px;min-height:44px}
+.ink-settings input[type=color]{width:44px;height:44px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.ink-settings select{min-height:44px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:0 8px}
+.ink-settings input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent)}
+.ink-settings small{color:var(--muted);font-size:12px}
+.phone-layout .ink-settings{gap:4px 12px;padding:4px 12px}.phone-layout .ink-settings small{display:none}

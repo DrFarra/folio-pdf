@@ -15,3 +15,10 @@ release/
 
 src-tauri/gen/apple/
 src-tauri/plugins/folio-ios/ios/Frameworks/
+
+**/.tauri/
+**/.gradle/
+src-tauri/plugins/folio-android/android/build/
+.codex-remote-attachments/
+output/
+tmp/

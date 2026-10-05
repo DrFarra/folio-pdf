@@ -6,6 +6,7 @@ import type { LoadedDocument } from '../types';
 import { getDocument } from '../pdf';
 import { extractText } from '../engine/client';
 import { compareText, visualDifference } from '../comparison';
+import FilePicker from './FilePicker';
 
 type Pair = { before: PDFDocumentProxy; after: PDFDocumentProxy; beforeText: string[]; afterText: string[]; name: string };
 export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc: LoadedDocument; getBytes: () => Promise<Uint8Array>; onBusyChange?: (busy: boolean) => void }) {
@@ -63,7 +64,7 @@ export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc:
   }, [pair, page, mode]);
   const differences = pair ? compareText(pair.beforeText[page - 1] || '', pair.afterText[page - 1] || '') : [];
   return <div className="compare-documents">
-    <label className="file-choice">Segundo PDF<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={e => setFile(e.target.files?.[0] || null)} /></label>
+    <FilePicker label="Segundo PDF" buttonText="Elegir PDF" accept=".pdf,application/pdf" selectedName={file?.name} disabled={busy} onSelect={files => setFile(files[0])} />
     <label className="compare-password">Contraseña del segundo PDF, si tiene<input type="password" autoComplete="off" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} /></label>
     <button className="primary-button" disabled={!file || busy} onClick={() => void compare()}>{busy && <LoaderCircle size={16} className="spin" />}Comparar</button>
     {error && <p className="operation-error" role="alert">{error}</p>}

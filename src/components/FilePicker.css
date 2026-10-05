@@ -1,0 +1,11 @@
+.file-picker{display:flex;flex-direction:column;gap:8px;min-width:0;width:100%;margin:0 0 16px}
+.file-picker-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--text);overflow-wrap:anywhere}
+.file-picker-control{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.file-picker .file-picker-button{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;max-width:100%;margin:0;padding:9px 12px;border-radius:7px;font-size:13px;line-height:1.4;white-space:normal;text-align:left}
+.file-picker-button>svg{flex-shrink:0;color:var(--accent)}
+.file-picker-status{flex:1 1 140px;min-width:0;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.file-picker-status.has-file{color:var(--text);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.file-picker>input[hidden]{display:none}
+html:is([data-phone],[data-tablet]) .app-shell .file-picker .file-picker-button{min-height:48px;font-size:14px}
+html:is([data-phone],[data-tablet]) .file-picker-label{font-size:14px}
+html:is([data-phone],[data-tablet]) .file-picker-status{font-size:13px}

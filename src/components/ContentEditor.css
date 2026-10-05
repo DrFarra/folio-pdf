@@ -62,7 +62,6 @@ html:not([data-phone]) .app-shell .workbench .content-inspector-scroll label{fon
 .content-suggestion .secondary-button{font-size:12px;min-height:34px;align-self:flex-start}
 .content-editor-delete-note{border-left:3px solid #ae4036;border-radius:4px;background:#ae403609;padding:10px 11px;margin:0 0 10px;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .content-editor[data-intent=delete] .content-source-box{border-color:#ae4036}
-.content-image-choice{font-weight:400!important;border:1px dashed var(--line);padding:8px;border-radius:5px}
 .content-image-info{display:flex;align-items:center;gap:9px;margin:0;min-width:0}
 .content-image-info img{width:48px;height:48px;object-fit:contain;background:var(--canvas);border:1px solid var(--line);border-radius:4px;flex-shrink:0}
 .content-image-info figcaption{font-size:11px;overflow-wrap:anywhere;min-width:0}

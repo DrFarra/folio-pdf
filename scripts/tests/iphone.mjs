@@ -988,8 +988,8 @@ try {
     assert.equal(text.length, 2); assert(text[0].includes('FIRST PAGE 3')); assert(text[1].includes('FIRST PAGE 1'));
     await library(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
     await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor(); await page.getByLabel('Nombre', { exact: true }).fill('iPhone created.pdf');
-    await page.locator('.workbench input[type=file]').setInputFiles(imageSource); assertScreen(await geometry(page));
-    await page.getByRole('button', { name: 'Crear documento', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.getByLabel('Imágenes (opcional)', { exact: true }).setInputFiles(imageSource); assertScreen(await geometry(page));
+    await page.getByRole('button', { name: 'Crear documento', exact: true }).tap(); await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor({ state: 'detached' });
     await page.getByRole('heading', { name: 'iPhone created.pdf', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
     const created = await save(page, 'iphone-created-image-export.pdf'), document = new mupdf.PDFDocument(created.bytes);
     let images = 0;

@@ -2,12 +2,19 @@ use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Manager, State};
-#[cfg(not(target_os = "ios"))]
+mod drive;
+mod drive_auth;
+use drive::*;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tauri_plugin_dialog::DialogExt;
 #[cfg(target_os = "ios")]
 mod ios_commands;
 #[cfg(target_os = "ios")]
 use ios_commands::{pick_document, pick_documents, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url};
+#[cfg(target_os = "android")]
+mod android_commands;
+#[cfg(target_os = "android")]
+use android_commands::*;
 use folio_core::{atomic_write, digest, fingerprint, protect_original, read_pdf, validate_pdf, inspect_pdf_file, read_pdf_range, FileSnapshot};
 
 #[derive(Clone, Serialize)]
@@ -52,14 +59,14 @@ fn register(desktop: &Desktop, path: PathBuf) -> Result<DocumentInfo, String> {
     Ok(info)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn pick_document(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
     let result = tauri::async_runtime::spawn_blocking(move || app.dialog().file().add_filter("Documento PDF", &["pdf"]).blocking_pick_file()).await.map_err(|_| "No se pudo abrir el diálogo.")?;
     result.map(|p| p.into_path().map_err(|_| "El archivo elegido no tiene una ruta local.".to_string()).and_then(|p| register(&desktop, p))).transpose()
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn pick_documents(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Vec<DocumentInfo>, String> {
     let result = tauri::async_runtime::spawn_blocking(move || app.dialog().file().add_filter("Documentos PDF", &["pdf"]).blocking_pick_files()).await.map_err(|_| "No se pudo abrir el diálogo.")?;
@@ -96,7 +103,7 @@ fn read_document_range(token: String, offset: u64, length: usize, desktop: State
     read_pdf_range(&source.path, &source.snapshot, offset, length).map(tauri::ipc::Response::new)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn choose_output(source: Option<String>, name: String, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<String>, String> {
     let filename = Path::new(&name).file_name().ok_or("Nombre de copia inválido.")?.to_string_lossy().into_owned();
@@ -113,7 +120,7 @@ async fn choose_output(source: Option<String>, name: String, app: tauri::AppHand
     Ok(Some(token))
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 fn write_pdf_copy(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<DocumentInfo, String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("No se eligió un destino de guardado.")?;
@@ -126,7 +133,7 @@ fn write_pdf_copy(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>)
     register(&desktop, output.path)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn choose_export(source: Option<String>, name: String, format: String, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<String>, String> {
     if !["txt", "html", "png", "jpg", "zip", "docx", "json"].contains(&format.as_str()) { return Err("Formato no admitido.".into()); }
@@ -143,7 +150,7 @@ async fn choose_export(source: Option<String>, name: String, format: String, app
     files.outputs.insert(token.clone(), Output { path, fingerprint: expected, source: original, format });
     Ok(Some(token))
 }
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 fn write_export(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<(), String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
@@ -154,13 +161,13 @@ fn write_export(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
     atomic_write(&output.path, bytes, output.fingerprint.as_deref())
 }
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 fn print_document(window: tauri::WebviewWindow) -> Result<(), String> {
     window.print().map_err(|_| "No se pudo abrir el diálogo de impresión.".into())
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn validated_external_url(value: &str) -> Result<tauri::Url, String> {
     if value.len() > 8192 || value.chars().any(char::is_control) { return Err("Enlace externo inválido.".into()); }
     let url = tauri::Url::parse(value).map_err(|_| "Enlace externo inválido.")?;
@@ -171,7 +178,7 @@ fn validated_external_url(value: &str) -> Result<tauri::Url, String> {
     Ok(url)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn open_external_url(url: String) -> Result<(), String> {
     let url = validated_external_url(&url)?;
@@ -426,7 +433,7 @@ fn open_from_system(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
     });
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -449,25 +456,29 @@ fn file_url_paths(urls: Vec<tauri::Url>) -> Vec<PathBuf> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().manage(EarlyOpenPaths::default());
-    #[cfg(not(target_os = "ios"))]
+    let builder = tauri::Builder::default().manage(EarlyOpenPaths::default()).manage(DriveState::default());
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             open_from_system(app, resolve_arguments(argv, Path::new(&cwd)));
             show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_folio_android::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_folio_ios::init());
     #[cfg(feature = "native-qa")]
     let builder = builder.plugin(tauri::plugin::Builder::<tauri::Wry, ()>::new("native-qa")
         .js_init_script(include_str!("native_qa.js"))
         .build());
-    #[cfg(not(target_os = "ios"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_pending_open, pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_pending_open, pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_pending_open, pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, print_document, share_document, share_pdf_copy, print_pdf_copy, set_mobile_theme, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    #[cfg(target_os = "android")]
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_pending_open, pick_document, pick_documents, startup_document, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, write_pdf_original, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, android_safe_area, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, recent_documents, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     builder
         .setup(|app| {
             let data = app.path().app_data_dir()?;
@@ -490,6 +501,8 @@ pub fn run() {
                 std::mem::take(&mut *early)
             };
             if !paths.is_empty() { open_from_system(app.handle(), paths); }
+            #[cfg(target_os = "android")]
+            android_commands::watch_system_documents(app.handle().clone());
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -630,7 +643,7 @@ mod tests {
         assert_eq!(fs::read(store.0.data.join("recent.json")).unwrap(), catalog_before, "Listing, opening and failures must preserve catalog metadata");
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn external_links_reject_local_and_executable_schemes_before_launching() {
         for url in ["https://example.com/path?q=1&second=2", "http://example.com", "mailto:user@example.com", "tel:+595123456"] {

@@ -40,7 +40,21 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform aarch64-apple-darwin --format-version 1 > test-results/cargo-metadata-macos.json
           python3 scripts/generate-notices.py --platform macos --cargo-metadata test-results/cargo-metadata-macos.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
           npm run build
-      - name: Test the PDF content engine used by the 0.8.2 editor
+      - name: Configure installed Google OAuth client
+        env:
+          FOLIO_OAUTH_CONFIG: ${{ secrets.FOLIO_GOOGLE_DESKTOP_CREDENTIALS_JSON }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          config = json.loads(os.environ['FOLIO_OAUTH_CONFIG'])
+          assert config['installed']['client_id'] and config['installed']['client_secret']
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'folio-google-installed.json'
+          path.write_text(json.dumps(config))
+          path.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'FOLIO_GOOGLE_DESKTOP_CREDENTIALS={path}\n')
+          PY
+      - name: Test the current PDF content engine
         run: |
           npm run test:operations
           npm run test:page-content:engine
@@ -53,6 +67,7 @@ jobs:
       - name: Test selection, shortcuts and PDF rendering in Mac WebKit
         run: |
           npx playwright-core install webkit
+          FOLIO_TEST_BROWSER=webkit npm run test:drive
           FOLIO_MAC_PLATFORM_TEST=webkit npm run test:macos
           FOLIO_TEST_BROWSER=webkit npm run test:reading-settings
           FOLIO_TEST_BROWSER=webkit npm run test:remove-highlights
@@ -125,6 +140,8 @@ jobs:
             test-results/folio-macos.png
             test-results/folio-macos-qa.png
             test-results/mac-platform-results.json
+            test-results/drive/*.json
+            test-results/drive/*.png
             test-results/mac-webkit.png
             test-results/reading-settings-results.json
             test-results/reading-settings.png

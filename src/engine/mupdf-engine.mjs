@@ -1,7 +1,7 @@
 import * as mupdf from 'mupdf';
 import { DEFAULT_HIGHLIGHT_OPACITY } from './highlight-style.mjs';
 
-const supported = new Set(['Highlight', 'Text']);
+const supported = new Set(['Highlight', 'Text', 'Ink']);
 const LOCKED = mupdf.PDFAnnotation.IS_READ_ONLY | mupdf.PDFAnnotation.IS_LOCKED | mupdf.PDFAnnotation.IS_LOCKED_CONTENTS;
 const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
 const colorHex = color => {
@@ -50,7 +50,7 @@ function identity(annotation, page) {
 
 function read(annotation, page, transform) {
   const inverse = mupdf.Matrix.invert(transform);
-  const kind = annotation.getType() === 'Text' ? 'note' : 'highlight';
+  const kind = annotation.getType() === 'Text' ? 'note' : annotation.getType() === 'Ink' ? 'ink' : 'highlight';
   const quads = kind === 'highlight' ? annotation.getQuadPoints() : [];
   const xs = quads.flatMap(q => [q[0], q[2], q[4], q[6]]);
   const ys = quads.flatMap(q => [q[1], q[3], q[5], q[7]]);
@@ -68,6 +68,7 @@ function read(annotation, page, transform) {
     author: annotation.getAuthor(), opacity: annotation.getOpacity(),
     sourceRef: annotation.getObject().asIndirect(),
     originalName: annotation.getObject().get('NM').asString(),
+    ...(kind === 'ink' ? { inkPaths: annotation.getInkList().map(path => path.flatMap(p => point(p[0], p[1], inverse))), strokeWidth: annotation.getBorderWidth() || 1 } : {}),
     ...(kind === 'highlight' ? { quads: quads.map(q => {
       const result = [];
       for (let i = 0; i < 8; i += 2) result.push(...point(q[i], q[i + 1], inverse));
@@ -110,19 +111,20 @@ function validate(annotations, pages) {
   const ids = new Set();
   for (const a of annotations) {
     if (!a.id || ids.has(a.id) || !Number.isInteger(a.page) || a.page < 1 || a.page > pages ||
-      !['note', 'highlight'].includes(a.kind) || !Array.isArray(a.rect) || a.rect.length !== 4 ||
+      !['note', 'highlight', 'ink'].includes(a.kind) || !Array.isArray(a.rect) || a.rect.length !== 4 ||
       !a.rect.every(Number.isFinite) || !/^#[\da-f]{6}$/i.test(a.color) || typeof a.text !== 'string' || a.text.length > 5000)
       throw new Error('Una anotación contiene datos inválidos. No se modificó el original.');
     if (a.quads && (!Array.isArray(a.quads) || a.quads.length > 5000 || a.quads.some(q => !Array.isArray(q) || q.length !== 8 || !q.every(Number.isFinite))))
       throw new Error('Las coordenadas del resaltado no son válidas.');
     if (a.opacity !== undefined && (!Number.isFinite(a.opacity) || a.opacity < 0 || a.opacity > 1))
       throw new Error('La opacidad del resaltado no es válida.');
+    if (a.kind === 'ink' && (!Number.isFinite(a.strokeWidth) || a.strokeWidth <= 0 || a.strokeWidth > 50 || !Array.isArray(a.inkPaths) || !a.inkPaths.length || a.inkPaths.length > 500 || a.inkPaths.some(p => !Array.isArray(p) || p.length < 4 || p.length > 20000 || p.length % 2 || !p.every(Number.isFinite)))) throw new Error('El dibujo contiene coordenadas o un grosor inválidos.');
     ids.add(a.id);
   }
 }
 
 /** Save ISO PDF Text/Highlight annotations with Unicode contents and AP streams. */
-export function writeAnnotations(bytes, annotations, password = '') {
+export function writeAnnotations(bytes, annotations, password = '', incremental = false) {
   const doc = open(bytes, password);
   try {
     if (hasSignature(doc)) throw new Error('Este PDF contiene una firma. La edición está bloqueada para conservarla.');
@@ -151,7 +153,7 @@ export function writeAnnotations(bytes, annotations, password = '') {
         }
         const transform = page.getTransform();
         for (const value of pending.values()) {
-          const annotation = page.createAnnotation(value.kind === 'note' ? 'Text' : 'Highlight');
+          const annotation = page.createAnnotation(value.kind === 'note' ? 'Text' : value.kind === 'ink' ? 'Ink' : 'Highlight');
           annotation.setContents(value.text);
           annotation.setName('Folio:' + value.id);
           annotation.setAuthor(value.author || 'Folio');
@@ -163,6 +165,10 @@ export function writeAnnotations(bytes, annotations, password = '') {
             const p = point(value.rect[0], value.rect[1], transform);
             annotation.setRect([p[0], p[1], p[0] + 20, p[1] + 20]);
             annotation.setIcon('Note');
+          } else if (value.kind === 'ink') {
+            annotation.setInkList(value.inkPaths.map(path => { const points = []; for (let i = 0; i < path.length; i += 2) points.push(point(path[i], path[i + 1], transform)); return points; }));
+            annotation.setBorderWidth(value.strokeWidth);
+            annotation.setOpacity(value.opacity ?? 1);
           } else {
             const box = [Math.min(value.rect[0], value.rect[2]), Math.min(value.rect[1], value.rect[3]), Math.max(value.rect[0], value.rect[2]), Math.max(value.rect[1], value.rect[3])];
             const quad = [box[0], box[3], box[2], box[3], box[0], box[1], box[2], box[1]];
@@ -177,6 +183,6 @@ export function writeAnnotations(bytes, annotations, password = '') {
         }
       } finally { page.destroy(); }
     }
-    return save(doc);
+    return save(doc, incremental && doc.canBeSavedIncrementally() ? 'incremental=yes,encrypt=keep' : undefined);
   } finally { doc.destroy(); mupdf.emptyStore(); }
 }

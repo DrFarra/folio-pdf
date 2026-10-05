@@ -26,3 +26,4 @@ html:not([data-phone]) .app-shell .settings-advanced .modal-description{margin-t
 html:not([data-phone]) .app-shell .settings-modal .clear-library{font-size:13px;line-height:1.5;min-height:42px;border-top:0;padding:9px 0}
 html:not([data-phone]) .app-shell .settings-modal .modal-actions{margin-top:18px}
 @media(max-width:480px){html:not([data-phone]) .app-shell .reading-setting{gap:12px;font-size:13px}html:not([data-phone]) .app-shell .reading-setting select,html:not([data-phone]) .app-shell .reading-range{width:145px}html:not([data-phone]) .app-shell .settings-theme button{padding:10px 8px;gap:6px;font-size:12px}}
+.settings-modal .folio-version{align-self:center;margin-right:auto;color:var(--muted);font-size:12px;white-space:nowrap}

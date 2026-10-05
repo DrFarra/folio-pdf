@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows, Undo2, Redo2, Save } from 'lucide-react';
 import Modal from './Modal';
+import FilePicker from './FilePicker';
 import { Thumbnail } from './PDFPage';
 import { inspectPdf, processPdf, readFields } from '../engine/client';
 import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.mjs';
@@ -8,7 +9,7 @@ import type { LoadedDocument, Tool } from '../types';
 import { formatSize } from '../pdf';
 import { recognizePdf } from '../ocr';
 import { convertPdf } from '../conversion';
-import { saveExport } from '../platform';
+import { saveExport, isNative, isAndroid } from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
@@ -59,10 +60,12 @@ export default function Workbench(props: Props) {
   const [pageRange, setPageRange] = useState(String(props.page));
   const [progress, setProgress] = useState('');
   const [pfx, setPfx] = useState<Uint8Array | null>(null);
+  const [pfxName, setPfxName] = useState('');
   const [pfxPassword, setPfxPassword] = useState('');
   const [reason, setReason] = useState('');
   const [signatures, setSignatures] = useState<SignatureResult[] | null>(null);
   const [roots, setRoots] = useState<Uint8Array[]>([]);
+  const [rootName, setRootName] = useState('');
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => { controller.current?.abort(); }, []);
   useEffect(() => () => { pfx?.fill(0); }, [pfx]);
@@ -155,15 +158,15 @@ export default function Workbench(props: Props) {
       if (!file) return;
       if (file.size > 1024 * 1024) throw new Error('El certificado supera 1 MiB.');
       const bytes = new Uint8Array(await file.arrayBuffer()), text = new TextDecoder().decode(bytes);
-      setRoots([text.includes('-----BEGIN CERTIFICATE-----') ? Uint8Array.from(atob(text.replace(/-----[^-]+-----/g, '').replace(/\s/g, '')), c => c.charCodeAt(0)) : bytes]); setError('');
-    } catch { setRoots([]); setError('No se pudo leer el certificado de confianza. Elige un archivo CER o PEM válido.'); }
+      setRoots([text.includes('-----BEGIN CERTIFICATE-----') ? Uint8Array.from(atob(text.replace(/-----[^-]+-----/g, '').replace(/\s/g, '')), c => c.charCodeAt(0)) : bytes]); setRootName(file.name); setError('');
+    } catch { setRoots([]); setRootName(''); setError('No se pudo leer el certificado de confianza. Elige un archivo CER o PEM válido.'); }
   }
   async function readPfx(file?: File) {
     if (!file) return;
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error('El certificado supera 4 MiB.');
-      setPfx(new Uint8Array(await file.arrayBuffer())); setError('');
-    } catch (err) { setPfx(null); setError((err as Error).message); }
+      setPfx(new Uint8Array(await file.arrayBuffer())); setPfxName(file.name); setError('');
+    } catch (err) { setPfx(null); setPfxName(''); setError((err as Error).message); }
   }
   const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'add-text': 'Añadir texto', 'replace-text': 'Reemplazar texto', 'add-image': 'Añadir imagen', 'replace-image': 'Reemplazar imagen', 'remove-image': 'Eliminar imagen', redact: 'Aplicar censura', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
   const actions = [
@@ -215,7 +218,7 @@ export default function Workbench(props: Props) {
     {section !== 'home' && <div className="workbench-navigation">{props.inline && <h2 className="workspace-editor-title">Editar PDF</h2>}<button type="button" className="workbench-back secondary-button" aria-label="Volver a Herramientas" title="Volver a Herramientas" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" /><span className="edit-back-label">{props.inline ? 'Herramientas' : 'Volver a Herramientas'}</span></button>{section === 'edit-pdf' && <div className="edit-pdf-history">
       <button type="button" className="secondary-button" aria-label="Deshacer" title="Deshacer" disabled={busy || !!editSelection || !props.canUndo} onClick={() => props.onHistory?.('undo')}><Undo2 size={15} /><span className="edit-history-label">Deshacer</span></button>
       <button type="button" className="secondary-button" aria-label="Rehacer" title="Rehacer" disabled={busy || !!editSelection || !props.canRedo} onClick={() => props.onHistory?.('redo')}><Redo2 size={15} /><span className="edit-history-label">Rehacer</span></button>
-      {props.inline && props.onSave && <button type="button" className={'edit-pdf-save ' + (!busy && !editSelection && props.canSave ? 'primary-button' : 'secondary-button')} disabled={busy || !!editSelection || !props.canSave} onClick={props.onSave}><Save size={15} />Guardar una copia</button>}
+      {props.inline && props.onSave && <button type="button" className={'edit-pdf-save ' + (!busy && !editSelection && props.canSave ? 'primary-button' : 'secondary-button')} disabled={busy || !!editSelection || !props.canSave} onClick={props.onSave}><Save size={15} />{doc.drive ? 'Guardar en Drive' : isNative && isAndroid ? 'Guardar' : 'Guardar una copia'}</button>}
       <button type="button" className="secondary-button edit-pdf-done" disabled={busy || props.inline && !!editSelection} onClick={props.onClose}>Listo</button>
     </div>}</div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
@@ -301,10 +304,10 @@ export default function Workbench(props: Props) {
       <div className="signature-results">{signatures?.length === 0 && <p className="modal-description">Este PDF no contiene firmas digitales.</p>}{signatures?.map((signature, index) => <article key={index}>
         <strong>{signature.signer || signature.field}</strong><dl><div><dt>Integridad</dt><dd>{signature.integrity ? 'Válida' : 'No válida'}</dd></div><div><dt>Documento cubierto</dt><dd>{signature.coversWholeDocument ? 'Completo' : 'Hay datos posteriores a la firma'}</dd></div><div><dt>Certificado vigente</dt><dd>{signature.certificateCurrent ? 'Sí' : 'No'}</dd></div><div><dt>Cadena de confianza</dt><dd>{signature.trustChecked ? signature.trusted ? 'Verificada con la raíz elegida' : 'No válida para la raíz elegida' : 'Sin raíz de confianza elegida'}</dd></div><div><dt>Revocación y sello de tiempo</dt><dd>No comprobados</dd></div></dl>{signature.error && <p className="operation-error">{signature.error}</p>}
       </article>)}</div>
-      <label className="file-choice">Raíz de confianza (.cer o .pem, opcional)<input type="file" accept=".cer,.der,.pem" disabled={busy} onChange={e => void readRoot(e.target.files?.[0])} /></label>
+      <FilePicker label="Raíz de confianza (.cer o .pem, opcional)" buttonText="Elegir certificado" accept=".cer,.der,.pem" selectedName={rootName} disabled={busy} resetAfterSelect onSelect={files => void readRoot(files[0])} />
       <div className="operation-actions"><button className="secondary-button" disabled={busy} onClick={() => void task(async signal => setSignatures(await checkSignatures(await props.getBytes(), doc.password, roots, signal)))}>Verificar firmas</button></div>
       {!doc.signed && doc.canEdit && <form className="security-form signing-form" onSubmit={e => { e.preventDefault(); if (!pfx) return; void task(async signal => { const bytes = await signPdf(await props.getBytes(), pfx, pfxPassword, reason, signal, setProgress); await props.onReplace(bytes); }); }}>
-        <label>Certificado con clave privada (.p12 o .pfx)<input type="file" accept=".p12,.pfx" disabled={busy} onChange={e => void readPfx(e.target.files?.[0])} /></label>
+        <FilePicker label="Certificado con clave privada (.p12 o .pfx)" buttonText="Elegir certificado" accept=".p12,.pfx" selectedName={pfxName} disabled={busy} resetAfterSelect onSelect={files => void readPfx(files[0])} />
         <label>Contraseña del certificado<input type="password" autoComplete="off" value={pfxPassword} onChange={e => setPfxPassword(e.target.value)} disabled={busy} /></label><label>Motivo de firma<input maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} disabled={busy} /></label>
         <p className="modal-description">Firma RSA/SHA-256. El certificado se usa durante la operación y no se guarda en Folio. Los PDF cifrados requieren quitar su protección con la contraseña de propietario antes de firmar.</p><div className="operation-actions"><button className="primary-button" disabled={!pfx || busy}>Firmar documento</button></div>
       </form>}

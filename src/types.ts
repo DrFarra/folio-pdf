@@ -1,11 +1,11 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
-export type Tool = 'select' | 'highlight' | 'note' | 'add-text' | 'replace-text' | 'add-image' | 'replace-image' | 'remove-image' | 'redact' | 'crop' | 'create-field';
+export type Tool = 'select' | 'highlight' | 'note' | 'draw' | 'eraser' | 'add-text' | 'replace-text' | 'add-image' | 'replace-image' | 'remove-image' | 'redact' | 'crop' | 'create-field';
 export type SideTab = 'pages' | 'outline' | 'bookmarks';
 export type Annotation = {
   id: string;
   page: number;
-  kind: 'highlight' | 'note';
+  kind: 'highlight' | 'note' | 'ink';
   rect: [number, number, number, number];
   color: string;
   text: string;
@@ -16,6 +16,9 @@ export type Annotation = {
   nativeSourceRef?: string;
   originalName?: string;
   quads?: number[][];
+  /** PDF coordinates; each path is [x, y, x, y, ...], independent of zoom. */
+  inkPaths?: number[][];
+  strokeWidth?: number;
 };
 export type BookmarkNode = {
   id: string;
@@ -38,6 +41,7 @@ export type Session = {
   nativeLegacySession?: boolean;
 };
 export type LoadedDocument = {
+  drive?: import('./drive').DriveBinding;
   pdf: PDFDocumentProxy;
   bytes: Uint8Array;
   id: string;

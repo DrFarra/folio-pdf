@@ -263,7 +263,7 @@ try {
   });
   await check('image-to-pdf-creation', async page => {
     await page.getByRole('button',{name:'Crear PDF',exact:true}).click(); await page.getByLabel('Nombre',{exact:true}).fill('Desde imagen.pdf');
-    await page.locator('.workbench input[type=file]').setInputFiles(path.join(output,'scan.png')); await page.getByRole('button',{name:'Crear documento',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});
+    await page.getByLabel('Imágenes (opcional)',{exact:true}).setInputFiles(path.join(output,'scan.png')); await page.getByRole('button',{name:'Crear documento',exact:true}).click(); await page.getByRole('dialog',{name:'Crear PDF',exact:true}).waitFor({state:'detached'});
     const bytes=await save(page,'ui-created-from-image.pdf'), pdf=await PDFDocument.load(bytes); assert.equal(pdf.getPageCount(),1);
     const doc=new mupdf.PDFDocument(bytes); let images=0;
     doc.findPage(0).get('Resources','XObject').forEach(value=>{if(value.get('Subtype').asName()==='Image')images++;});

@@ -8,7 +8,7 @@
 .document-library-header-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .document-library-header-actions button{display:flex;align-items:center;justify-content:center;width:44px;padding:0;border-radius:10px;color:var(--muted)}
 .document-library-header-actions button:hover{color:var(--text);background:var(--hover)}
-.document-library-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px 20px calc(20px + env(safe-area-inset-bottom,0px));flex:1}
+.document-library-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px 20px calc(20px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)));flex:1}
 .document-library-continue{display:flex;align-items:center;gap:14px;width:100%;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);margin-bottom:18px;text-align:left}
 .document-library-continue>svg:first-child{color:var(--accent);flex-shrink:0}
 .document-library-continue>svg:last-child{margin-left:auto;flex-shrink:0;color:var(--muted)}
@@ -58,7 +58,7 @@
 .document-library-demo>svg:first-child{color:var(--accent)}
 .document-library-demo>svg:last-child{margin-left:auto;color:var(--muted)}
 .document-library-demo:hover{background:var(--hover)}
-@media(max-width:480px){.document-library-header{padding:14px 16px}.document-library-content{padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}.document-library-header h1{font-size:1.625rem}.document-library-header-actions{gap:0}.document-library-open{gap:10px;padding:12px 10px}.document-library-create-actions{gap:8px}.document-library-create-actions button{gap:7px}}
+@media(max-width:480px){.document-library-header{padding:14px 16px}.document-library-content{padding:16px 16px calc(20px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}.document-library-header h1{font-size:1.625rem}.document-library-header-actions{gap:0}.document-library-open{gap:10px;padding:12px 10px}.document-library-create-actions{gap:8px}.document-library-create-actions button{gap:7px}}
 @media(prefers-reduced-motion:reduce){.document-library button{transition:none}}
 
 /* A desktop library is a document list in the main window. The phone retains

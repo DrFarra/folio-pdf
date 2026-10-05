@@ -1,0 +1,168 @@
+use super::*;
+use tauri_plugin_folio_android::FolioAndroidExt;
+use tauri::ipc::{Channel, InvokeResponseBody};
+
+fn incoming_error(app: &tauri::AppHandle, error: String) {
+    let desktop = app.state::<Desktop>();
+    if let Ok(mut files) = desktop.files.lock() {
+        if let Some(opened) = files.queue_system_open(SystemOpen { documents: vec![], errors: vec![error] }) {
+            for error in opened.errors { let _ = app.emit("folio-open-error", error); }
+        }
+    };
+}
+
+pub fn watch_system_documents(app: tauri::AppHandle) {
+    let receiver = app.clone();
+    // A Rust-owned channel survives WebView loading/reloading. The existing
+    // system-open queue waits until React has registered its event listeners.
+    let channel = Channel::<Value>::new(move |body| {
+        if let InvokeResponseBody::Json(json) = body {
+            let value: Value = serde_json::from_str(&json)?;
+            if let Some(error) = value["error"].as_str() { incoming_error(&receiver, error.to_owned()); }
+            let paths = value["paths"].as_array().into_iter().flatten().filter_map(|path| path.as_str().map(PathBuf::from)).collect::<Vec<_>>();
+            if !paths.is_empty() { open_from_system(&receiver, paths); }
+        }
+        Ok(())
+    });
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = mobile_call(app.clone(), "watchDocuments", serde_json::json!({"channel":channel})).await {
+            incoming_error(&app, error);
+        }
+    });
+}
+
+async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Result<Value, String> { let command = command.to_owned(); tauri::async_runtime::spawn_blocking(move || app.folio_android().call(&command, args).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())? }
+fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
+    let paths = response["paths"].as_array().ok_or("Android no devolvió los archivos elegidos.")?;
+    paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
+}
+
+#[tauri::command]
+pub async fn pick_documents(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Vec<DocumentInfo>, String> {
+    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":true})).await?;
+    register_imports(&desktop, response)
+}
+
+#[tauri::command]
+pub async fn pick_document(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
+    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":false})).await?;
+    Ok(register_imports(&desktop, response)?.into_iter().next())
+}
+
+fn reserve_output(desktop: &Desktop, source: Option<String>, name: String, format: String) -> Result<String, String> {
+    let filename = Path::new(&name).file_name().filter(|n| !n.is_empty()).ok_or("Nombre de archivo inválido.")?;
+    let token = uuid::Uuid::new_v4().to_string();
+    let folder = desktop.data.join("exports").join(&token);
+    fs::create_dir_all(&folder).map_err(|_| "No se pudo preparar la copia para exportar.")?;
+    let mut path = folder.join(filename);
+    path.set_extension(&format);
+    let mut files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+    let original = source.map(|id| files.sources.get(&id).map(|s| s.path.clone()).ok_or("El documento de origen no está disponible.")).transpose()?;
+    if let Some(original) = &original { protect_original(original, &path)?; }
+    files.outputs.insert(token.clone(), Output { path, fingerprint: None, source: original, format });
+    Ok(token)
+}
+
+#[tauri::command]
+pub fn choose_output(source: Option<String>, name: String, desktop: State<'_, Desktop>) -> Result<Option<String>, String> {
+    reserve_output(&desktop, source, name, "pdf".into()).map(Some)
+}
+
+#[tauri::command]
+pub fn choose_export(source: Option<String>, name: String, format: String, desktop: State<'_, Desktop>) -> Result<Option<String>, String> {
+    if !["txt", "html", "png", "jpg", "zip", "docx", "json"].contains(&format.as_str()) { return Err("Formato no admitido.".into()); }
+    reserve_output(&desktop, source, name, format).map(Some)
+}
+
+fn write_reserved(request: tauri::ipc::Request<'_>, desktop: &Desktop, pdf: bool) -> Result<PathBuf, String> {
+    let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Contenido binario inválido.".into()); };
+    if pdf { validate_pdf(bytes)?; }
+    else if bytes.is_empty() || bytes.len() > 128 * 1024 * 1024 { return Err("El archivo está vacío o excede 128 MiB.".into()); }
+    let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("Destino vencido.")?;
+    if (output.format == "pdf") != pdf { return Err("El tipo de archivo no coincide con el destino.".into()); }
+    if let Some(original) = &output.source { protect_original(original, &output.path)?; }
+    atomic_write(&output.path, bytes, output.fingerprint.as_deref())?;
+    Ok(output.path)
+}
+
+fn remove_export(desktop: &Desktop, path: &Path) {
+    if let Some(folder) = path.parent().filter(|folder| folder.parent() == Some(desktop.data.join("exports").as_path())) {
+        let _ = fs::remove_dir_all(folder);
+    }
+}
+
+pub fn cleanup_unreferenced_exports(desktop: &Desktop) {
+    let retained = read_recents(desktop).into_iter().map(|r| r.path).collect::<Vec<_>>();
+    if let Ok(entries) = fs::read_dir(desktop.data.join("exports")) {
+        for entry in entries.flatten() {
+            let folder = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) && !retained.iter().any(|p| p.parent() == Some(folder.as_path())) {
+                let _ = fs::remove_dir_all(folder);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_pdf_original(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
+    let token = request.headers().get("x-folio-source-token").and_then(|s| s.to_str().ok()).ok_or("Origen ausente.")?;
+    let original = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.get(token)
+        .map(|s| s.path.clone()).ok_or("Vuelve a abrir el PDF original.")?;
+    let path = write_reserved(request, &desktop, true)?;
+    let response = mobile_call(app, "saveOriginal", serde_json::json!({"source":original,"path":path})).await;
+    if response.as_ref().ok().and_then(|r| r["completed"].as_bool()) != Some(true) {
+        remove_export(&desktop, &path);
+        return response.map(|_| None);
+    }
+    register(&desktop, path).map(Some)
+}
+
+#[tauri::command]
+pub async fn write_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
+    let path = write_reserved(request, &desktop, true)?;
+    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await;
+    if response.as_ref().ok().and_then(|r| r["completed"].as_bool()) != Some(true) {
+        remove_export(&desktop, &path);
+        return response.map(|_| None);
+    }
+    register(&desktop, path).map(Some)
+}
+
+#[tauri::command]
+pub async fn write_export(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
+    let path = write_reserved(request, &desktop, false)?;
+    let response = mobile_call(app, "exportFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
+}
+
+#[tauri::command]
+pub async fn share_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
+    let path = write_reserved(request, &desktop, true)?;
+    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
+}
+
+#[tauri::command]
+pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
+    let path = write_reserved(request, &desktop, true)?;
+    let response = mobile_call(app, "printFile", serde_json::json!({"path":path})).await;
+    remove_export(&desktop, &path);
+    response.map(|r| r["completed"].as_bool() == Some(true))
+}
+
+
+#[tauri::command]
+pub async fn set_mobile_theme(theme: String, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setTheme", serde_json::json!({"theme":theme})).await.map(|_| ()) }
+#[tauri::command]
+pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setReaderChrome", serde_json::json!({"visible":visible})).await.map(|_| ()) }
+#[tauri::command]
+pub async fn android_safe_area(app: tauri::AppHandle) -> Result<Value, String> { mobile_call(app, "getSafeArea", serde_json::json!({})).await }
+#[tauri::command]
+pub async fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|_| "Enlace inválido.")?;
+    if !["http", "https", "mailto", "tel"].contains(&parsed.scheme()) { return Err("Enlace no compatible.".into()); }
+    mobile_call(app, "openUrl", serde_json::json!({"url":url})).await.map(|_| ())
+}

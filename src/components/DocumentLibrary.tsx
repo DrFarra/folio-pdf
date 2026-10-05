@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ArrowRight, BookOpen, ChevronRight, Clock, FilePlus2, FileText, HelpCircle, MoreHorizontal, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronRight, Clock, FilePlus2, FileText, FolderOpen, HelpCircle, MoreHorizontal, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import type { RecentDocument } from '../types';
 import './DocumentLibrary.css';
 
@@ -11,6 +11,7 @@ export type DocumentLibraryProps = {
   onOpen: (document: RecentDocument) => void;
   onImport: () => void;
   onCreate: () => void;
+  onDrive?: () => void;
   onContinue?: () => void;
   onHideRecent: (document: RecentDocument) => void;
   onDelete: (document: RecentDocument) => void;
@@ -65,6 +66,7 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
       <div className="document-library-create-actions">
         <button type="button" className="document-library-import" disabled={props.busy} onClick={props.onImport}><Upload size={20} aria-hidden="true" />Importar PDF</button>
         <button type="button" className="document-library-create" disabled={props.busy} onClick={props.onCreate}><FilePlus2 size={20} aria-hidden="true" />Crear PDF</button>
+        {props.onDrive && <button type="button" className="document-library-create" disabled={props.busy} onClick={props.onDrive}><FolderOpen size={20} aria-hidden="true" />Google Drive</button>}
       </div>
       <div className="document-library-search">
         <Search size={20} aria-hidden="true" />

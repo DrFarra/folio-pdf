@@ -17,7 +17,7 @@
 .content-editor-slot{display:flex;flex:1;min-height:0;min-width:0;overflow:hidden}
 .content-editor-slot[hidden]{display:none}
 html:not([data-phone]) .app-shell dialog.workbench.content-workbench[open]{display:flex;flex-direction:column;width:min(1160px,calc(100vw - 28px));height:min(820px,calc(var(--modal-visible-height,100dvh) - 48px));min-height:0;overflow:hidden}
-html[data-phone] dialog.content-workbench[open]{display:flex;flex-direction:column;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px);min-height:0;overflow:hidden}
+html[data-phone] dialog.content-workbench[open]{display:flex;flex-direction:column;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - var(--native-safe-bottom, env(safe-area-inset-bottom,0px)) - 16px);min-height:0;overflow:hidden}
 dialog.content-workbench>.modal-heading,dialog.content-workbench>.workbench-navigation,dialog.content-workbench>.operation-error,dialog.content-workbench>.operation-loading{flex-shrink:0}
 dialog.content-workbench>.workbench-navigation{margin-bottom:12px}
 dialog.content-workbench>.operation-loading{margin:8px 0 0}
@@ -54,7 +54,7 @@ html:not([data-phone]) .app-shell .workbench .operation-actions .primary-button,
 /* Long forms and export settings scroll inside their body, preserving the
    title, navigation and action row when the desktop window is resized. */
 html:not([data-phone]) .app-shell dialog.workbench.bounded-workbench[open]{display:flex;flex-direction:column;height:min(760px,calc(var(--modal-visible-height,100dvh) - 48px));min-height:0;overflow:hidden}
-html[data-phone] dialog.bounded-workbench[open]{display:flex;flex-direction:column;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px);min-height:0;overflow:hidden}
+html[data-phone] dialog.bounded-workbench[open]{display:flex;flex-direction:column;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - var(--native-safe-bottom, env(safe-area-inset-bottom,0px)) - 16px);min-height:0;overflow:hidden}
 dialog.bounded-workbench>.modal-heading,dialog.bounded-workbench>.workbench-navigation,dialog.bounded-workbench>.operation-error,dialog.bounded-workbench>.operation-loading{flex-shrink:0}
 html:not([data-phone]) dialog.bounded-workbench>.modal-heading{position:relative;top:auto;box-shadow:none}
 .forms-workbench-body{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
@@ -70,7 +70,7 @@ html:not([data-phone]) .app-shell dialog.bounded-workbench:has(.form-fields:empt
 /* The organizer owns one bounded layout: controls and actions stay in place,
    while only the thumbnail grid consumes and scrolls the remaining space. */
 html:not([data-phone]) dialog.pages-workbench[open]{display:flex;flex-direction:column;min-height:0;height:min(780px,calc(var(--modal-visible-height,100dvh) - 48px));overflow:hidden}
-html[data-phone] dialog.pages-workbench[open]{display:flex;flex-direction:column;min-height:0;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px);overflow:hidden}
+html[data-phone] dialog.pages-workbench[open]{display:flex;flex-direction:column;min-height:0;height:calc(var(--visible-height,100dvh) - env(safe-area-inset-top,0px) - var(--native-safe-bottom, env(safe-area-inset-bottom,0px)) - 16px);overflow:hidden}
 dialog.pages-workbench>*{flex-shrink:0}
 html:not([data-phone]) dialog.pages-workbench>.modal-heading{position:relative;top:auto;box-shadow:none}
 html[data-phone] dialog.pages-workbench>.modal-heading{position:relative;top:auto}

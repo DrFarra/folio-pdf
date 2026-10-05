@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { PageViewport, RenderTask } from 'pdfjs-dist';
-import { CheckCircle2, LoaderCircle, Move, RotateCcw, Upload, ZoomIn, ZoomOut } from 'lucide-react';
+import { CheckCircle2, LoaderCircle, Move, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import FilePicker from './FilePicker';
 import { assetUrl, pdfAssetSettings } from '../assets';
 import { getDocument } from '../pdf';
 import { processPdf, readAreaContent, readPageImage } from '../engine/client';
@@ -359,7 +360,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
             </section>
           </> : <>
             <section className="content-property-section"><h4>Contenido</h4>
-            <label className="file-choice content-image-choice"><Upload size={16} aria-hidden="true" />{initialItem?.kind === 'image' ? 'Cambiar imagen' : 'Imagen PNG o JPEG'}<input aria-label="Imagen PNG o JPEG" type="file" accept="image/png,image/jpeg" onChange={event => { void chooseImage(event.target.files?.[0]); event.target.value = ''; }} /></label>
+            <FilePicker label="Imagen PNG o JPEG" buttonText={initialItem?.kind === 'image' ? 'Cambiar imagen' : 'Elegir imagen'} accept="image/png,image/jpeg" selectedName={image?.name} resetAfterSelect onSelect={files => { void chooseImage(files[0]); }} />
             {image && <figure className="content-image-info"><img src={image.url} alt="Imagen elegida" /><figcaption>{image.name}<small>{image.width} × {image.height} píxeles</small></figcaption></figure>}
             </section>
             <section className="content-property-section"><h4>Ajustes de imagen</h4>

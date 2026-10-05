@@ -1,0 +1,31 @@
+{
+  "status": "testing_integration_implemented_device_validation_pending",
+  "projectId": "folio-510714",
+  "projectNumber": "743680809956",
+  "appName": "Folio",
+  "api": "drive.googleapis.com",
+  "scopes": [
+    "https://www.googleapis.com/auth/drive"
+  ],
+  "desktop": {
+    "clientId": "743680809956-j9qveb9ad4ujsiebdl4ghvcjkdhrsof4.apps.googleusercontent.com",
+    "type": "installed_desktop",
+    "authorizationFlow": "authorization_code_pkce_s256_system_browser_loopback"
+  },
+  "android": {
+    "clientId": "743680809956-shhg4jlomck276l7spt35ca8a6k7hevv.apps.googleusercontent.com",
+    "packageName": "org.folio.pdf",
+    "certificateSha1": "80:0D:C0:DB:A0:36:05:7A:2D:71:A2:21:31:42:43:7D:9C:B9:CA:56",
+    "certificateType": "Android Debug",
+    "verifiedArtifact": "release/android/Folio-Android-0.8.4-tablet-telefono.apk",
+    "authorizationFlow": "google_identity_services_authorization_client"
+  },
+  "ios": {
+    "clientId": "743680809956-ttrgvo90qjhd297aauk3p4uvohv6djhi.apps.googleusercontent.com",
+    "bundleIdentifier": "org.folio.pdf",
+    "reversedClientId": "com.googleusercontent.apps.743680809956-ttrgvo90qjhd297aauk3p4uvohv6djhi",
+    "verifiedArtifact": "release/Folio-0.8.3-iPhone-CI/Folio_0.8.3_iphone_arm64_unsigned.ipa",
+    "requiresInstalledBundleIdentifierCheck": true,
+    "authorizationFlow": "google_sign_in_ios_sdk"
+  }
+}

@@ -17,7 +17,7 @@ function nativeBaseline(value: unknown): string | undefined {
   if (typeof value !== 'string') return;
   try {
     const rows = JSON.parse(value);
-    if (Array.isArray(rows) && rows.every(row => Array.isArray(row) && row.length >= 6 && typeof row[0] === 'string' && Number.isInteger(row[1]) && ['highlight', 'note'].includes(row[2]) && Array.isArray(row[3]) && row[3].length === 4 && row[3].every(Number.isFinite))) return value;
+    if (Array.isArray(rows) && rows.every(row => Array.isArray(row) && row.length >= 6 && typeof row[0] === 'string' && Number.isInteger(row[1]) && ['highlight', 'note', 'ink'].includes(row[2]) && Array.isArray(row[3]) && row[3].length === 4 && row[3].every(Number.isFinite))) return value;
   } catch { /* A damaged baseline does not prevent opening the PDF. */ }
 }
 function parseSession(raw: Partial<Session> | null): Session {
@@ -27,7 +27,7 @@ function parseSession(raw: Partial<Session> | null): Session {
       documentRevision: typeof raw.documentRevision === 'string' ? raw.documentRevision : undefined,
       annotations: raw.annotations.filter(a =>
         typeof a.id === 'string' && Number.isInteger(a.page) && Number(a.page) > 0 &&
-        (a.kind === 'note' || a.kind === 'highlight') && typeof a.text === 'string' &&
+        (a.kind === 'note' || a.kind === 'highlight' || a.kind === 'ink' && Array.isArray(a.inkPaths) && a.inkPaths.length > 0 && a.inkPaths.every(path => Array.isArray(path) && path.length >= 4 && path.length <= 20000 && path.length % 2 === 0 && path.every(Number.isFinite)) && Number.isFinite(a.strokeWidth) && a.strokeWidth! > 0 && a.strokeWidth! <= 50) && typeof a.text === 'string' &&
         Array.isArray(a.rect) && a.rect.length === 4 && a.rect.every(Number.isFinite) &&
         typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color)),
       bookmarks: normalizeBookmarks(raw.bookmarks),

@@ -1,4 +1,7 @@
 import { Check, Monitor, Moon, Sun, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
+import { isNative } from '../platform';
 import Modal from './Modal';
 import type { ReadingPreferences } from '../reading-preferences';
 import './ReadingSettings.css';
@@ -13,6 +16,12 @@ type Props = {
 };
 export default function ReadingSettings(props: Props) {
   const { preferences: prefs } = props;
+  const [version, setVersion] = useState('');
+  useEffect(() => {
+    let alive = true;
+    if (isNative) void getVersion().then(value => { if (alive) setVersion(value); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) => props.onPreferences({ ...prefs, [key]: value });
   return <Modal title={props.phone ? 'Ajustes de Folio' : 'Preferencias de lectura'} onClose={props.onClose} className="settings-modal">
     <h3>Apariencia</h3>
@@ -37,6 +46,6 @@ export default function ReadingSettings(props: Props) {
     <details className="settings-advanced"><summary>Eliminar datos locales</summary><p className="modal-description">Esta acción elimina las copias de la biblioteca y sus cambios guardados. Los archivos originales no se modifican.</p><button className={`clear-library ${props.confirmClear ? 'confirm' : ''}`} onClick={props.onClear}><Trash2 size={16} /><span>{props.confirmClear ? 'Confirmar: eliminar archivos y anotaciones locales' : 'Eliminar biblioteca y anotaciones locales'}</span></button>
     {props.confirmClear && <button className="text-button" onClick={props.onCancelClear}>Cancelar eliminación</button>}
     </details>
-    <div className="modal-actions"><button className="primary-button" onClick={props.onClose}><Check size={15} />Listo</button></div>
+    <div className="modal-actions">{version && <span className="folio-version">Folio · {version}</span>}<button className="primary-button" onClick={props.onClose}><Check size={15} />Listo</button></div>
   </Modal>;
 }

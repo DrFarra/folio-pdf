@@ -61,6 +61,7 @@ jobs:
         if: inputs.mode == 'full'
         run: |
           npx playwright-core install webkit
+          FOLIO_TEST_BROWSER=webkit npm run test:drive
           npm run test:iphone
           node scripts/tests/iphone-native-contract.mjs
           node scripts/tests/native-pdf-adapter.mjs
@@ -115,6 +116,8 @@ jobs:
             test-results/ios/*.xcresult/**
             test-results/iphone/*.json
             test-results/iphone/*.png
+            test-results/drive/*.json
+            test-results/drive/*.png
             test-results/operations-results.json
             test-results/page-content-engine-results.json
             test-results/content-editor-engine-results.json

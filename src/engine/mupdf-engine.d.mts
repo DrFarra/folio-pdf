@@ -4,4 +4,4 @@ export function open(bytes: Uint8Array, password?: string): import('mupdf').PDFD
 export function hasSignature(doc: import('mupdf').PDFDocument): boolean;
 export function save(doc: import('mupdf').PDFDocument, options?: string): Uint8Array;
 export function inspectDocument(bytes: Uint8Array, password?: string): Inspection;
-export function writeAnnotations(bytes: Uint8Array, annotations: Annotation[], password?: string): Uint8Array;
+export function writeAnnotations(bytes: Uint8Array, annotations: Annotation[], password?: string, incremental?: boolean): Uint8Array;

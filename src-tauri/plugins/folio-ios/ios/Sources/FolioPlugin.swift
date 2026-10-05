@@ -21,6 +21,22 @@ private final class PickerDelegate: NSObject, UIDocumentPickerDelegate {
 }
 
 final class FolioPlugin: Plugin {
+    private let drive = DriveAuthorization()
+    @objc public func driveAuthorize(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(DriveAuthArgs.self)
+        DispatchQueue.main.async {
+            self.drive.authorize(interactive: args.interactive, window: self.webview?.window) { result in
+                switch result {
+                case .success(let value):
+                    // Only native Rust receives this response; tokens never cross
+                    // the application command boundary into the web frontend.
+                    invoke.resolve(["access_token": value["access_token"] as? String ?? "", "expires_in": value["expires_in"] as? Int ?? 3000])
+                case .failure(let error): invoke.reject(error.localizedDescription)
+                }
+            }
+        }
+    }
+    @objc public func driveDisconnect(_ invoke: Invoke) { drive.disconnect(); invoke.resolve() }
     private var pickerDelegate: PickerDelegate?
     private var presenting = false
     private weak var webview: WKWebView?

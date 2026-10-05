@@ -2,10 +2,15 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { downloadBytes } from './pdf';
 import type { Annotation } from './types';
 
+export async function setAndroidReaderChrome(visible: boolean): Promise<void> {
+  await invoke('set_mobile_chrome', { visible });
+}
+
 export const isNative = isTauri();
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-export const isMobile = isIOS || /Android/i.test(navigator.userAgent);
+export const isAndroid = /Android/i.test(navigator.userAgent);
+export const isMobile = isIOS || isAndroid;
 export const isDesktop = isNative && !isMobile;
 export const isMac = !isIOS && /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform);
 export const shortcutLabel = (key: string) => `${isMac || isIOS ? '⌘' : 'Ctrl'}+${key}`;
@@ -47,13 +52,21 @@ export async function savePdf(bytes: Uint8Array, name: string, source?: string):
   return await invoke<NativeDocument | null>('write_pdf_copy', new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } }) || false;
 }
 
+export async function saveOriginalPdf(bytes: Uint8Array, name: string, source: string): Promise<NativeDocument | false> {
+  const token = await invoke<string | null>('choose_output', { source, name });
+  if (!token) return false;
+  return await invoke<NativeDocument | null>('write_pdf_original', new Uint8Array(bytes), {
+    headers: { 'x-folio-output-token': token, 'x-folio-source-token': source },
+  }) || false;
+}
+
 async function presentMobilePdf(command: 'share_pdf_copy' | 'print_pdf_copy', bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
   return invoke<boolean>(command, new Uint8Array(bytes), { headers: { 'x-folio-output-token': token } });
 }
 export async function sharePdf(bytes: Uint8Array, name: string, source?: string): Promise<boolean> {
-  if (isNative && isIOS) return presentMobilePdf('share_pdf_copy', bytes, name, source);
+  if (isNative && isMobile) return presentMobilePdf('share_pdf_copy', bytes, name, source);
   const file = new File([new Uint8Array(bytes).buffer], name, { type: 'application/pdf' });
   if (navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return true; }

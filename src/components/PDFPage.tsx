@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { LoaderCircle, MessageSquare } from 'lucide-react';
 import type { Annotation, Tool, SearchResult, PDFNavigationTarget } from '../types';
@@ -11,6 +11,7 @@ import HighlightAnnotationMenu from './HighlightAnnotationMenu';
 import { isMobile } from '../platform';
 import { isNativePdfDocument } from '../nativePdf';
 import './PDFPage.css';
+import InkLayer from './InkLayer';
 
 function useNearby(ref: React.RefObject<HTMLDivElement | null>, first = false) {
   const [nearby, setNearby] = useState(first);
@@ -33,6 +34,9 @@ type Props = {
   annotations: Annotation[];
   tool: Tool;
   color: string;
+  inkColor?: string;
+  inkWidth?: number;
+  penOnly?: boolean;
   query: string;
   activeSearch?: SearchResult | null;
   pageLabel?: string;
@@ -71,7 +75,7 @@ export default function PDFPage(props: Props) {
   </div>;
 }
 
-function PageContent({ pdf, page, scale, rotation, annotations, tool, color, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
+function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -89,7 +93,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, que
   activeSearchRef.current = activeSearch;
   const lastSearchScroll = useRef('');
   const [links, setLinks] = useState<{ rect: number[]; target: PDFNavigationTarget }[]>([]);
-  const viewport = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
+  const viewport = useMemo(() => page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 }), [page, scale, rotation]);
 
   function revealActiveSearch() {
     const active = activeSearchRef.current;
@@ -422,6 +426,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, que
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
       })}
     </div>
+    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} penOnly={penOnly} enabled={canAnnotate && rendered && !failed} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
         const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);

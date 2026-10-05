@@ -1,0 +1,7 @@
+{
+  "identifier": "android-window",
+  "description": "PDF locales elegidos por el usuario mediante Android Storage Access Framework.",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["core:default"]
+}

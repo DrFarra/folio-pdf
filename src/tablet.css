@@ -1,0 +1,73 @@
+/* Tablet: one app bar; navigation and editing tools appear only when needed. */
+html[data-tablet] .app-shell.tablet-layout{--app-header-height:56px;--toolbar-height:0px;height:var(--visible-height,100dvh);padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px)}
+html[data-tablet] .app-shell .app-header{height:56px;min-height:56px;padding:4px 8px;gap:4px;background:var(--surface);border-bottom:1px solid var(--line)}
+.tablet-icon-button,.tablet-ink-options{width:48px;height:48px;min-width:48px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;color:var(--muted);flex-shrink:0}
+.tablet-icon-button:hover:not(:disabled),.tablet-ink-options:hover{background:var(--hover);color:var(--text)}
+.tablet-icon-button.active{background:var(--accent-soft);color:var(--accent)}
+.tablet-document-selector{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:48px;text-align:left;padding:0 8px;color:var(--text);font-size:14px;font-weight:550}
+.tablet-document-selector>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tablet-document-selector>svg,.tablet-document-selector>small{flex-shrink:0;color:var(--muted)}
+.tablet-document-selector>small{border:1px solid var(--line);border-radius:5px;padding:2px 5px;font-size:11px}
+.tablet-page-jump{height:48px;min-width:64px;padding:0 8px;white-space:nowrap;font-size:13px;font-variant-numeric:tabular-nums;color:var(--muted);border-radius:8px}
+.tablet-done{height:48px;min-width:56px;padding:0 12px;color:var(--accent);font-size:14px;font-weight:600}
+html[data-tablet] .app-shell .reader{container-type:normal}
+html[data-tablet] .app-shell .reader-status{display:none}
+html[data-tablet] .app-shell .reading-area{touch-action:pan-x pan-y;overscroll-behavior:contain;scrollbar-gutter:auto}
+html[data-tablet] .app-shell .pdf-stack{padding:12px 12px 84px}
+html[data-tablet] .app-shell .sample-hint{display:none}
+html[data-tablet] .app-shell .page-caption{font-size:11px;height:22px}
+.tablet-annotation-dock,.tablet-search-controls{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:15;display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 4px 20px #0000001f;max-width:calc(100% - 24px)}
+.tablet-annotation-dock{width:max-content}
+.tablet-dock-divider{width:1px;height:24px;background:var(--line);margin:0 3px}
+.tablet-ink-options{gap:4px;width:60px}
+.tablet-ink-options>span{height:20px;width:20px;box-shadow:inset 0 0 0 1px #0002;border-radius:50%}
+html[data-tablet] .app-shell .tablet-search-controls .icon-button{width:48px;height:48px}
+.tablet-search-controls>span{font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+html[data-tablet] .app-shell .desktop-return-location{bottom:16px;left:12px;min-height:48px}
+/* Overlaying the explorer preserves the PDF scale and position. */
+html[data-tablet] .app-shell .mobile-panel-backdrop{display:block;position:absolute;inset:0;z-index:30;background:#0003;touch-action:none}
+html[data-tablet] .app-shell .mobile-drawer{position:absolute;top:0;bottom:0;left:0;right:auto;width:320px;min-width:0;max-width:85%;z-index:31;background:var(--panel);border:0;border-right:1px solid var(--line);box-shadow:8px 0 32px #0002}
+html[data-tablet] .app-shell .mobile-drawer>.sheet-handle{display:none}
+html[data-tablet] .app-shell .mobile-drawer-heading{display:flex;align-items:center;justify-content:space-between;min-height:56px;padding:4px 8px 4px 16px;border-bottom:1px solid var(--line)}
+html[data-tablet] .app-shell .mobile-drawer-heading h2{font-size:17px;font-weight:600}
+html[data-tablet] .app-shell .mobile-panel-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:4px;gap:2px;border-bottom:1px solid var(--line)}
+html[data-tablet] .app-shell .mobile-panel-tabs button{min-height:56px;font-size:11px}
+html[data-tablet] .app-shell .mobile-drawer .icon-button{width:48px;height:48px;flex-shrink:0}
+html[data-tablet] .app-shell .mobile-drawer .sidebar-scroll,html[data-tablet] .app-shell .mobile-drawer .notes-scroll{min-height:0;flex:1;overflow-x:hidden}
+html[data-tablet] .app-shell .thumbnails{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:16px;align-content:start}
+html[data-tablet] .app-shell .thumbnail-item{width:100%}
+html[data-tablet] .app-shell .outline-entry,html[data-tablet] .app-shell .bookmark-entry{min-height:48px;font-size:14px}
+html[data-tablet] .app-shell .search-field input{height:48px;font-size:16px}
+html[data-tablet] .app-shell .annotation-tool-hint{bottom:84px}
+html[data-tablet] .app-shell .toast{bottom:84px}
+html[data-tablet] .app-shell.library-visible>.app-header{display:none}
+html[data-tablet] .app-shell.library-visible>.library-screen{inset:0}
+/* A single list: filenames own the row width; metadata uses a second line.
+   Scope above the shared desktop rules so viewport breakpoints cannot turn a
+   tablet row into a three-column table inside a half-width card. */
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-list{display:block}
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;min-width:0;width:100%}
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text strong{grid-column:1/-1;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:15px;line-height:1.4}
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text>span{min-width:0;font-size:12px}
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-date{text-align:right;white-space:nowrap}
+html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-more{width:48px;min-height:48px}
+html[data-tablet] .modal{max-height:calc(var(--visible-height,100dvh) - 32px);max-width:calc(100vw - 32px);font-size:14px}
+html[data-tablet] .modal :is(button,input:not([type=checkbox]),select){min-height:48px}
+html[data-tablet] .modal :is(input,textarea,select){font-size:16px}
+html[data-tablet] .modal-heading .icon-button{width:48px;height:48px}
+html[data-tablet] .tablet-ink-modal{width:400px}
+html[data-tablet] .tablet-ink-modal .ink-settings{display:flex;flex-direction:column;align-items:stretch;padding:0;background:transparent;border:0;gap:10px}
+html[data-tablet] .tablet-ink-modal label{justify-content:space-between;font-size:14px}
+html[data-tablet] .tablet-ink-modal p{font-size:13px;line-height:1.5;color:var(--muted)}
+html[data-touch] .mobile-annotation-toolbar{overflow-x:auto;justify-content:flex-start;gap:4px;padding-left:8px;padding-right:8px}
+html[data-touch] .mobile-annotation-toolbar>.icon-button{flex:0 0 44px}
+@media(max-width:700px){.tablet-document-selector{padding:0 4px;font-size:13px}.tablet-page-jump{min-width:56px;padding:0 4px}}
+
+/* Reading reaches the lower edge; only floating controls avoid system gestures. */
+html[data-tablet] .tablet-annotation-dock,html[data-tablet] .tablet-search-controls{bottom:calc(16px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}
+html[data-tablet] .app-shell .pdf-stack{padding-bottom:calc(84px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}
+html[data-tablet] .app-shell.reader-chrome-hidden>.app-header{display:none}
+html[data-tablet] .app-shell.reader-chrome-hidden .page-caption{visibility:hidden}
+html[data-tablet] .app-shell.reader-chrome-hidden :is(.tablet-annotation-dock,.tablet-search-controls,.annotation-tool-hint,.toast){display:none}
+html[data-tablet] .app-shell .mobile-drawer{padding-bottom:var(--native-safe-bottom, env(safe-area-inset-bottom,0px))}
+html[data-touch] .app-shell.reader-chrome-hidden .toast{visibility:hidden;pointer-events:none}
