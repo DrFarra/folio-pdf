@@ -46,6 +46,417 @@
         }
       ],
       "verification": "Prueba real de reemplazo, guardar copia, deshacer, volver a guardar y conservar Rehacer."
+    },
+    {
+      "id": "continuous-pdf-editor-0.8.0",
+      "title": "Editar PDF con selección visual y continuidad de trabajo",
+      "version": "0.8.0",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "Edición y selección verificadas en pruebas automatizadas",
+      "addresses": [
+        "tool-workflow",
+        "text-edit",
+        "image-edit",
+        "help"
+      ],
+      "note": "Editar PDF permite elegir líneas, párrafos o imágenes visibles, revisar propiedades y aplicar cambios sin dibujar siempre el área a mano. Aplicar vuelve al selector; Deshacer/Rehacer permanecen en el modo de edición y volver de Herramientas conserva el borrador. La aceptación de cada aplicación nativa se consulta en su registro externo de entrega.",
+      "capabilities": [
+        "Selector de texto por línea o párrafo e imágenes detectadas, con navegación de páginas y zoom.",
+        "Inspector de texto con 12 variantes estándar de Helvetica, Times y Courier, además de DM Sans regular y seminegrita; aviso cuando se sustituye la fuente original.",
+        "Vista previa PDF, caja de destino independiente de la región de origen y conservación del marco de la imagen seleccionada al cargarla.",
+        "Aplicación continua, descarte del borrador y controles de Deshacer/Rehacer sin salir de Editar PDF."
+      ],
+      "limits": [
+        "La selección automática detecta texto OCR invisible, capas visibles/invisibles mezcladas, texto girado o recortado y contenido superpuesto; los casos incompatibles explican por qué no se pueden editar automáticamente.",
+        "Los estilos mixtos se detectan, pero la sustitución usa un formato uniforme; no se conserva tipografía distinta por carácter ni se recompone la maquetación entre bloques.",
+        "Las imágenes con máscara, recorte, efectos, inclinación, reflexión o solapamiento pueden requerir selección manual; el reemplazo continúa actuando por región.",
+        "Las fuentes originales no siempre se pueden reutilizar. La vista previa debe revisarse si se elige una fuente sustituta.",
+        "Detectar un párrafo no equivale a disponer de edición universal de objetos, reflujo completo o OCR editable."
+      ],
+      "evidence_scope": "Código de desarrollo posterior a 0.7.1; referencias actuales, separadas de las líneas del commit base df6a70a.",
+      "evidence": [
+        {
+          "path": "src/components/PdfContentPicker.tsx",
+          "line": 145,
+          "note": "Selección visual con rechazo explicado de elementos incompatibles."
+        },
+        {
+          "path": "src/components/PdfContentPicker.tsx",
+          "line": 186,
+          "note": "Zoom y navegación; selector de líneas/párrafos en las líneas siguientes."
+        },
+        {
+          "path": "src/components/ContentEditor.tsx",
+          "line": 17,
+          "note": "Doce variantes estándar y dos variantes DM Sans."
+        },
+        {
+          "path": "src/components/ContentEditor.tsx",
+          "line": 54,
+          "note": "La región de origen se conserva de forma independiente al destino."
+        },
+        {
+          "path": "src/components/ContentEditor.tsx",
+          "line": 318,
+          "note": "Aviso de sustitución de la fuente original."
+        },
+        {
+          "path": "src/components/Workbench.tsx",
+          "line": 208,
+          "note": "Deshacer/Rehacer y continuidad entre selector e inspector."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 1022,
+          "note": "Aplicación con contexto keepEditing."
+        },
+        {
+          "path": "src/engine/operations.mjs",
+          "line": 396,
+          "note": "Restricciones de OCR invisible, capas mixtas, giro y efectos; detección de solapamiento en las líneas siguientes."
+        },
+        {
+          "path": "test-results/pdf-editing-ui-results.json",
+          "line": 1,
+          "note": "6 casos de edición continua aprobados, incluido volver de Herramientas con el borrador."
+        },
+        {
+          "path": "test-results/pdf-content-picker-ui-results.json",
+          "line": 1,
+          "note": "12 casos del selector aprobados, con geometría, casos restringidos y ventanas medias."
+        }
+      ],
+      "verification": {
+        "engine": {
+          "status": "verificado",
+          "passed": 22,
+          "suites": [
+            {
+              "status": "verificado",
+              "passed": 10,
+              "failed": 0,
+              "report": "test-results/page-content-engine-results.json",
+              "cases": [
+                "lines-paragraphs-styles-and-baselines-are-real-regions",
+                "native-quarter-rotations-and-crop-box-return-original-pdf-coordinates",
+                "non-bmp-to-unicode-text-is-not-truncated-by-the-installed-walker",
+                "ocr-is-readonly-and-widget-comment-text-is-not-content",
+                "reuse-original-image-keeps-quarter-turn-opacity-frame-and-annotations",
+                "repeated-image-instances-ids-are-page-scoped-and-neighbor-is-preserved",
+                "ambiguous-images-clipping-masks-skew-and-reflection-are-explained-and-blocked",
+                "copy-edit-signature-permissions-and-original-bytes-remain-enforced",
+                "image-raster-limit-is-checked-before-decoding",
+                "page-content-and-image-client-copy-and-cancellation"
+              ]
+            },
+            {
+              "status": "verificado",
+              "passed": 12,
+              "failed": 0,
+              "report": "test-results/content-editor-engine-results.json",
+              "cases": [
+                "text-wrap-alignment-line-spacing-and-font-are-real-pdf-content",
+                "long-word-wrap-explicit-newlines-and-legacy-defaults",
+                "bundled-font-bytes-are-used-with-real-font-metadata",
+                "image-fit-opacity-and-quarter-rotation-preserve-pixel-geometry",
+                "appended-content-is-visible-after-ocr-clipping-transparency-and-page-rotation",
+                "same-font-sequential-multipage-edits-survive-export-compression-and-ocr",
+                "content-normalization-keeps-passwords-encryption-and-prior-edits",
+                "text-replacement-source-and-destination-are-independent-and-annotations-survive",
+                "image-replacement-keeps-text-comments-and-neighboring-image",
+                "area-info-selects-characters-style-and-rotated-cropped-coordinates",
+                "invalid-options-overflow-and-copy-permissions-fail-with-source-intact",
+                "client-area-inspection-and-preview-cancel-before-or-during-work"
+              ]
+            }
+          ]
+        },
+        "ui": {
+          "status": "verificado",
+          "suites": [
+            {
+              "status": "verificado",
+              "passed": 6,
+              "failed": 0,
+              "browser_errors": 0,
+              "report": "test-results/pdf-editing-ui-results.json",
+              "cases": [
+                "direct-selection-continuous-history",
+                "cancel-zoom-and-frame",
+                "return-from-tools-keeps-draft",
+                "low-height-editor-actions",
+                "move-original-image-without-upload",
+                "medium-window-editor-resize"
+              ]
+            },
+            {
+              "status": "verificado",
+              "passed": 8,
+              "failed": 0,
+              "browser_errors": 0,
+              "report": "test-results/content-editor-ui-results.json",
+              "cases": [
+                "replacement-preview-move-export-and-one-history-step",
+                "cancel-stale-preview-invalid-draft-and-return-to-tools",
+                "wrapped-formatted-text-and-latest-draft-export",
+                "image-preview-proportions-drag-resize-and-export",
+                "replace-image-clears-original-region-and-keeps-neighbors",
+                "corrupt-image-cannot-apply-previous-image",
+                "delayed-image-loading-does-not-restore-stale-position",
+                "rotated-cropped-page-box-mapping-and-short-window-footer"
+              ]
+            },
+            {
+              "status": "verificado",
+              "passed": 12,
+              "failed": 0,
+              "browser_errors": 0,
+              "report": "test-results/pdf-content-picker-ui-results.json",
+              "frontend_entry": "/assets/index-mp-lofTA.js",
+              "cases": [
+                "levels-zoom-pagination-and-contained-pan",
+                "crop-rotate90-overlay-contains-painted-glyph",
+                "drawing-text-and-image-uses-crop-pdf-coordinates",
+                "image-selection-keeps-original-source-region",
+                "invisible-ocr-explains-unavailability-without-opening-editor",
+                "desktop-800x600",
+                "desktop-900x600",
+                "desktop-1024x600",
+                "phone-390x844",
+                "phone-600x800",
+                "phone-844x390",
+                "resize-medium-keeps-selection-zoom-and-usable-layout"
+              ]
+            },
+            {
+              "status": "verificado",
+              "passed": 6,
+              "failed": 0,
+              "browser_errors": 0,
+              "report": "test-results/content-editor-layout-results.json",
+              "cases": [
+                "desktop-1360x720",
+                "desktop-1360x600",
+                "desktop-1024x600",
+                "desktop-760x600",
+                "phone-390x844",
+                "phone-844x390"
+              ]
+            },
+            {
+              "status": "verificado",
+              "passed": 2,
+              "failed": 0,
+              "browser_errors": 0,
+              "report": "test-results/content-editor-races-results.json",
+              "mode": "real-component-vite-dev",
+              "cases": [
+                "manual-before-snapshot",
+                "opacity-before-original-image"
+              ]
+            }
+          ]
+        },
+        "acceptance_register": {
+          "kind": "registro_externo_de_entrega",
+          "report": "windows-manifest.json",
+          "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+          "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+        }
+      }
+    },
+    {
+      "id": "conversion-options-0.8.0",
+      "title": "Exportación con selección de páginas y propiedades PNG",
+      "version": "0.8.0",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "Conversión y uso desde la interfaz verificados en pruebas automatizadas",
+      "addresses": [
+        "convert"
+      ],
+      "note": "TXT, DOCX y PNG comparten la misma selección validada de página actual, todas las páginas o intervalos. PNG ofrece resolución y fondo explícitos, sin reducir silenciosamente la resolución elegida.",
+      "capabilities": [
+        "Página actual, todas o intervalos como 1-3, 6; validación de páginas existentes, orden solicitado y eliminación de duplicados.",
+        "PNG de 72, 144, 200 o 300 ppp, fondo blanco o transparente y una imagen por página dentro de un ZIP.",
+        "Dimensiones exactas y densidad física pHYs en el PNG; comprobación de todas las páginas antes de renderizar.",
+        "Exportación desde los bytes actuales del documento, incluidos sus comentarios; cancelación sin modificar la fuente."
+      ],
+      "limits": [
+        "Máximo 16 millones de píxeles por página, 16.384 píxeles por lado, 10.000 páginas seleccionadas y 110 MiB de ZIP. Si se supera un límite se informa; no se reduce la resolución automáticamente.",
+        "La exportación libera el canvas de cada página, pero conserva los fragmentos del ZIP y la salida final en memoria, además del PDF y sus recursos. El límite no acredita capacidad ilimitada con documentos grandes.",
+        "Fondo transparente no elimina rectángulos blancos que ya estén dibujados en el PDF. PNG es sin pérdida y no tiene control de calidad JPEG.",
+        "DOCX conserva texto y separación de páginas; no reproduce imágenes, tablas ni la distribución del documento. Los escaneos necesitan OCR para TXT/DOCX."
+      ],
+      "evidence_scope": "Pruebas del módulo y de su integración en Chromium con documentos públicos o sintéticos. La aceptación de cada instalador o dispositivo corresponde al registro externo de la entrega.",
+      "evidence": [
+        {
+          "path": "src/components/ConversionOptions.tsx",
+          "line": 53,
+          "note": "Alcance actual/todas/intervalo, resolución y fondo PNG."
+        },
+        {
+          "path": "src/conversion.ts",
+          "line": 10,
+          "note": "Límites explícitos de exportación."
+        },
+        {
+          "path": "src/conversion.ts",
+          "line": 26,
+          "note": "Parser común de intervalos y validación para todos los formatos."
+        },
+        {
+          "path": "src/conversion.ts",
+          "line": 62,
+          "note": "Dimensiones exactas; rechazo de canvas excesivos."
+        },
+        {
+          "path": "src/conversion.ts",
+          "line": 125,
+          "note": "Conversión de la selección validada desde los bytes actuales."
+        },
+        {
+          "path": "scripts/tests/conversion.mjs",
+          "line": 88,
+          "note": "Seis casos: selección, dimensiones/densidad, alfa/comentarios, límites, TXT/DOCX y cancelación."
+        },
+        {
+          "path": "test-results/conversion-results.json",
+          "line": 1,
+          "note": "6 resultados aprobados y cero errores de navegador."
+        }
+      ],
+      "verification": {
+        "module": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/conversion-results.json",
+          "cases": [
+            "shared-page-selection-validation-preserves-order-for-all-formats",
+            "png-resolution-dimensions-density-and-rotated-page-selection",
+            "png-background-alpha-and-current-annotations-use-export-bytes",
+            "png-oversized-page-is-rejected-in-preflight-without-silent-downscale",
+            "txt-and-docx-use-validated-selected-pages-in-requested-order",
+            "png-cancel-before-preflight-encoding-and-packing-keeps-source-usable"
+          ]
+        },
+        "integration": {
+          "status": "verificado",
+          "suite": {
+            "status": "verificado",
+            "passed": 10,
+            "failed": 0,
+            "browser_errors": 0,
+            "report": "test-results/responsive-workbench-results.json",
+            "frontend_entry": "/assets/index-mp-lofTA.js",
+            "cases": [
+              "conversion-800x600",
+              "forms-800x600",
+              "pages-800x600",
+              "conversion-900x600",
+              "forms-900x600",
+              "pages-900x600",
+              "conversion-1024x600",
+              "forms-1024x600",
+              "pages-1024x600",
+              "resize-conversion-forms-pages"
+            ]
+          },
+          "scope": "Acceso a todos los controles, exportación PNG real, footer fijo y cambio de tamaño."
+        },
+        "acceptance_register": {
+          "kind": "registro_externo_de_entrega",
+          "report": "windows-manifest.json",
+          "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+          "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+        }
+      }
+    },
+    {
+      "id": "responsive-workbench-0.8.0",
+      "title": "Herramientas utilizables en ventanas de escritorio medianas",
+      "version": "0.8.0",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "10 casos responsive aprobados en el build de producción",
+      "addresses": [
+        "convert",
+        "form-fill",
+        "page-organizer",
+        "tool-workflow"
+      ],
+      "note": "Convertir y Formularios conservan título, navegación y acciones fuera de la zona desplazable. Organizar páginas ajusta la altura de sus miniaturas para mostrar una fila completa con los botones de mover en ventanas de 600 píxeles de alto.",
+      "capabilities": [
+        "Cuerpo con desplazamiento propio y pie de acciones fijo; el diálogo completo permanece inmóvil.",
+        "Formato y alcance comparten una fila en PC; todas las propiedades PNG siguen disponibles sin reducir el tamaño de texto.",
+        "Una fila completa de tarjetas de Páginas, incluidas sus flechas, en 800×600, 900×600 y 1024×600.",
+        "Quince muestras de cambio de tamaño entre ventanas medianas y 1360×720; exportación real, aplicación de valores y arrastre de grupo con cancelación."
+      ],
+      "limits": [
+        "Los tamaños son viewports de Chromium en Windows. Esta prueba no equivale a medir la barra de tareas, varios monitores o dispositivos físicos.",
+        "La misma suite no acredita una nueva aceptación nativa de macOS/iOS. El registro de cada paquete describe la aceptación correspondiente."
+      ],
+      "evidence_scope": "Build de producción servido por Vite preview; el informe registra el entry probado y conserva los resultados de los 10 casos.",
+      "evidence": [
+        {
+          "path": "src/components/Workbench.tsx",
+          "line": 238,
+          "note": "Cuerpo y pie del formulario separados."
+        },
+        {
+          "path": "src/components/Workbench.css",
+          "line": 56,
+          "note": "Título y navegación fijos; el cuerpo consume el espacio restante."
+        },
+        {
+          "path": "src/components/Workbench.css",
+          "line": 78,
+          "note": "Miniaturas según la altura útil para conservar tarjetas completas."
+        },
+        {
+          "path": "src/components/ConversionOptions.css",
+          "line": 1,
+          "note": "Fieldset con desplazamiento propio y acciones fuera de él."
+        },
+        {
+          "path": "scripts/tests/responsive-workbench.mjs",
+          "line": 1,
+          "note": "Suite reproducible: npm run test:responsive-workbench; preview por defecto y DEV opcional."
+        },
+        {
+          "path": "test-results/responsive-workbench-results.json",
+          "line": 1,
+          "note": "10 casos aprobados, 15 muestras de resize y cero errores de navegador."
+        }
+      ],
+      "verification": {
+        "browser": {
+          "status": "verificado",
+          "passed": 10,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/responsive-workbench-results.json",
+          "frontend_entry": "/assets/index-mp-lofTA.js",
+          "cases": [
+            "conversion-800x600",
+            "forms-800x600",
+            "pages-800x600",
+            "conversion-900x600",
+            "forms-900x600",
+            "pages-900x600",
+            "conversion-1024x600",
+            "forms-1024x600",
+            "pages-1024x600",
+            "resize-conversion-forms-pages"
+          ]
+        },
+        "acceptance_register": {
+          "kind": "registro_externo_de_entrega",
+          "report": "windows-manifest.json",
+          "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+          "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+        }
+      }
     }
   ],
   "roadmap": [
@@ -1146,5 +1557,226 @@
         "https://updf.com/updf-windows-user-guide-1/edit-image/"
       ]
     }
-  ]
+  ],
+  "release_in_progress": {
+    "version": "0.8.0",
+    "date": "2026-10-05",
+    "status": "pruebas_automatizadas_documentadas",
+    "label": "0.8.0: capacidades y pruebas automatizadas documentadas",
+    "baseline_distinction": "Se conservan sin reescribir los 35 apartados y 89 referencias auditados en df6a70a. La evidencia verificada de 0.7.1 permanece separada de los cambios de 0.8.0.",
+    "platform_scope": "Pruebas de motor y Chromium en Windows; los escenarios móviles son simulados y no acreditan nuevas pruebas de macOS, iPhone o iPad físicos.",
+    "verification": {
+      "page_content_engine": {
+        "status": "verificado",
+        "passed": 10,
+        "failed": 0,
+        "report": "test-results/page-content-engine-results.json",
+        "cases": [
+          "lines-paragraphs-styles-and-baselines-are-real-regions",
+          "native-quarter-rotations-and-crop-box-return-original-pdf-coordinates",
+          "non-bmp-to-unicode-text-is-not-truncated-by-the-installed-walker",
+          "ocr-is-readonly-and-widget-comment-text-is-not-content",
+          "reuse-original-image-keeps-quarter-turn-opacity-frame-and-annotations",
+          "repeated-image-instances-ids-are-page-scoped-and-neighbor-is-preserved",
+          "ambiguous-images-clipping-masks-skew-and-reflection-are-explained-and-blocked",
+          "copy-edit-signature-permissions-and-original-bytes-remain-enforced",
+          "image-raster-limit-is-checked-before-decoding",
+          "page-content-and-image-client-copy-and-cancellation"
+        ]
+      },
+      "content_editor_engine": {
+        "status": "verificado",
+        "passed": 12,
+        "failed": 0,
+        "report": "test-results/content-editor-engine-results.json",
+        "cases": [
+          "text-wrap-alignment-line-spacing-and-font-are-real-pdf-content",
+          "long-word-wrap-explicit-newlines-and-legacy-defaults",
+          "bundled-font-bytes-are-used-with-real-font-metadata",
+          "image-fit-opacity-and-quarter-rotation-preserve-pixel-geometry",
+          "appended-content-is-visible-after-ocr-clipping-transparency-and-page-rotation",
+          "same-font-sequential-multipage-edits-survive-export-compression-and-ocr",
+          "content-normalization-keeps-passwords-encryption-and-prior-edits",
+          "text-replacement-source-and-destination-are-independent-and-annotations-survive",
+          "image-replacement-keeps-text-comments-and-neighboring-image",
+          "area-info-selects-characters-style-and-rotated-cropped-coordinates",
+          "invalid-options-overflow-and-copy-permissions-fail-with-source-intact",
+          "client-area-inspection-and-preview-cancel-before-or-during-work"
+        ]
+      },
+      "continuous_editor": {
+        "status": "verificado",
+        "passed": 6,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/pdf-editing-ui-results.json",
+        "cases": [
+          "direct-selection-continuous-history",
+          "cancel-zoom-and-frame",
+          "return-from-tools-keeps-draft",
+          "low-height-editor-actions",
+          "move-original-image-without-upload",
+          "medium-window-editor-resize"
+        ]
+      },
+      "content_editor_ui": {
+        "status": "verificado",
+        "passed": 8,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/content-editor-ui-results.json",
+        "cases": [
+          "replacement-preview-move-export-and-one-history-step",
+          "cancel-stale-preview-invalid-draft-and-return-to-tools",
+          "wrapped-formatted-text-and-latest-draft-export",
+          "image-preview-proportions-drag-resize-and-export",
+          "replace-image-clears-original-region-and-keeps-neighbors",
+          "corrupt-image-cannot-apply-previous-image",
+          "delayed-image-loading-does-not-restore-stale-position",
+          "rotated-cropped-page-box-mapping-and-short-window-footer"
+        ]
+      },
+      "content_picker_ui": {
+        "status": "verificado",
+        "passed": 12,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/pdf-content-picker-ui-results.json",
+        "frontend_entry": "/assets/index-mp-lofTA.js",
+        "cases": [
+          "levels-zoom-pagination-and-contained-pan",
+          "crop-rotate90-overlay-contains-painted-glyph",
+          "drawing-text-and-image-uses-crop-pdf-coordinates",
+          "image-selection-keeps-original-source-region",
+          "invisible-ocr-explains-unavailability-without-opening-editor",
+          "desktop-800x600",
+          "desktop-900x600",
+          "desktop-1024x600",
+          "phone-390x844",
+          "phone-600x800",
+          "phone-844x390",
+          "resize-medium-keeps-selection-zoom-and-usable-layout"
+        ]
+      },
+      "editor_layout": {
+        "status": "verificado",
+        "passed": 6,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/content-editor-layout-results.json",
+        "cases": [
+          "desktop-1360x720",
+          "desktop-1360x600",
+          "desktop-1024x600",
+          "desktop-760x600",
+          "phone-390x844",
+          "phone-844x390"
+        ]
+      },
+      "conversion": {
+        "status": "verificado",
+        "passed": 6,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/conversion-results.json",
+        "cases": [
+          "shared-page-selection-validation-preserves-order-for-all-formats",
+          "png-resolution-dimensions-density-and-rotated-page-selection",
+          "png-background-alpha-and-current-annotations-use-export-bytes",
+          "png-oversized-page-is-rejected-in-preflight-without-silent-downscale",
+          "txt-and-docx-use-validated-selected-pages-in-requested-order",
+          "png-cancel-before-preflight-encoding-and-packing-keeps-source-usable"
+        ]
+      },
+      "responsive_workbench": {
+        "status": "verificado",
+        "passed": 10,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/responsive-workbench-results.json",
+        "frontend_entry": "/assets/index-mp-lofTA.js",
+        "cases": [
+          "conversion-800x600",
+          "forms-800x600",
+          "pages-800x600",
+          "conversion-900x600",
+          "forms-900x600",
+          "pages-900x600",
+          "conversion-1024x600",
+          "forms-1024x600",
+          "pages-1024x600",
+          "resize-conversion-forms-pages"
+        ]
+      },
+      "image_loading_races": {
+        "status": "verificado",
+        "passed": 2,
+        "failed": 0,
+        "browser_errors": 0,
+        "report": "test-results/content-editor-races-results.json",
+        "mode": "real-component-vite-dev",
+        "cases": [
+          "manual-before-snapshot",
+          "opacity-before-original-image"
+        ]
+      },
+      "standard_operations": {
+        "status": "verificado",
+        "passed": 13,
+        "failed": 0,
+        "report": "test-results/operations-results.json",
+        "cases": [
+          "page-order-delete-duplicate-rotation-and-original-preserved",
+          "blank-pages-and-merge-preserve-text",
+          "fill-text-checkbox-and-choice-roundtrip",
+          "replace-original-text-keeps-neighboring-content",
+          "redaction-removes-data-fields-comments-and-metadata",
+          "aes256-protect-restrict-and-owner-unlock",
+          "lossless-compression-keeps-text-fields-and-pages",
+          "crop-and-rotated-text-placement",
+          "actual-crop-coordinate-roundtrip-at-four-rotations",
+          "merge-preserves-real-fields-notes-and-internal-links",
+          "multiline-highlights-retain-separate-standard-quads",
+          "radio-group-exports-one-selected-option",
+          "image-redaction-removes-embedded-pixels-and-hidden-copy"
+        ]
+      }
+    },
+    "acceptance_register": {
+      "kind": "registro_externo_de_entrega",
+      "report": "windows-manifest.json",
+      "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+      "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+    },
+    "verification_scope": "Las cifras corresponden a los informes enumerados, no a una certificación universal del programa o de objetos PDF complejos. El registro externo de cada paquete identifica fuente, build, hashes, aceptación nativa e instalación."
+  },
+  "benchmark_scope": {
+    "purpose": "Referencias de patrones documentados para mejorar selección, formato y controles. No son una prueba comparativa de rendimiento ni una afirmación de equivalencia o superioridad.",
+    "target": "La evolución 0.8.0 se dirige primero al flujo de escritorio en Windows.",
+    "sources": [
+      {
+        "product": "Adobe Acrobat",
+        "platform": "Documentación de escritorio; referencia de cajas y formato.",
+        "sources": [
+          "https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/modify-text.html",
+          "https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/format-text.html"
+        ]
+      },
+      {
+        "product": "UPDF",
+        "platform": "Documentación específica de Windows; referencia de asas y medidas de imágenes.",
+        "sources": [
+          "https://updf.com/updf-windows-user-guide-1/edit-image/"
+        ]
+      },
+      {
+        "product": "PDF Expert",
+        "platform": "Referencia documental de selección por líneas/párrafos del ecosistema Apple; no acredita nuevas verificaciones de macOS/iOS.",
+        "sources": [
+          "https://support.readdle.com/pdfexpert/en_US/edit-pdfs/edit-text-in-pdf-files"
+        ]
+      }
+    ],
+    "verification": "No se realizaron nuevas pruebas de competidores ni validación física de macOS/iOS para esta evolución."
+  }
 }

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows, Undo2, Redo2 } from 'lucide-react';
 import Modal from './Modal';
 import { Thumbnail } from './PDFPage';
 import { inspectPdf, processPdf, readFields } from '../engine/client';
-import type { Area, Field, Operation, PageEntry } from '../engine/operations.mjs';
+import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.mjs';
 import type { LoadedDocument, Tool } from '../types';
 import { formatSize } from '../pdf';
 import { recognizePdf } from '../ocr';
@@ -13,10 +13,12 @@ import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
 import ContentEditor, { type ContentEditorKind } from './ContentEditor';
+import PdfContentPicker from './PdfContentPicker';
+import ConversionOptions from './ConversionOptions';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onApply: (operation: Operation, signal?: AbortSignal) => Promise<void>; getBytes: () => Promise<Uint8Array>; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
 const contentKinds = ['add-text', 'replace-text', 'add-image', 'replace-image'];
@@ -24,9 +26,12 @@ const contentKinds = ['add-text', 'replace-text', 'add-image', 'replace-image'];
 export default function Workbench(props: Props) {
   const { doc, onApply, onSelectTool } = props;
   const [section, setSection] = useState(props.section);
+  const [editPage, setEditPage] = useState(props.page);
+  const [editSelection, setEditSelection] = useState<{ kind: ContentEditorKind; area: Area; item?: PageContentItem } | null>(null);
   const [compareVisited, setCompareVisited] = useState(props.section === 'compare');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [taskBusy, setBusy] = useState(false);
+  const busy = taskBusy || !!props.documentBusy;
   const [compareBusy, setCompareBusy] = useState(false);
   const [plan, setPlan] = useState<PlannedPage[]>(() => Array.from({ length: doc.pdf.numPages }, (_, i) => entry(i + 1)));
   const initialPlan = useRef(plan);
@@ -50,7 +55,6 @@ export default function Workbench(props: Props) {
   const [fieldOptions, setFieldOptions] = useState('');
   const [language, setLanguage] = useState<'spa' | 'eng' | 'spa+eng'>('spa+eng');
   const [pageRange, setPageRange] = useState(String(props.page));
-  const [exportFormat, setExportFormat] = useState<'txt' | 'docx' | 'png'>('docx');
   const [progress, setProgress] = useState('');
   const [pfx, setPfx] = useState<Uint8Array | null>(null);
   const [pfxPassword, setPfxPassword] = useState('');
@@ -76,7 +80,7 @@ export default function Workbench(props: Props) {
   }, [section, doc.bytes, doc.password]);
 
   async function apply(operation: Operation) {
-    await task(signal => onApply(operation, signal));
+    await task(signal => onApply(operation, signal, section === 'edit-pdf' ? { keepEditing: true, page: editPage } : undefined));
   }
   function selectedPages(): number[] {
     const result = new Set<number>();
@@ -161,6 +165,7 @@ export default function Workbench(props: Props) {
   }
   const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'add-text': 'Añadir texto', 'replace-text': 'Reemplazar texto', 'add-image': 'Añadir imagen', 'replace-image': 'Reemplazar imagen', 'remove-image': 'Eliminar imagen', redact: 'Aplicar censura', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
   const actions = [
+    ['edit-pdf', 'Editar PDF', Type, doc.canEdit],
     ['pages', 'Organizar páginas', Files, doc.canAssemble], ['forms', 'Rellenar formulario', FormInput, doc.canFill],
     ['add-text', 'Añadir texto', Type, doc.canEdit], ['replace-text', 'Reemplazar texto', FileText, doc.canEdit],
     ['add-image', 'Añadir imagen', ImagePlus, doc.canEdit], ['remove-image', 'Eliminar imagen', FileImage, doc.canEdit],
@@ -174,7 +179,7 @@ export default function Workbench(props: Props) {
   ] as const;
   const categories = [
     { id: 'pages', title: 'Páginas', actions: ['pages', 'crop'] },
-    { id: 'content', title: 'Contenido', actions: ['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image'] },
+    { id: 'content', title: 'Contenido', actions: ['edit-pdf', 'add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image'] },
     { id: 'forms', title: 'Formularios', actions: ['forms', 'create-field'] },
     { id: 'review', title: 'Revisión y firmas', actions: ['compare', 'signatures'] },
     { id: 'export', title: 'Exportación y OCR', actions: ['convert', 'ocr', 'compress'] },
@@ -183,6 +188,7 @@ export default function Workbench(props: Props) {
   const chooseAction = (key: string) => {
     if (busy || compareBusy) return;
     setError('');
+    if (key === 'edit-pdf' && props.onOpenEditor) { if (props.section === 'edit-pdf') setSection('edit-pdf'); else props.onOpenEditor(); return; }
     if (['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) {
       // Revisit the already selected area without remounting this form or
       // clearing its text/image/field draft. A different tool needs a new area.
@@ -198,8 +204,12 @@ export default function Workbench(props: Props) {
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.workbench [data-tool-key="${CSS.escape(previous)}"]`)?.focus());
   };
   const planChanged = plan.length !== initialPlan.current.length || plan.some((page, index) => page.key !== initialPlan.current[index].key || (page.rotation || 0) !== (initialPlan.current[index].rotation || 0));
-  return <Modal title={titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${contentKinds.includes(section) && props.area ? ' content-workbench' : ''}`}>
-    {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button></div>}
+  return <Modal title={section === 'edit-pdf' ? 'Editar PDF' : titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${section === 'forms' || section === 'convert' ? ' bounded-workbench' : ''}${section === 'edit-pdf' || contentKinds.includes(section) && props.area ? ' content-workbench' : ''}`}>
+    {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button>{section === 'edit-pdf' && <div className="edit-pdf-history">
+      <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canUndo} onClick={() => props.onHistory?.('undo')}><Undo2 size={15} />Deshacer</button>
+      <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canRedo} onClick={() => props.onHistory?.('redo')}><Redo2 size={15} />Rehacer</button>
+      <button type="button" className="secondary-button edit-pdf-done" disabled={busy} onClick={props.onClose}>Listo</button>
+    </div>}</div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
     {section === 'home' && <div className="tool-categories">{categories.map(category => <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}><h3 className="tool-category-heading" id={`tool-category-${category.id}`}>{category.title}</h3><div className="operation-grid">{category.actions.map(key => {
       const action = actions.find(action => action[0] === key)!;
@@ -225,7 +235,7 @@ export default function Workbench(props: Props) {
       {!!pageDrag.draggingKeys.length && <div className="page-plan-drag-preview" aria-hidden="true" style={{ left: Math.max(8, Math.min(pageDrag.location.x + 16, window.innerWidth - 220)), top: Math.max(8, Math.min(pageDrag.location.y + 16, window.innerHeight - 54)) }}><Files size={17} /><span>{pageDrag.label}</span></div>}
       <div className="operation-actions page-plan-footer"><span>{plan.length} páginas · {selected.length} seleccionadas{planChanged ? ' · Cambios pendientes' : ''}</span><button className="secondary-button" disabled={!selected.length || busy} onClick={() => void extractSelection()}>Extraer selección</button><button className="primary-button" disabled={!planChanged || !plan.length || busy} onClick={() => void apply({ operation: 'pages', plan, sources })}>{busy ? <LoaderCircle size={16} className="spin" /> : null}Aplicar cambios</button></div>
     </>}
-    {section === 'forms' && <>
+    {section === 'forms' && <div className="forms-workbench-body">
       {fields === null && !error && <p className="operation-loading"><LoaderCircle size={18} className="spin" />Leyendo campos…</p>}
       {fields?.length === 0 && <p className="modal-description">Este PDF no tiene campos de formulario.</p>}
       <div className="form-fields">{fields?.filter(f => !['signature', 'button'].includes(f.type)).map(f => <label key={f.id}>
@@ -234,7 +244,12 @@ export default function Workbench(props: Props) {
           f.options.length ? <select value={String(values[f.id] || '')} disabled={f.readOnly || busy} onChange={e => setValues({ ...values, [f.id]: e.target.value })}>{f.options.map((label, index) => <option key={index} value={f.exportOptions[index]}>{label}</option>)}</select> :
             f.multiline ? <textarea value={String(values[f.id] || '')} disabled={f.readOnly || busy} maxLength={f.maxLength || 100000} onChange={e => setValues({ ...values, [f.id]: e.target.value })} /> : <input value={String(values[f.id] || '')} disabled={f.readOnly || busy} maxLength={f.maxLength || 100000} onChange={e => setValues({ ...values, [f.id]: e.target.value })} />}
       </label>)}</div>
-      {!!fields?.length && <><label className="check-option"><input type="checkbox" checked={flatten} disabled={!doc.canEdit || busy} onChange={e => setFlatten(e.target.checked)} />Convertir los campos a contenido fijo</label><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'fill', values: Object.fromEntries(fields.filter(f => !f.readOnly && !['signature', 'button'].includes(f.type)).map(f => [f.id, values[f.id]])), flatten })}>Aplicar valores</button></div></>}
+      {!!fields?.length && <div className="forms-workbench-footer"><label className="check-option"><input type="checkbox" checked={flatten} disabled={!doc.canEdit || busy} onChange={e => setFlatten(e.target.checked)} />Convertir los campos a contenido fijo</label><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'fill', values: Object.fromEntries(fields.filter(f => !f.readOnly && !['signature', 'button'].includes(f.type)).map(f => [f.id, values[f.id]])), flatten })}>Aplicar valores</button></div></div>}
+    </div>}
+    {props.section === 'edit-pdf' && <>
+      <div className="content-editor-slot" hidden={section !== 'edit-pdf'}>
+        {editSelection ? <ContentEditor key={editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => setEditSelection(null)} cancelLabel="Descartar borrador" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={setEditPage} onSelect={item => { if (item.editable) setEditSelection({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => setEditSelection({ kind, area })} />}
+      </div>
     </>}
     {contentKinds.includes(props.section) && props.area && <div className="content-editor-slot" hidden={section !== props.section}><ContentEditor doc={doc} area={props.area} kind={props.section as ContentEditorKind} active={section === props.section} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={props.onClose} /></div>}
     {['remove-image', 'crop'].includes(section) && props.area && <><p className="modal-description">{section === 'crop' ? 'El recorte cambia el área visible de esta página. El contenido exterior permanece en el PDF.' : 'Se eliminan los píxeles de imágenes dentro del área seleccionada; el texto permanece.'}</p><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: section as 'remove-image' | 'crop', ...props.area! })}>Aplicar</button></div></>}
@@ -256,23 +271,22 @@ export default function Workbench(props: Props) {
       {fieldType === 'combobox' && <label>Una opción por línea<textarea value={fieldOptions} onChange={e => setFieldOptions(e.target.value)} /></label>}
       <div className="operation-actions"><button className="primary-button" disabled={!fieldName.trim() || busy}>Crear campo</button></div>
     </form>}
-    {['ocr', 'convert'].includes(section) && <>
+    {section === 'convert' && <ConversionOptions doc={doc} page={props.page} busy={busy} onConvert={(format, pages, options) => { void task(async signal => {
+      const bytes = await props.getBytes();
+      const output = await convertPdf(bytes, doc.pdf, doc.password, format, pages, setProgress, signal, options);
+      signal.throwIfAborted(); const extension = format === 'png' ? 'zip' : format;
+      if (await saveExport(output, doc.name.replace(/\.pdf$/i, '') + '.' + extension, extension, doc.nativeSource)) props.onClose();
+    }); }} />}
+    {section === 'ocr' && <>
       <div className="security-form"><label>Páginas<input aria-label="Páginas a procesar" value={pageRange} onChange={e => setPageRange(e.target.value)} placeholder={`1-${doc.pdf.numPages}`} disabled={busy} /></label>
-      {section === 'ocr' ? <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label> : <label>Formato<select aria-label="Formato" value={exportFormat} onChange={e => setExportFormat(e.target.value as typeof exportFormat)} disabled={busy}><option value="docx">Word — texto editable</option><option value="txt">Texto (.txt)</option><option value="png">Imágenes PNG (.zip)</option></select></label>}</div>
-      <p className="modal-description">{section === 'ocr' ? 'Añade texto seleccionable a las páginas escaneadas. El reconocimiento se procesa aquí, sin conexión. Revisa los errores del OCR antes de usar el texto.' : exportFormat === 'docx' ? 'Exporta el texto con separación de páginas. Las imágenes y la maquetación original no se trasladan a Word.' : exportFormat === 'png' ? 'Exporta una imagen por página a 144 ppp.' : 'Extrae el texto de las páginas seleccionadas.'}</p>
+      <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label></div>
+      <p className="modal-description">Añade texto seleccionable a las páginas escaneadas. El reconocimiento se procesa aquí, sin conexión. Revisa los errores del OCR antes de usar el texto.</p>
       <div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void task(async signal => {
         const pages = selectedPages();
-        if (section === 'ocr') {
           const content = await Promise.all(pages.map(async number => (await (await doc.pdf.getPage(number)).getTextContent()).items));
           if (content.some(items => items.length > 0)) throw new Error('La selección ya contiene texto. Elige páginas escaneadas para evitar duplicarlo.');
           await onApply(await recognizePdf(doc.pdf, pages, language, setProgress, signal), signal);
-        } else {
-          const bytes = await props.getBytes();
-          const output = await convertPdf(bytes, doc.pdf, doc.password, exportFormat, pages, setProgress, signal);
-          signal.throwIfAborted(); const extension = exportFormat === 'png' ? 'zip' : exportFormat;
-          if (await saveExport(output, doc.name.replace(/\.pdf$/i, '') + '.' + extension, extension, doc.nativeSource)) props.onClose();
-        }
-      })}>{section === 'ocr' ? 'Reconocer texto' : 'Exportar'}</button></div>
+      })}>Reconocer texto</button></div>
     </>}
     {compareVisited && <div hidden={section !== 'compare'}><CompareDocuments doc={doc} getBytes={props.getBytes} onBusyChange={setCompareBusy} /></div>}
     {section === 'signatures' && <>

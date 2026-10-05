@@ -1,4 +1,4 @@
-# Folio 0.7.1
+# Folio 0.8.0
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
@@ -29,15 +29,18 @@ Organizar páginas permite seleccionar rangos con Shift y reordenar miniaturas;
 Aplicar cambios confirma la organización. Extraer selección crea otra pestaña
 y conserva el original. Los botones permanecen visibles mientras se desplazan
 las miniaturas.
-En escritorio, añadir o reemplazar texto e imágenes abre un editor con la página
-visible, una caja movible y redimensionable y una vista previa del PDF real.
+En escritorio, Editar PDF permite elegir párrafos, líneas e imágenes en la página,
+navegar entre páginas y mantener abierto el editor después de cada cambio.
+Añadir o reemplazar contenido abre un inspector con una caja movible y
+redimensionable y una vista previa del PDF real.
 El texto ofrece fuentes disponibles, tamaño, color, alineación, interlineado y
 ajuste de líneas. Las imágenes ofrecen proporción, encajar/cubrir/estirar,
 opacidad y giro. El reemplazo actúa sobre la región original; el destino puede
 moverse de forma independiente. Aplicar confirma un paso de deshacer; cancelar
 conserva el documento. Guardar una copia conserva el historial de deshacer y rehacer.
-Esta edición por región no reconstruye párrafos complejos ni garantiza reutilizar
-fuentes embebidas o editar aisladamente objetos de imagen solapados.
+Detecta el formato disponible y permite mover la imagen original sin cargar otro
+archivo. Esta edición por región no reconstruye párrafos complejos ni garantiza
+reutilizar fuentes embebidas o editar aisladamente objetos solapados.
 La revisión de todos los apartados y las mejoras pendientes está en
 [docs/product-review.html](docs/product-review.html).
 Un toque breve oculta o muestra los controles sin cambiar escala ni posición.
@@ -94,8 +97,9 @@ de lectura de las herramientas contextuales sin incorporar una cinta de opciones
 
 ## Límites
 
-- Edición por áreas, sin recomponer párrafos o reproducir la fuente original.
-  Usa DM Sans; si el texto no cabe, se informa y no se aplica. La imagen se
+- Edición por áreas, sin recomponer párrafos entre bloques o recuperar cualquier
+  fuente embebida. Ofrece fuentes estándar y DM Sans y avisa de sustituciones;
+  si el texto no cabe, se informa y no se aplica. La imagen se
   ajusta al rectángulo elegido. Recortar conserva contenido exterior: no censura.
 - OCR requiere páginas sin texto; no incluye corrector o reconstrucción de
   tablas. DOCX conserva texto y separación de páginas, sin imágenes ni diseño.
@@ -114,6 +118,60 @@ de lectura de las herramientas contextuales sin incorporar una cinta de opciones
   pendiente. Instalación/desinstalación y asociación predeterminada en distintas
   máquinas requieren aceptación manual. El instalador no está firmado.
 
+## Cambios de 0.8.0
+
+Esta evolución se centra en el flujo de escritorio de Windows. La auditoría
+conserva la referencia de 0.7.1 y separa la evidencia de esta entrega:
+
+- **Editar PDF continuo:** selección visual de líneas, párrafos e imágenes,
+  navegación y zoom; aplicar una edición vuelve al selector, con Deshacer y
+  Rehacer dentro del mismo modo. El inspector ofrece 12 variantes estándar de
+  Helvetica, Times y Courier, además de DM Sans regular y seminegrita. Avisa
+  cuando sustituye una fuente original que no está disponible. La caja de
+  destino es independiente de la región original y la imagen seleccionada
+  conserva su marco al cargarse. Volver a Herramientas conserva el borrador.
+- **Ventanas medianas:** editor, selector, Formularios, Convertir y Organizar
+  páginas ajustan su espacio a 800, 900 y 1024 × 600. Los botones de aplicación
+  y exportación permanecen visibles; el desplazamiento se limita al contenido.
+  Las miniaturas conservan sus controles dentro de una fila completa.
+- **Selección con límites explícitos:** el texto OCR invisible, las capas
+  visibles/invisibles mezcladas, el texto girado o recortado y los elementos
+  superpuestos pueden impedir la selección automática. Los estilos mixtos se
+  detectan, pero la sustitución usa un formato uniforme. Las imágenes con
+  máscaras, efectos, recorte, inclinación o reflexión pueden necesitar una
+  selección manual. Se sigue reemplazando una región; no se garantiza reflujo
+  entre bloques, recuperación de fuentes embebidas ni edición universal de
+  objetos o del texto visible de un escaneo.
+- **Exportación con control:** TXT, DOCX y PNG permiten página actual, todas o
+  intervalos validados. PNG ofrece 72, 144, 200 o 300 ppp, fondo blanco o
+  transparente, dimensiones exactas y densidad física en sus metadatos; cada
+  página se entrega como imagen dentro de un ZIP. Se comprueban todas las
+  páginas antes de renderizar. Los límites son 16 millones de píxeles por página,
+  16.384 píxeles por lado, 10.000 páginas y 110 MiB de ZIP; se informa al
+  superarlos sin reducir silenciosamente la resolución. El fondo transparente
+  conserva los blancos ya dibujados en el PDF. DOCX sigue exportando texto y
+  separación de páginas, sin imágenes, tablas o maquetación original.
+
+Las pruebas verifican el motor, la vista previa, el historial, la conservación
+de contenido vecino, la conversión y el cambio de tamaño mientras se edita.
+Los resultados, la identidad del ejecutable y la comprobación de instalación
+se adjuntan en `windows-manifest.json` y `evidence/` de la entrega Windows.
+Estos resultados no acreditan nuevas pruebas de macOS ni de iPhone/iPad físicos.
+El ZIP y su salida final todavía requieren
+memoria además del documento; los límites no equivalen a capacidad ilimitada
+con archivos grandes.
+
+Los patrones de selección y formato toman como referencia la documentación de
+[Acrobat](https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/modify-text.html),
+[UPDF para Windows](https://updf.com/updf-windows-user-guide-1/edit-image/) y
+[PDF Expert](https://support.readdle.com/pdfexpert/en_US/edit-pdfs/edit-text-in-pdf-files).
+La última es una referencia del ecosistema Apple; no es una nueva verificación
+de macOS/iOS. No se realizó una prueba comparativa nueva ni se afirma
+equivalencia o superioridad. La evolución y sus evidencias están separadas de
+los 35 apartados de la auditoría original en
+[docs/product-review.html](docs/product-review.html) y
+[docs/product-review.json](docs/product-review.json).
+
 ## Compilar
 
 Node.js 22+, Rust MSVC, Visual Studio C++ Build Tools/Windows SDK y WebView2:
@@ -125,7 +183,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.7.1_x64-setup.exe.
+Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.0_x64-setup.exe.
 Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
 Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
 las herramientas portátiles de esta estación; .tools no se distribuye.

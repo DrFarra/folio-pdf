@@ -69,6 +69,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<'download' | 'print' | 'edit' | null>(null);
   const [workbench, setWorkbench] = useState<string | null>(null);
+  const workbenchRef = useRef(workbench); workbenchRef.current = workbench;
   const [creating, setCreating] = useState(false);
   const [editArea, setEditArea] = useState<Area | null>(null);
   const [redactions, setRedactions] = useState<Area[]>([]);
@@ -1011,12 +1012,14 @@ export default function App() {
   }
   async function restoreHistory(value: History) {
     const current = docRef.current; if (!current || !value.bytes) return;
+    const keepEditing = workbenchRef.current === 'edit-pdf';
     setBusy('edit');
     await openDocument(value.bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password: value.password,
       modified: true, useSession: false, preserveHistory: true, page: value.page, bookmarks: value.bookmarks });
     annotationRef.current = value.annotations; setAnnotations(value.annotations); setBusy(null); setHistoryTick(v => v + 1);
+    if (keepEditing) setWorkbench('edit-pdf');
   }
-  async function applyOperation(operation: Operation, signal?: AbortSignal) {
+  async function applyOperation(operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) {
     const current = docRef.current; if (!current) return;
     if (isNativePdfDocument(current.pdf)) throw new Error('Esta herramienta de edición no está disponible en el lector nativo.');
     const before = snapshot(); setBusy('edit');
@@ -1028,12 +1031,12 @@ export default function App() {
       const bookmarkPages = operation.operation === 'pages' ? remapBookmarks(before.bookmarks || [], operation.plan) : before.bookmarks;
       const password = operation.operation === 'protect' ? operation.ownerPassword : operation.operation === 'unprotect' ? '' : current.password;
       const opened = await openDocument(output, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password, modified: true,
-        useSession: false, preserveHistory: true, page: before.page, bookmarks: bookmarkPages });
+        useSession: false, preserveHistory: true, page: context?.keepEditing ? context.page : before.page, bookmarks: bookmarkPages });
       if (!opened) throw new Error('No se pudo cargar el resultado de la operación.');
       undoStack.current.push(before);
       // Bound the total retained PDF history as well as the number of operations.
       trimHistory(undoStack.current, 20);
-      redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(null); setTool('select');
+      redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(context?.keepEditing ? 'edit-pdf' : null); setTool('select');
       if (operation.operation === 'compress') notify(output.length < source.length ? `PDF reducido de ${formatSize(source.length)} a ${formatSize(output.length)}.` : 'El PDF ya está optimizado; no se redujo su tamaño.');
     } finally { setBusy(null); }
   }
@@ -1438,7 +1441,7 @@ export default function App() {
 
     {library && <div className={`library-screen${phone ? '' : ' desktop-library-screen'}`}>{libraryContent}</div>}
     {deleteTarget && <Modal title="Eliminar copia local" onClose={() => setDeleteTarget(null)}><p className="modal-description">Se eliminarán la copia de «{deleteTarget.name}» de la biblioteca, sus anotaciones, marcadores y cambios guardados en este dispositivo. El archivo original de Archivos no se modifica.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setDeleteTarget(null)}>Cancelar</button><button className="primary-button destructive-button" disabled={!!busy || loading} onClick={() => void forgetRecent(deleteTarget)}>Eliminar copia local y cambios</button></div></Modal>}
-    {workbench && doc && !isNativePdfDocument(doc.pdf) && <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} area={editArea} redactions={redactions} onClose={() => { setWorkbench(null); setEditArea(null); if (tool !== 'redact') setTool('select'); }} onSelectTool={next => { setWorkbench(null); setTool(next); }} onApply={applyOperation} getBytes={currentBytes} onReplace={replaceDocument} />}
+    {workbench && doc && !isNativePdfDocument(doc.pdf) && <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} documentBusy={!!busy} area={editArea} redactions={redactions} onClose={() => { setWorkbench(null); setEditArea(null); if (tool !== 'redact') setTool('select'); }} onSelectTool={next => { setWorkbench(null); setTool(next); }} onOpenEditor={() => setWorkbench('edit-pdf')} onApply={applyOperation} getBytes={currentBytes} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} />}
     {noteDraft && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {noteDraft.page}</div><textarea autoFocus aria-label="Texto de la nota" placeholder="Escribe un comentario" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} /><div className="note-modal-footer"><span>{noteText.length} / 5000</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
     {password && <Modal title="Este PDF tiene contraseña" onClose={cancelPassword} className="password-modal"><p className="modal-description">Introduce la contraseña para abrirlo.</p><form onSubmit={e => { e.preventDefault(); if (passwordText) { password.submit(passwordText); setPassword(null); } }}><label htmlFor="pdf-password">Contraseña del documento</label><input autoFocus id="pdf-password" type="password" value={passwordText} onChange={e => setPasswordText(e.target.value)} autoComplete="off" />{password.retry && <p className="password-error">La contraseña anterior no es correcta. Inténtalo de nuevo.</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={cancelPassword}>Cancelar</button><button className="primary-button" disabled={!passwordText}><LockKeyhole size={15} />Abrir PDF</button></div></form></Modal>}
     {info && doc && <Modal title="Sobre este documento" onClose={() => setInfo(false)} className="info-modal"><div className="info-file"><FileText size={30} /><strong>{doc.name}</strong></div><dl className="document-details"><div><dt>Páginas</dt><dd>{doc.pdf.numPages}</dd></div><div><dt>Tamaño</dt><dd>{formatSize(doc.size)}</dd></div><div><dt>Anotaciones de Folio</dt><dd>{annotations.length}</dd></div><div><dt>Marcadores</dt><dd>{bookmarks.length}</dd></div><div><dt>Procesamiento</dt><dd>Local, en tu dispositivo</dd></div></dl></Modal>}

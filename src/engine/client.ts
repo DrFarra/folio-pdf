@@ -1,6 +1,6 @@
 import type { Annotation } from '../types';
 import type { Inspection } from './mupdf-engine.mjs';
-import type { Operation, Field, Area, AreaContentInfo } from './operations.mjs';
+import type { Operation, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo } from './operations.mjs';
 
 function run<T>(operation: 'inspect' | 'annotate' | 'operate', bytes: Uint8Array, password?: string, annotations?: Annotation[], signal?: AbortSignal, options?: Operation): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -22,3 +22,5 @@ export const processPdf = (bytes: Uint8Array, options: Operation, password?: str
 export const readFields = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<Field[]>('operate', bytes, password, undefined, signal, { operation: 'fields' });
 export const extractText = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<string[]>('operate', bytes, password, undefined, signal, { operation: 'text' });
 export const readAreaContent = (bytes: Uint8Array, area: Area, password?: string, signal?: AbortSignal) => run<AreaContentInfo>('operate', bytes, password, undefined, signal, { operation: 'area-info', ...area });
+export const getPageContent = (bytes: Uint8Array, page: number, password?: string, signal?: AbortSignal) => run<PageContentInfo>('operate', bytes, password, undefined, signal, { operation: 'page-content', page });
+export const readPageImage = (bytes: Uint8Array, page: number, id: string, password?: string, signal?: AbortSignal) => run<PageImageInfo>('operate', bytes, password, undefined, signal, { operation: 'page-image', page, id });

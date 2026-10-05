@@ -1,6 +1,6 @@
 {
   "name": "folio-pdf",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "node scripts/prepare-resources.mjs && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "demo": "node scripts/create-demo.mjs",
-    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:content-editor:engine && npm run test:content-editor:ui && npm run test:content-editor:layout && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:focus-modality && npm run test:organizer-layout && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics",
+    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:page-content:engine && npm run test:pdf-editing:ui && npm run test:pdf-content-picker:ui && npm run test:conversion && npm run test:responsive-workbench && npm run test:content-editor:engine && npm run test:content-editor:ui && npm run test:content-editor:races && npm run test:content-editor:layout && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:focus-modality && npm run test:organizer-layout && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:windows": "tauri build --target x86_64-pc-windows-msvc",
@@ -44,7 +44,13 @@
     "test:search-navigation": "node scripts/tests/search-navigation.mjs",
     "test:library-storage": "node scripts/tests/library-storage.mjs",
     "test:mobile-architecture": "node scripts/tests/mobile-architecture.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:page-content:engine": "node scripts/tests/page-content-engine.mjs",
+    "test:pdf-editing:ui": "node scripts/tests/pdf-editing-ui.mjs",
+    "test:pdf-content-picker:ui": "node scripts/tests/pdf-content-picker-ui.mjs",
+    "test:conversion": "node scripts/tests/conversion.mjs",
+    "test:content-editor:races": "node scripts/tests/content-editor-races.mjs",
+    "test:responsive-workbench": "node scripts/tests/responsive-workbench.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

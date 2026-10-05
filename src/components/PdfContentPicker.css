@@ -1,0 +1,68 @@
+.pdf-content-picker{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;gap:10px}
+.pdf-picker-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:9px 14px;flex-shrink:0;min-width:0}
+.pdf-picker-tools,.pdf-picker-zoom,.pdf-picker-pagination{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap;margin:0}
+.pdf-picker-toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 9px;border:1px solid var(--line);border-radius:5px;font-size:12px;white-space:nowrap;background:var(--surface);color:var(--text)}
+.pdf-picker-toolbar button:hover:not(:disabled){background:var(--hover)}
+.pdf-picker-toolbar button[aria-pressed=true]{border-color:#3978b8;background:#3978b812;color:var(--text)}
+.pdf-picker-toolbar button:disabled{opacity:.45;cursor:default}
+.pdf-picker-short-label{display:none}
+.pdf-picker-zoom>span{min-width:35px;text-align:center;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pdf-picker-pagination>input{width:54px;min-width:0;height:34px;padding:5px 6px;text-align:center;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--text)}
+.pdf-picker-pagination>span{font-size:11px;color:var(--muted);white-space:nowrap}
+.pdf-picker-level{display:flex;align-items:center;gap:6px;font-size:12px;min-width:0}
+.pdf-picker-level>select{width:98px;min-width:0;height:34px;padding:5px 6px;font-size:12px}
+/* Toolbar controls need less padding than the general Workbench form fields. */
+.workbench .pdf-content-picker .pdf-picker-toolbar :is(.pdf-picker-pagination>input[type=number],.pdf-picker-level>select){padding:5px 6px;line-height:1.2}
+.pdf-picker-viewport{position:relative;flex:1;min-height:0;min-width:0;display:flex;align-items:safe center;justify-content:safe center;overflow:auto;padding:16px;background:var(--canvas);border:1px solid var(--line);border-radius:7px;overscroll-behavior:contain;scrollbar-gutter:stable}
+.pdf-picker-stage{position:relative;flex:none;background:white;box-shadow:0 2px 12px #0002}
+.pdf-picker-stage>canvas{display:block;max-width:none}
+.pdf-picker-stage[data-drawing=true]{touch-action:none;cursor:crosshair;user-select:none}
+.pdf-content-item{position:absolute;margin:0;padding:0;border:1px solid transparent;border-radius:0;background:transparent;cursor:pointer;box-sizing:border-box;min-width:0;min-height:0}
+.pdf-content-item[data-kind=image]{z-index:1;border-color:#3978b840}
+.pdf-content-item[data-kind=text]{z-index:2}
+.pdf-content-item[data-editable=false]{border:1px dashed #7775;cursor:help}
+.pdf-content-item:hover:not(:disabled),.pdf-content-item.is-selected{border-color:#3978b8;background:#3978b819}
+.pdf-content-item[data-editable=false]:hover{border-color:#777;background:#7771}
+.pdf-content-item:disabled{cursor:default}
+.pdf-picker-draw-box{position:absolute;border:1.5px solid #3978b8;background:#3978b81a;pointer-events:none;box-sizing:border-box;z-index:3}
+.pdf-picker-loading{position:absolute;inset:10px;display:flex;align-items:center;justify-content:center;gap:10px;line-height:1.5;font-size:13px;text-align:center;overflow-wrap:anywhere}
+.pdf-picker-error{color:var(--text);padding:14px}
+.pdf-picker-loading>svg{flex-shrink:0}
+.pdf-picker-footer{flex-shrink:0;display:flex;align-items:flex-start;flex-wrap:wrap;gap:5px 12px;min-width:0;border-top:1px solid var(--line);padding-top:9px;max-height:126px;overflow:auto;overscroll-behavior:contain}
+.pdf-picker-footer>p{flex:1;min-width:160px;margin:0;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.pdf-picker-footer>.pdf-picker-unavailable{display:flex;gap:6px;color:var(--text)}
+.pdf-picker-unavailable>svg{flex-shrink:0;margin-top:1px}
+.pdf-picker-count{font-size:11px;color:var(--muted);line-height:1.6;white-space:nowrap}
+.pdf-picker-footer>.pdf-picker-note{flex-basis:100%;font-size:11px}
+.pdf-picker-warnings{flex-basis:100%;min-width:0;font-size:11px;color:var(--muted);line-height:1.5}
+.pdf-picker-warnings>summary{cursor:pointer;padding:2px 0}
+.pdf-picker-warnings ul{margin:5px 0 0;padding-left:18px;overflow-wrap:anywhere}
+@media(max-width:750px){.pdf-picker-toolbar{gap:7px 10px}.pdf-picker-toolbar button{min-height:36px;padding:7px 8px}.pdf-picker-tools{width:100%;justify-content:space-between}.pdf-picker-tools>button{flex:1;white-space:normal}.pdf-picker-zoom{flex-wrap:nowrap;gap:3px}.pdf-picker-zoom>button{padding:6px 7px}.pdf-picker-zoom>span{min-width:30px}.pdf-picker-pagination{margin-left:auto}.pdf-picker-viewport{padding:10px;min-height:100px}.pdf-picker-footer{max-height:110px}.pdf-picker-footer>p{font-size:11px}.pdf-picker-count{font-size:10px}}
+@media(max-width:430px){.pdf-picker-pagination{margin-left:0}.pdf-picker-toolbar{gap:6px 9px}.pdf-picker-zoom{width:100%;justify-content:space-between}.pdf-picker-level{margin-left:auto}.pdf-picker-tools>button{font-size:11px;gap:4px}.pdf-picker-pagination>input{height:32px}.pdf-picker-toolbar button{min-height:32px}.pdf-picker-viewport{min-height:80px}.pdf-picker-footer{max-height:100px}}
+@media(min-width:751px) and (max-width:1100px){
+  .pdf-content-picker{gap:8px}
+  .pdf-content-picker .pdf-picker-toolbar{gap:6px 10px}
+  .pdf-content-picker .pdf-picker-toolbar button{min-height:30px;padding:5px 7px}
+  .pdf-content-picker .pdf-picker-pagination>input,.pdf-content-picker .pdf-picker-level>select{height:30px}
+  .workbench .pdf-content-picker .pdf-picker-toolbar :is(.pdf-picker-pagination>input[type=number],.pdf-picker-level>select){padding:3px 6px}
+  .pdf-content-picker .pdf-picker-viewport{padding:12px}
+  .pdf-content-picker .pdf-picker-footer{padding-top:7px}
+  .pdf-content-picker .pdf-picker-footer>p{font-size:11px;line-height:1.4}
+}
+html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-height:40px}
+html[data-phone] .pdf-content-picker .pdf-picker-level>select{width:112px}
+@media(max-height:500px){.pdf-content-picker{gap:6px}.pdf-picker-toolbar{gap:5px 8px}.pdf-picker-toolbar button{min-height:29px;padding:4px 7px;font-size:11px}.pdf-picker-pagination>input,.pdf-picker-level>select{height:29px}.pdf-picker-viewport{min-height:70px;padding:10px}.pdf-picker-footer{padding-top:5px;max-height:90px}.pdf-picker-footer>p{font-size:11px}}
+@media(max-height:500px){
+  html[data-phone] .pdf-content-picker .pdf-picker-toolbar{gap:5px 8px}
+  html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-height:40px;height:40px;padding:6px 7px;font-size:12px;white-space:nowrap}
+  html[data-phone] .pdf-content-picker .pdf-picker-tools{width:auto;justify-content:flex-start;flex-wrap:nowrap}
+  html[data-phone] .pdf-content-picker .pdf-picker-tools>button{flex:none}
+  html[data-phone] .pdf-content-picker .pdf-picker-full-label,html[data-phone] .pdf-content-picker .pdf-picker-zoom>span,html[data-phone] .pdf-content-picker .pdf-picker-level>span{display:none}
+  html[data-phone] .pdf-content-picker .pdf-picker-short-label{display:inline}
+  html[data-phone] .pdf-content-picker .pdf-picker-pagination{margin-left:0;flex-wrap:nowrap}
+  html[data-phone] .pdf-content-picker .pdf-picker-level{gap:0}
+  html[data-phone] .pdf-content-picker .pdf-picker-pagination>input,html[data-phone] .pdf-content-picker .pdf-picker-level>select{min-height:40px!important;height:40px;padding:4px 5px}
+  html[data-phone] .pdf-content-picker .pdf-picker-level>select{width:112px}
+  html[data-phone] .pdf-content-picker .pdf-picker-viewport{min-height:0}
+  html[data-phone] .pdf-content-picker .pdf-picker-footer{max-height:70px}
+}

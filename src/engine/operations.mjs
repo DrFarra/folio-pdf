@@ -198,6 +198,7 @@ function textDrawing(device, box, options) {
   if (!['left', 'center', 'right'].includes(align)) fail('Alineación de texto inválida.');
   if (!Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3) fail('Interlineado inválido.');
   if (typeof wrap !== 'boolean') fail('Ajuste de líneas inválido.');
+  if (options.baselineOffset !== undefined && (!Number.isFinite(options.baselineOffset) || options.baselineOffset < 0 || options.baselineOffset > 2000)) fail('Posición de la línea de base inválida.');
   const standardFonts = ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique', 'Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic', 'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'];
   if (options.fontName !== undefined && !standardFonts.includes(options.fontName)) fail('Fuente de texto no disponible.');
   const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font(options.fontName ?? 'Helvetica');
@@ -224,7 +225,7 @@ function textDrawing(device, box, options) {
       }
       lines.push(line.trimEnd());
     }
-    let y = box[1] + size;
+    let y = box[1] + (options.baselineOffset ?? size);
     for (const line of lines) {
       const width = measure(line);
       if (width > limit + .5 || y > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
@@ -234,7 +235,10 @@ function textDrawing(device, box, options) {
     }
     // Wrapped text must fit its actual glyph ink, including descenders below the baseline.
     // Legacy calls retain their original baseline-based fitting behavior.
-    if (wrap && options.text.trim() && text.getBounds(null, mupdf.Matrix.identity)[3] > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
+    if (wrap && options.text.trim()) {
+      const ink = text.getBounds(null, mupdf.Matrix.identity);
+      if (ink[3] > box[3] + .5 || (options.baselineOffset !== undefined && ink[1] < box[1] - .5)) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
+    }
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, rgb(options.color || '#202020'), 1);
   } finally { text.destroy(); font.destroy(); }
 }
@@ -298,6 +302,150 @@ function areaContent(page, box) {
   } finally { structured?.destroy(); }
 }
 
+// Describe selectable regions, rather than pretending a PDF always has isolated
+// editable objects. The device pass also sees faint images and invisible OCR.
+function pageContent(doc, page, requestedImage) {
+  if (requestedImage !== undefined && (typeof requestedImage !== 'string' || !/^image-\d{1,5}$/.test(requestedImage))) fail('La imagen seleccionada ya no es válida.');
+  const bounds = page.getBounds(), inverse = mupdf.Matrix.invert(page.getTransform());
+  const overlap = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > .5 && Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > .5;
+  const intersection = (a, b) => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  const usable = b => finite(b) && b.length === 4 && b[2] - b[0] > .1 && b[3] - b[1] > .1;
+  const equalBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < .5);
+  const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
+  const warnings = new Set(), textPaint = [], images = [], graphics = [], groups = [];
+  const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, display, structured, device, selectedImage;
+  const reserve = () => { if (++events > 20000) fail('La página contiene demasiados elementos para la selección automática. Usa una selección manual.'); };
+  const currentClip = () => clips.at(-1);
+  const complexGroup = () => groups.some(Boolean);
+  const pushClip = (box, complex) => { reserve(); clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex }); };
+  const isRectangle = (path, matrix) => {
+    let count = 0, curve = false, closed = false; const points = [];
+    path.walk({ moveTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, lineTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, curveTo: () => { curve = true; }, closePath: () => { closed = true; } });
+    if (curve || !closed || count < 4 || count > 5) return false;
+    const box = path.getBounds(null, matrix);
+    return points.every(([x, y]) => (Math.abs(x - box[0]) < .1 || Math.abs(x - box[2]) < .1) && (Math.abs(y - box[1]) < .1 || Math.abs(y - box[3]) < .1));
+  };
+  const paintText = (text, matrix, alpha, hidden, stroke = null) => {
+    reserve(); const box = text.getBounds(stroke, matrix);
+    textPaint.push({ box, hidden: hidden || alpha <= 0, complex: complexGroup() || currentClip().complex || alpha < .999, clip: currentClip().box, order: order++ });
+  };
+  const paintImage = (image, matrix, alpha, mask = false) => {
+    reserve(); const box = mupdf.Rect.transform([0, 0, 1, 1], matrix), clip = currentClip(), visible = intersection(box, clip.box);
+    let softMask;
+    try {
+      softMask = image.getMask();
+      if (usable(visible)) {
+        if (`image-${images.length}` === requestedImage) selectedImage = new mupdf.Image(image.pointer);
+        images.push({ box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask() || !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() });
+      }
+    } finally { softMask?.destroy(); }
+  };
+  const paintPath = (path, matrix, alpha, stroke = null) => { reserve(); if (alpha > 0) graphics.push({ box: path.getBounds(stroke, matrix), order: order++ }); };
+  try {
+    device = new mupdf.Device({
+      fillText: (text, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false); } finally { text.destroy(); cs.destroy(); } },
+      strokeText: (text, stroke, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false, stroke); } finally { text.destroy(); stroke.destroy(); cs.destroy(); } },
+      ignoreText: (text, matrix) => { try { paintText(text, matrix, 0, true); } finally { text.destroy(); } },
+      fillImage: (image, matrix, alpha) => { try { paintImage(image, matrix, alpha); } finally { image.destroy(); } },
+      fillImageMask: (image, matrix, cs, _color, alpha) => { try { paintImage(image, matrix, alpha, true); } finally { image.destroy(); cs.destroy(); } },
+      fillPath: (path, _evenOdd, matrix, cs, _color, alpha) => { try { paintPath(path, matrix, alpha); } finally { path.destroy(); cs.destroy(); } },
+      strokePath: (path, stroke, matrix, cs, _color, alpha) => { try { paintPath(path, matrix, alpha, stroke); } finally { path.destroy(); stroke.destroy(); cs.destroy(); } },
+      clipPath: (path, _evenOdd, matrix) => { try { pushClip(path.getBounds(null, matrix), !isRectangle(path, matrix)); } finally { path.destroy(); } },
+      clipStrokePath: (path, stroke, matrix) => { try { pushClip(path.getBounds(stroke, matrix), true); } finally { path.destroy(); stroke.destroy(); } },
+      clipText: (text, matrix) => { try { pushClip(text.getBounds(null, matrix), true); } finally { text.destroy(); } },
+      clipStrokeText: (text, stroke, matrix) => { try { pushClip(text.getBounds(stroke, matrix), true); } finally { text.destroy(); stroke.destroy(); } },
+      clipImageMask: (image, matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true); } finally { image.destroy(); } },
+      popClip: () => { if (clips.length > 1) clips.pop(); },
+      beginGroup: (_box, cs, _isolated, knockout, blend, alpha) => { reserve(); groups.push(knockout || blend !== 'Normal' || alpha < .999); cs.destroy(); },
+      endGroup: () => { groups.pop(); },
+      beginMask: (box, _luminosity, cs) => { pushClip(box, true); cs.destroy(); },
+      endMask: () => {},
+    });
+    page.runPageContents(device, mupdf.Matrix.identity); device.close(); device.destroy(); device = undefined;
+    display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
+    // The installed walker truncates non-BMP runes with fromCharCode. JSON's
+    // Unicode strings preserve them; only strings are used, not its rounded boxes.
+    const jsonLines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
+    if (jsonLines.reduce((n, line) => n + line.length, 0) > 200000) fail('Hay demasiado texto para la selección automática. Usa una selección manual.');
+    const blocks = []; let block, line, index = 0, rune = 0, jsonRunes;
+    structured.walk({
+      beginTextBlock: box => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
+      beginLine: (box, mode, direction) => { line = { box, mode, direction, text: '', styles: new Map() }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
+      onChar: (character, origin, font, size, _quad, color) => {
+        try {
+          if (++characters > 100000) fail('Hay demasiado texto para la selección automática.');
+          const c = jsonRunes[rune++] ?? character; line.text += c; line.origin ??= origin;
+          if (!c.trim()) return;
+          const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
+          const fontName = font.getName(), key = `${fontName}:${Math.round(size * 100)}:${hex}`, style = line.styles.get(key) || { size, color: hex, fontName, count: 0 };
+          style.count++; line.styles.set(key, style);
+        } finally { font.destroy(); }
+      },
+    });
+    const candidates = [];
+    for (const [bi, block] of blocks.entries()) {
+      const rows = block.lines.filter(row => row.text.trim() && usable(intersection(row.box, bounds)));
+      if (!rows.length) continue;
+      const addText = (id, level, box, rows) => {
+        const styles = new Map(); rows.forEach(row => row.styles.forEach((style, key) => { const entry = styles.get(key) || { ...style, count: 0 }; entry.count += style.count; styles.set(key, entry); }));
+        const style = [...styles.values()].sort((a, b) => b.count - a.count)[0] || { size: 12, color: '#202020', fontName: 'Helvetica' };
+        const related = textPaint.filter(event => overlap(event.box, box)), hidden = related.some(event => event.hidden), visible = related.some(event => !event.hidden);
+        const rotated = rows.some(row => row.mode !== 0 || Math.abs(row.direction[1]) > .01 || row.direction[0] < .99);
+        const clipped = !equalBox(intersection(box, bounds), box) || related.some(event => !equalBox(intersection(box, event.clip), box));
+        const complex = related.some(event => event.complex && !event.hidden);
+        let reason = !visible ? 'Texto OCR invisible: no representa letras visibles que puedan reemplazarse.' : hidden ? 'Hay capas de texto visibles e invisibles superpuestas.' : rotated ? 'Texto girado o vertical: usa una selección manual.' : clipped || complex ? 'Texto recortado o con efectos: usa una selección manual.' : undefined;
+        const baselineOffset = rows[0].origin?.[1] - box[1];
+        const advances = !rotated ? rows.slice(1).map((row, i) => (row.origin?.[1] - rows[i].origin?.[1]) / style.size).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b) : [];
+        const lineHeight = advances.length ? advances[Math.floor(advances.length / 2)] : undefined;
+        if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor: usa una selección manual.';
+        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}) };
+        candidates.push({ item, box, block: bi, rows });
+      };
+      rows.forEach((row, li) => addText(`text-line-b${bi}-l${li}`, 'line', row.box, [row]));
+      addText(`text-paragraph-b${bi}`, 'paragraph', rows.reduce((box, row) => [Math.min(box[0], row.box[0]), Math.min(box[1], row.box[1]), Math.max(box[2], row.box[2]), Math.max(box[3], row.box[3])], [...rows[0].box]), rows);
+    }
+    for (const candidate of candidates) {
+      if (candidate.item.editable && candidates.some(other => other.block !== candidate.block && other.item.level === 'line' && overlap(candidate.box, other.box))) {
+        candidate.item.editable = false; candidate.item.reason = 'Hay otro bloque de texto superpuesto: usa una selección manual.';
+      }
+      if (candidate.item.editable && images.some(image => image.alpha >= .999 && !image.masked && overlap(candidate.box, image.box) && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box) && image.order > event.order))) {
+        candidate.item.editable = false; candidate.item.reason = 'El texto está cubierto por una imagen: usa una selección manual.';
+      }
+      if (candidate.item.reason) warnings.add(candidate.item.reason);
+    }
+    const imageItems = images.map((image, i) => {
+      const [a, b, c, d] = image.matrix, orthogonal = (Math.abs(b) < .01 && Math.abs(c) < .01) || (Math.abs(a) < .01 && Math.abs(d) < .01);
+      const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box)) && overlap(image.box, candidate.box)) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
+      const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos: usa una selección manual.' : a * d - b * c <= 0 ? 'Imagen reflejada: usa una selección manual.' : !orthogonal ? 'Imagen inclinada: usa una selección manual.' : overlaps ? 'Imagen con contenido superpuesto: usa una selección manual.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
+      if (reason) warnings.add(reason);
+      return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, ...(reason ? { reason } : {}) };
+    });
+    const items = [...candidates.map(candidate => candidate.item), ...imageItems];
+    if (hasSignature(doc) || !doc.hasPermission('edit')) {
+      const reason = 'El documento firmado o sus permisos no permiten editar el contenido.';
+      items.forEach(item => { item.editable = false; item.reason = reason; }); warnings.add(reason);
+    }
+    if (requestedImage !== undefined) {
+      const item = imageItems.find(item => item.id === requestedImage);
+      if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
+      if (!item.editable) fail(item.reason);
+      return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))]);
+    }
+    return { items, warnings: [...warnings] };
+  } finally { selectedImage?.destroy(); device?.destroy(); structured?.destroy(); display?.destroy(); }
+}
+
+function pageImagePixels(image, info) {
+  const width = image.getWidth(), height = image.getHeight();
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height > 16000000) fail('La imagen supera el límite de 16 megapíxeles para editarla automáticamente.');
+  let decoded, rgb;
+  try {
+    decoded = image.toPixmap(); rgb = decoded.convertToColorSpace(mupdf.ColorSpace.DeviceRGB, true);
+    const rotation = ((Math.round(Math.atan2(info.matrix[1], info.matrix[0]) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
+    return { bytes: new Uint8Array(rgb.asPNG()), width, height, opacity: info.alpha, rotation };
+  } finally { rgb?.destroy(); decoded?.destroy(); }
+}
+
 function redactPage(doc, page, boxes, { black = true, images = true, graphics = true, text = true, preserveAnnotations = false } = {}) {
   // Editing content must retain comments, links, widgets and pending redaction marks.
   const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
@@ -324,6 +472,13 @@ export function operateDocument(bytes, options, password = '') {
   try {
     const operation = options.operation;
     if (operation === 'fields') return fields(doc);
+    if (operation === 'page-content' || operation === 'page-image') {
+      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
+      if (operation === 'page-image' && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
+      const page = doc.loadPage(pageIndex(doc, options.page));
+      try { return pageContent(doc, page, operation === 'page-image' ? options.id : undefined); }
+      finally { page.destroy(); }
+    }
     if (operation === 'area-info') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       const page = doc.loadPage(pageIndex(doc, options.page));
