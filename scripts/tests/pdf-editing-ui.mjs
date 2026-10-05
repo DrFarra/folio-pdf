@@ -112,7 +112,7 @@ try {
     await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
     await page.locator('.pdf-content-item[data-kind="image"][data-editable="true"]').first().click();
     const before = await page.locator('.content-editor').getAttribute('data-destination-rect');
-    await page.locator('.content-image-choice input[type=file]').setInputFiles(imageFile); await ready(page);
+    await page.getByLabel('Imagen PNG o JPEG', {exact:true}).setInputFiles(imageFile); await ready(page);
     assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), before, 'Uploading a different aspect ratio preserves the chosen frame');
     await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
     const bytes = await save(page, 'pdf-editing-cancel.pdf'); assert.deepEqual(operateDocument(bytes, { operation: 'text' }), operateDocument(original, { operation: 'text' }));

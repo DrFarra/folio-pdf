@@ -73,10 +73,28 @@ try {
     await page.getByRole('button',{name:/Documento remoto.pdf/}).waitFor();await page.screenshot({path:`${out}/${name}-folders.png`});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal overflow');
     await page.getByRole('button',{name:/Documento remoto.pdf/}).click();await page.locator('.loading-overlay').waitFor({state:'detached'});
+    assert.equal(await page.locator('.drive-save-status').count(),0,'Drive must not create a separate reader bar');
+    const indicator=page.locator('.app-header .drive-document-indicator');
+    await indicator.waitFor({state:'visible'});
+    const compact=await indicator.boundingBox();
+    assert(compact.width<=18&&compact.height<=20,'Drive indicator stays within the existing filename row');
+    if(mobile){
+      await page.locator('.pdf-page-wrap').first().locator('.page-loading').waitFor({state:'detached'});
+      const paper=await page.locator('.pdf-page-wrap').first().boundingBox();
+      await page.touchscreen.tap(paper.x+paper.width-12,Math.min(paper.y+220,height-130));
+      await page.locator('.reader-chrome-hidden').waitFor();
+      await indicator.waitFor({state:'hidden'});
+      await page.screenshot({path:`${out}/${name}-reading-hidden.png`});
+      await page.keyboard.press('Escape');
+      await indicator.waitFor({state:'visible'});
+    }
+    await page.screenshot({path:`${out}/${name}-reading.png`});
+    if(mobile)await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();
     await page.getByRole('button',{name:'Guardar en Drive',exact:true}).click();
     await page.getByText(/Puedes reintentarlo en Documentos/).waitFor();
     const native=await page.evaluate(()=>window.__driveQA.calls.filter(c=>['write_pdf_original','write_pdf_copy'].includes(c.command)));
     assert.equal(native.length,0,'Drive must never save into the Android cache or use Android SAF overwrite');
+    await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();
     await page.getByRole('button',{name:'Ver Drive',exact:true}).click();
     await page.getByRole('heading',{name:'Ediciones pendientes (1)'}).waitFor();
     await page.evaluate(()=>window.__driveQA.outcome='conflict');await page.getByRole('button',{name:'Reintentar',exact:true}).click();

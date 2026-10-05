@@ -12,7 +12,7 @@
 .document-tab.selected{border-color:var(--line);background:var(--surface);color:var(--text)}
 .document-tab:hover{background:var(--hover)}
 .document-tab>[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;height:100%;padding:0 8px;font-size:11px;text-align:left;color:inherit;border-radius:6px 0 0 6px}
-.document-tab>[role=tab]>span:not(.modified-dot){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.document-tab>[role=tab]>span:not(.modified-dot):not(.drive-document-indicator){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
 .document-tab>[role=tab]>svg{flex-shrink:0;color:var(--muted)}
 .document-tab-close{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:23px;height:25px;margin-right:4px;border-radius:5px;color:var(--muted)}
 .document-tab-close:hover:not(:disabled){background:var(--accent-soft);color:var(--accent)}

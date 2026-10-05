@@ -6,13 +6,13 @@ function Button({ label, children, onClick, disabled, active }: { label: string;
   return <button type="button" className={`tablet-icon-button${active ? ' active' : ''}`} aria-label={label} title={label} disabled={disabled} aria-pressed={active} onClick={onClick}>{children}</button>;
 }
 
-export function TabletReaderHeader({ name, count, page, documentsOpen, annotating, disabled, draft, canUndo, canRedo, onLibrary, onDocuments, onPage, onPages, onSearch, onAnnotate, onDone, onUndo, onRedo, onMore }: {
-  name: string; count: number; page?: string; documentsOpen: boolean; annotating: boolean; disabled: boolean; draft: boolean; canUndo: boolean; canRedo: boolean;
+export function TabletReaderHeader({ name, nameAdornment, count, page, documentsOpen, annotating, disabled, draft, canUndo, canRedo, onLibrary, onDocuments, onPage, onPages, onSearch, onAnnotate, onDone, onUndo, onRedo, onMore }: {
+  name: string; nameAdornment?: ReactNode; count: number; page?: string; documentsOpen: boolean; annotating: boolean; disabled: boolean; draft: boolean; canUndo: boolean; canRedo: boolean;
   onLibrary: () => void; onDocuments: () => void; onPage: () => void; onPages: () => void; onSearch: () => void; onAnnotate: () => void; onDone: () => void; onUndo: () => void; onRedo: () => void; onMore: () => void;
 }) {
   return <>
     <Button label="Volver a biblioteca" disabled={disabled || draft} onClick={onLibrary}><ChevronLeft size={23} /></Button>
-    <button id="document-switcher-trigger" className="tablet-document-selector" aria-label="Documentos abiertos y recientes" aria-haspopup="dialog" aria-expanded={documentsOpen} aria-controls="document-switcher" disabled={disabled || draft || count === 0} onClick={onDocuments}><span>{name}</span>{count > 1 && <small>{count}</small>}<ChevronDown size={16} /></button>
+    <button id="document-switcher-trigger" className="tablet-document-selector" aria-label="Documentos abiertos y recientes" aria-haspopup="dialog" aria-expanded={documentsOpen} aria-controls="document-switcher" disabled={disabled || draft || count === 0} onClick={onDocuments}><span>{name}</span>{nameAdornment}{count > 1 && <small>{count}</small>}<ChevronDown size={16} /></button>
     {page && <button className="tablet-page-jump" aria-label="Ir a página" disabled={disabled || draft} onClick={onPage}>{page}</button>}
     {annotating ? <>
       <Button label="Deshacer" disabled={disabled || !canUndo} onClick={onUndo}><Undo2 size={21} /></Button>

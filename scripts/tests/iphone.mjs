@@ -133,7 +133,7 @@ async function waitForReadingPage(page, requested = null) {
 }
 async function actions(page) {
   if (await page.getByRole('button', { name: 'Terminar anotación', exact: true }).isVisible()) await page.getByRole('button', { name: 'Terminar anotación', exact: true }).tap();
-  await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
+  await page.getByRole('button', { name: /^Más acciones(?: del documento)?$/ }).tap();
   return page.getByRole('dialog', { name: 'Acciones del documento', exact: true });
 }
 async function settings(page) {
@@ -157,6 +157,7 @@ async function noteMode(page) {
   await annotateMode(page); await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
 }
 async function closeDialog(page) {
+  if (await page.locator('.document-switcher').isVisible()) { await page.keyboard.press('Escape'); await page.locator('.document-switcher').waitFor({state:'detached'}); return; }
   await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap();
   await page.locator('dialog[open]').waitFor({ state: 'detached' });
 }
@@ -173,8 +174,9 @@ async function save(page, name) {
   return { file, bytes, inspection: inspectDocument(bytes) };
 }
 async function tabs(page) {
-  await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).tap();
-  await page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap();
+  await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).waitFor();
+  await page.locator('.document-switcher').evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
 }
 async function switchTo(page, file) {
   await tabs(page); await page.getByRole('button', { name: `Abrir pestaña ${path.basename(file)}`, exact: true }).tap();
@@ -327,37 +329,27 @@ try {
     await check(`touch-focus-document-sheet-${theme}`, async page => {
       await open(page, another);
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
-      const opener = page.getByRole('button', { name: 'Documentos abiertos', exact: true });
-      // Cover keyboard-to-touch use as well as showModal's genuine autofocus.
-      // Keeping focus is intentional: hiding an outline by blurring is a failure.
+      const opener = page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true });
       await opener.focus(); const before = await focusAppearance(page, opener);
-      await opener.tap();
-      const dialog = page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }); await dialog.waitFor();
-      const handle = dialog.getByRole('button', { name: 'Cerrar hoja', exact: true });
-      const automatic = await focusAppearance(page, handle);
-      assert.equal(await handle.evaluate(element => getComputedStyle(element).touchAction), 'none');
+      await opener.press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }); await dialog.waitFor();
+      await dialog.evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
       assert.equal(await dialog.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
-      assert.equal(await dialog.locator('.mobile-document-list .selected').count(), 1, 'Active document selection must retain its separate visual state.');
+      assert.equal(await dialog.locator('.document-switcher-row.selected').count(), 1);
+      await page.keyboard.press('ArrowDown');
+      await focusAppearance(page, dialog.getByRole('button', { name: /^Abrir pestaña / }).first());
       assertScreen(await geometry(page));
       await page.screenshot({ path: path.join(output, `iphone-focus-documents-${theme}.png`), animations: 'disabled' });
-      await handle.tap(); await dialog.waitFor({ state: 'detached' });
-      const restored = await focusAppearance(page);
-      await opener.tap(); await dialog.waitFor(); await focusAppearance(page, handle);
-      await dialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap(); await dialog.waitFor({ state: 'detached' });
-      await focusAppearance(page);
-      // WebKit touch taps deliberately do not focus ordinary buttons. Enter
-      // supplies an actual focused opener so restoration can be checked exactly.
-      await opener.focus(); await opener.press('Enter'); await dialog.waitFor();
-      await focusAppearance(page, handle); await handle.tap(); await dialog.waitFor({ state: 'detached' });
-      await focusAppearance(page, opener);
+      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+      const restored = await focusAppearance(page, opener);
+      await opener.tap(); await dialog.waitFor(); await opener.tap(); await dialog.waitFor({state:'detached'});
       await opener.tap(); await dialog.waitFor();
       await dialog.getByRole('button', { name: `Abrir pestaña ${path.basename(source)}`, exact: true }).tap();
       await heading(page, source).waitFor({ state: 'attached' }); await waitForReadingPage(page, 1);
       await focusAppearance(page);
-      return { theme, realTouchTaps: true, showModalAutoFocusRetained: true, keyboardToTouchFocusRetained: true,
-        handleAndCloseButtonDismiss: true, reopenedSheetDoesNotPaintFocus: true, touchDocumentSwitchWorks: true,
-        originalDocumentSelectionStillVisible: true, focusSamples: { before, automatic, restored }, physicalSheetDragTested: false,
-        touchDragLimitation: 'Playwright WebKit exposes touchscreen.tap, but no continuous touch-drag API; no synthetic gesture is counted as a physical drag.' };
+      return { theme, realTouchTaps: true, anchoredDocumentPicker: true, keyboardNavigation: true,
+        escapeRestoresFocus: true, triggerTogglesPicker: true, touchDocumentSwitchWorks: true,
+        originalDocumentSelectionStillVisible: true, focusSamples: { before, restored } };
     }, { theme });
 
     await check(`touch-focus-explorer-panels-${theme}`, async page => {
@@ -525,10 +517,10 @@ try {
 
   for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }, { width: 768, height: 1024 }]) {
     await check(`reading-layout-${viewport.width}x${viewport.height}`, async page => {
-      assert.equal(await page.locator('.app-shell.phone-layout').count(), 1);
+      assert.equal(await page.locator(viewport.width >= 700 && viewport.height >= 600 ? '.app-shell.tablet-layout' : '.app-shell.phone-layout').count(), 1);
       assert.equal(await page.locator('.window-actions').count(), 0);
       assert.equal(await page.locator('.document-tab-strip').count(), 0);
-      assert.equal(await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).count(), 1);
+      assert.equal(await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).count(), 1);
       const before = await geometry(page); assertScreen(before);
       assert(before.reader.height >= viewport.height * .62, `Reader wastes space: ${JSON.stringify(before.reader)}`);
       await page.screenshot({ path: path.join(output, `iphone-reading-${viewport.width}x${viewport.height}.png`), animations: 'disabled' });
