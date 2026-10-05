@@ -69,7 +69,8 @@ async function layout(page, specification) {
   const geometry = await page.locator('.pdf-content-picker').evaluate(element => {
     const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, right: bounds.right, bottom: bounds.bottom, overflowX: node.scrollWidth - node.clientWidth }; };
     const container = element.closest('.workspace-editor,dialog'), phone = document.documentElement.hasAttribute('data-phone');
-    return { width: innerWidth, height: innerHeight, phone, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')) };
+    const navigation = container.querySelector('.workbench-navigation'), controls = [...navigation.querySelectorAll('button')].map(button => button.getBoundingClientRect()), centers = controls.map(box => (box.top + box.bottom) / 2);
+    return { width: innerWidth, height: innerHeight, phone, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')), navigationHeight: navigation.getBoundingClientRect().height, navigationControlHeight: Math.max(...controls.map(box => box.height)), navigationCenterSpread: Math.max(...centers) - Math.min(...centers) };
   });
   assert.equal(geometry.phone, !!specification.phone); assert.equal(geometry.documentWidth, geometry.width); assert.equal(geometry.documentHeight, geometry.height);
   if (!specification.phone) {
@@ -77,6 +78,7 @@ async function layout(page, specification) {
     assert.equal(geometry.openDialogs, 0);
     assert(geometry.header.height >= 40 && geometry.container.y >= geometry.header.bottom - 1, 'The app header must remain visible above the integrated editor.');
     assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true);
+    assert(geometry.navigationCenterSpread <= 1 && geometry.navigationHeight <= geometry.navigationControlHeight + 1, 'Desktop navigation must stay in one row without taking height from the page.');
   }
   for (const [name, bounds] of Object.entries(geometry).filter(([name]) => ['container', 'picker', 'toolbar', 'viewport', 'canvas', 'footer'].includes(name))) {
     assert(bounds.width > 0 && bounds.height > 0, name + ' needs usable space.');

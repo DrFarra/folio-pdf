@@ -46,7 +46,8 @@ async function inlineWorkspace(page) {
   const geometry = await workspace.evaluate(element => {
     const bounds = element.getBoundingClientRect(), header = document.querySelector('.app-header').getBoundingClientRect(), main = element.closest('main').getBoundingClientRect();
     const visible = selector => [...document.querySelectorAll(selector)].some(node => { const box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden'; });
-    return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, headerBottom: header.bottom, mainTop: main.top, position: getComputedStyle(element).position, width: innerWidth, height: innerHeight, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, readerToolbarVisible: visible('main.reader>.reader-toolbar'), readerVisible: visible('main.reader>.reading-area') };
+    const navigation = element.querySelector('.workbench-navigation').getBoundingClientRect(), controls = [...element.querySelectorAll('.workbench-navigation button')].map(button => button.getBoundingClientRect()), centers = controls.map(box => (box.top + box.bottom) / 2);
+    return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, headerBottom: header.bottom, mainTop: main.top, position: getComputedStyle(element).position, width: innerWidth, height: innerHeight, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, readerToolbarVisible: visible('main.reader>.reader-toolbar'), readerVisible: visible('main.reader>.reading-area'), navigationHeight: navigation.height, navigationControlHeight: Math.max(...controls.map(box => box.height)), navigationCenterSpread: Math.max(...centers) - Math.min(...centers) };
   });
   assert.notEqual(geometry.position, 'fixed');
   assert(geometry.top >= geometry.headerBottom - 1 && geometry.top >= geometry.mainTop - 1);
@@ -54,12 +55,13 @@ async function inlineWorkspace(page) {
   assert(geometry.horizontalOverflow <= 1);
   assert.equal(geometry.readerToolbarVisible, false, 'Reader and editor toolbars must not compete for the same space.');
   assert.equal(geometry.readerVisible, false, 'The editing surface replaces the reader canvas in the same main pane.');
+  assert(geometry.navigationCenterSpread <= 1 && geometry.navigationHeight <= geometry.navigationControlHeight + 1, 'Editor navigation must remain in one row, preserving page height.');
   return geometry;
 }
 async function picker(page, number = 1) { await page.locator(`.pdf-content-picker[data-page="${number}"][data-picker-state="ready"]`).waitFor({ timeout: 60000 }); }
 async function selectText(page, number = 1) { await page.getByRole('button', { name: 'Párrafo: ORIGINAL ' + number, exact: true }).click(); await page.locator('.content-editor').waitFor(); }
-async function ready(page) { await page.locator('.content-editor[data-preview-state="ready"]').waitFor({ timeout: 60000 }); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click({ trial: true, timeout: 60000 }); }
-async function commit(page, number = 1) { await ready(page); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await picker(page, number); }
+async function ready(page) { await page.locator('.content-editor[data-preview-state="ready"]').waitFor({ timeout: 60000 }); }
+async function commit(page, number = 1) { await ready(page); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click({ trial: true, timeout: 60000 }); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await picker(page, number); }
 async function save(page, name) { await page.getByRole('button', { name: 'Listo', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Descargar', exact: true }).click({ trial: true }); const download = page.waitForEvent('download'); void download.catch(() => {}); await page.getByRole('button', { name: 'Descargar', exact: true }).click(); const target = path.join(output, name); await (await download).saveAs(target); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); return new Uint8Array(fs.readFileSync(target)); }
 async function check(id, run, viewport = { width: 1360, height: 720 }) {
   if (process.env.FOLIO_EDITING_TEST && !new RegExp(process.env.FOLIO_EDITING_TEST).test(id)) return;
@@ -96,14 +98,17 @@ try {
     await selectText(page); await page.getByRole('button', { name: 'Al área', exact: true }).click(); await ready(page);
     assert(Number(await page.locator('.content-zoom-toolbar>span').innerText().then(value => value.replace('%', ''))) > 100);
     await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('DISCARD THIS');
+    await page.getByRole('button', { name: 'Restablecer', exact: true }).click(); await ready(page);
+    assert.equal(await page.getByRole('textbox', { name: 'Texto', exact: true }).inputValue(), 'ORIGINAL 1', 'Reset restores the selected source draft without modifying the document.');
+    await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('DISCARD THIS');
     await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
     await page.locator('.pdf-content-item[data-kind="image"][data-editable="true"]').first().click();
     const before = await page.locator('.content-editor').getAttribute('data-destination-rect');
-    await page.getByLabel('Imagen PNG o JPEG', { exact: true }).setInputFiles(imageFile); await ready(page);
+    await page.locator('.content-image-choice input[type=file]').setInputFiles(imageFile); await ready(page);
     assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), before, 'Uploading a different aspect ratio preserves the chosen frame');
     await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
     const bytes = await save(page, 'pdf-editing-cancel.pdf'); assert.deepEqual(operateDocument(bytes, { operation: 'text' }), operateDocument(original, { operation: 'text' }));
-    return { zoomAtArea: true, cancelledDraftUnchanged: true, imageFramePreserved: true };
+    return { zoomAtArea: true, resetRestoresSourceDraft: true, cancelledDraftUnchanged: true, imageFramePreserved: true };
   });
   await check('return-from-tools-keeps-draft', async page => {
     await selectText(page); await ready(page);
@@ -156,9 +161,15 @@ try {
       const value = await page.locator('.content-editor').evaluate(editor => {
         const footer = editor.querySelector('.content-editor-footer .primary-button').getBoundingClientRect(), inspector = editor.querySelector('.content-inspector').getBoundingClientRect();
         const box = editor.querySelector('.content-box').getBoundingClientRect(), preview = editor.querySelector('.content-preview').getBoundingClientRect();
-        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, previewHeight: preview.height, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom };
+        const actions = [...editor.querySelectorAll('.content-editor-actions button')].map(button => { const bounds = button.getBoundingClientRect(); return { label: button.textContent.trim(), left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, visible: bounds.top >= inspector.top && bounds.bottom <= inspector.bottom && bounds.left >= inspector.left && bounds.right <= inspector.right }; });
+        const firstControls = ['Texto', 'Fuente', 'Tamaño', 'Color'].map(label => { const control = editor.querySelector(`[aria-label="${label}"]`), bounds = control.getBoundingClientRect(); return { label, top: bounds.top, bottom: bounds.bottom, visible: bounds.top >= inspector.top && bounds.bottom <= inspector.bottom }; });
+        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, previewHeight: preview.height, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom, actionButtons: actions, firstControls, compactTextRows: editor.querySelector('textarea[aria-label="Texto"]').rows, originalDetailsClosed: !editor.querySelector('.content-editor-source-info')?.open };
       });
       assert(value.applyBottom <= 592); assert(value.inspectorWidth >= 240); assert(value.horizontalOverflow <= 1); assert(value.areaVisible); assert(value.previewHeight >= 200);
+      assert.deepEqual(value.actionButtons.map(action => action.label), ['Editar', 'Duplicar', 'Eliminar', 'Restablecer']);
+      assert(value.actionButtons.every(action => action.visible), 'Object actions must be visible without scrolling the inspector.');
+      assert(value.firstControls.every(control => control.visible), 'Text, font, size and color must be visible together in the compact inspector.');
+      assert(value.compactTextRows <= 3); assert(value.originalDetailsClosed);
       assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), originalArea); metrics.push({ ...value, workspace });
       if (width === 800 || width === 900) await page.screenshot({ path: path.join(output, `pdf-editing-medium-${width}x600.png`) });
     }

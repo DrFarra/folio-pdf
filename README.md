@@ -1,4 +1,4 @@
-# Folio 0.8.1
+# Folio 0.8.2
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
@@ -118,6 +118,27 @@ de lectura de las herramientas contextuales sin incorporar una cinta de opciones
   pendiente. Instalación/desinstalación y asociación predeterminada en distintas
   máquinas requieren aceptación manual. El instalador no está firmado.
 
+## Cambios de 0.8.2
+
+El elemento seleccionado ofrece **Editar, Duplicar, Eliminar y Restablecer**.
+La copia conserva el original; eliminar muestra el PDF resultante antes de
+**Aplicar eliminación**. Aplicar añade un paso que se puede deshacer. Los vecinos,
+anotaciones y formularios se conservan; las selecciones ambiguas se rechazan.
+
+**Guardar una copia** y **Ctrl+S** permiten guardar desde el editor después de
+aplicar o descartar el borrador. La copia queda registrada en la biblioteca y
+mantiene la edición, página, pestaña e historial. El inspector ocupa menos espacio
+y los controles se mantienen en una fila incluso en 800×600.
+
+Verificación actual: 33 casos sobre la compilación de interfaz y
+56 sobre motor/módulos fuente. Las nuevas suites son
+`npm run test:content-actions:engine` y `npm run test:content-actions:ui`.
+La aceptación nativa se registra por separado en el paquete de Windows.
+
+La duplicación usa las fuentes de edición disponibles y formato uniforme. Esta
+entrega conserva los límites documentados de contenido PDF complejo; no acredita
+edición universal, reflujo entre párrafos ni validación física de Apple.
+
 ## Cambios de 0.8.1
 
 En escritorio, **Editar** abre el editor dentro del lector, con la cabecera y
@@ -205,7 +226,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.1_x64-setup.exe.
+Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.2_x64-setup.exe.
 Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
 Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
 las herramientas portátiles de esta estación; .tools no se distribuye.

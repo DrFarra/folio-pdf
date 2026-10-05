@@ -116,3 +116,12 @@ html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:100%;min-
 html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:12px}
 @media(max-height:500px){.app-shell .reader>.workbench.workspace-editor{padding:8px 12px}.workspace-editor>.workbench-navigation{margin-bottom:6px}.workspace-editor>.modal-heading,.workspace-editor>.workspace-editor-heading{margin-bottom:6px}}
 @media(max-height:500px){html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:7px 10px}.workspace-editor .edit-pdf-history{flex-basis:auto}.workspace-editor>.workbench-navigation{flex-wrap:nowrap;gap:6px}.workspace-editor .workbench-back{white-space:nowrap;font-size:12px}}
+@media(max-width:850px){
+  html:not([data-phone]) .workspace-editor .edit-history-label{display:none}
+  html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label){width:36px;min-width:36px;min-height:36px;padding:8px;gap:0}
+}
+@media(min-width:701px) and (max-width:850px){
+  html:not([data-phone]) .workspace-editor>.workbench-navigation{flex-wrap:nowrap}
+  html:not([data-phone]) .workspace-editor .edit-pdf-history{flex-wrap:nowrap;gap:6px}
+}
+@media(max-width:700px){html:not([data-phone]) .workspace-editor .edit-back-label{display:none}}

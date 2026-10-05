@@ -50,7 +50,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 type OpenSource = Blob | Uint8Array | 'sample' | NativeDocument;
 const nativeReadingThreshold = 32 * 1024 * 1024;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
-type OpenContext = { savedCopy?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[] };
+type OpenContext = { savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[] };
 type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[] };
 type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[]; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
 type DocumentTab = TabView & { key: string; doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[]; undo: History[]; redo: History[]; scrollTop: number; scrollLeft: number };
@@ -395,7 +395,9 @@ export default function App() {
       const initialPanel = readingPreferencesRef.current.initialPanel;
       if (!replacing) setReadingMode(readingPreferencesRef.current.mode);
       if (!replacing) { setRotation(0); setZoomMode(initialZoomMode); setCustomScale(initialScale); setSidebar(initialPanel !== 'closed'); if (initialPanel !== 'closed') setSideTab(initialPanel); setSearchOpen(false); setQuery(''); setResultIndex(0); setNotesOpen(false); setActiveNote(null); }
-      setTool(restoredTool); setLibrary(false); setWorkbench(null); setNoteDraft(null); setBookmarkEditingId(null);
+      const resumeEditing = !!context?.keepEditing && !phoneRef.current && !fileBacked;
+      if (resumeEditing) editorReadingLocation.current = { revision: String(loaded.revision), page: initialPage, top: previousTab?.scrollTop || 0, left: previousTab?.scrollLeft || 0 };
+      setTool(restoredTool); setLibrary(false); setWorkbench(resumeEditing ? 'edit-pdf' : null); setNoteDraft(null); setBookmarkEditingId(null);
       setOutline([]); setTextIndex([]); setSessionFailed(false); setDraftFailed(false); setPassword(null); setInfo(false);
       setLoading(false); loadingRef.current = false; taskRef.current = null;
       const tab: DocumentTab = { ...activeView.current, tool: restoredTool, key, doc: loaded, annotations: annotationRef.current, bookmarks: restoredBookmarks, page: readingState.current.page,
@@ -945,7 +947,8 @@ export default function App() {
           e.preventDefault(); const all = tabsRef.current, index = all.findIndex(tab => tab.key === activeTabRef.current);
           if (!editorDraftRef.current && all.length > 1) void switchTab(all[(index + (e.shiftKey ? all.length - 1 : 1)) % all.length].key);
         } else if (command && key === 'w') { e.preventDefault(); if (!editorDraftRef.current && activeTabRef.current) void closeTab(activeTabRef.current); }
-        else if (command && ['s', 'p', 'o', 'f'].includes(key)) e.preventDefault();
+        else if (command && key === 's') { e.preventDefault(); void download({ keepEditing: true }); }
+        else if (command && ['p', 'o', 'f'].includes(key)) e.preventDefault();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
@@ -1116,17 +1119,18 @@ export default function App() {
     const removed = (current.nativeOriginalRefs || []).filter(ref => !annotationRef.current.some(annotation => annotation.nativeSourceRef === ref));
     return presentNativePdf(current.nativeSource!, action === 'save' ? current.name.replace(/\.pdf$/i, '') + ' — copia.pdf' : current.name, action, annotationRef.current, removed);
   }
-  async function download() {
+  async function download(options?: { keepEditing?: boolean }) {
     if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de guardar el PDF.'); return; }
     const current = docRef.current;
     if (!current || busyRef.current || loadingRef.current || saving.current) return;
+    const keepEditing = !!options?.keepEditing && workbenchRef.current === 'edit-pdf' && !phoneRef.current;
     saving.current = true;
     setBusy('download');
     try {
       if (isNativePdfDocument(current.pdf)) {
         const saved = await presentFileBacked(current, 'save');
         if (saved && typeof saved === 'object') {
-          const opened = await openDocument(saved, saved.name, false, saved.token, { savedCopy: true, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
+          const opened = await openDocument(saved, saved.name, false, saved.token, { savedCopy: true, keepEditing, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
           if (opened) await discardDraft(current.id);
           notify('PDF guardado.');
         }
@@ -1137,7 +1141,7 @@ export default function App() {
       if (saved) {
         await draftSave.current.catch(() => {});
         const opened = await openDocument(bytes, typeof saved === 'object' ? saved.name : current.name, false, typeof saved === 'object' ? saved.token : undefined,
-          { savedCopy: true, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
+          { savedCopy: true, keepEditing, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
         if (opened) await discardDraft(current.id);
         notify('PDF guardado.');
       }
@@ -1341,7 +1345,7 @@ export default function App() {
   const libraryContent = <DocumentLibrary documents={recents} loading={libraryLoading} activeDocument={doc ? { name: doc.name, page } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onHideRecent={recent => void removeFromRecents(recent)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
-  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
+  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
 
   return <div className={`app-shell${isDesktop && isMac ? ' native-mac' : ''}${phone ? ' phone-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); if (!isNative) void openFiles(Array.from(e.dataTransfer.files)); }}>
     {closeBlocked && <Modal title="No se pudo guardar la sesión" onClose={() => setCloseBlocked(false)}><p className="modal-description">Puedes guardar una copia del PDF antes de salir. Si cierras ahora, los cambios de esta sesión podrían perderse.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setCloseBlocked(false)}>Volver</button><button className="secondary-button" onClick={() => { setCloseBlocked(false); void download(); }}>Guardar una copia</button><button className="primary-button" onClick={() => { void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().destroy()); }}>Cerrar sin guardar sesión</button></div></Modal>}

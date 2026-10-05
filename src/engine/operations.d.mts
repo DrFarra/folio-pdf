@@ -19,6 +19,7 @@ export type Operation =
   | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
   | ({ operation: 'add-text' | 'replace-text' } & TextOptions & Area)
   | ({ operation: 'add-image' | 'replace-image' } & ImageOptions & Area)
+  | ({ operation: 'remove-content'; id: string; kind: 'text' | 'image' } & Area)
   | ({ operation: 'remove-image' | 'crop' } & Area)
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };

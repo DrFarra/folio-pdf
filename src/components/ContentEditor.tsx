@@ -10,7 +10,8 @@ import type { LoadedDocument } from '../types';
 import './ContentEditor.css';
 
 export type ContentEditorKind = 'add-text' | 'replace-text' | 'add-image' | 'replace-image';
-type Props = { doc: LoadedDocument; area: Area; initialItem?: PageContentItem; cancelLabel?: string; kind: ContentEditorKind; active: boolean; busy: boolean; getBytes: () => Promise<Uint8Array>; onApply: (operation: Operation) => Promise<void>; onCancel: () => void };
+type Props = { doc: LoadedDocument; area: Area; initialItem?: PageContentItem; cancelLabel?: string; kind: ContentEditorKind; active: boolean; busy: boolean; getBytes: () => Promise<Uint8Array>; onApply: (operation: Operation) => Promise<void>; onCancel: () => void; onReset?: () => void };
+type ContentIntent = 'edit' | 'duplicate' | 'delete';
 type Box = { x: number; y: number; width: number; height: number };
 type Handle = 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 type FontChoice = string;
@@ -48,11 +49,14 @@ function boundBox(box: Box, viewport: PageViewport): Box {
 
 /** A draft is always rendered from the original snapshot, never from a preview.
  * PDF coordinates remain authoritative across view rotation, crop and resizing. */
-export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'Cancelar', kind, active, busy, getBytes, onApply, onCancel }: Props) {
+export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'Cancelar', kind, active, busy, getBytes, onApply, onCancel, onReset }: Props) {
   const isText = kind === 'add-text' || kind === 'replace-text';
-  const replacing = kind === 'replace-text' || kind === 'replace-image';
+  const [intent, setIntent] = useState<ContentIntent>('edit');
+  const deleting = intent === 'delete';
+  const replacing = intent === 'edit' && (kind === 'replace-text' || kind === 'replace-image');
   const sourceRect = useRef(normalize(area.rect)).current;
   const [rect, setRect] = useState<Area['rect']>(() => normalize(area.rect));
+  const placements = useRef<{ edit: Area['rect']; duplicate: Area['rect'] | null }>({ edit: sourceRect, duplicate: null });
   const [snapshot, setSnapshot] = useState<Uint8Array | null>(null);
   const [previewBase, setPreviewBase] = useState<{ bytes: Uint8Array; page: number } | null>(null);
   const [viewport, setViewport] = useState<PageViewport | null>(null);
@@ -162,21 +166,22 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
 
   const validRect = rect.every(Number.isFinite) && rect[2] - rect[0] >= .1 && rect[3] - rect[1] >= .1;
   const fontReady = !font.startsWith('dm-sans') || fontBytes?.name === font;
-  const validation = !validRect ? 'Selecciona un área válida.' : isText ? !text.trim() ? 'Escribe el texto que quieres colocar.' : !Number.isFinite(size) || size < 4 || size > 200 ? 'El tamaño debe estar entre 4 y 200 puntos.' : !Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3 ? 'El interlineado debe estar entre 0,8 y 3.' : '' : !image ? 'Elige una imagen PNG o JPEG.' : !Number.isFinite(opacity) || opacity < 0 || opacity > 100 ? 'La opacidad debe estar entre 0 y 100 %.' : '';
+  const validation = deleting ? '' : !validRect ? 'Selecciona un área válida.' : isText ? !text.trim() ? 'Escribe el texto que quieres colocar.' : !Number.isFinite(size) || size < 4 || size > 200 ? 'El tamaño debe estar entre 4 y 200 puntos.' : !Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3 ? 'El interlineado debe estar entre 0,8 y 3.' : '' : !image ? 'Elige una imagen PNG o JPEG.' : !Number.isFinite(opacity) || opacity < 0 || opacity > 100 ? 'La opacidad debe estar entre 0 y 100 %.' : '';
   const operation = useMemo<Operation | null>(() => {
+    if (deleting) return initialItem ? { operation: 'remove-content', page: area.page, id: initialItem.id, kind: initialItem.kind, rect: sourceRect } : null;
     if (validation || isText && !fontReady) return null;
-    if (isText) return { operation: kind as 'add-text' | 'replace-text', page: area.page, rect, ...(replacing ? { sourceRect } : {}), text, size, color, align, lineHeight, wrap,
+    if (isText) return { operation: intent === 'duplicate' ? 'add-text' : kind as 'add-text' | 'replace-text', page: area.page, rect, ...(replacing ? { sourceRect } : {}), text, size, color, align, lineHeight, wrap,
       ...(initialItem?.baselineOffset !== undefined && initialItem.size ? { baselineOffset: initialItem.baselineOffset * size / initialItem.size } : {}),
       ...(font.startsWith('dm-sans') ? { font: fontBytes!.bytes } : { fontName: font }) };
-    return { operation: kind as 'add-image' | 'replace-image', page: area.page, rect, ...(replacing ? { sourceRect } : {}), image: image!.bytes, fit, opacity: opacity / 100, rotation };
-  }, [kind, area.page, rect, sourceRect, text, size, color, align, lineHeight, wrap, font, fontBytes, image, fit, opacity, rotation, replacing, isText, validation, fontReady, initialItem]);
-  const draftKey = JSON.stringify({ rect, text, size, color, align, lineHeight, wrap, font, image: image?.url, fit, opacity, rotation, fontReady, validation });
+    return { operation: intent === 'duplicate' ? 'add-image' : kind as 'add-image' | 'replace-image', page: area.page, rect, ...(replacing ? { sourceRect } : {}), image: image!.bytes, fit, opacity: opacity / 100, rotation };
+  }, [intent, deleting, kind, area.page, rect, sourceRect, text, size, color, align, lineHeight, wrap, font, fontBytes, image, fit, opacity, rotation, replacing, isText, validation, fontReady, initialItem]);
+  const draftKey = JSON.stringify(deleting ? { intent, id: initialItem?.id, sourceRect } : { intent, rect, text, size, color, align, lineHeight, wrap, font, image: image?.url, fit, opacity, rotation, fontReady, validation });
   const renderKey = draftKey + ':' + hostSize.width + ':' + hostSize.height + ':' + zoom;
   const previewReady = previewResult?.key === renderKey && !previewResult.error && !dragging;
   const previewError = previewResult?.key === renderKey ? previewResult.error : '';
-  const failureMessage = inputError || sourceError || fontError || previewError;
-  const canApply = !!operation && !!snapshot && previewReady && !busy && !dragging && !imageLoading && !inputError;
-  const previewState = sourceError || fontError || previewError || inputError || validation ? 'error' : previewReady && !imageLoading ? 'ready' : 'updating';
+  const failureMessage = sourceError || previewError || (!deleting && (inputError || fontError));
+  const canApply = !!operation && !!snapshot && previewReady && !busy && !dragging && (deleting || !imageLoading && !inputError);
+  const previewState = failureMessage || validation ? 'error' : previewReady && (deleting || !imageLoading) ? 'ready' : 'updating';
 
   useEffect(() => {
     if (!active || dragging || !previewBase || !viewport) return;
@@ -194,7 +199,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
           loading = getDocument({ ...pdfAssetSettings(), data: new Uint8Array(bytes), password: doc.password });
           const pdf = await loading.promise; controller.signal.throwIfAborted();
           const page = await pdf.getPage(previewBase.page), base = page.getViewport({ scale: 1 });
-          const areaBox = boxFor(viewport, rect);
+          const areaBox = boxFor(viewport, deleting ? sourceRect : rect);
           const desiredScale = typeof zoom === 'number' ? zoom : zoom === 'area' ? Math.min((hostSize.width - 64) / Math.max(80, areaBox.width + 48), (hostSize.height - 64) / Math.max(80, areaBox.height + 48), 4) : Math.min((hostSize.width - 32) / base.width, (hostSize.height - 32) / base.height, 1.5);
           const ratio = Math.min(2, window.devicePixelRatio || 1);
           const scale = Math.max(.1, Math.min(desiredScale, Math.sqrt(16_000_000 / (base.width * base.height * ratio * ratio))));
@@ -218,10 +223,20 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
       })();
     }, operation ? 250 : 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [active, dragging, previewBase, viewport, operation, renderKey, doc.password, hostSize, zoom, rect]);
+  }, [active, dragging, previewBase, viewport, operation, renderKey, doc.password, hostSize, zoom, rect, deleting, sourceRect]);
 
   const box = viewport ? boxFor(viewport, rect) : null;
   const originalBox = viewport ? boxFor(viewport, sourceRect) : null;
+  function changeIntent(next: ContentIntent) {
+    if (busy || dragging || !initialItem || !viewport || next === intent) return;
+    if (intent !== 'delete') placements.current[intent] = rect;
+    if (next === 'duplicate' && !placements.current.duplicate) {
+      const original = boxFor(viewport, placements.current.edit);
+      placements.current.duplicate = rectFor(viewport, boundBox({ ...original, x: original.x + 12, y: original.y + 12 }, viewport));
+    }
+    if (next !== 'delete') setRect(placements.current[next]!);
+    setIntent(next);
+  }
   function updateBox(next: Box) { const view = viewportRef.current; if (view) setRect(rectFor(view, boundBox(next, view))); }
   function resizeWithRatio(next: Box, axis: 'width' | 'height') {
     if (!box || !viewport) return;
@@ -292,14 +307,14 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
     if (/^#[\da-f]{6}$/i.test(info.color)) setColor(info.color);
     setFont(matchingFont(info.fontName).font);
   }
-  return <div className="content-editor" data-preview-state={previewState} data-kind={kind} data-preview-base-bytes={previewBase?.bytes.length} data-source-rect={sourceRect.join(',')} data-destination-rect={rect.join(',')}>
+  return <div className="content-editor" data-preview-state={previewState} data-kind={kind} data-intent={intent} data-selected={!!initialItem} data-preview-base-bytes={previewBase?.bytes.length} data-source-rect={sourceRect.join(',')} data-destination-rect={rect.join(',')}>
     <div className="content-zoom-toolbar"><button type="button" className="secondary-button" onClick={() => setZoom('page')}>Página completa</button><button type="button" className="secondary-button" onClick={() => setZoom('area')}>Al área</button><button type="button" className="secondary-button" onClick={() => setZoom(1)}>100 %</button><button type="button" aria-label="Alejar vista previa" onClick={() => setZoom(Math.max(.1, geometry.scale / 1.25))}><ZoomOut size={17} /></button><button type="button" aria-label="Acercar vista previa" onClick={() => setZoom(Math.min(4, geometry.scale * 1.25))}><ZoomIn size={17} /></button><span>{Math.round(geometry.scale * 100)} %</span></div>
     <div className="content-editor-body">
       <div className="content-preview" ref={host} aria-label="Vista previa del PDF">
         <div className="content-page" style={{ width: geometry.width || undefined, height: geometry.height || undefined }}>
           <canvas ref={canvas} aria-label={'Vista previa de la página ' + area.page} style={{ width: geometry.width, height: geometry.height }} />
-          {replacing && originalBox && geometry.width > 0 && <div className="content-source-box" aria-hidden="true" style={{ left: originalBox.x * geometry.scale, top: originalBox.y * geometry.scale, width: originalBox.width * geometry.scale, height: originalBox.height * geometry.scale }} />}
-          {box && geometry.width > 0 && <div className={'content-box' + (dragging ? ' is-dragging' : '')} data-role="destination" role="group" tabIndex={0} aria-label="Área de destino. Arrastra para mover; usa las flechas para ajustar." style={{ left: box.x * geometry.scale, top: box.y * geometry.scale, width: box.width * geometry.scale, height: box.height * geometry.scale }} onPointerDown={event => pointerDown(event, 'move')} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd} onKeyDown={event => {
+          {(replacing || deleting || intent === 'duplicate') && originalBox && geometry.width > 0 && <div className="content-source-box" aria-hidden="true" style={{ left: originalBox.x * geometry.scale, top: originalBox.y * geometry.scale, width: originalBox.width * geometry.scale, height: originalBox.height * geometry.scale }} />}
+          {!deleting && box && geometry.width > 0 && <div className={'content-box' + (dragging ? ' is-dragging' : '')} data-role="destination" role="group" tabIndex={0} aria-label="Área de destino. Arrastra para mover; usa las flechas para ajustar." style={{ left: box.x * geometry.scale, top: box.y * geometry.scale, width: box.width * geometry.scale, height: box.height * geometry.scale }} onPointerDown={event => pointerDown(event, 'move')} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd} onKeyDown={event => {
             if (busy || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
             event.preventDefault(); const step = event.shiftKey ? 10 : 1;
             updateBox({ ...box, x: box.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0), y: box.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0) });
@@ -309,12 +324,19 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
         {!previewReady && !previewError && !sourceError && <div className="content-preview-badge" role="status"><LoaderCircle className="spin" size={14} />Actualizando vista previa…</div>}
       </div>
       <div className="content-inspector">
-        <p className="content-editor-help"><Move size={15} aria-hidden="true" />Mueve el área y ajusta sus esquinas. Página {area.page}.</p>
-        {replacing && <p className="content-editor-note">{isText ? 'Se quita el texto del área marcada con línea discontinua. Puedes mover el texto nuevo.' : 'Se quitan sólo los píxeles de imagen del área marcada con línea discontinua. Otras imágenes solapadas podrían verse afectadas. Puedes mover la imagen nueva.'}</p>}
+        {initialItem && <div className="content-editor-actions" role="group" aria-label="Acciones del elemento">
+          <button type="button" className="secondary-button" aria-pressed={intent === 'edit'} disabled={busy || dragging || !viewport} onClick={() => changeIntent('edit')}>Editar</button>
+          <button type="button" className="secondary-button" aria-pressed={intent === 'duplicate'} disabled={busy || dragging || !viewport} onClick={() => changeIntent('duplicate')}>Duplicar</button>
+          <button type="button" className="secondary-button" aria-pressed={deleting} disabled={busy || dragging || !viewport} onClick={() => changeIntent('delete')}>Eliminar</button>
+          {onReset && <button type="button" className="secondary-button" disabled={busy || dragging} onClick={onReset}>Restablecer</button>}
+        </div>}
+        {deleting ? <p className="content-editor-delete-note">Se eliminará {isText ? 'el texto seleccionado' : 'la imagen seleccionada'}. Revisa la vista previa y pulsa Aplicar eliminación. Puedes deshacer después de aplicarla.</p> : <>
+        {!initialItem && <p className="content-editor-help"><Move size={15} aria-hidden="true" />Mueve el área y ajusta sus esquinas. Página {area.page}.</p>}
+        {intent === 'duplicate' ? <p className="content-editor-note">El original permanece en su lugar. Mueve la copia y revisa el formato antes de aplicarla.</p> : replacing && !initialItem && <p className="content-editor-note">{isText ? 'Se quita el texto del área marcada con línea discontinua. Puedes mover el texto nuevo.' : 'Se quitan sólo los píxeles de imagen del área marcada con línea discontinua. Otras imágenes solapadas podrían verse afectadas. Puedes mover la imagen nueva.'}</p>}
         <fieldset disabled={busy} onChangeCapture={() => { inputTouched.current = true; }}>
           {isText ? <>
-            <label>Texto<textarea aria-label="Texto" value={text} maxLength={50000} onChange={event => { inputTouched.current = true; setText(event.target.value); }} rows={5} placeholder="Escribe el texto" /></label>
-            {kind === 'replace-text' && doc.canCopy && <div className="content-suggestion"><button type="button" className="secondary-button" disabled={readingArea || !suggestion?.text} onClick={useSuggestion}>{readingArea ? 'Leyendo texto del área…' : 'Usar texto del área'}</button>{suggestion && <p>{suggestion.text ? 'Fuente original: ' + (suggestion.fontName || 'no identificada') + '.' : 'No se encontró texto extraíble en esta área.'}{suggestion.mixedStyle ? ' El área mezcla estilos; revisa el formato.' : ''}{suggestion.rotated ? ' El texto original tiene rotación.' : ''}</p>}{suggestionError && <p role="alert">{suggestionError}</p>}</div>}
+            <label>Texto<textarea aria-label="Texto" value={text} maxLength={50000} onChange={event => { inputTouched.current = true; setText(event.target.value); }} rows={initialItem ? 3 : 5} placeholder="Escribe el texto" /></label>
+            {initialItem ? <details className="content-editor-source-info"><summary>Formato original</summary><p className="content-editor-note">Fuente: {initialItem.fontName || 'no identificada'}. Tamaño: {rounded(initialItem.size || size)} pt.{initialItem.mixedStyle ? ' El elemento mezcla estilos; la edición aplicará un formato uniforme.' : ''}</p></details> : kind === 'replace-text' && doc.canCopy && <div className="content-suggestion"><button type="button" className="secondary-button" disabled={readingArea || !suggestion?.text} onClick={useSuggestion}>{readingArea ? 'Leyendo texto del área…' : 'Usar texto del área'}</button>{suggestion && <p>{suggestion.text ? 'Fuente original: ' + (suggestion.fontName || 'no identificada') + '.' : 'No se encontró texto extraíble en esta área.'}{suggestion.mixedStyle ? ' El área mezcla estilos; revisa el formato.' : ''}{suggestion.rotated ? ' El texto original tiene rotación.' : ''}</p>}{suggestionError && <p role="alert">{suggestionError}</p>}</div>}
             {(initialItem?.fontName || suggestion?.fontName) && !matchingFont(initialItem?.fontName || suggestion!.fontName).exact && <p className="content-editor-note">La fuente original no está disponible como fuente de edición. Se usará {fontChoices.find(([value]) => value === font)?.[1] || font}; revisa la vista previa.</p>}
             <label>Fuente<select aria-label="Fuente" value={font} onChange={event => { inputTouched.current = true; setFont(event.target.value); }}>{fontChoices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <div className="content-property-row"><label>Tamaño<input aria-label="Tamaño" type="number" min={4} max={200} step={.5} value={size} onChange={event => setSize(Number(event.target.value))} /></label><label>Color<input aria-label="Color" type="color" value={color} onChange={event => setColor(event.target.value)} /></label></div>
@@ -322,7 +344,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
             <label>Interlineado<input aria-label="Interlineado" type="number" min={.8} max={3} step={.05} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))} /></label>
             <label className="check-option"><input aria-label="Ajustar líneas" type="checkbox" checked={wrap} onChange={event => setWrap(event.target.checked)} />Ajustar líneas al ancho del área</label>
           </> : <>
-            <label className="file-choice content-image-choice"><Upload size={16} aria-hidden="true" />Imagen PNG o JPEG<input aria-label="Imagen PNG o JPEG" type="file" accept="image/png,image/jpeg" onChange={event => { void chooseImage(event.target.files?.[0]); event.target.value = ''; }} /></label>
+            <label className="file-choice content-image-choice"><Upload size={16} aria-hidden="true" />{initialItem?.kind === 'image' ? 'Cambiar imagen' : 'Imagen PNG o JPEG'}<input aria-label="Imagen PNG o JPEG" type="file" accept="image/png,image/jpeg" onChange={event => { void chooseImage(event.target.files?.[0]); event.target.value = ''; }} /></label>
             {image && <figure className="content-image-info"><img src={image.url} alt="Imagen elegida" /><figcaption>{image.name}<small>{image.width} × {image.height} píxeles</small></figcaption></figure>}
             <label>Ajuste de imagen<select aria-label="Ajuste de imagen" value={fit} onChange={event => { imageFormatTouched.current.fit = true; setFit(event.target.value as typeof fit); }}><option value="contain">Encajar sin deformar</option><option value="cover">Cubrir el área</option><option value="stretch">Estirar al área</option></select></label>
             <label className="check-option"><input type="checkbox" aria-label="Bloquear proporción" checked={lockRatio} onChange={event => setLockRatio(event.target.checked)} />Bloquear proporción del marco</label>
@@ -331,10 +353,11 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
           </>}
           {box && <><h3>Posición y dimensiones</h3><p className="content-editor-note">Puntos desde la esquina superior izquierda de la página visible.</p><div className="content-property-row"><label>Posición X<input aria-label="Posición X" type="number" min={0} step={.5} value={rounded(box.x)} onChange={event => updateBox({ ...box, x: Number(event.target.value) })} /></label><label>Posición Y<input aria-label="Posición Y" type="number" min={0} step={.5} value={rounded(box.y)} onChange={event => updateBox({ ...box, y: Number(event.target.value) })} /></label></div><div className="content-property-row"><label>Ancho<input aria-label="Ancho" type="number" min={1} step={.5} value={rounded(box.width)} onChange={event => resizeWithRatio({ ...box, width: Number(event.target.value) }, 'width')} /></label><label>Alto<input aria-label="Alto" type="number" min={1} step={.5} value={rounded(box.height)} onChange={event => resizeWithRatio({ ...box, height: Number(event.target.value) }, 'height')} /></label></div></>}
         </fieldset>
+        </>}
         {failureMessage && <p className="operation-error">{failureMessage}</p>}
         {validation && <p className="content-editor-note">{validation}</p>}
       </div>
     </div>
-    <div className="content-editor-footer"><span className={failureMessage ? 'content-footer-error' : undefined} role={failureMessage ? 'alert' : 'status'}>{busy ? 'Aplicando cambios…' : failureMessage || (imageLoading ? 'Leyendo imagen…' : previewReady && operation ? 'Vista previa lista. El PDF aún no se ha modificado.' : validation || 'Preparando vista previa…')}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{cancelLabel}</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}Aplicar cambios</button></div>
+    <div className="content-editor-footer"><span className={failureMessage ? 'content-footer-error' : undefined} role={failureMessage ? 'alert' : 'status'}>{busy ? 'Aplicando cambios…' : failureMessage || (!deleting && imageLoading ? 'Leyendo imagen…' : previewReady && operation ? 'Vista previa lista. El PDF aún no se ha modificado.' : validation || 'Preparando vista previa…')}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{cancelLabel}</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}{deleting ? 'Aplicar eliminación' : intent === 'duplicate' ? 'Aplicar duplicación' : 'Aplicar cambios'}</button></div>
   </div>;
 }

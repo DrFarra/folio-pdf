@@ -304,7 +304,7 @@ function areaContent(page, box) {
 
 // Describe selectable regions, rather than pretending a PDF always has isolated
 // editable objects. The device pass also sees faint images and invisible OCR.
-function pageContent(doc, page, requestedImage) {
+function pageContent(doc, page, requestedImage, selectedContent) {
   if (requestedImage !== undefined && (typeof requestedImage !== 'string' || !/^image-\d{1,5}$/.test(requestedImage))) fail('La imagen seleccionada ya no es válida.');
   const bounds = page.getBounds(), inverse = mupdf.Matrix.invert(page.getTransform());
   const overlap = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > .5 && Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > .5;
@@ -312,7 +312,7 @@ function pageContent(doc, page, requestedImage) {
   const usable = b => finite(b) && b.length === 4 && b[2] - b[0] > .1 && b[3] - b[1] > .1;
   const equalBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < .5);
   const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
-  const warnings = new Set(), textPaint = [], images = [], graphics = [], groups = [];
+  const warnings = new Set(), textPaint = [], images = [], imagePaint = [], glyphs = [], graphics = [], groups = [];
   const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, display, structured, device, selectedImage;
   const reserve = () => { if (++events > 20000) fail('La página contiene demasiados elementos para la selección automática. Usa una selección manual.'); };
   const currentClip = () => clips.at(-1);
@@ -334,9 +334,11 @@ function pageContent(doc, page, requestedImage) {
     let softMask;
     try {
       softMask = image.getMask();
+      const info = { box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask() || !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() };
+      if (selectedContent) imagePaint.push(info);
       if (usable(visible)) {
         if (`image-${images.length}` === requestedImage) selectedImage = new mupdf.Image(image.pointer);
-        images.push({ box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask() || !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() });
+        images.push(info);
       }
     } finally { softMask?.destroy(); }
   };
@@ -370,14 +372,16 @@ function pageContent(doc, page, requestedImage) {
     const blocks = []; let block, line, index = 0, rune = 0, jsonRunes;
     structured.walk({
       beginTextBlock: box => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
-      beginLine: (box, mode, direction) => { line = { box, mode, direction, text: '', styles: new Map() }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
+      beginLine: (box, mode, direction) => { line = { box, mode, direction, text: '', styles: new Map(), glyphs: [] }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
       onChar: (character, origin, font, size, _quad, color) => {
         try {
           if (++characters > 100000) fail('Hay demasiado texto para la selección automática.');
           const c = jsonRunes[rune++] ?? character; line.text += c; line.origin ??= origin;
+          const fontName = font.getName();
+          if (selectedContent) { const glyph = { c, origin: [...origin], quad: [..._quad], fontName, size, color: [...color] }; line.glyphs.push(glyph); glyphs.push(glyph); }
           if (!c.trim()) return;
           const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
-          const fontName = font.getName(), key = `${fontName}:${Math.round(size * 100)}:${hex}`, style = line.styles.get(key) || { size, color: hex, fontName, count: 0 };
+          const key = `${fontName}:${Math.round(size * 100)}:${hex}`, style = line.styles.get(key) || { size, color: hex, fontName, count: 0 };
           style.count++; line.styles.set(key, style);
         } finally { font.destroy(); }
       },
@@ -425,6 +429,46 @@ function pageContent(doc, page, requestedImage) {
       const reason = 'El documento firmado o sus permisos no permiten editar el contenido.';
       items.forEach(item => { item.editable = false; item.reason = reason; }); warnings.add(reason);
     }
+    if (selectedContent) {
+      const { id, kind } = selectedContent, item = items.find(item => item.id === id);
+      if (!item || item.kind !== kind || !item.rect.every((value, i) => Math.abs(value - selectedContent.rect[i]) <= .02)) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');
+      if (!item.editable) fail(item.reason || 'No se puede eliminar esta selección automáticamente.');
+      if (kind === 'image') {
+        const image = images[Number(id.slice(6))];
+        if (!finite(image.fullBox) || !image.fullBox.every((n, i) => Math.abs(n - image.box[i]) <= .02)) fail('La imagen está recortada; no se puede eliminar esta instancia automáticamente.');
+        // IMAGE_REMOVE tests the complete painted image, even when it is hidden
+        // by alpha or clipping. The picker deliberately tolerates tiny overlaps;
+        // deletion must not use that tolerance or remove a second instance.
+        if (imagePaint.some(other => other !== image && intersects(image.fullBox, other.fullBox))) fail('Otra imagen toca el área seleccionada; no se puede eliminar sólo esta instancia con seguridad.');
+        return { boxes: [image.fullBox], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()) };
+      }
+      const candidate = candidates.find(candidate => candidate.item === item), selected = new Set(candidate.rows.flatMap(row => row.glyphs));
+      if (selected.size > 5000) fail('Hay demasiados caracteres para eliminar esta selección automáticamente. Selecciona menos líneas.');
+      const glyphBoxes = [...selected].map(glyph => {
+        if (!finite(glyph.quad) || !finite(glyph.origin)) fail('Los límites del texto no permiten una eliminación segura.');
+        const xs = glyph.quad.filter((_n, i) => i % 2 === 0), ys = glyph.quad.filter((_n, i) => i % 2 === 1);
+        const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        // Inset normal quads to avoid deleting a neighbouring glyph that only
+        // shares an edge. Zero-width accents still need a small removal area.
+        const insetX = Math.min(.02, (box[2] - box[0]) / 10), insetY = Math.min(.02, (box[3] - box[1]) / 10);
+        return [box[0] + insetX - (insetX === 0 ? .01 : 0), box[1] + insetY - (insetY === 0 ? .01 : 0), box[2] - insetX + (insetX === 0 ? .01 : 0), box[3] - insetY + (insetY === 0 ? .01 : 0)];
+      });
+      // Merge touching quads with the same vertical extent, but never bridge
+      // lines or differently sized spans. This avoids thousands of annotations
+      // for an ordinary paragraph while retaining its actual glyph geometry.
+      const boxes = [];
+      glyphBoxes.sort((a, b) => a[1] - b[1] || a[3] - b[3] || a[0] - b[0]);
+      for (const box of glyphBoxes) {
+        const last = boxes.at(-1);
+        if (last && Math.abs(last[1] - box[1]) < .02 && Math.abs(last[3] - box[3]) < .02 && box[0] <= last[2] + .041) last[2] = Math.max(last[2], box[2]);
+        else boxes.push(box);
+      }
+      if (boxes.length > 500) fail('La selección tiene demasiados fragmentos para eliminarla con seguridad. Selecciona menos líneas.');
+      const retainedGlyphs = glyphs.filter(glyph => !selected.has(glyph) && glyph.c.trim());
+      const boundsOf = glyph => [Math.min(glyph.quad[0], glyph.quad[2], glyph.quad[4], glyph.quad[6]), Math.min(glyph.quad[1], glyph.quad[3], glyph.quad[5], glyph.quad[7]), Math.max(glyph.quad[0], glyph.quad[2], glyph.quad[4], glyph.quad[6]), Math.max(glyph.quad[1], glyph.quad[3], glyph.quad[5], glyph.quad[7])];
+      if (retainedGlyphs.some(glyph => boxes.some(box => intersects(boundsOf(glyph), box)))) fail('Hay caracteres vecinos dentro de la selección; no se pueden eliminar sólo los elegidos con seguridad.');
+      return { boxes, retainedGlyphs };
+    }
     if (requestedImage !== undefined) {
       const item = imageItems.find(item => item.id === requestedImage);
       if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
@@ -433,6 +477,33 @@ function pageContent(doc, page, requestedImage) {
     }
     return { items, warnings: [...warnings] };
   } finally { selectedImage?.destroy(); device?.destroy(); structured?.destroy(); display?.destroy(); }
+}
+
+function contentGlyphs(page) {
+  let display, structured, rune = 0, line = 0, chars; const result = [];
+  try {
+    display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
+    const lines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
+    if (lines.reduce((n, text) => n + text.length, 0) > 200000) fail('No se pudo verificar la eliminación sin afectar texto vecino.');
+    structured.walk({
+      beginLine: () => { chars = [...(lines[line++] || '')]; rune = 0; },
+      onChar: (c, origin, font, size, quad, color) => {
+        try { const value = chars[rune++] ?? c; if (value.trim()) result.push({ c: value, origin: [...origin], quad: [...quad], fontName: font.getName(), size, color: [...color] }); }
+        finally { font.destroy(); }
+      },
+    });
+    return result;
+  } finally { structured?.destroy(); display?.destroy(); }
+}
+
+function verifyRetainedGlyphs(expected, actual) {
+  const key = glyph => JSON.stringify([glyph.c, glyph.fontName, glyph.color.map(n => Math.round(n * 255))]);
+  const sort = (a, b) => key(a).localeCompare(key(b)) || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0] || a.size - b.size;
+  expected.sort(sort); actual.sort(sort);
+  if (expected.length !== actual.length || expected.some((glyph, i) => {
+    const next = actual[i];
+    return key(glyph) !== key(next) || Math.abs(glyph.size - next.size) > .025 || [...glyph.origin, ...glyph.quad].some((n, j) => Math.abs(n - [...next.origin, ...next.quad][j]) > .025);
+  })) fail('La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.');
 }
 
 function pageImagePixels(image, info) {
@@ -446,7 +517,7 @@ function pageImagePixels(image, info) {
   } finally { rgb?.destroy(); decoded?.destroy(); }
 }
 
-function redactPage(doc, page, boxes, { black = true, images = true, graphics = true, text = true, preserveAnnotations = false } = {}) {
+function redactPage(doc, page, boxes, { black = true, images = true, imageMethod = mupdf.PDFPage.REDACT_IMAGE_PIXELS, graphics = true, text = true, preserveAnnotations = false } = {}) {
   // Editing content must retain comments, links, widgets and pending redaction marks.
   const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
   let restored;
@@ -460,7 +531,7 @@ function redactPage(doc, page, boxes, { black = true, images = true, graphics = 
       if (!preserveAnnotations) for (const a of [...page.getAnnotations()]) if (intersects(a.getBounds(), box)) page.deleteAnnotation(a);
       const mark = page.createAnnotation('Redact'); mark.setRect(box); mark.update();
     }
-    page.applyRedactions(black, images ? mupdf.PDFPage.REDACT_IMAGE_PIXELS : mupdf.PDFPage.REDACT_IMAGE_NONE,
+    page.applyRedactions(black, images ? imageMethod : mupdf.PDFPage.REDACT_IMAGE_NONE,
       graphics ? mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED : mupdf.PDFPage.REDACT_LINE_ART_NONE, text ? mupdf.PDFPage.REDACT_TEXT_REMOVE : mupdf.PDFPage.REDACT_TEXT_NONE);
   } finally {
     if (preserveAnnotations) { if (restored) object.put('Annots', restored); else object.delete('Annots'); }
@@ -484,6 +555,23 @@ export function operateDocument(bytes, options, password = '') {
       const page = doc.loadPage(pageIndex(doc, options.page));
       try { return areaContent(page, mupdf.Rect.transform(rect(options.rect), page.getTransform())); }
       finally { page.destroy(); }
+    }
+    if (operation === 'remove-content') {
+      allowed(doc, 'edit');
+      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+      if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
+      const index = pageIndex(doc, options.page), page = doc.loadPage(index); let selection;
+      try {
+        selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: rect(options.rect) });
+        redactPage(doc, page, selection.boxes, { black: false, images: options.kind === 'image', imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text: options.kind === 'text', preserveAnnotations: true });
+      } finally { page.destroy(); }
+      // Redaction uses font character bounds rather than the picker's quads.
+      // Verify the saved result before returning it; nearby text must survive
+      // with its original glyphs/positions, including other lines in the block.
+      const output = save(doc), verification = open(output, password);
+      try { const page = verification.loadPage(index); try { verifyRetainedGlyphs(selection.retainedGlyphs, contentGlyphs(page)); } finally { page.destroy(); } }
+      finally { verification.destroy(); }
+      return output;
     }
     if (operation === 'text') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
@@ -696,8 +784,7 @@ export function operateDocument(bytes, options, password = '') {
             } finally { image.destroy(); }
             if (replacement) return operateDocument(replacement, { ...options, operation: 'add-image' }, password);
           } else if (operation === 'remove-image') {
-            const a = page.createAnnotation('Redact'); a.setRect(box); a.update();
-            page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_NONE);
+            redactPage(doc, page, [box], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
           } else {
             // Fit validation happens before redaction; errors never return a modified PDF.
             if (operation === 'replace-text') {

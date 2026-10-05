@@ -1946,6 +1946,230 @@
   },
   "release_updates": [
     {
+      "version": "0.8.2",
+      "date": "2026-10-05",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "0.8.2: acciones de contenido y guardado integrado",
+      "frontend_entry": "/assets/index-CdH82sdv.js",
+      "baseline_distinction": "Se conservan los 35 apartados y 89 referencias del commit base y todas las entregas anteriores. Esta entrada sólo registra la evolución posterior.",
+      "platform_scope": "Windows, Chromium y documentos sintéticos. Los casos de teléfono son simulados; la aceptación del ejecutable instalado tiene su registro independiente.",
+      "capabilities": [
+        "Editar, duplicar y eliminar texto o imágenes desde el elemento seleccionado. Duplicar conserva el original y permite mover y formatear la copia antes de aplicarla.",
+        "Eliminar usa una vista previa real del PDF y un botón Aplicar eliminación. El motor revalida el identificador, el tipo, la geometría y los permisos; comprueba que los glifos vecinos permanecen en su posición.",
+        "La eliminación de imágenes retira la instancia completa cuando su selección es segura. Se conservan anotaciones, widgets, metadatos y marcas de censura pendientes; los solapes ambiguos se rechazan.",
+        "Restablecer devuelve texto, imagen, propiedades y marco a la selección original sin modificar el documento ni añadir un paso al historial. Descartar conserva el PDF y aplicar permite Deshacer/Rehacer.",
+        "Guardar una copia y Ctrl+S funcionan desde el editor después de aplicar o descartar el borrador. La copia se registra en la biblioteca sin abandonar la edición ni perder la página, pestaña o historial.",
+        "Inspector compacto con cuatro acciones visibles, formato original plegable y Cambiar imagen. La navegación mantiene una sola fila en 800×600, con la página y los botones de aplicar y descartar visibles."
+      ],
+      "limits": [
+        "La selección automática sigue siendo edición por regiones verificadas. Los documentos complejos, OCR invisible, imágenes con máscaras, recortes residuales o solapes pueden requerir otro flujo y se explican cuando no son editables.",
+        "Duplicar texto usa las fuentes de edición disponibles y un formato uniforme; no reconstruye automáticamente todos los estilos o tipografías del PDF original. La fuente sustituta se indica en el inspector.",
+        "Estas pruebas no acreditan reflujo entre párrafos, edición universal de objetos, aceptación física de Apple ni superioridad global frente a otros programas.",
+        "La prueba de guardado con puente nativo usa un contrato simulado en Chromium. La aplicación instalada se comprueba por separado y se registra en el manifiesto de cada paquete."
+      ],
+      "verification": {
+        "content-actions-ui": {
+          "status": "verificado",
+          "passed": 5,
+          "failed": 0,
+          "report": "test-results/content-actions-ui-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "cases": [
+            "duplicate-delete-text-history",
+            "duplicate-delete-image-pixels",
+            "reset-cancel-do-not-commit",
+            "inline-save-shortcut-page-history-library",
+            "native-save-cancel-and-success-contract"
+          ]
+        },
+        "pdf-editing-ui": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "report": "test-results/pdf-editing-ui-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "cases": [
+            "direct-selection-continuous-history",
+            "cancel-zoom-and-frame",
+            "return-from-tools-keeps-draft",
+            "low-height-editor-actions",
+            "move-original-image-without-upload",
+            "medium-window-editor-resize"
+          ]
+        },
+        "pdf-content-picker-ui": {
+          "status": "verificado",
+          "passed": 12,
+          "failed": 0,
+          "report": "test-results/pdf-content-picker-ui-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "cases": [
+            "levels-zoom-pagination-and-contained-pan",
+            "crop-rotate90-overlay-contains-painted-glyph",
+            "drawing-text-and-image-uses-crop-pdf-coordinates",
+            "image-selection-keeps-original-source-region",
+            "invisible-ocr-explains-unavailability-without-opening-editor",
+            "desktop-800x600",
+            "desktop-900x600",
+            "desktop-1024x600",
+            "phone-390x844",
+            "phone-600x800",
+            "phone-844x390",
+            "resize-medium-keeps-selection-zoom-and-usable-layout"
+          ]
+        },
+        "inline-editor-integration": {
+          "status": "verificado",
+          "passed": 2,
+          "failed": 0,
+          "report": "test-results/inline-editor-integration-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "cases": [
+            "inline-draft-guards-tabs-shortcuts-and-document-actions",
+            "inline-page-navigation-and-reader-zoom-scroll-restoration"
+          ]
+        },
+        "content-editor-ui": {
+          "status": "verificado",
+          "passed": 8,
+          "failed": 0,
+          "report": "test-results/content-editor-ui-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "cases": [
+            "replacement-preview-move-export-and-one-history-step",
+            "cancel-stale-preview-invalid-draft-and-return-to-tools",
+            "wrapped-formatted-text-and-latest-draft-export",
+            "image-preview-proportions-drag-resize-and-export",
+            "replace-image-clears-original-region-and-keeps-neighbors",
+            "corrupt-image-cannot-apply-previous-image",
+            "delayed-image-loading-does-not-restore-stale-position",
+            "rotated-cropped-page-box-mapping-and-short-window-footer"
+          ]
+        },
+        "content-actions-engine": {
+          "status": "verificado",
+          "passed": 13,
+          "failed": 0,
+          "report": "test-results/content-actions-engine-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "delete-one-line-preserves-next-line-and-neighbour-pixels",
+            "delete-paragraph-uses-lines-and-retains-background-and-another-column",
+            "unsafe-tight-lines-and-foreign-glyphs-are-rejected-with-source-intact",
+            "ordinary-deletion-keeps-notes-highlights-links-widgets-pending-redactions-and-metadata",
+            "shared-image-removal-affects-only-one-instance-and-reveals-original-background",
+            "tiny-image-overlaps-and-invisible-overlapping-instances-block-deletion",
+            "masked-or-cropped-images-cannot-bypass-the-safe-selection-gate",
+            "native-crop-and-all-quarter-turns-remove-or-duplicate-the-intended-image",
+            "second-page-extraction-preview-retains-selection-ids-and-geometries",
+            "text-duplication-adds-an-independent-copy-and-leaves-original-content",
+            "bad-selection-copy-edit-signature-and-encryption-guards-do-not-change-source",
+            "legacy-image-removal-preserves-pending-marks-notes-and-unrelated-text",
+            "client-remove-preview-cancels-with-source-owned-by-caller"
+          ]
+        },
+        "operations": {
+          "status": "verificado",
+          "passed": 13,
+          "failed": 0,
+          "report": "test-results/operations-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "page-order-delete-duplicate-rotation-and-original-preserved",
+            "blank-pages-and-merge-preserve-text",
+            "fill-text-checkbox-and-choice-roundtrip",
+            "replace-original-text-keeps-neighboring-content",
+            "redaction-removes-data-fields-comments-and-metadata",
+            "aes256-protect-restrict-and-owner-unlock",
+            "lossless-compression-keeps-text-fields-and-pages",
+            "crop-and-rotated-text-placement",
+            "actual-crop-coordinate-roundtrip-at-four-rotations",
+            "merge-preserves-real-fields-notes-and-internal-links",
+            "multiline-highlights-retain-separate-standard-quads",
+            "radio-group-exports-one-selected-option",
+            "image-redaction-removes-embedded-pixels-and-hidden-copy"
+          ]
+        },
+        "content-editor-engine": {
+          "status": "verificado",
+          "passed": 12,
+          "failed": 0,
+          "report": "test-results/content-editor-engine-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "text-wrap-alignment-line-spacing-and-font-are-real-pdf-content",
+            "long-word-wrap-explicit-newlines-and-legacy-defaults",
+            "bundled-font-bytes-are-used-with-real-font-metadata",
+            "image-fit-opacity-and-quarter-rotation-preserve-pixel-geometry",
+            "appended-content-is-visible-after-ocr-clipping-transparency-and-page-rotation",
+            "same-font-sequential-multipage-edits-survive-export-compression-and-ocr",
+            "content-normalization-keeps-passwords-encryption-and-prior-edits",
+            "text-replacement-source-and-destination-are-independent-and-annotations-survive",
+            "image-replacement-keeps-text-comments-and-neighboring-image",
+            "area-info-selects-characters-style-and-rotated-cropped-coordinates",
+            "invalid-options-overflow-and-copy-permissions-fail-with-source-intact",
+            "client-area-inspection-and-preview-cancel-before-or-during-work"
+          ]
+        },
+        "page-content-engine": {
+          "status": "verificado",
+          "passed": 10,
+          "failed": 0,
+          "report": "test-results/page-content-engine-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "lines-paragraphs-styles-and-baselines-are-real-regions",
+            "native-quarter-rotations-and-crop-box-return-original-pdf-coordinates",
+            "non-bmp-to-unicode-text-is-not-truncated-by-the-installed-walker",
+            "ocr-is-readonly-and-widget-comment-text-is-not-content",
+            "reuse-original-image-keeps-quarter-turn-opacity-frame-and-annotations",
+            "repeated-image-instances-ids-are-page-scoped-and-neighbor-is-preserved",
+            "ambiguous-images-clipping-masks-skew-and-reflection-are-explained-and-blocked",
+            "copy-edit-signature-permissions-and-original-bytes-remain-enforced",
+            "image-raster-limit-is-checked-before-decoding",
+            "page-content-and-image-client-copy-and-cancellation"
+          ]
+        },
+        "content-editor-races": {
+          "status": "verificado",
+          "passed": 2,
+          "failed": 0,
+          "report": "test-results/content-editor-races-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "manual-before-snapshot",
+            "opacity-before-original-image"
+          ]
+        },
+        "conversion": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "report": "test-results/conversion-results.json",
+          "scope": "source_regression",
+          "cases": [
+            "shared-page-selection-validation-preserves-order-for-all-formats",
+            "png-resolution-dimensions-density-and-rotated-page-selection",
+            "png-background-alpha-and-current-annotations-use-export-bytes",
+            "png-oversized-page-is-rejected-in-preflight-without-silent-downscale",
+            "txt-and-docx-use-validated-selected-pages-in-requested-order",
+            "png-cancel-before-preflight-encoding-and-packing-keeps-source-usable"
+          ]
+        }
+      },
+      "total_browser_cases": 33,
+      "total_source_cases": 56,
+      "acceptance_register": {
+        "report": "windows-manifest.json",
+        "note": "La instalación y la aceptación nativa se registran después de la compilación final en el paquete, no se afirman desde este informe de código."
+      }
+    },
+    {
       "version": "0.8.1",
       "date": "2026-10-05",
       "status": "verificado_en_pruebas_automatizadas",

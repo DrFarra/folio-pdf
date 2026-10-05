@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows, Undo2, Redo2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileImage, FileText, Files, FormInput, GripVertical, Highlighter, ImagePlus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, Scissors, ShieldCheck, Trash2, Type, FileOutput, Signature, GitCompareArrows, Undo2, Redo2, Save } from 'lucide-react';
 import Modal from './Modal';
 import { Thumbnail } from './PDFPage';
 import { inspectPdf, processPdf, readFields } from '../engine/client';
@@ -18,7 +18,7 @@ import ConversionOptions from './ConversionOptions';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onSave?: () => void; canSave?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
 const contentKinds = ['add-text', 'replace-text', 'add-image', 'replace-image'];
@@ -27,7 +27,7 @@ export default function Workbench(props: Props) {
   const { doc, onApply, onSelectTool } = props;
   const [section, setSection] = useState(props.section);
   const [editPage, setEditPage] = useState(props.page);
-  const [editSelection, setEditSelection] = useState<{ kind: ContentEditorKind; area: Area; item?: PageContentItem } | null>(null);
+  const [editSelection, setEditSelection] = useState<{ kind: ContentEditorKind; area: Area; item?: PageContentItem; reset?: number } | null>(null);
   useEffect(() => { props.onDraftChange?.(!!editSelection); }, [!!editSelection, props.onDraftChange]);
   useEffect(() => () => props.onDraftChange?.(false), [props.onDraftChange]);
   const [compareVisited, setCompareVisited] = useState(props.section === 'compare');
@@ -212,9 +212,10 @@ export default function Workbench(props: Props) {
   const content = <>
     {props.inline && section === 'home' && <div className="workspace-editor-heading"><h2>Herramientas</h2><button type="button" className="secondary-button" disabled={busy || !!editSelection} onClick={props.onClose}>Listo</button></div>}
     {props.inline && section === 'home' && editSelection && <p className="modal-description">Tienes un borrador de edición. Vuelve a Editar PDF para aplicarlo o descartarlo.</p>}
-    {section !== 'home' && <div className="workbench-navigation">{props.inline && <h2 className="workspace-editor-title">Editar PDF</h2>}<button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button>{section === 'edit-pdf' && <div className="edit-pdf-history">
-      <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canUndo} onClick={() => props.onHistory?.('undo')}><Undo2 size={15} />Deshacer</button>
-      <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canRedo} onClick={() => props.onHistory?.('redo')}><Redo2 size={15} />Rehacer</button>
+    {section !== 'home' && <div className="workbench-navigation">{props.inline && <h2 className="workspace-editor-title">Editar PDF</h2>}<button type="button" className="workbench-back secondary-button" aria-label="Volver a Herramientas" title="Volver a Herramientas" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" /><span className="edit-back-label">Volver a Herramientas</span></button>{section === 'edit-pdf' && <div className="edit-pdf-history">
+      <button type="button" className="secondary-button" aria-label="Deshacer" title="Deshacer" disabled={busy || !!editSelection || !props.canUndo} onClick={() => props.onHistory?.('undo')}><Undo2 size={15} /><span className="edit-history-label">Deshacer</span></button>
+      <button type="button" className="secondary-button" aria-label="Rehacer" title="Rehacer" disabled={busy || !!editSelection || !props.canRedo} onClick={() => props.onHistory?.('redo')}><Redo2 size={15} /><span className="edit-history-label">Rehacer</span></button>
+      {props.inline && props.onSave && <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canSave} onClick={props.onSave}><Save size={15} />Guardar una copia</button>}
       <button type="button" className="secondary-button edit-pdf-done" disabled={busy || props.inline && !!editSelection} onClick={props.onClose}>Listo</button>
     </div>}</div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
@@ -255,7 +256,7 @@ export default function Workbench(props: Props) {
     </div>}
     {props.section === 'edit-pdf' && <>
       <div className="content-editor-slot" hidden={section !== 'edit-pdf'}>
-        {editSelection ? <ContentEditor key={editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => setEditSelection(null)} cancelLabel="Descartar borrador" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={next => { setEditPage(next); props.onEditPageChange?.(next); }} onSelect={item => { if (item.editable) setEditSelection({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => setEditSelection({ kind, area })} />}
+        {editSelection ? <ContentEditor key={(editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')) + ':' + (editSelection.reset || 0)} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => setEditSelection(null)} onReset={() => setEditSelection(previous => previous ? { ...previous, reset: (previous.reset || 0) + 1 } : null)} cancelLabel="Descartar borrador" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={next => { setEditPage(next); props.onEditPageChange?.(next); }} onSelect={item => { if (item.editable) setEditSelection({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => setEditSelection({ kind, area })} />}
       </div>
     </>}
     {contentKinds.includes(props.section) && props.area && <div className="content-editor-slot" hidden={section !== props.section}><ContentEditor doc={doc} area={props.area} kind={props.section as ContentEditorKind} active={section === props.section} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={props.onClose} /></div>}
