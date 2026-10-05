@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "folio-pdf"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "folio-core",
  "serde",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-folio-ios"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "serde_json",
  "tauri",

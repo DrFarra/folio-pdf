@@ -1,4 +1,4 @@
-Folio 0.6.1 — Third-party notices
+Folio 0.6.2 — Third-party notices
 Folio is licensed under AGPL-3.0-or-later; see LICENSE.
 No commercial PDF SDK or paid service is required for local reading/annotations.
 

@@ -26,22 +26,19 @@ async function appearance(locator) {
   return locator.evaluate(element => {
     const style = getComputedStyle(element);
     return { focused: element === document.activeElement, nativeVisible: element.matches(':focus-visible'),
-      outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth),
-      modality: document.documentElement.dataset.focusModality };
+      outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) };
   });
 }
 async function pointerFocus(locator) {
   const state = await appearance(locator);
-  assert.equal(state.modality, 'pointer');
   assert.equal(state.focused, true, 'Quitar el anillo no debe quitar el foco del control.');
   assert(state.outlineStyle === 'none' || state.outlineWidth === 0, 'Ctrl/Meta + clic no debe dibujar el anillo de teclado.');
   return state;
 }
 async function keyboardFocus(locator) {
   const state = await appearance(locator);
-  assert.equal(state.modality, 'keyboard');
   assert.equal(state.focused, true);
-  assert(state.outlineStyle !== 'none' && state.outlineWidth > 0, 'La navegación de teclado debe conservar un indicador visible.');
+  assert(state.outlineStyle === 'none' || state.outlineWidth === 0, 'La navegación de teclado conserva el foco sin dibujar contornos.');
   return state;
 }
 try {
@@ -62,10 +59,9 @@ try {
   const close = page.getByRole('button', { name: 'Cerrar diálogo', exact: true });
   await close.waitFor();
   await pointerFocus(close);
-  // Modifier keys on their own must not turn a preceding mouse interaction into
-  // keyboard navigation; Tab and Shift+Tab still show the regular focus ring.
+  // Modifier keys, Tab and Shift+Tab keep real focus without adding outlines.
   await page.keyboard.down('Control');
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.focusModality), 'pointer');
+  await pointerFocus(close);
   await page.keyboard.up('Control');
   await page.keyboard.press('Tab');
   await keyboardFocus(page.locator('.workbench :focus'));
@@ -75,6 +71,23 @@ try {
   await page.locator('.workbench').waitFor({ state: 'detached' });
   await keyboardFocus(page.getByRole('button', { name: 'Herramientas', exact: true }));
   results.push({ id: 'modifier-click-dialog-and-keyboard-return', passed: true });
+
+  const tools = page.getByRole('button', { name: 'Herramientas', exact: true });
+  await tools.click();
+  await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.workbench').waitFor({ state: 'detached' });
+  await pointerFocus(tools);
+  results.push({ id: 'mouse-open-organizer-escape-return-without-outline', passed: true });
+
+  await tools.click();
+  await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
+  await page.keyboard.press('Tab');
+  await keyboardFocus(page.locator('.workbench :focus'));
+  await page.keyboard.press('Escape');
+  await page.locator('.workbench').waitFor({ state: 'detached' });
+  await keyboardFocus(tools);
+  results.push({ id: 'keyboard-tab-organizer-escape-return-without-outline', passed: true });
 
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
   await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();

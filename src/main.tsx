@@ -3,10 +3,6 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles.css';
 import { isNative } from './platform';
-import { installFocusModality } from './focus-modality';
-
-const stopFocusModality = installFocusModality();
-if (import.meta.hot) import.meta.hot.dispose(stopFocusModality);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,

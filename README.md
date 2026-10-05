@@ -1,4 +1,4 @@
-# Folio 0.6.1
+# Folio 0.6.2
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas de Windows y sus límites
