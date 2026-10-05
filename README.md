@@ -1,4 +1,4 @@
-# Folio 0.8.0
+# Folio 0.8.1
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
@@ -118,6 +118,28 @@ de lectura de las herramientas contextuales sin incorporar una cinta de opciones
   pendiente. Instalación/desinstalación y asociación predeterminada en distintas
   máquinas requieren aceptación manual. El instalador no está firmado.
 
+## Cambios de 0.8.1
+
+En escritorio, **Editar** abre el editor dentro del lector, con la cabecera y
+las pestañas visibles. La selección y el inspector usan el espacio del documento,
+sin ventana modal ni fondo superpuesto. También se accede desde Herramientas.
+
+Aplicar vuelve al selector; Deshacer y Rehacer mantienen el modo de edición.
+Listo devuelve a lectura en la página elegida y conserva el zoom y la posición
+cuando se vuelve a la misma página. Cambiar de pestaña desde el selector también
+conserva la vista de lectura.
+
+Mientras hay un borrador seleccionado, aplica los cambios o usa **Descartar
+borrador** antes de cambiar, cerrar o abrir un documento, guardar, imprimir o
+salir. Los botones y atajos que podrían perderlo quedan protegidos. Volver a
+Herramientas conserva ese borrador para retomarlo.
+
+La suite `npm run test:inline-editor` comprueba estas rutas con dos documentos
+sintéticos, incluida la conservación del historial y de la página sin aplicar.
+La edición conserva los límites de selección y reemplazo por región descritos
+en 0.8.0. La aceptación nativa y la instalación de Windows se registran por
+separado en `windows-manifest.json` de cada paquete.
+
 ## Cambios de 0.8.0
 
 Esta evolución se centra en el flujo de escritorio de Windows. La auditoría
@@ -183,7 +205,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.0_x64-setup.exe.
+Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.1_x64-setup.exe.
 Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
 Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
 las herramientas portátiles de esta estación; .tools no se distribuye.

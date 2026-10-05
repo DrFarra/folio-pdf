@@ -96,3 +96,23 @@ html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:100%;min-
   html[data-phone] dialog.pages-workbench>.page-plan-footer>span{font-size:10px;flex-shrink:0}
   html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:auto;flex:1;font-size:12px;padding:6px;min-height:44px}
 }
+
+/* Integrated editing uses the reader's remaining space rather than modal
+   viewport dimensions. Document tabs and the application header stay visible. */
+.app-shell .reader>.workbench.workspace-editor{display:flex;flex:1;flex-direction:column;position:relative;inset:auto;width:100%;max-width:none;height:auto;max-height:none;min-width:0;min-height:0;overflow:hidden;margin:0;padding:16px 20px;border:0;border-radius:0;box-shadow:none;background:var(--bg);font-size:13px}
+.reader:has(> .workspace-editor){min-width:0;min-height:0}
+.workspace-editor>.modal-heading,.workspace-editor>.workspace-editor-heading,.workspace-editor>.workbench-navigation,.workspace-editor>.operation-error,.workspace-editor>.operation-loading{flex-shrink:0}
+.workspace-editor>.modal-heading,.workspace-editor>.workspace-editor-heading{position:static;top:auto;box-shadow:none;margin:0 0 12px;padding:0}
+.workspace-editor>.workbench-navigation{margin:0 0 12px;gap:8px}
+.workspace-editor>.operation-loading{margin:8px 0 0}
+.workspace-editor>.content-editor-slot{flex:1;min-width:0;min-height:0;overflow:hidden}
+.workspace-editor .edit-pdf-history{min-width:0}
+.workspace-editor-title{flex-shrink:0;margin:0 4px 0 0;font-size:16px;font-weight:600;line-height:1.3;white-space:nowrap}
+.workspace-editor>.workspace-editor-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.workspace-editor>.workspace-editor-heading>h2{font-size:18px;font-weight:600;line-height:1.3}
+.app-shell .reader>.workbench.workspace-editor>.tool-categories{flex:1;min-width:0;min-height:0;margin-top:0;padding-bottom:4px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+@media(max-width:1100px){.app-shell .reader>.workbench.workspace-editor{padding:12px 14px}.workspace-editor>.workbench-navigation{margin-bottom:10px}}
+@media(max-width:750px){.app-shell .reader>.workbench.workspace-editor{padding:12px}.workspace-editor>.workbench-navigation{gap:7px;margin-bottom:9px}}
+html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:12px}
+@media(max-height:500px){.app-shell .reader>.workbench.workspace-editor{padding:8px 12px}.workspace-editor>.workbench-navigation{margin-bottom:6px}.workspace-editor>.modal-heading,.workspace-editor>.workspace-editor-heading{margin-bottom:6px}}
+@media(max-height:500px){html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:7px 10px}.workspace-editor .edit-pdf-history{flex-basis:auto}.workspace-editor>.workbench-navigation{flex-wrap:nowrap;gap:6px}.workspace-editor .workbench-back{white-space:nowrap;font-size:12px}}

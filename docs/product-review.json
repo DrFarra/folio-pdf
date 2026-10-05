@@ -457,6 +457,171 @@
           "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
         }
       }
+    },
+    {
+      "id": "inline-pdf-editor-0.8.1",
+      "title": "Editar dentro de la misma vista del documento",
+      "version": "0.8.1",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "0.8.1: edición integrada en el lector",
+      "addresses": [
+        "tool-workflow",
+        "text-edit",
+        "image-edit",
+        "save"
+      ],
+      "note": "La edición deja de abrir un diálogo en la distribución de escritorio. Las pestañas permanecen visibles; las salidas que podrían perder un borrador se protegen, y el retorno restaura la página y la posición del lector.",
+      "capabilities": [
+        "Entrada Editar junto a Lectura y Anotar; selector e inspector dentro del espacio del documento, con cabecera y pestañas visibles y sin diálogo ni fondo modal.",
+        "Aplicar vuelve al selector. Deshacer y Rehacer conservan el modo de edición; Volver a Herramientas permite retomar el borrador.",
+        "Un borrador seleccionado debe aplicarse o descartarse antes de cambiar, cerrar o abrir documentos, guardar, imprimir o salir. Los controles y atajos que podrían perderlo están protegidos.",
+        "Listo mantiene la página elegida sin necesidad de aplicar. Volver a la misma página y cambiar de pestaña desde el selector conserva el zoom y la posición del lector.",
+        "Salir hacia Organizar páginas o una herramienta de área restaura primero la página de lectura; se puede seleccionar un área de la página visible."
+      ],
+      "limits": [
+        "La integración cambia la distribución del escritorio; la vista de teléfono mantiene su flujo de herramientas.",
+        "El inspector contiene un borrador temporal. El PDF se modifica al aplicar; proteger la salida no equivale a persistir ese borrador de inspector después de un cierre forzado.",
+        "Se conservan los límites del motor y de la selección documentados en 0.8.0: reemplazo por región, sustitución de fuentes y restricciones de OCR invisible, contenido superpuesto, máscaras y estilos mixtos.",
+        "Estos escenarios de interfaz no equivalen a edición universal de objetos PDF, recuperación de toda tipografía ni reflujo entre bloques."
+      ],
+      "evidence_scope": "Código de 0.8.1 posterior a las entregas anteriores; estas referencias no sustituyen las líneas auditadas del commit df6a70a.",
+      "evidence": [
+        {
+          "path": "src/App.tsx",
+          "line": 1421,
+          "note": "Entrada Editar en el selector de modo del lector."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 1440,
+          "note": "Workbench se muestra dentro de main.reader y sustituye la superficie de lectura mientras se edita."
+        },
+        {
+          "path": "src/components/Workbench.tsx",
+          "line": 313,
+          "note": "La variante integrada es una sección accesible; no abre Modal."
+        },
+        {
+          "path": "src/components/Workbench.tsx",
+          "line": 258,
+          "note": "La navegación del selector comparte la página con el lector y el borrador se descarta explícitamente."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 223,
+          "note": "Cambio de pestaña protegido mientras existe un borrador."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 891,
+          "note": "Deshacer consulta la misma guarda de borrador; Rehacer la aplica a continuación."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 627,
+          "note": "El lector conserva las últimas dimensiones positivas mientras su área permanece oculta."
+        },
+        {
+          "path": "src/App.tsx",
+          "line": 1244,
+          "note": "Retorno asíncrono con página, revisión y pestaña capturadas antes de restaurar posición y reactivar el observador."
+        },
+        {
+          "path": "src/components/Workbench.css",
+          "line": 102,
+          "note": "Panel integrado flexible dentro del lector; controles y contenido ajustan su altura disponible."
+        },
+        {
+          "path": "scripts/tests/inline-editor-integration.mjs",
+          "line": 87,
+          "note": "Dos documentos y un historial real para comprobar pérdida de borrador por atajos, acciones y cambio de pestaña."
+        },
+        {
+          "path": "scripts/tests/inline-editor-integration.mjs",
+          "line": 123,
+          "note": "Página sin aplicar, salida a otras herramientas y restauración de zoom/scroll, incluso al cambiar de pestaña."
+        }
+      ],
+      "verification": {
+        "inline_integration": {
+          "status": "verificado",
+          "passed": 2,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/inline-editor-integration-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Guardas de borrador, historial, pestañas y retorno al lector, incluidas salidas hacia otras herramientas.",
+          "cases": [
+            "inline-draft-guards-tabs-shortcuts-and-document-actions",
+            "inline-page-navigation-and-reader-zoom-scroll-restoration"
+          ]
+        },
+        "continuous_editor": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/pdf-editing-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Edición continua dentro del lector; selección, aplicación, historial, descarte y ventanas medias.",
+          "cases": [
+            "direct-selection-continuous-history",
+            "cancel-zoom-and-frame",
+            "return-from-tools-keeps-draft",
+            "low-height-editor-actions",
+            "move-original-image-without-upload",
+            "medium-window-editor-resize"
+          ]
+        },
+        "content_picker": {
+          "status": "verificado",
+          "passed": 12,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/pdf-content-picker-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Selector visual y geometría en escritorio, resize y vista de teléfono simulada.",
+          "cases": [
+            "levels-zoom-pagination-and-contained-pan",
+            "crop-rotate90-overlay-contains-painted-glyph",
+            "drawing-text-and-image-uses-crop-pdf-coordinates",
+            "image-selection-keeps-original-source-region",
+            "invisible-ocr-explains-unavailability-without-opening-editor",
+            "desktop-800x600",
+            "desktop-900x600",
+            "desktop-1024x600",
+            "phone-390x844",
+            "phone-600x800",
+            "phone-844x390",
+            "resize-medium-keeps-selection-zoom-and-usable-layout"
+          ]
+        },
+        "legacy_editor_compatibility": {
+          "status": "verificado",
+          "passed": 8,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/content-editor-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Compatibilidad del editor por área, guardado, vista previa y exportación; estos ocho casos no se presentan como pruebas del modo integrado.",
+          "cases": [
+            "replacement-preview-move-export-and-one-history-step",
+            "cancel-stale-preview-invalid-draft-and-return-to-tools",
+            "wrapped-formatted-text-and-latest-draft-export",
+            "image-preview-proportions-drag-resize-and-export",
+            "replace-image-clears-original-region-and-keeps-neighbors",
+            "corrupt-image-cannot-apply-previous-image",
+            "delayed-image-loading-does-not-restore-stale-position",
+            "rotated-cropped-page-box-mapping-and-short-window-footer"
+          ]
+        }
+      },
+      "acceptance_register": {
+        "kind": "registro_externo_de_entrega",
+        "report": "windows-manifest.json",
+        "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+        "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+      }
     }
   ],
   "roadmap": [
@@ -1778,5 +1943,111 @@
       }
     ],
     "verification": "No se realizaron nuevas pruebas de competidores ni validación física de macOS/iOS para esta evolución."
-  }
+  },
+  "release_updates": [
+    {
+      "version": "0.8.1",
+      "date": "2026-10-05",
+      "status": "verificado_en_pruebas_automatizadas",
+      "label": "0.8.1: edición integrada en el lector",
+      "frontend_entry": "/assets/index-wb7WuvXo.js",
+      "baseline_distinction": "Los 35 apartados y 89 referencias de df6a70a, la implementación verificada de 0.7.1 y la evidencia documentada de 0.8.0 se conservan sin reescribir. Esta sección registra únicamente la evolución posterior de 0.8.1.",
+      "platform_scope": "Chromium en Windows con PDF sintéticos. El modo integrado corresponde a la distribución de escritorio; las vistas de teléfono son simuladas y no acreditan instalaciones físicas de Apple.",
+      "capabilities": [
+        "Entrada Editar junto a Lectura y Anotar; selector e inspector dentro del espacio del documento, con cabecera y pestañas visibles y sin diálogo ni fondo modal.",
+        "Aplicar vuelve al selector. Deshacer y Rehacer conservan el modo de edición; Volver a Herramientas permite retomar el borrador.",
+        "Un borrador seleccionado debe aplicarse o descartarse antes de cambiar, cerrar o abrir documentos, guardar, imprimir o salir. Los controles y atajos que podrían perderlo están protegidos.",
+        "Listo mantiene la página elegida sin necesidad de aplicar. Volver a la misma página y cambiar de pestaña desde el selector conserva el zoom y la posición del lector.",
+        "Salir hacia Organizar páginas o una herramienta de área restaura primero la página de lectura; se puede seleccionar un área de la página visible."
+      ],
+      "limits": [
+        "La integración cambia la distribución del escritorio; la vista de teléfono mantiene su flujo de herramientas.",
+        "El inspector contiene un borrador temporal. El PDF se modifica al aplicar; proteger la salida no equivale a persistir ese borrador de inspector después de un cierre forzado.",
+        "Se conservan los límites del motor y de la selección documentados en 0.8.0: reemplazo por región, sustitución de fuentes y restricciones de OCR invisible, contenido superpuesto, máscaras y estilos mixtos.",
+        "Estos escenarios de interfaz no equivalen a edición universal de objetos PDF, recuperación de toda tipografía ni reflujo entre bloques."
+      ],
+      "verification": {
+        "inline_integration": {
+          "status": "verificado",
+          "passed": 2,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/inline-editor-integration-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Guardas de borrador, historial, pestañas y retorno al lector, incluidas salidas hacia otras herramientas.",
+          "cases": [
+            "inline-draft-guards-tabs-shortcuts-and-document-actions",
+            "inline-page-navigation-and-reader-zoom-scroll-restoration"
+          ]
+        },
+        "continuous_editor": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/pdf-editing-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Edición continua dentro del lector; selección, aplicación, historial, descarte y ventanas medias.",
+          "cases": [
+            "direct-selection-continuous-history",
+            "cancel-zoom-and-frame",
+            "return-from-tools-keeps-draft",
+            "low-height-editor-actions",
+            "move-original-image-without-upload",
+            "medium-window-editor-resize"
+          ]
+        },
+        "content_picker": {
+          "status": "verificado",
+          "passed": 12,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/pdf-content-picker-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Selector visual y geometría en escritorio, resize y vista de teléfono simulada.",
+          "cases": [
+            "levels-zoom-pagination-and-contained-pan",
+            "crop-rotate90-overlay-contains-painted-glyph",
+            "drawing-text-and-image-uses-crop-pdf-coordinates",
+            "image-selection-keeps-original-source-region",
+            "invisible-ocr-explains-unavailability-without-opening-editor",
+            "desktop-800x600",
+            "desktop-900x600",
+            "desktop-1024x600",
+            "phone-390x844",
+            "phone-600x800",
+            "phone-844x390",
+            "resize-medium-keeps-selection-zoom-and-usable-layout"
+          ]
+        },
+        "legacy_editor_compatibility": {
+          "status": "verificado",
+          "passed": 8,
+          "failed": 0,
+          "browser_errors": 0,
+          "report": "test-results/content-editor-ui-results.json",
+          "frontend_entry": "/assets/index-wb7WuvXo.js",
+          "scope": "Compatibilidad del editor por área, guardado, vista previa y exportación; estos ocho casos no se presentan como pruebas del modo integrado.",
+          "cases": [
+            "replacement-preview-move-export-and-one-history-step",
+            "cancel-stale-preview-invalid-draft-and-return-to-tools",
+            "wrapped-formatted-text-and-latest-draft-export",
+            "image-preview-proportions-drag-resize-and-export",
+            "replace-image-clears-original-region-and-keeps-neighbors",
+            "corrupt-image-cannot-apply-previous-image",
+            "delayed-image-loading-does-not-restore-stale-position",
+            "rotated-cropped-page-box-mapping-and-short-window-footer"
+          ]
+        }
+      },
+      "total_browser_cases": 28,
+      "acceptance_register": {
+        "kind": "registro_externo_de_entrega",
+        "report": "windows-manifest.json",
+        "location": "Incluido con cada paquete de Windows, separado de este informe de código fuente.",
+        "note": "La aceptación nativa y la instalación se registran en windows-manifest.json de cada paquete; este documento no sustituye ese registro ni afirma que una versión ya esté instalada."
+      },
+      "verification_scope": "Los 28 casos corresponden a las cuatro suites enumeradas sobre la compilación indicada: 2 de integración, 6 de edición continua, 12 del selector y 8 de compatibilidad del editor por área. No se suman a las cifras históricas ni acreditan aceptación nativa o instalación. Esos resultados se registran en windows-manifest.json de cada paquete."
+    }
+  ]
 }

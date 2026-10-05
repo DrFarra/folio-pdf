@@ -18,7 +18,7 @@ import ConversionOptions from './ConversionOptions';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
 const contentKinds = ['add-text', 'replace-text', 'add-image', 'replace-image'];
@@ -28,6 +28,8 @@ export default function Workbench(props: Props) {
   const [section, setSection] = useState(props.section);
   const [editPage, setEditPage] = useState(props.page);
   const [editSelection, setEditSelection] = useState<{ kind: ContentEditorKind; area: Area; item?: PageContentItem } | null>(null);
+  useEffect(() => { props.onDraftChange?.(!!editSelection); }, [!!editSelection, props.onDraftChange]);
+  useEffect(() => () => props.onDraftChange?.(false), [props.onDraftChange]);
   const [compareVisited, setCompareVisited] = useState(props.section === 'compare');
   const [error, setError] = useState('');
   const [taskBusy, setBusy] = useState(false);
@@ -189,13 +191,14 @@ export default function Workbench(props: Props) {
     if (busy || compareBusy) return;
     setError('');
     if (key === 'edit-pdf' && props.onOpenEditor) { if (props.section === 'edit-pdf') setSection('edit-pdf'); else props.onOpenEditor(); return; }
+    if (props.inline && editSelection) return;
     if (['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image', 'crop', 'redact', 'create-field'].includes(key)) {
       // Revisit the already selected area without remounting this form or
       // clearing its text/image/field draft. A different tool needs a new area.
       if (props.section === key && (props.area || key === 'redact')) setSection(key);
       else tool(key as Tool);
     }
-    else { if (key === 'compare') setCompareVisited(true); setSection(key); }
+    else { if (props.inline && props.onOpenSection) { props.onOpenSection(key); return; } if (key === 'compare') setCompareVisited(true); setSection(key); }
   };
   const returnToTools = () => {
     if (busy || compareBusy) return;
@@ -204,17 +207,21 @@ export default function Workbench(props: Props) {
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.workbench [data-tool-key="${CSS.escape(previous)}"]`)?.focus());
   };
   const planChanged = plan.length !== initialPlan.current.length || plan.some((page, index) => page.key !== initialPlan.current[index].key || (page.rotation || 0) !== (initialPlan.current[index].rotation || 0));
-  return <Modal title={section === 'edit-pdf' ? 'Editar PDF' : titles[section] || 'Herramientas'} onClose={() => { if (!busy) props.onClose(); }} className={`workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${section === 'forms' || section === 'convert' ? ' bounded-workbench' : ''}${section === 'edit-pdf' || contentKinds.includes(section) && props.area ? ' content-workbench' : ''}`}>
-    {section !== 'home' && <div className="workbench-navigation"><button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button>{section === 'edit-pdf' && <div className="edit-pdf-history">
+  const title = section === 'edit-pdf' ? 'Editar PDF' : titles[section] || 'Herramientas';
+  const className = `workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${section === 'forms' || section === 'convert' ? ' bounded-workbench' : ''}${section === 'edit-pdf' || contentKinds.includes(section) && props.area ? ' content-workbench' : ''}`;
+  const content = <>
+    {props.inline && section === 'home' && <div className="workspace-editor-heading"><h2>Herramientas</h2><button type="button" className="secondary-button" disabled={busy || !!editSelection} onClick={props.onClose}>Listo</button></div>}
+    {props.inline && section === 'home' && editSelection && <p className="modal-description">Tienes un borrador de edición. Vuelve a Editar PDF para aplicarlo o descartarlo.</p>}
+    {section !== 'home' && <div className="workbench-navigation">{props.inline && <h2 className="workspace-editor-title">Editar PDF</h2>}<button type="button" className="workbench-back secondary-button" disabled={busy || compareBusy} onClick={returnToTools}><ArrowLeft size={17} aria-hidden="true" />Volver a Herramientas</button>{section === 'edit-pdf' && <div className="edit-pdf-history">
       <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canUndo} onClick={() => props.onHistory?.('undo')}><Undo2 size={15} />Deshacer</button>
       <button type="button" className="secondary-button" disabled={busy || !!editSelection || !props.canRedo} onClick={() => props.onHistory?.('redo')}><Redo2 size={15} />Rehacer</button>
-      <button type="button" className="secondary-button edit-pdf-done" disabled={busy} onClick={props.onClose}>Listo</button>
+      <button type="button" className="secondary-button edit-pdf-done" disabled={busy || props.inline && !!editSelection} onClick={props.onClose}>Listo</button>
     </div>}</div>}
     {error && <p className="operation-error" role="alert">{error}</p>}
     {section === 'home' && <div className="tool-categories">{categories.map(category => <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}><h3 className="tool-category-heading" id={`tool-category-${category.id}`}>{category.title}</h3><div className="operation-grid">{category.actions.map(key => {
       const action = actions.find(action => action[0] === key)!;
       const [, label, Icon, enabled] = action;
-      return <button type="button" key={key} data-tool-key={key} disabled={!enabled || busy || compareBusy} onClick={() => chooseAction(key)}><Icon size={24} aria-hidden="true" /><span>{label}</span></button>;
+      return <button type="button" key={key} data-tool-key={key} disabled={!enabled || busy || compareBusy || props.inline && !!editSelection && key !== 'edit-pdf'} onClick={() => chooseAction(key)}><Icon size={24} aria-hidden="true" /><span>{label}</span></button>;
     })}</div></section>)}</div>}
     {section === 'pages' && <>
       <div className="page-plan-actions">
@@ -248,7 +255,7 @@ export default function Workbench(props: Props) {
     </div>}
     {props.section === 'edit-pdf' && <>
       <div className="content-editor-slot" hidden={section !== 'edit-pdf'}>
-        {editSelection ? <ContentEditor key={editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => setEditSelection(null)} cancelLabel="Descartar borrador" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={setEditPage} onSelect={item => { if (item.editable) setEditSelection({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => setEditSelection({ kind, area })} />}
+        {editSelection ? <ContentEditor key={editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => setEditSelection(null)} cancelLabel="Descartar borrador" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={next => { setEditPage(next); props.onEditPageChange?.(next); }} onSelect={item => { if (item.editable) setEditSelection({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => setEditSelection({ kind, area })} />}
       </div>
     </>}
     {contentKinds.includes(props.section) && props.area && <div className="content-editor-slot" hidden={section !== props.section}><ContentEditor doc={doc} area={props.area} kind={props.section as ContentEditorKind} active={section === props.section} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={props.onClose} /></div>}
@@ -302,5 +309,6 @@ export default function Workbench(props: Props) {
       </form>}
     </>}
     {busy && <p className="operation-loading" role="status"><LoaderCircle size={16} className="spin" />{progress || 'Procesando…'}{controller.current && <button className="text-button" onClick={() => controller.current?.abort()}>Cancelar</button>}</p>}
-  </Modal>;
+  </>;
+  return props.inline ? <section className={`${className} workspace-editor`} aria-label="Editar PDF">{content}</section> : <Modal title={title} onClose={() => { if (!busy) props.onClose(); }} className={className}>{content}</Modal>;
 }

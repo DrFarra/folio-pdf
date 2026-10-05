@@ -50,3 +50,16 @@
   html[data-phone] .content-editor-body{grid-template-columns:minmax(0,1fr) minmax(180px,42%);grid-template-rows:minmax(0,1fr);gap:12px}
   html[data-phone] .content-editor-footer{padding-top:8px;margin-top:8px}
 }
+
+/* The inline editor keeps the inspector and action footer independent of the
+   page pan/zoom surface. Its parent supplies all available reader height. */
+.workspace-editor .content-editor{flex:1;min-height:0;min-width:0}
+.workspace-editor .content-editor-body{min-width:0;min-height:0;gap:16px}
+.workspace-editor .content-inspector{overflow-x:hidden;overflow-y:auto;min-width:0;min-height:0}
+.workspace-editor .content-editor-footer{flex-shrink:0;margin-top:12px;padding-top:12px}
+.workspace-editor .content-zoom-toolbar{flex-shrink:0}
+@media(min-width:751px) and (max-width:1100px){.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr) 260px;gap:12px}.workspace-editor .content-editor-footer{margin-top:10px;padding-top:10px}}
+@media(max-width:750px){.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(170px,1fr) minmax(0,1fr);gap:10px}.workspace-editor .content-editor-footer{margin-top:10px;padding-top:10px}}
+@media(max-height:500px){.workspace-editor .content-editor-footer{margin-top:7px;padding-top:7px}.workspace-editor .content-zoom-toolbar{margin-bottom:5px}}
+@media(max-height:500px) and (min-width:751px){.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr) 260px;grid-template-rows:minmax(0,1fr);gap:12px}}
+@media(max-height:500px){html[data-phone] .workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr) minmax(180px,42%);grid-template-rows:minmax(0,1fr);gap:10px}.workspace-editor .content-editor-footer>span{flex-basis:auto}}

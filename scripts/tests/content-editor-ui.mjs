@@ -10,6 +10,8 @@ import { operateDocument } from '../../src/engine/operations.mjs';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
+const frontendEntry = fs.readFileSync(path.join(root, 'dist/index.html'), 'utf8').match(/<script[^>]+src="([^"]+)"/)?.[1];
+assert(frontendEntry, 'A built frontend is required.');
 fs.mkdirSync(output, { recursive: true });
 const source = path.join(output, 'content-editor-source.pdf');
 const fixture = await PDFDocument.create(), font = await fixture.embedFont(StandardFonts.Helvetica);
@@ -98,7 +100,11 @@ async function check(id, action, viewport = { width: 1360, height: 720 }) {
   if (process.env.FOLIO_EDITOR_TEST && !new RegExp(process.env.FOLIO_EDITOR_TEST).test(id)) return;
   const context = await browser.newContext({ viewport, acceptDownloads: true }); const page = await context.newPage(); page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
-  try { await page.goto(origin); await open(page); results.push({ id, status: 'passed', ...await action(page) }); }
+  try {
+    await page.goto(origin);
+    assert.equal(await page.locator('script[type="module"][src]').getAttribute('src'), frontendEntry, 'Tested frontend must match the recorded build.');
+    await open(page); results.push({ id, status: 'passed', ...await action(page) });
+  }
   catch (error) { results.push({ id, status: 'failed', error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, `failure-editor-${id}.png`) }); }
   finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
 }
@@ -316,6 +322,6 @@ try {
   });
 } finally {
   await browser?.close(); server.kill();
-  fs.writeFileSync(path.join(output, 'content-editor-ui-results.json'), JSON.stringify({ results, errors }, null, 2) + '\n');
+  fs.writeFileSync(path.join(output, 'content-editor-ui-results.json'), JSON.stringify({ frontendEntry, results, errors }, null, 2) + '\n');
   if (errors.length) { console.log(JSON.stringify({ errors })); process.exitCode = 1; }
 }

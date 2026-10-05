@@ -68,10 +68,17 @@ async function layout(page, specification) {
   await picker(page);
   const geometry = await page.locator('.pdf-content-picker').evaluate(element => {
     const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, right: bounds.right, bottom: bounds.bottom, overflowX: node.scrollWidth - node.clientWidth }; };
-    const dialog = element.closest('dialog'); return { width: innerWidth, height: innerHeight, phone: document.documentElement.hasAttribute('data-phone'), documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, dialog: rect(dialog), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')) };
+    const container = element.closest('.workspace-editor,dialog'), phone = document.documentElement.hasAttribute('data-phone');
+    return { width: innerWidth, height: innerHeight, phone, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')) };
   });
   assert.equal(geometry.phone, !!specification.phone); assert.equal(geometry.documentWidth, geometry.width); assert.equal(geometry.documentHeight, geometry.height);
-  for (const [name, bounds] of Object.entries(geometry).filter(([name]) => ['dialog', 'picker', 'toolbar', 'viewport', 'canvas', 'footer'].includes(name))) {
+  if (!specification.phone) {
+    assert.equal(geometry.inlineWorkspace, true, 'Desktop editing must stay in the main reader.');
+    assert.equal(geometry.openDialogs, 0);
+    assert(geometry.header.height >= 40 && geometry.container.y >= geometry.header.bottom - 1, 'The app header must remain visible above the integrated editor.');
+    assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true);
+  }
+  for (const [name, bounds] of Object.entries(geometry).filter(([name]) => ['container', 'picker', 'toolbar', 'viewport', 'canvas', 'footer'].includes(name))) {
     assert(bounds.width > 0 && bounds.height > 0, name + ' needs usable space.');
     assert(bounds.x >= -.5 && bounds.y >= -.5 && bounds.right <= geometry.width + .5 && bounds.bottom <= geometry.height + .5, name + ' must remain in the window: ' + JSON.stringify(bounds));
     assert(bounds.overflowX <= 1, name + ' must not overflow horizontally at Fit.');
@@ -107,8 +114,8 @@ try {
     await page.getByRole('button', { name: 'Acercar página del editor', exact: true }).click(); await picker(page);
     assert(Math.abs((await page.locator('.pdf-content-picker canvas').boundingBox()).width - 625) < 1);
     for (let index = 0; index < 5; index++) { await page.getByRole('button', { name: 'Acercar página del editor', exact: true }).click(); await picker(page); }
-    const pan = await page.locator('.pdf-picker-viewport').evaluate(element => ({ scrollWidth: element.scrollWidth, width: element.clientWidth, dialogOverflow: element.closest('dialog').scrollWidth - element.closest('dialog').clientWidth, bodyOverflow: document.documentElement.scrollWidth - innerWidth }));
-    assert(pan.scrollWidth > pan.width + 100); assert(pan.dialogOverflow <= 1 && pan.bodyOverflow <= 1);
+    const pan = await page.locator('.pdf-picker-viewport').evaluate(element => { const container = element.closest('.workspace-editor,dialog'); return { scrollWidth: element.scrollWidth, width: element.clientWidth, containerOverflow: container.scrollWidth - container.clientWidth, bodyOverflow: document.documentElement.scrollWidth - innerWidth }; });
+    assert(pan.scrollWidth > pan.width + 100); assert(pan.containerOverflow <= 1 && pan.bodyOverflow <= 1);
     await page.getByRole('button', { name: 'Ajustar página', exact: true }).click(); await picker(page);
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
     await page.getByRole('button', { name: 'Página anterior del editor', exact: true }).click(); await picker(page, 1);
@@ -178,7 +185,16 @@ try {
     const samples = [];
     for (const width of [900, 800, 1024]) {
       const specification = { width, height: 600 }; await page.setViewportSize(specification); const geometry = await layout(page, specification);
-      await page.getByRole('combobox', { name: 'Seleccionar texto por', exact: true }).selectOption('line'); assert.equal(await page.locator('.pdf-content-item[data-kind="text"]').count(), oracle[0].items.filter(item => item.kind === 'text' && item.level === 'line').length);
+      await page.getByRole('combobox', { name: 'Seleccionar texto por', exact: true }).selectOption('line');
+      // A resize can still be publishing its render when the level changes.
+      // Wait for the real line targets, rather than count an updating surface.
+      const expectedLines = oracle[0].items.filter(item => item.kind === 'text' && item.level === 'line').length;
+      await page.waitForFunction(expected => {
+        const picker = document.querySelector('.pdf-content-picker');
+        return picker?.dataset.pickerState === 'ready' && picker.querySelectorAll('.pdf-content-item[data-kind="text"][data-level="line"]').length === expected;
+      }, expectedLines, { timeout: 60000 });
+      await picker(page);
+      assert.equal(await page.locator('.pdf-content-item[data-kind="text"]').count(), expectedLines);
       samples.push({ width, canvasHeight: geometry.canvas.height });
       await page.screenshot({ path: path.join(output, `pdf-content-picker-resize-${width}x600.png`) });
     }

@@ -24,9 +24,9 @@ let original = operateDocument(await fixture.save(), { operation: 'add-image', p
 original = writeAnnotations(original, [{ id: 'editing-note', page: 1, kind: 'note', rect: [340, 420, 360, 440], color: '#ffcc00', text: 'KEEP NOTE', created: 1 }]);
 const source = path.join(output, 'pdf-editing-source.pdf'); fs.writeFileSync(source, original);
 const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync); assert(chrome);
-const port = '4251', origin = 'http://127.0.0.1:' + port;
+const port = process.env.FOLIO_EDITING_UI_PORT || '4251', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
-let browser, log = ''; const results = [], errors = [];
+let browser, log = '', frontendEntry; const results = [], errors = [];
 server.stdout.on('data', value => { log += value; }); server.stderr.on('data', value => { log += value; });
 async function open(page) {
   await page.goto(origin); await page.locator('.app-header input[type=file]').setInputFiles(source);
@@ -34,6 +34,27 @@ async function open(page) {
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
   await page.getByRole('button', { name: 'Editar PDF', exact: true }).click(); await picker(page);
+  await inlineWorkspace(page);
+}
+async function inlineWorkspace(page) {
+  const workspace = page.locator('main.reader .workspace-editor'); await workspace.waitFor();
+  assert.equal(await page.locator('dialog[open]').count(), 0, 'Editing must be integrated in the reader, without an open dialog.');
+  assert.equal(await workspace.evaluate(element => element.tagName), 'SECTION');
+  assert.equal(await workspace.getAttribute('aria-label'), 'Editar PDF');
+  assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true, 'Document tabs must remain visible while editing.');
+  assert.equal(await page.getByRole('tab', { name: path.basename(source), exact: true }).getAttribute('aria-selected'), 'true');
+  const geometry = await workspace.evaluate(element => {
+    const bounds = element.getBoundingClientRect(), header = document.querySelector('.app-header').getBoundingClientRect(), main = element.closest('main').getBoundingClientRect();
+    const visible = selector => [...document.querySelectorAll(selector)].some(node => { const box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden'; });
+    return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, headerBottom: header.bottom, mainTop: main.top, position: getComputedStyle(element).position, width: innerWidth, height: innerHeight, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, readerToolbarVisible: visible('main.reader>.reader-toolbar'), readerVisible: visible('main.reader>.reading-area') };
+  });
+  assert.notEqual(geometry.position, 'fixed');
+  assert(geometry.top >= geometry.headerBottom - 1 && geometry.top >= geometry.mainTop - 1);
+  assert(geometry.bottom <= geometry.height + 1 && geometry.left >= -1 && geometry.right <= geometry.width + 1);
+  assert(geometry.horizontalOverflow <= 1);
+  assert.equal(geometry.readerToolbarVisible, false, 'Reader and editor toolbars must not compete for the same space.');
+  assert.equal(geometry.readerVisible, false, 'The editing surface replaces the reader canvas in the same main pane.');
+  return geometry;
 }
 async function picker(page, number = 1) { await page.locator(`.pdf-content-picker[data-page="${number}"][data-picker-state="ready"]`).waitFor({ timeout: 60000 }); }
 async function selectText(page, number = 1) { await page.getByRole('button', { name: 'Párrafo: ORIGINAL ' + number, exact: true }).click(); await page.locator('.content-editor').waitFor(); }
@@ -44,12 +65,13 @@ async function check(id, run, viewport = { width: 1360, height: 720 }) {
   if (process.env.FOLIO_EDITING_TEST && !new RegExp(process.env.FOLIO_EDITING_TEST).test(id)) return;
   const context = await browser.newContext({ viewport, acceptDownloads: true }), page = await context.newPage(); page.setDefaultTimeout(25000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
-  try { await open(page); results.push({ id, status: 'passed', ...await run(page) }); }
-  catch (error) { results.push({ id, status: 'failed', error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, 'failure-editing-' + id + '.png') }); }
+  try { await open(page); results.push({ id, status: 'passed', frontendEntry, inlineWorkspace: true, ...await run(page) }); }
+  catch (error) { results.push({ id, status: 'failed', frontendEntry, error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, 'failure-editing-' + id + '.png') }); }
   finally { console.log(JSON.stringify(results.at(-1))); await context.close(); }
 }
 try {
   for (let n = 0; n < 100; n++) { try { if ((await fetch(origin)).ok) break; } catch {} if (server.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }
+  frontendEntry = (await (await fetch(origin)).text()).match(/src="([^"]+\.js)"/)?.[1];
   browser = await chromium.launch({ executablePath: chrome, headless: true });
   await check('direct-selection-continuous-history', async page => {
     await selectText(page);
@@ -98,11 +120,12 @@ try {
   });
   await check('low-height-editor-actions', async page => {
     await selectText(page); await ready(page);
-    const metrics = await page.locator('.workbench').evaluate(dialog => {
-      const apply = dialog.querySelector('.content-editor-footer .primary-button').getBoundingClientRect();
-      return { applyBottom: apply.bottom, visibleHeight: innerHeight, horizontalOverflow: dialog.scrollWidth - dialog.clientWidth };
+    const metrics = await page.locator('.workspace-editor').evaluate(workspace => {
+      const apply = workspace.querySelector('.content-editor-footer .primary-button').getBoundingClientRect(), preview = workspace.querySelector('.content-preview').getBoundingClientRect();
+      return { applyBottom: apply.bottom, visibleHeight: innerHeight, previewHeight: preview.height, horizontalOverflow: workspace.scrollWidth - workspace.clientWidth };
     });
-    assert(metrics.applyBottom <= metrics.visibleHeight - 8); assert(metrics.horizontalOverflow <= 1);
+    assert(metrics.applyBottom <= metrics.visibleHeight - 8); assert(metrics.horizontalOverflow <= 1); assert(metrics.previewHeight >= 200);
+    await inlineWorkspace(page);
     await page.screenshot({ path: path.join(output, 'pdf-editing-low-height.png') }); return metrics;
   }, { width: 1024, height: 600 });
   await check('move-original-image-without-upload', async page => {
@@ -129,19 +152,20 @@ try {
     for (const width of [1024, 900, 800, 1360]) {
       await page.setViewportSize({ width, height: 600 });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await ready(page);
+      const workspace = await inlineWorkspace(page);
       const value = await page.locator('.content-editor').evaluate(editor => {
         const footer = editor.querySelector('.content-editor-footer .primary-button').getBoundingClientRect(), inspector = editor.querySelector('.content-inspector').getBoundingClientRect();
         const box = editor.querySelector('.content-box').getBoundingClientRect(), preview = editor.querySelector('.content-preview').getBoundingClientRect();
-        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom };
+        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, previewHeight: preview.height, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom };
       });
-      assert(value.applyBottom <= 592); assert(value.inspectorWidth >= 240); assert(value.horizontalOverflow <= 1); assert(value.areaVisible);
-      assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), originalArea); metrics.push(value);
+      assert(value.applyBottom <= 592); assert(value.inspectorWidth >= 240); assert(value.horizontalOverflow <= 1); assert(value.areaVisible); assert(value.previewHeight >= 200);
+      assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), originalArea); metrics.push({ ...value, workspace });
       if (width === 800 || width === 900) await page.screenshot({ path: path.join(output, `pdf-editing-medium-${width}x600.png`) });
     }
-    return { resizingKeepsDraft: true, selectedAreaReadableAndVisible: true, metrics };
+    return { resizingKeepsDraft: true, selectedAreaReadableAndVisible: true, sameReaderView: true, appHeaderAndTabsVisible: true, noDialog: true, metrics };
   });
 } finally {
   await browser?.close(); server.kill();
-  fs.writeFileSync(path.join(output, 'pdf-editing-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), results, errors }, null, 2));
+  fs.writeFileSync(path.join(output, 'pdf-editing-ui-results.json'), JSON.stringify({ date: new Date().toISOString(), frontendEntry, results, errors }, null, 2));
   if (errors.length) process.exitCode = 1;
 }

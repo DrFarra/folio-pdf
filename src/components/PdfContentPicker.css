@@ -66,3 +66,8 @@ html[data-phone] .pdf-content-picker .pdf-picker-level>select{width:112px}
   html[data-phone] .pdf-content-picker .pdf-picker-viewport{min-height:0}
   html[data-phone] .pdf-content-picker .pdf-picker-footer{max-height:70px}
 }
+
+.workspace-editor .pdf-content-picker{flex:1;min-width:0;min-height:0}
+.workspace-editor .pdf-picker-viewport{min-height:0}
+.workspace-editor .pdf-picker-footer{flex-shrink:0}
+@media(max-height:500px){.workspace-editor .pdf-picker-footer{max-height:64px}}

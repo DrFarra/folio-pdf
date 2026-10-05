@@ -70,6 +70,11 @@ export default function App() {
   const [busy, setBusy] = useState<'download' | 'print' | 'edit' | null>(null);
   const [workbench, setWorkbench] = useState<string | null>(null);
   const workbenchRef = useRef(workbench); workbenchRef.current = workbench;
+  const [editorDraft, setEditorDraft] = useState(false);
+  const editorDraftRef = useRef(editorDraft); editorDraftRef.current = editorDraft;
+  const editorReadingLocation = useRef<{ revision: string; page: number; top: number; left: number } | null>(null);
+  const editorRestorePending = useRef(false);
+  const editorRestoreRequest = useRef(0);
   const [creating, setCreating] = useState(false);
   const [editArea, setEditArea] = useState<Area | null>(null);
   const [redactions, setRedactions] = useState<Area[]>([]);
@@ -171,7 +176,7 @@ export default function App() {
     onReorder: keys => {
       if (busyRef.current || loadingRef.current || keys.length !== tabsRef.current.length || new Set(keys).size !== keys.length ||
           keys.some(key => !tabsRef.current.some(tab => tab.key === key))) return;
-      retainCurrentTab();
+      if (workbenchRef.current !== 'edit-pdf' || phoneRef.current) retainCurrentTab();
       const current = new Map(tabsRef.current.map(tab => [tab.key, tab]));
       tabsRef.current = keys.map(key => current.get(key)!); publishTabs();
     } });
@@ -215,8 +220,10 @@ export default function App() {
     if (!saved) throw new Error('No se pudo conservar la sesión. Guarda el PDF antes de cerrar la pestaña.');
   }
   async function switchTab(key: string) {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de cambiar de documento.'); return; }
     if (key === activeTabRef.current || busyRef.current || loadingRef.current || document.querySelector('dialog[open]')) return;
     const next = tabsRef.current.find(tab => tab.key === key); if (!next) return;
+    if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
     const focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab';
     try {
       loadingRef.current = true; setLoading(true);
@@ -226,8 +233,10 @@ export default function App() {
     finally { loadingRef.current = false; setLoading(false); }
   }
   async function closeTab(key: string) {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de cerrar el documento.'); return; }
     if (busyRef.current || loadingRef.current || document.querySelector('dialog[open]')) return;
     const index = tabsRef.current.findIndex(tab => tab.key === key); if (index < 0) return;
+    if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
     try {
       loadingRef.current = true; setLoading(true); retainCurrentTab();
       const closed = tabsRef.current[index]; await persistTab(closed);
@@ -253,6 +262,8 @@ export default function App() {
   }, []);
 
   const loadDocument = useCallback(async (source: OpenSource, name = SAMPLE_NAME, sample = false, nativeSource?: string, context?: OpenContext) => {
+    if (editorDraftRef.current && !context?.preserveHistory) { notify('Aplica o descarta el borrador antes de abrir otro documento.'); return false; }
+    if (workbenchRef.current === 'edit-pdf' && !phoneRef.current && !context?.preserveHistory) await closeWorkbench();
     const request = ++loadRequest.current;
     engineRef.current?.abort();
     const controller = new AbortController(); engineRef.current = controller;
@@ -541,6 +552,7 @@ export default function App() {
       return window.onCloseRequested(async event => {
         if (!alive || !tabsRef.current.length) return;
         event.preventDefault();
+        if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de cerrar Folio.'); return; }
         if (busyRef.current || loadingRef.current || document.querySelector('.workbench .operation-loading')) { notify('Espera a que termine la operación antes de cerrar.'); return; }
         try { retainCurrentTab(); for (const tab of tabsRef.current) await persistTab(tab); await window.destroy(); }
         catch { setCloseBlocked(true); notify('No se pudo guardar la sesión. Puedes guardar una copia del PDF.', true); }
@@ -612,7 +624,10 @@ export default function App() {
   useEffect(() => {
     const root = viewer.current;
     if (!root) return;
-    const observer = new ResizeObserver(() => setViewportSize({ width: root.clientWidth, height: root.clientHeight }));
+    const observer = new ResizeObserver(() => {
+      // The reader remains mounted while editing; hiding it must not change its fit zoom.
+      if (root.clientWidth > 0 && root.clientHeight > 0) setViewportSize({ width: root.clientWidth, height: root.clientHeight });
+    });
     observer.observe(root);
     return () => observer.disconnect();
   }, [doc]);
@@ -650,12 +665,13 @@ export default function App() {
     return () => { cancel(); root.removeEventListener('pointerdown', down, true); root.removeEventListener('pointerup', up, true); root.removeEventListener('pointercancel', cancel, true); window.removeEventListener('folio:pinch-start', cancel); window.removeEventListener('folio:reader-interaction', action); document.removeEventListener('selectionchange', selection); };
   }, [phone, doc, tool, busy, loading, mobileAnnotating, searchOpen, library, sidebar, notesOpen]);
   useEffect(() => {
-    if (!doc || !viewer.current) return;
+    if (!doc || !viewer.current || !phone && workbench === 'edit-pdf') return;
     const root = viewer.current;
     const visible = new Set<Element>();
     let frame = 0;
     const update = () => {
       frame = 0;
+      if (editorRestorePending.current) return;
       const bounds = root.getBoundingClientRect();
       const candidates = [...visible].map(node => {
         const box = node.getBoundingClientRect();
@@ -671,7 +687,7 @@ export default function App() {
     root.querySelectorAll('.pdf-page-wrap').forEach(node => observer.observe(node));
     root.addEventListener('scroll', schedule, { passive: true });
     return () => { observer.disconnect(); root.removeEventListener('scroll', schedule); if (frame) cancelAnimationFrame(frame); };
-  }, [doc, readingMode, readingMode === 'single' ? page : null]);
+  }, [doc, readingMode, readingMode === 'single' ? page : null, workbench, phone]);
 
   const scale = useMemo(() => {
     const rotated = rotation % 180 !== 0;
@@ -872,6 +888,7 @@ export default function App() {
     annotationRef.current = next; setAnnotations(next); setHistoryTick(v => v + 1);
   }, []);
   const undo = useCallback(() => {
+    if (editorDraftRef.current || busyRef.current || loadingRef.current) return;
     const previous = undoStack.current.pop();
     if (!previous) return;
     redoStack.current.push(previous.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
@@ -882,6 +899,7 @@ export default function App() {
     setAnnotations(previous.annotations); setHistoryTick(v => v + 1);
   }, [openDocument]);
   const redo = useCallback(() => {
+    if (editorDraftRef.current || busyRef.current || loadingRef.current) return;
     const next = redoStack.current.pop();
     if (!next) return;
     undoStack.current.push(next.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
@@ -919,6 +937,17 @@ export default function App() {
       const editing = (e.target as HTMLElement).closest('input,textarea,select,[contenteditable]');
       const modal = document.querySelector('dialog[open]');
       if (modal) { if ((e.ctrlKey || e.metaKey) && ['s', 'p'].includes(e.key.toLowerCase())) e.preventDefault(); return; }
+      if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) {
+        const command = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
+        if (command && !editing && ['z', 'y'].includes(key)) {
+          e.preventDefault(); if (!editorDraftRef.current && !busyRef.current && !loadingRef.current) { if (key === 'y' || e.shiftKey) redo(); else undo(); }
+        } else if (command && e.key === 'Tab') {
+          e.preventDefault(); const all = tabsRef.current, index = all.findIndex(tab => tab.key === activeTabRef.current);
+          if (!editorDraftRef.current && all.length > 1) void switchTab(all[(index + (e.shiftKey ? all.length - 1 : 1)) % all.length].key);
+        } else if (command && key === 'w') { e.preventDefault(); if (!editorDraftRef.current && activeTabRef.current) void closeTab(activeTabRef.current); }
+        else if (command && ['s', 'p', 'o', 'f'].includes(key)) e.preventDefault();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
         e.preventDefault(); const all = tabsRef.current, index = all.findIndex(tab => tab.key === activeTabRef.current);
         if (all.length > 1) void switchTab(all[(index + (e.shiftKey ? all.length - 1 : 1)) % all.length].key);
@@ -955,6 +984,7 @@ export default function App() {
   }, [page, library, goToPage, undo, redo, changeZoom, searchOpen, query, results, resultIndex]);
 
   async function openFiles(files: File[]) {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de abrir otro documento.'); return; }
     if (busyRef.current) return;
     for (const file of files) {
       if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') { notify('Elige un archivo PDF para abrirlo.', true); continue; }
@@ -962,6 +992,7 @@ export default function App() {
     }
   }
   async function chooseFile() {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de abrir otro documento.'); return; }
     if (busyRef.current || loadingRef.current) return;
     if (!isNative) { fileInput.current?.click(); return; }
     loadingRef.current = true; setLoading(true);
@@ -1086,6 +1117,7 @@ export default function App() {
     return presentNativePdf(current.nativeSource!, action === 'save' ? current.name.replace(/\.pdf$/i, '') + ' — copia.pdf' : current.name, action, annotationRef.current, removed);
   }
   async function download() {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de guardar el PDF.'); return; }
     const current = docRef.current;
     if (!current || busyRef.current || loadingRef.current || saving.current) return;
     saving.current = true;
@@ -1113,6 +1145,7 @@ export default function App() {
     finally { saving.current = false; setBusy(null); }
   }
   async function printDocument() {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de imprimir el PDF.'); return; }
     const current = docRef.current;
     if (!current?.canPrint || busyRef.current) return;
     if (isIOS) {
@@ -1203,7 +1236,42 @@ export default function App() {
     noteOrigin.current = 'document'; setNoteDraft({ page: annotation.page, kind: 'note', rect: [x, y, x, y], text: '', color: annotation.color }); setNoteText('');
   }
   function openTools() { if (!doc || isNativePdfDocument(doc.pdf)) { setCapabilityNotice(true); return; } setMobileAnnotating(false); setTool('select'); setWorkbench('home'); }
+  function openEditor() {
+    if (!doc || isNativePdfDocument(doc.pdf) || busyRef.current) return;
+    editorReadingLocation.current = { revision: String(doc.revision), page, top: viewer.current?.scrollTop || 0, left: viewer.current?.scrollLeft || 0 };
+    setSidebar(false); setSearchOpen(false); setNotesOpen(false); setMobileAnnotating(false); setReaderChromeHidden(false); setTool('select'); setWorkbench('edit-pdf');
+  }
+  async function closeWorkbench() {
+    const wasEditing = workbenchRef.current === 'edit-pdf' && !phoneRef.current, location = editorReadingLocation.current;
+    const desiredPage = readingState.current.page, revision = docRef.current?.revision, key = activeTabRef.current;
+    const request = ++editorRestoreRequest.current;
+    if (wasEditing) editorRestorePending.current = true;
+    setWorkbench(null); setEditArea(null); if (tool !== 'redact') setTool('select');
+    if (!wasEditing) return;
+    if (scrollRestoreFrame.current !== null) { cancelAnimationFrame(scrollRestoreFrame.current); scrollRestoreFrame.current = null; }
+    // Let the reader and its fit zoom recover before positioning the selected page.
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    if (request === editorRestoreRequest.current && key === activeTabRef.current && revision === docRef.current?.revision) {
+      if (location && String(revision) === location.revision && desiredPage === location.page) {
+        setPage(desiredPage); setPageInput(String(desiredPage)); viewer.current?.scrollTo({ top: location.top, left: location.left, behavior: 'instant' });
+      } else goToPage(desiredPage, false);
+    }
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    if (request === editorRestoreRequest.current) editorRestorePending.current = false;
+  }
+  async function selectWorkbenchTool(next: Tool) {
+    if (editorDraftRef.current) return;
+    if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
+    else setWorkbench(null);
+    setTool(next);
+  }
+  async function openWorkbenchSection(next: string) {
+    if (editorDraftRef.current) return;
+    if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
+    setWorkbench(next);
+  }
   async function returnToLibrary() {
+    if (editorDraftRef.current) { notify('Aplica o descarta el borrador antes de salir del editor.'); return; }
     if (busyRef.current || loadingRef.current) return;
     try { const current = captureTab(); if (current) await persistTab(current); retainCurrentTab(); publishTabs(); closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); setLibrary(true); }
     catch (error) { notify(errorMessage(error), true); }
@@ -1272,6 +1340,9 @@ export default function App() {
   })}</div>;
   const libraryContent = <DocumentLibrary documents={recents} loading={libraryLoading} activeDocument={doc ? { name: doc.name, page } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onHideRecent={recent => void removeFromRecents(recent)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
+  const inlineEditing = !phone && workbench === 'edit-pdf';
+  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
+
   return <div className={`app-shell${isDesktop && isMac ? ' native-mac' : ''}${phone ? ' phone-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); if (!isNative) void openFiles(Array.from(e.dataTransfer.files)); }}>
     {closeBlocked && <Modal title="No se pudo guardar la sesión" onClose={() => setCloseBlocked(false)}><p className="modal-description">Puedes guardar una copia del PDF antes de salir. Si cierras ahora, los cambios de esta sesión podrían perderse.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setCloseBlocked(false)}>Volver</button><button className="secondary-button" onClick={() => { setCloseBlocked(false); void download(); }}>Guardar una copia</button><button className="primary-button" onClick={() => { void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().destroy()); }}>Cerrar sin guardar sesión</button></div></Modal>}
     <header className="app-header" data-tauri-drag-region inert={phone && (library || sidebar || notesOpen)}>
@@ -1284,18 +1355,18 @@ export default function App() {
       </> : <>
       <div className={`document-tab-strip${tabDrag.enabled ? ' drag-enabled' : ''}${tabDrag.draggingKey ? ' is-dragging' : ''}`} ref={tabDrag.strip} onClickCapture={tabDrag.clickCapture} onDragStart={event => { if (tabDrag.enabled) event.preventDefault(); }} role="tablist" aria-label="Documentos abiertos">
         {tabs.map(tab => <div className={`document-tab ${tab.key === activeTabKey ? 'selected' : ''}${tabDrag.draggingKey === tab.key ? ' plan-tab-dragging' : ''}${tabDrag.drop?.key === tab.key ? ` tab-drop-${tabDrag.drop.side}` : ''}`} key={tab.key} data-tab-key={tab.key} onPointerDown={event => tabDrag.begin(event, tab.key)}>
-          <button role="tab" aria-selected={tab.key === activeTabKey} aria-controls="document-reader" aria-label={tab.doc.name} title={tab.doc.name} tabIndex={tab.key === activeTabKey ? 0 : -1} disabled={!!busy || loading} onClick={() => { if (tab.key === activeTabKey) setLibrary(false); else void switchTab(tab.key); }} onKeyDown={event => {
+          <button role="tab" aria-selected={tab.key === activeTabKey} aria-controls="document-reader" aria-label={tab.doc.name} title={tab.doc.name} tabIndex={tab.key === activeTabKey ? 0 : -1} disabled={!!busy || loading || editorDraft} onClick={() => { if (tab.key === activeTabKey) setLibrary(false); else void switchTab(tab.key); }} onKeyDown={event => {
             if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const i = tabs.findIndex(item => item.key === tab.key); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (i + (event.key === 'ArrowLeft' ? tabs.length - 1 : 1)) % tabs.length; void switchTab(tabs[next].key); }
           }}><FileText size={14} /><span>{tab.doc.name}</span>{(tab.doc.modified || annotationFingerprint(tab.key === activeTabKey ? annotations : tab.annotations) !== tab.doc.savedAnnotations) && <span className="modified-dot" title="Cambios sin guardar en un PDF" aria-label="Documento modificado" />}</button>
-          <button className="document-tab-close" aria-label={`Cerrar ${tab.doc.name}`} title={`Cerrar pestaña (${shortcutLabel('W')})`} disabled={!!busy || loading} onClick={() => void closeTab(tab.key)}><X size={13} /></button>
+          <button className="document-tab-close" aria-label={`Cerrar ${tab.doc.name}`} title={`Cerrar pestaña (${shortcutLabel('W')})`} disabled={!!busy || loading || editorDraft} onClick={() => void closeTab(tab.key)}><X size={13} /></button>
         </div>)}
       </div>
       {draggedTab && <div className="document-tab-drag-preview" aria-hidden="true" style={{ left: Math.max(8, Math.min(tabDrag.location.x + 16, window.innerWidth - 270)), top: Math.max(8, Math.min(tabDrag.location.y + 16, window.innerHeight - 48)) }}><FileText size={16} /><span>{draggedTab.doc.name}</span></div>}
-      <IconButton label="Abrir PDF" disabled={!!busy || loading} onClick={() => void chooseFile()} className="new-document-tab"><Plus size={19} /></IconButton>
+      <IconButton label="Abrir PDF" disabled={!!busy || loading || editorDraft} onClick={() => void chooseFile()} className="new-document-tab"><Plus size={19} /></IconButton>
       <div className="header-drag-space" data-tauri-drag-region />
       <div className="header-actions">
         <IconButton label="Información del documento" disabled={!doc || loading} onClick={() => setInfo(true)}><Info size={16} /></IconButton>
-        <IconButton label="Crear PDF" disabled={!!busy || loading} onClick={() => setCreating(true)}><FilePlus2 size={18} /></IconButton>
+        <IconButton label="Crear PDF" disabled={!!busy || loading || editorDraft} onClick={() => setCreating(true)}><FilePlus2 size={18} /></IconButton>
         {storageFailed && <button className="session-warning" title="No se pudo guardar la sesión" onClick={() => void download()}><Info size={15} />Sesión sin guardar</button>}
       </div>
       {isDesktop && !isMac && <div className="window-actions">
@@ -1308,7 +1379,7 @@ export default function App() {
     </header>
 
     <div className="workspace" inert={library}>
-      {!phone && <nav className="tool-rail" aria-label="Herramientas del documento">
+      {!phone && <nav className="tool-rail" aria-label="Herramientas del documento" inert={inlineEditing}>
         <div className="rail-primary">
           <button className={library ? 'rail-button active' : 'rail-button'} aria-label="Mis documentos" title="Mis documentos" onClick={() => setLibrary(true)}><FolderOpen size={21} /><span>Documentos</span></button>
           <button className={`rail-button ${sidebar && !searchOpen && sideTab === 'pages' ? 'active' : ''}`} aria-label="Páginas" title="Páginas" aria-expanded={sidebar && !searchOpen && sideTab === 'pages'} disabled={!doc} onClick={() => toggleSidePanel('pages')}><Layers size={21} /><span>Páginas</span></button>
@@ -1342,11 +1413,12 @@ export default function App() {
       </aside>}
 
       <main className={`reader${phone && mobileAnnotating ? ' mobile-annotating' : ''}`} id="document-reader" inert={library || phone && (sidebar || notesOpen)}>
-        {!phone && <div className="reader-toolbar">
+        {!phone && !inlineEditing && <div className="reader-toolbar">
           <div className="toolbar-left">
             <div className="desktop-mode-switch" role="group" aria-label="Modo del documento">
               <button aria-label="Modo lectura" aria-pressed={!mobileAnnotating} disabled={!doc || !!busy || loading} onClick={() => { setMobileAnnotating(false); setTool('select'); }}><BookOpen size={17} /><span>Lectura</span></button>
               <button aria-label="Anotar documento" aria-pressed={mobileAnnotating} disabled={!doc || !!busy || loading} onClick={startAnnotating}><Highlighter size={17} /><span>Anotar</span></button>
+              <button aria-label="Editar contenido del PDF" aria-pressed={false} disabled={!doc?.canEdit || !doc?.canCopy || !!busy || loading || !!doc && isNativePdfDocument(doc.pdf)} onClick={openEditor}><FileText size={17} /><span>Editar</span></button>
             </div>
             <button className="tools-button" disabled={!doc || !!busy || loading} onClick={openTools} title="Herramientas"><Wrench size={17} /><span>Herramientas</span></button>
             <div className="undo-group"><span className="toolbar-divider" /><IconButton label={`Deshacer (${shortcutLabel('Z')})`} onClick={undo} disabled={!!busy || !undoStack.current.length}><Undo2 size={17} /></IconButton><IconButton label={`Rehacer (${shortcutLabel(isMac ? '⇧+Z' : 'Y')})`} onClick={redo} disabled={!!busy || !redoStack.current.length}><Redo2 size={17} /></IconButton></div>
@@ -1359,13 +1431,14 @@ export default function App() {
             <IconButton label="Más acciones del documento" disabled={!doc || !!busy || loading} onClick={() => setMobileActions(true)}><MoreHorizontal size={20} /></IconButton>
           </div>
         </div>}
-        {!phone && doc && mobileAnnotating && <div className="desktop-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
+        {!phone && !inlineEditing && doc && mobileAnnotating && <div className="desktop-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
           <div className="tool-group"><IconButton label="Seleccionar texto (V)" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={18} /></IconButton><IconButton label="Resaltado automático (H)" toggle active={tool === 'highlight'} disabled={!doc.canAnnotate || !doc.canCopy || !!busy || loading} onMouseDown={e => e.preventDefault()} onClick={activateHighlight}><Highlighter size={19} /></IconButton>{tool === 'highlight' && <HighlightColorPicker color={color} onChange={setColor} disabled={!doc.canAnnotate || !doc.canCopy || !!busy || loading} />}<IconButton label="Añadir nota (N)" active={tool === 'note'} disabled={!doc.canAnnotate || !!busy || loading} onClick={() => setTool(tool === 'note' ? 'select' : 'note')}><StickyNote size={18} /></IconButton></div>
           <span className="desktop-tool-description">{tool === 'highlight' ? 'Selecciona el texto para resaltarlo' : tool === 'note' ? 'Haz clic en la página para añadir una nota' : 'Selecciona texto para copiar, resaltar o comentar'}</span>
           <button className="text-button" onClick={() => { setMobileAnnotating(false); setTool('select'); }}><Check size={16} />Listo</button>
         </div>}
 
-        <div className="reading-area" ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
+        {inlineEditing && workbenchPanel}
+        <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
           {doc ? <div className="pdf-stack" key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><Sparkles size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageLabels?.[number - 1]} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || []} tool={tool} color={color} query={query} activeSearch={searchOpen && (!phone || !sidebar) ? results[resultIndex] : null} onNavigate={navigatePDF} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} onCommentHighlight={commentHighlight} onAnnotate={onAnnotate} onArea={onArea} redactions={redactions} onNoteClick={id => { const annotation = annotationRef.current.find(item => item.id === id); if (annotation && doc.canAnnotate) editNote(annotation, 'document'); else { setNotesOpen(true); setActiveNote(id); } }} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{phone ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un archivo o arrástralo a esta ventana.'}</p></div>}
           {loading && <div className="loading-overlay"><LoaderCircle size={28} className="spin" /><span>Abriendo PDF…</span></div>}
         </div>
@@ -1441,7 +1514,7 @@ export default function App() {
 
     {library && <div className={`library-screen${phone ? '' : ' desktop-library-screen'}`}>{libraryContent}</div>}
     {deleteTarget && <Modal title="Eliminar copia local" onClose={() => setDeleteTarget(null)}><p className="modal-description">Se eliminarán la copia de «{deleteTarget.name}» de la biblioteca, sus anotaciones, marcadores y cambios guardados en este dispositivo. El archivo original de Archivos no se modifica.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setDeleteTarget(null)}>Cancelar</button><button className="primary-button destructive-button" disabled={!!busy || loading} onClick={() => void forgetRecent(deleteTarget)}>Eliminar copia local y cambios</button></div></Modal>}
-    {workbench && doc && !isNativePdfDocument(doc.pdf) && <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} documentBusy={!!busy} area={editArea} redactions={redactions} onClose={() => { setWorkbench(null); setEditArea(null); if (tool !== 'redact') setTool('select'); }} onSelectTool={next => { setWorkbench(null); setTool(next); }} onOpenEditor={() => setWorkbench('edit-pdf')} onApply={applyOperation} getBytes={currentBytes} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} />}
+    {!inlineEditing && workbenchPanel}
     {noteDraft && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {noteDraft.page}</div><textarea autoFocus aria-label="Texto de la nota" placeholder="Escribe un comentario" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} /><div className="note-modal-footer"><span>{noteText.length} / 5000</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
     {password && <Modal title="Este PDF tiene contraseña" onClose={cancelPassword} className="password-modal"><p className="modal-description">Introduce la contraseña para abrirlo.</p><form onSubmit={e => { e.preventDefault(); if (passwordText) { password.submit(passwordText); setPassword(null); } }}><label htmlFor="pdf-password">Contraseña del documento</label><input autoFocus id="pdf-password" type="password" value={passwordText} onChange={e => setPasswordText(e.target.value)} autoComplete="off" />{password.retry && <p className="password-error">La contraseña anterior no es correcta. Inténtalo de nuevo.</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={cancelPassword}>Cancelar</button><button className="primary-button" disabled={!passwordText}><LockKeyhole size={15} />Abrir PDF</button></div></form></Modal>}
     {info && doc && <Modal title="Sobre este documento" onClose={() => setInfo(false)} className="info-modal"><div className="info-file"><FileText size={30} /><strong>{doc.name}</strong></div><dl className="document-details"><div><dt>Páginas</dt><dd>{doc.pdf.numPages}</dd></div><div><dt>Tamaño</dt><dd>{formatSize(doc.size)}</dd></div><div><dt>Anotaciones de Folio</dt><dd>{annotations.length}</dd></div><div><dt>Marcadores</dt><dd>{bookmarks.length}</dd></div><div><dt>Procesamiento</dt><dd>Local, en tu dispositivo</dd></div></dl></Modal>}
