@@ -190,6 +190,11 @@ def main():
         if device:
             if not report['passed']:
                 subprocess.run(['xcrun', 'simctl', 'io', device, 'screenshot', str(OUT / 'iphone-native-import-ui-failure.png')], capture_output=True)
+                try:
+                    logs = subprocess.run(['xcrun', 'simctl', 'spawn', device, 'log', 'show', '--last', '10m', '--style', 'compact', '--info', '--debug', '--predicate', 'process == "Folio" OR subsystem CONTAINS[c] "fileprovider" OR subsystem CONTAINS[c] "DocumentManager"'], capture_output=True, text=True, timeout=45)
+                    (OUT / 'iphone-file-provider-system.log').write_text(logs.stdout + '\n' + logs.stderr)
+                except subprocess.TimeoutExpired:
+                    (OUT / 'iphone-file-provider-system.log').write_text('Simulator log collection timed out after 45 seconds.')
             subprocess.run(['xcrun', 'simctl', 'shutdown', device], capture_output=True)
             subprocess.run(['xcrun', 'simctl', 'delete', device], capture_output=True)
         (OUT / 'iphone-native-import-ui-results.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))

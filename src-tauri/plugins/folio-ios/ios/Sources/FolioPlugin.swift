@@ -16,8 +16,15 @@ private final class PickerDelegate: NSObject, UIDocumentPickerDelegate {
     init(picked: @escaping ([URL]) -> Void, cancelled: @escaping () -> Void) {
         self.picked = picked; self.cancelled = cancelled
     }
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { picked(urls) }
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { cancelled() }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        NSLog("Folio file picker selected %ld documents", urls.count)
+        picked(urls)
+    }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        NSLog("Folio file picker cancelled")
+        cancelled()
+    }
+    deinit { NSLog("Folio file picker delegate released") }
 }
 
 final class FolioPlugin: Plugin {
@@ -177,15 +184,22 @@ final class FolioPlugin: Plugin {
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
                         let paths = try self.importURLs(urls)
+                        NSLog("Folio file picker imported %ld documents", paths.count)
                         DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": paths]) }
                     }
-                    catch { DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; self.fail(invoke, error) } }
+                    catch {
+                        let native = error as NSError
+                        NSLog("Folio file picker import failed [%@:%ld]", native.domain, native.code)
+                        DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; self.fail(invoke, error) }
+                    }
                 }
             }, cancelled: {
                 self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": [String]()])
             })
             picker.delegate = self.pickerDelegate
-            parent.present(picker, animated: true)
+            parent.present(picker, animated: true) {
+                NSLog("Folio file picker presented; delegate attached: %d", picker.delegate != nil)
+            }
         }
     }
 

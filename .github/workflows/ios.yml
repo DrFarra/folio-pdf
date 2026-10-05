@@ -88,6 +88,17 @@ jobs:
         if: inputs.mode == 'full'
         run: |
           python3 scripts/tests/native-smoke-ios.py --app test-results/ios-build/simulator/Folio.app
+      - name: Preserve the production simulator for focused UIKit diagnostics
+        if: inputs.mode == 'full'
+        run: python3 scripts/tests/ios-ui-candidate.py
+      - name: Upload the simulator candidate before UIKit acceptance
+        if: inputs.mode == 'full'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-iOS-candidate
+          path: test-results/ios-ui-candidate/
+          if-no-files-found: error
+          retention-days: 1
       - name: Exercise actual UIKit PDF picker and cold and warm Open In
         if: always() && !cancelled() && steps.ios_production_build.outcome == 'success'
         run: |

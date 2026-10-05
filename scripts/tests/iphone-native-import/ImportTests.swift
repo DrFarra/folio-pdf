@@ -70,7 +70,12 @@ final class ImportTests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed, "Files did not select the exact requested PDF")
             for attempt in 1...2 {
                 XCTAssertTrue(confirm.isEnabled); XCTAssertTrue(confirm.isHittable)
-                confirm.tap()
+                print("Files Open confirmation attempt \(attempt), frame \(confirm.frame)")
+                if attempt == 1 {
+                    // Touch the observed button's center rather than relying
+                    // on the remote file provider's accessibility hit point.
+                    confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                } else { confirm.tap() }
                 if confirm.waitForNonExistence(timeout: 5) { return }
                 attach("picker-open-still-visible-\(basename)-\(attempt)", app: folio)
                 // Retry only the unchanged system picker and exact selection.
