@@ -1,22 +1,36 @@
 """Verify an unsigned DEVICE IPA and package it separately from simulator .app."""
 from pathlib import Path
-import argparse, hashlib, json, os, plistlib, shutil, stat, subprocess, sys, tempfile, zipfile
+from datetime import datetime, timezone
+import argparse, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile, zipfile
 from ios_icon_audit import verify_compiled_icons
 
 ROOT = Path(__file__).resolve().parent.parent
 MUPDF_SHA = 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3'
+ENGINE_REPORTS = {'operations-results.json': 13, 'page-content-engine-results.json': 10,
+                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 13}
+IPC_REPORTS = {'iphone-native-contract-results.json': 3, 'native-pdf-adapter-results.json': 1,
+               'iphone-native-big-contract-results.json': 11}
+FOCUS_CASES = {'touch-focus-document-sheet-light', 'touch-focus-document-sheet-dark',
+               'touch-focus-explorer-panels-light', 'touch-focus-explorer-panels-dark',
+               'touch-focus-page-search-and-settings-light', 'touch-focus-page-search-and-settings-dark'}
+MOBILE_CASES = FOCUS_CASES | {f'reading-layout-{width}x{height}' for width, height in
+                            [(320, 568), (375, 667), (390, 844), (430, 932), (844, 390), (768, 1024)]} | {
+    'mobile-content-editor-text-image-export-reopen', 'multiple-documents-selector-isolated-annotations-and-page-state',
+    'native-text-range-copy-highlight-and-comment-standard-pdf', 'automatic-highlight-custom-color-and-reopen-persistence',
+    'external-highlight-removal-retains-standard-note', 'readonly-copy-and-highlight-permission-enforced',
+    'copy-protection-does-not-expose-text-actions', 'reading-settings-persist-follow-system-and-single-page',
+    'bookmark-name-tree-pointer-handle-move-and-persistence', 'reader-short-touch-chrome-and-gesture-exclusions',
+    'pinch-compositor-bitmap-retention-and-cancel', 'mobile-workbench-page-order-and-image-pdf-creation',
+    'note-tool-pinch-does-not-create-notes-and-short-touch-tap-does', 'webkit-recent-file-and-real-pdf-draft-survive-reload'}
 parser = argparse.ArgumentParser()
-parser.add_argument('--out', required=True, type=Path)
-parser.add_argument('--build-dir', required=True, type=Path)
-parser.add_argument('--mupdf-source', required=True, type=Path)
+parser.add_argument('--out', type=Path)
+parser.add_argument('--build-dir', type=Path)
+parser.add_argument('--mupdf-source', type=Path)
+parser.add_argument('--capture-report-inputs', action='store_true', help='Record source/build identity before running the browser and IPC suites.')
+parser.add_argument('--validate-reports-only', action='store_true', help='Validate browser, IPC and engine evidence without creating a delivery.')
 args = parser.parse_args()
 if sys.platform != 'darwin': raise SystemExit('La entrega iOS se verifica en macOS con las herramientas Mach-O de Apple.')
 version = json.loads((ROOT / 'package.json').read_text())['version']
-out = args.out.resolve()
-out.mkdir(parents=True, exist_ok=True)
-build = args.build_dir.resolve()
-source_ipa = build / f'Folio_{version}_iphone_arm64_unsigned.ipa'
-simulator_app = build / 'simulator/Folio.app'
 
 def require(condition, message):
     if not condition: raise RuntimeError(message)
@@ -30,8 +44,118 @@ def run(*cmd):
 def report(name):
     path = ROOT / 'test-results/ios' / name
     result = json.loads(path.read_text())
-    require(result.get('passed') and result.get('version') == version, f'No pasó la prueba nativa {name} de esta versión.')
+    require(result.get('passed') is True and result.get('version') == version and
+            not result.get('errors') and not result.get('uncaughtErrors') and not result.get('error'),
+            f'No pasó la prueba nativa {name} de esta versión.')
     return result
+
+
+def frontend_identity():
+    distribution = ROOT / 'dist'
+    index = distribution / 'index.html'
+    entries = re.findall(r'<script\b[^>]*\bsrc=["\']([^"\']+\.js)["\']', index.read_text(encoding='utf-8'))
+    require(len(entries) == 1 and entries[0].startswith('/assets/'), 'Falta la entrada única de la interfaz de producción.')
+    assets = [{'path': path.relative_to(distribution).as_posix(), 'bytes': path.stat().st_size, 'sha256': sha(path)}
+              for path in sorted(distribution.rglob('*')) if path.is_file() and path.suffix in {'.js', '.css'}]
+    require(any('/' + asset['path'] == entries[0] for asset in assets), 'La entrada JavaScript no existe en dist.')
+    return {'entry': entries[0], 'indexSha256': sha(index), 'assets': assets}
+
+
+def source_identity(frontend):
+    commit = run('git', 'rev-parse', 'HEAD')
+    require(re.fullmatch(r'[0-9a-f]{40}', commit), 'No se pudo identificar el commit de la entrega.')
+    tracked = run('git', 'ls-files', '-z').split('\x00')
+    inputs = {name: sha(ROOT / name) for name in sorted(tracked) if name and
+              (name.startswith('src/') or name.startswith('scripts/tests/') and name.endswith('.mjs') or
+               name in {'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig.json', 'tsconfig.app.json'})}
+    require(inputs and 'src/styles.css' in inputs and 'scripts/tests/native-pdf-adapter.mjs' in inputs,
+            'El inventario no incluye las fuentes y los tests del frontend.')
+    return {'version': version, 'gitCommit': commit, 'hostPlatform': sys.platform, 'frontend': frontend, 'sourceInputs': inputs,
+            'workflowRunId': os.environ.get('GITHUB_RUN_ID'), 'workflowRunAttempt': os.environ.get('GITHUB_RUN_ATTEMPT')}
+
+
+def passed_cases(data, name, expected_count=None, top_passed=True):
+    require(isinstance(data, dict) and data.get('passed') is not False and
+            (not top_passed or data.get('passed') is True), f'{name} no acredita passed: true.')
+    require(not data.get('errors') and not data.get('uncaughtErrors') and not data.get('error'), f'{name} contiene errores.')
+    cases = data.get('results')
+    if expected_count == 1 and cases is None:
+        # The isolated adapter reports one complete assertion group at top level.
+        return [{'passed': data.get('passed')}]
+    require(isinstance(cases, list) and cases and (expected_count is None or len(cases) == expected_count),
+            f'{name} no contiene todos los casos esperados.')
+    require(all(isinstance(case, dict) and (case.get('status') == 'passed' or case.get('passed') is True) and
+            case.get('passed') is not False and case.get('status') not in {'failed', 'skipped'} and
+            not case.get('error') for case in cases), f'{name} contiene casos fallidos o incompletos.')
+    return cases
+
+
+def browser_and_engine_validation(identity):
+    fingerprint_path = ROOT / 'test-results/ios/browser-test-inputs.json'
+    recorded = json.loads(fingerprint_path.read_text())
+    require({key: value for key, value in recorded.items() if key != 'startedAt'} == identity and
+            recorded.get('hostPlatform') == 'darwin',
+            'Las fuentes, la versión o el frontend cambiaron después de iniciar las pruebas de iPhone en WebKit.')
+    started = datetime.fromisoformat(recorded.get('startedAt', '').replace('Z', '+00:00'))
+    require(started.tzinfo is not None, 'El inventario de pruebas no tiene fecha UTC válida.')
+    frontend = identity['frontend']
+    ui_path = ROOT / 'test-results/iphone/iphone-results.json'
+    ui = json.loads(ui_path.read_text())
+    require(datetime.fromisoformat(ui.get('capturedAt', '').replace('Z', '+00:00')) >= started,
+            'El informe móvil es anterior al inicio de estas pruebas.')
+    cases = passed_cases(ui, ui_path.name, len(MOBILE_CASES))
+    require(ui.get('errors') == [], 'El informe móvil debe contener errors: [].')
+    require(ui.get('hostPlatform') == 'darwin' and ui.get('browser') == 'WebKit' and
+            ui.get('frontendEntry') == frontend['entry'] and ui.get('builtIndexSha256') == frontend['indexSha256'],
+            'Las pruebas móviles no corresponden a WebKit en macOS y a este dist.')
+    require(all(case.get('frontendEntry') == frontend['entry'] and case.get('browser') == 'WebKit' and
+            case.get('engine') == 'webkit' for case in cases), 'Un caso móvil corresponde a otra compilación o navegador.')
+    require({case.get('id') for case in cases} == MOBILE_CASES,
+            'Faltan casos móviles de lectura, foco o edición; no se acepta una suite parcial ni IDs duplicados.')
+    if 'version' in ui:
+        require(ui['version'] == version, 'Las pruebas móviles corresponden a otra versión.')
+    ipc_suites = []
+    for name, expected_count in IPC_REPORTS.items():
+        path = ROOT / 'test-results/iphone' / name
+        data = json.loads(path.read_text())
+        require(datetime.fromisoformat(data.get('capturedAt', '').replace('Z', '+00:00')) >= started,
+                f'{name} es anterior al inicio de estas pruebas.')
+        checks = passed_cases(data, name, expected_count)
+        require(data.get('errors', []) == [], f'{name} contiene errores de contrato.')
+        if 'version' in data:
+            require(data['version'] == version, f'{name} pertenece a otra versión.')
+        if 'frontendEntry' in data:
+            require(data['frontendEntry'] == frontend['entry'], f'{name} probó otro frontend.')
+        if 'builtIndexSha256' in data:
+            require(data['builtIndexSha256'] == frontend['indexSha256'], f'{name} probó otro dist.')
+        if 'buildMode' in data:
+            require(data['buildMode'] == 'immutable-dist', f'{name} no usó el snapshot de producción.')
+        require(data.get('PDFKitExecuted') is not True and
+                (data.get('bridgeMocked') is True or all(case.get('bridgeMocked') is True for case in checks)),
+                f'{name} no identifica explícitamente el puente simulado.')
+        ipc_suites.append({'report': name, 'caseCount': len(checks), 'passed': True, 'reportSha256': sha(path),
+                           'sourceInputsReportSha256': sha(fingerprint_path), 'bridgeMocked': True,
+                           'scope': data.get('scope', 'Explicitly mocked IPC contract')})
+    engine_suites = []
+    for name, expected_count in ENGINE_REPORTS.items():
+        path = ROOT / 'test-results' / name
+        data = json.loads(path.read_text())
+        checks = passed_cases(data, name, expected_count, top_passed=False)
+        engine_suites.append({'report': name, 'caseCount': len(checks), 'passed': True, 'reportSha256': sha(path)})
+    return {
+        'backend': {'scope': 'MuPDF.js PDF bytes and pixels in Node on macOS', 'caseCount': sum(s['caseCount'] for s in engine_suites), 'suites': engine_suites},
+        'webkitMobile': {'scope': 'Production HTTP preview in mobile WebKit; no physical iPhone or UIKit dialogs',
+                         'browser': 'WebKit', 'hostPlatform': 'darwin', 'caseCount': len(cases), 'passed': True,
+                         'report': ui_path.name, 'reportSha256': sha(ui_path), 'frontendEntry': frontend['entry'],
+                         'builtIndexSha256': frontend['indexSha256'], 'focusCaseCount': len(FOCUS_CASES),
+                         'nativeWKWebView': False, 'physicalDeviceTested': False},
+        'mockIPC': {'scope': 'WebKit adapter/App with mocked Tauri IPC; 2 GiB metadata is simulated',
+                    'browser': 'WebKit', 'hostPlatform': 'darwin',
+                    'caseCount': sum(s['caseCount'] for s in ipc_suites), 'suites': ipc_suites,
+                    'PDFKitExecuted': False, 'UIKitDialogInteractionTested': False, 'physicalDeviceTested': False,
+                    'sourceInputsReport': fingerprint_path.name, 'sourceInputsReportSha256': sha(fingerprint_path)}
+    }
+
 
 def verify_bundle(app, simulator=False):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
@@ -64,6 +188,28 @@ def verify_bundle(app, simulator=False):
     require(not any(p.suffix.lower() in {'.p12', '.pfx', '.pem', '.key'} for p in app.rglob('*') if p.is_file()), 'La entrega contiene material de firma.')
     return {'identifier': info['CFBundleIdentifier'], 'version': version, 'minimumIOS': '17.0', 'families': info['UIDeviceFamily'],
             'architecture': 'arm64', 'machoPlatform': expected, 'executableSha256': sha(exe)}
+
+frontend = frontend_identity()
+identity = source_identity(frontend)
+if args.capture_report_inputs:
+    require(not args.validate_reports_only, 'Elige capturar o validar los informes, no ambos.')
+    path = ROOT / 'test-results/ios/browser-test-inputs.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**identity, 'startedAt': datetime.now(timezone.utc).isoformat()}, indent=2), encoding='utf-8')
+    print(json.dumps({'capturedReportInputs': True, 'version': version, 'gitCommit': identity['gitCommit'], 'frontendEntry': frontend['entry']}))
+    raise SystemExit(0)
+validation = browser_and_engine_validation(identity)
+if args.validate_reports_only:
+    print(json.dumps({'passed': True, 'version': version, 'frontendEntry': frontend['entry'], 'validation': validation}))
+    raise SystemExit(0)
+require(args.out is not None and args.build_dir is not None and args.mupdf_source is not None,
+        'Empaquetar requiere --out, --build-dir y --mupdf-source.')
+out = args.out.resolve()
+require(not out.exists() or out.is_dir() and not any(out.iterdir()), 'La carpeta de entrega debe estar vacía.')
+out.mkdir(parents=True, exist_ok=True)
+build = args.build_dir.resolve()
+source_ipa = build / f'Folio_{version}_iphone_arm64_unsigned.ipa'
+simulator_app = build / 'simulator/Folio.app'
 
 qa = report('native-smoke-ios-qa.json')
 production = report('native-smoke-ios.json')
@@ -237,6 +383,13 @@ for folder in [ROOT / 'test-results/ios', ROOT / 'test-results/iphone']:
     for p in folder.glob('*'):
         if p.is_file() and p.suffix in {'.json', '.png'} and not p.name.startswith('cargo-metadata'):
             shutil.copy2(p, evidence / p.name)
+for name in ENGINE_REPORTS:
+    shutil.copy2(ROOT / 'test-results' / name, evidence / name)
+validation['nativeSimulator'] = {'scope': 'Actual iOS Simulator WKWebView, UIKit picker/Open In, Swift/PDFKit and Rust persistence',
+                                 'qaPassed': qa['passed'], 'productionPassed': production['passed'],
+                                 'UIKitDialogInteractionTested': ui_imports['UIKitDialogInteractionTested'],
+                                 'OSOpenInInteractionTested': ui_imports['OSOpenInInteractionTested'],
+                                 'nativeTwoGiBFixtureVerified': True, 'physicalDeviceTested': False}
 manifest = {'product': 'Folio', 'version': version, 'platform': 'iOS', 'device': device, 'simulator': simulator,
             'signing': 'unsigned device IPA; user signs with Feather and a valid certificate/profile',
             'AppleCertificateIncluded': False, 'ProvisioningProfileIncluded': False,
@@ -245,7 +398,8 @@ manifest = {'product': 'Folio', 'version': version, 'platform': 'iOS', 'device':
             'OSOpenInInteractionTested': ui_imports['OSOpenInInteractionTested'], 'AirPrintJobTested': False,
             'nativeFileBackedPDFKitVerified': True, 'nativeTwoGiBFixtureVerified': True, 'nativeIncrementalWriterVerified': True,
             'nativeSimulatorQA': qa['passed'], 'nativeSimulatorProduction': production['passed'],
-            'gitCommit': run('git', 'rev-parse', 'HEAD'), 'sourceFiles': count,
+            'gitCommit': identity['gitCommit'], 'frontend': frontend, 'sourceInputs': identity['sourceInputs'],
+            'validation': validation, 'sourceFiles': count,
             'correspondingMuPDFSourceSha256': MUPDF_SHA,
             'swiftDependencies': swift_dependencies, 'swiftLocksVerified': True,
             'artifacts': [{'path': str(p.relative_to(out)).replace('\\', '/'), 'bytes': p.stat().st_size, 'sha256': sha(p)}

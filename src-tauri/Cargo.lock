@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "folio-pdf"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "folio-core",
  "serde",

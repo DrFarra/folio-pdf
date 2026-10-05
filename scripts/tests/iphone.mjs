@@ -5,9 +5,9 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import { chromium, webkit } from 'playwright-core';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
+import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
 
 // WebKit's mobile browser context provides genuine DOM text selection, PDF.js
@@ -49,7 +49,20 @@ fs.writeFileSync(readOnly, operateDocument(new Uint8Array(fs.readFileSync(extern
 const noCopy = path.join(output, 'iphone-no-copy.pdf');
 fs.writeFileSync(noCopy, operateDocument(new Uint8Array(fs.readFileSync(source)), { operation: 'protect', userPassword: '', ownerPassword: 'test-owner', permissions: 32 }));
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const originals = new Map([source, another, external, readOnly, noCopy].map(file => [file, hash(file)]));
+const editorSource = path.join(output, 'iphone-editor.pdf');
+const pictureFixture = await PDFDocument.create();
+pictureFixture.addPage([80, 40]).drawRectangle({ x: 0, y: 0, width: 80, height: 40, color: rgb(0, .7, .2) });
+const pictureDocument = new mupdf.PDFDocument(await pictureFixture.save()), picturePage = pictureDocument.loadPage(0);
+const picturePixmap = picturePage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);
+const editorImage = new Uint8Array(picturePixmap.asPNG()); picturePixmap.destroy(); picturePage.destroy(); pictureDocument.destroy();
+const editorFixture = await PDFDocument.create(), editorFont = await editorFixture.embedFont(StandardFonts.Helvetica);
+const editorPage = editorFixture.addPage([420, 560]), embeddedImage = await editorFixture.embedPng(editorImage);
+editorPage.drawText('MOBILE ORIGINAL', { x: 32, y: 460, size: 16, font: editorFont });
+editorPage.drawText('KEEP NEIGHBOR', { x: 32, y: 400, size: 14, font: editorFont });
+editorPage.drawImage(embeddedImage, { x: 32, y: 230, width: 80, height: 40 });
+fs.writeFileSync(editorSource, writeAnnotations(await editorFixture.save(), [{ id: 'mobile-editor-note', kind: 'note', page: 1,
+  rect: [320, 400, 340, 420], text: 'KEEP MOBILE NOTE', color: '#ffcc00', created: 1 }]));
+const originals = new Map([source, another, external, readOnly, noCopy, editorSource].map(file => [file, hash(file)]));
 const sourceText = operateDocument(new Uint8Array(fs.readFileSync(source)), { operation: 'text' });
 function nativePdfAnnotations(bytes) {
   const doc = new mupdf.PDFDocument(bytes), results = [];
@@ -69,6 +82,9 @@ const port = process.env.FOLIO_IPHONE_PORT || '4195', origin = `http://127.0.0.1
 const snapshotRoot = path.resolve(root, '.tools'), snapshot = process.env.FOLIO_IPHONE_DEV ? null : path.join(snapshotRoot, `iphone-preview-${process.pid}`);
 if (snapshot) { fs.mkdirSync(snapshot, { recursive: true }); fs.cpSync(path.join(root, 'dist'), snapshot, { recursive: true }); }
 const builtIndexHash = snapshot ? createHash('sha256').update(fs.readFileSync(path.join(snapshot, 'index.html'))).digest('hex') : null;
+const frontendEntry = snapshot ? fs.readFileSync(path.join(snapshot, 'index.html'), 'utf8').match(/<script[^>]+src="([^"]+)"/)?.[1] : '/src/main.tsx';
+assert(frontendEntry, 'The tested frontend entry must be identifiable.');
+const browserName = process.env.FOLIO_TEST_BROWSER === 'chromium' ? 'Chromium' : 'WebKit';
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), ...(snapshot ? ['preview', '--outDir', snapshot] : []), '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });
 let log = '', browser; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
@@ -172,6 +188,37 @@ async function closePanel(page) {
   await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
   await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).waitFor({ state: 'detached' });
 }
+async function focusAppearance(page, expected = null) {
+  const samples = await page.evaluate(() => [...new Set([
+    document.activeElement, ...document.querySelectorAll(':focus, :focus-visible, .sheet-handle'),
+  ])].filter(element => element instanceof HTMLElement).map(element => {
+    const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+    const outline = pseudo => {
+      const value = getComputedStyle(element, pseudo);
+      return { style: value.outlineStyle, width: parseFloat(value.outlineWidth), color: value.outlineColor };
+    };
+    return { label: element.getAttribute('aria-label') || element.textContent.trim().slice(0, 80), tag: element.tagName,
+      className: element.className, focused: element === document.activeElement, focusVisible: element.matches(':focus-visible'),
+      visible: box.width > 0 && box.height > 0 && style.visibility !== 'hidden', outline: outline(null),
+      before: outline('::before'), after: outline('::after'), boxShadow: style.boxShadow,
+      selectedAnnotation: element.matches('.highlight-annotation[data-selected=true]') };
+  }));
+  for (const sample of samples) {
+    if (sample.selectedAnnotation) continue;
+    for (const [part, outline] of [['element', sample.outline], ['before', sample.before], ['after', sample.after]]) {
+      assert(outline.style === 'none' || outline.width === 0,
+        `Focus must not paint an outline (${part}, including hidden focus-visible elements): ${JSON.stringify(sample)}`);
+    }
+    if (String(sample.className).split(' ').includes('sheet-handle')) assert.equal(sample.boxShadow, 'none', 'The sheet handle must not paint a focus shadow.');
+  }
+  if (expected) assert.equal(await expected.evaluate(element => element === document.activeElement), true, 'Focus must remain on the functional control instead of being blurred to hide its outline.');
+  return samples;
+}
+
+async function touchFocusControl(page, control) {
+  await control.tap();
+  return focusAppearance(page);
+}
 async function selection(page, text = phrase, target = copiedPhrase) {
   const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: text }).first();
   await span.scrollIntoViewIfNeeded();
@@ -214,7 +261,8 @@ async function geometry(page) {
     reader: (() => { const element = document.querySelector('.reading-area'), box = element.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height }; })(),
     inputs: [...document.querySelectorAll('input:not([type=file]):not([type=range]):not([type=color]):not([type=checkbox]),select,textarea')].filter(element => element.getClientRects().length).map(element => ({ label: element.getAttribute('aria-label') || element.name, fontSize: parseFloat(getComputedStyle(element).fontSize) })),
     buttons: [...document.querySelectorAll('button')].filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden').map(element => {
-      const box = element.getBoundingClientRect(); return { label: element.getAttribute('aria-label') || element.textContent.trim(), width: box.width, height: box.height, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      const box = element.getBoundingClientRect(); return { label: element.getAttribute('aria-label') || element.textContent.trim(), width: box.width, height: box.height, left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+        pdfPrecisionTarget: element.matches('.content-box-handle, .pdf-content-item') };
     }),
   }));
 }
@@ -222,15 +270,19 @@ function assertScreen(geometry, { touchTargets = true, inputFonts = true } = {})
   assert(geometry.documentWidth <= geometry.width + 1, `Screen scrolls horizontally: ${JSON.stringify(geometry)}`);
   assert(geometry.documentHeight <= geometry.height + 1, `Outer document scrolls vertically: ${JSON.stringify(geometry)}`);
   assert.deepEqual(geometry.windowScroll, [0, 0], 'The app shell must remain fixed while the document scrolls.');
-  if (touchTargets) for (const button of geometry.buttons) assert(button.width >= 43.5 && button.height >= 43.5, `Small touch target: ${JSON.stringify(button)}`);
+  // PDF objects and their precision handles retain the PDF's own geometry;
+  // enlarging them would overlap neighboring content. Ordinary UI actions,
+  // including zoom, editor tabs, reset and commit, still require 44px targets.
+  if (touchTargets) for (const button of geometry.buttons) if (!button.pdfPrecisionTarget) assert(button.width >= 43.5 && button.height >= 43.5, `Small touch target: ${JSON.stringify(button)}`);
   if (inputFonts) for (const input of geometry.inputs) assert(input.fontSize >= 16, `An input could trigger iOS focus zoom: ${JSON.stringify(input)}`);
 }
 async function check(id, action, options = {}) {
   if (!selected(id)) return;
   const viewport = options.viewport || { width: 390, height: 844 };
-  const context = await browser.newContext({ viewport, screen: viewport, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent, acceptDownloads: true });
+  const context = await browser.newContext({ viewport, screen: viewport, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent, acceptDownloads: true, colorScheme: options.theme || 'light' });
   const page = await context.newPage(); page.setDefaultTimeout(25000);
   await context.addInitScript(() => { Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }); Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: undefined }); });
+  if (options.theme) await context.addInitScript(theme => localStorage.setItem('folio.theme', theme), options.theme);
   const diagnostics = [], outside = [], caseErrors = [];
   page.on('console', message => { if (['warning', 'error'].includes(message.type())) diagnostics.push({ type: message.type(), text: message.text() }); });
   page.on('pageerror', error => { const issue = { id, error: error.message }; caseErrors.push(issue); errors.push(issue); });
@@ -240,13 +292,17 @@ async function check(id, action, options = {}) {
     await open(page, options.file || source);
     const evidence = await action(page, context); assert.deepEqual(caseErrors, []); assert.deepEqual(outside, [], 'No document processing may call an outside service.');
     for (const [file, initialHash] of originals) assert.equal(hash(file), initialHash, 'The original file must remain unchanged.');
-    results.push({ id, status: 'passed', viewport, engine: process.env.FOLIO_TEST_BROWSER === 'chromium' ? 'chromium' : 'webkit', ...evidence, originalFilesUnchanged: true, outsideRequests: [] });
+    results.push({ id, status: 'passed', viewport, engine: process.env.FOLIO_TEST_BROWSER === 'chromium' ? 'chromium' : 'webkit', browser: browserName, frontendEntry, ...evidence, originalFilesUnchanged: true, outsideRequests: [] });
   } catch (error) {
-    process.exitCode = 1; results.push({ id, status: 'failed', error: error.stack, diagnostics, uiState: await page.evaluate(() => ({
+    process.exitCode = 1; results.push({ id, status: 'failed', browser: browserName, frontendEntry, viewport, error: error.stack, diagnostics, uiState: await page.evaluate(() => ({
       selection: window.getSelection()?.toString(), collapsed: window.getSelection()?.isCollapsed, highlightTapEvents: window.__iphoneHighlightTapEvents,
       draftSummaries: window.__iphoneDraftSummaries,
       navigation: window.__iphoneNavigation,
       chromeNoteEvents: window.__iphoneChromeNoteEvents,
+      editorPreview: window.__iphoneEditorPreview,
+      touchTargetViolations: [...document.querySelectorAll('button')].filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden').map(element => {
+        const box = element.getBoundingClientRect(); return { label: element.getAttribute('aria-label') || element.textContent.trim(), width: box.width, height: box.height };
+      }).filter(box => box.width < 43.5 || box.height < 43.5),
       activeElement: document.activeElement?.outerHTML?.slice(0, 500), alerts: [...document.querySelectorAll('[role=alert], .toast')].map(node => node.textContent),
     })).catch(() => null) });
     await page.screenshot({ path: path.join(output, `failure-${id}.png`), animations: 'disabled' }).catch(() => {});
@@ -266,6 +322,206 @@ try {
     const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
     assert(executablePath, 'Set CHROME_PATH to the installed Chromium executable.'); browser = await chromium.launch({ executablePath, headless: true });
   } else browser = await webkit.launch({ headless: true });
+
+  for (const theme of ['light', 'dark']) {
+    await check(`touch-focus-document-sheet-${theme}`, async page => {
+      await open(page, another);
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
+      const opener = page.getByRole('button', { name: 'Documentos abiertos', exact: true });
+      // Cover keyboard-to-touch use as well as showModal's genuine autofocus.
+      // Keeping focus is intentional: hiding an outline by blurring is a failure.
+      await opener.focus(); const before = await focusAppearance(page, opener);
+      await opener.tap();
+      const dialog = page.getByRole('dialog', { name: 'Documentos abiertos', exact: true }); await dialog.waitFor();
+      const handle = dialog.getByRole('button', { name: 'Cerrar hoja', exact: true });
+      const automatic = await focusAppearance(page, handle);
+      assert.equal(await handle.evaluate(element => getComputedStyle(element).touchAction), 'none');
+      assert.equal(await dialog.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
+      assert.equal(await dialog.locator('.mobile-document-list .selected').count(), 1, 'Active document selection must retain its separate visual state.');
+      assertScreen(await geometry(page));
+      await page.screenshot({ path: path.join(output, `iphone-focus-documents-${theme}.png`), animations: 'disabled' });
+      await handle.tap(); await dialog.waitFor({ state: 'detached' });
+      const restored = await focusAppearance(page);
+      await opener.tap(); await dialog.waitFor(); await focusAppearance(page, handle);
+      await dialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap(); await dialog.waitFor({ state: 'detached' });
+      await focusAppearance(page);
+      // WebKit touch taps deliberately do not focus ordinary buttons. Enter
+      // supplies an actual focused opener so restoration can be checked exactly.
+      await opener.focus(); await opener.press('Enter'); await dialog.waitFor();
+      await focusAppearance(page, handle); await handle.tap(); await dialog.waitFor({ state: 'detached' });
+      await focusAppearance(page, opener);
+      await opener.tap(); await dialog.waitFor();
+      await dialog.getByRole('button', { name: `Abrir pestaña ${path.basename(source)}`, exact: true }).tap();
+      await heading(page, source).waitFor({ state: 'attached' }); await waitForReadingPage(page, 1);
+      await focusAppearance(page);
+      return { theme, realTouchTaps: true, showModalAutoFocusRetained: true, keyboardToTouchFocusRetained: true,
+        handleAndCloseButtonDismiss: true, reopenedSheetDoesNotPaintFocus: true, touchDocumentSwitchWorks: true,
+        originalDocumentSelectionStillVisible: true, focusSamples: { before, automatic, restored }, physicalSheetDragTested: false,
+        touchDragLimitation: 'Playwright WebKit exposes touchscreen.tap, but no continuous touch-drag API; no synthetic gesture is counted as a physical drag.' };
+    }, { theme });
+
+    await check(`touch-focus-explorer-panels-${theme}`, async page => {
+      const opener = page.getByRole('button', { name: 'Páginas', exact: true });
+      await opener.focus(); await opener.tap();
+      const explorer = page.getByRole('dialog', { name: 'Explorar documento', exact: true }); await explorer.waitFor();
+      const handle = explorer.getByRole('button', { name: 'Cerrar explorador', exact: true });
+      await focusAppearance(page, handle);
+      const snapshots = [];
+      for (const tab of ['Páginas', 'Índice', 'Marcadores']) {
+        const control = explorer.getByRole('tab', { name: tab, exact: true });
+        await control.tap(); assert.equal(await control.getAttribute('aria-selected'), 'true');
+        snapshots.push({ tab, appearance: await focusAppearance(page) });
+      }
+      await explorer.getByRole('tab', { name: 'Anotaciones', exact: true }).tap();
+      const annotations = page.getByRole('dialog', { name: 'Anotaciones', exact: true }); await annotations.waitFor();
+      await focusAppearance(page, annotations.getByRole('button', { name: 'Cerrar explorador', exact: true }));
+      assertScreen(await geometry(page));
+      await page.screenshot({ path: path.join(output, `iphone-focus-explorer-${theme}.png`), animations: 'disabled' });
+      await annotations.getByRole('button', { name: 'Cerrar explorador', exact: true }).tap(); await annotations.waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Páginas');
+      await focusAppearance(page, opener);
+      await panel(page, 'Páginas');
+      await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).getByRole('button', { name: 'Ir a página 2', exact: true }).tap();
+      await waitForReadingPage(page, 2);
+      assert.equal(await page.getByRole('dialog', { name: 'Explorar documento', exact: true }).count(), 0);
+      await focusAppearance(page);
+      return { theme, explorerHandleAutoFocusRetained: true, tabSelectionPreserved: snapshots,
+        annotationsPanelTouchDismiss: true, restoredPagesFocus: true, touchThumbnailNavigatesPage: 2 };
+    }, { theme });
+
+    await check(`touch-focus-page-search-and-settings-${theme}`, async page => {
+      const jumpOpener = page.getByRole('button', { name: 'Ir a página', exact: true });
+      await jumpOpener.focus(); await jumpOpener.press('Enter');
+      const jump = page.getByRole('dialog', { name: 'Ir a página', exact: true }); await jump.waitFor();
+      const number = jump.getByLabel('Número de página', { exact: true });
+      const initialNumberFocus = await number.evaluate(element => element === document.activeElement);
+      assert.equal(initialNumberFocus, true, 'Opening the page form must honor its explicitly requested autofocus input.');
+      await focusAppearance(page); await number.tap(); await number.fill('2');
+      await focusAppearance(page, number); assert.equal(await number.inputValue(), '2');
+      await jump.getByRole('button', { name: 'Ir a página', exact: true }).tap(); await jump.waitFor({ state: 'detached' });
+      await waitForReadingPage(page, 2); await focusAppearance(page, jumpOpener);
+      await page.getByRole('button', { name: 'Buscar', exact: true }).tap();
+      const search = page.getByRole('dialog', { name: 'Buscar en el PDF', exact: true }); await search.waitFor();
+      const query = search.getByLabel('Buscar texto en el PDF', { exact: true });
+      await query.tap(); await query.fill('CONTENT 3'); await focusAppearance(page, query);
+      await search.locator('.search-result').waitFor();
+      assert.equal(await search.locator('.search-result').count(), 1);
+      await page.screenshot({ path: path.join(output, `iphone-focus-search-${theme}.png`), animations: 'disabled' });
+      await search.locator('.search-result').tap(); await search.waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.querySelector('.mobile-page-jump')?.title.startsWith('Página 3 de '));
+      await focusAppearance(page);
+      await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).tap();
+      await settings(page);
+      const settingsDialog = page.getByRole('dialog', { name: 'Ajustes de Folio', exact: true });
+      await focusAppearance(page, settingsDialog.getByRole('button', { name: 'Cerrar hoja', exact: true }));
+      const themeButton = settingsDialog.getByRole('button', { name: theme === 'light' ? 'Claro' : 'Oscuro', exact: true });
+      await touchFocusControl(page, themeButton); assert.equal(await themeButton.getAttribute('aria-pressed'), 'true');
+      const zoom = settingsDialog.getByLabel('Zoom inicial', { exact: true });
+      await zoom.tap(); await zoom.selectOption('width'); await focusAppearance(page);
+      assert.equal(await zoom.inputValue(), 'width');
+      await page.screenshot({ path: path.join(output, `iphone-focus-settings-${theme}.png`), animations: 'disabled' });
+      await settingsDialog.getByRole('button', { name: 'Listo', exact: true }).tap(); await settingsDialog.waitFor({ state: 'detached' });
+      await focusAppearance(page); await continueReading(page); await focusAppearance(page);
+      return { theme, pageJumpInputInitiallyFocused: initialNumberFocus, inputKeepsEditableFocusAfterTouch: true, pageJumpByTouch: 2, searchInputEditable: true,
+        searchResultNavigationByTouch: 3, settingsThemeSelectionPreserved: true, nativeSelectValueUpdated: true,
+        focusRestoredAfterPageForm: true, noOutlineIncludingHiddenFocusVisible: true };
+    }, { theme });
+  }
+
+  await check('mobile-content-editor-text-image-export-reopen', async page => {
+    const picker = () => page.locator('.pdf-content-picker[data-page="1"][data-picker-state="ready"]').waitFor({ timeout: 60000 });
+    const ready = (intent = 'edit') => page.locator(`.content-editor[data-intent="${intent}"][data-preview-state="ready"]`).waitFor({ timeout: 60000 });
+    const centeredPreview = async () => {
+      await page.evaluate(() => { window.__iphoneEditorPreview = { stableFrames: 0 }; });
+      await page.waitForFunction(() => {
+        const editor = document.querySelector('.content-editor'), host = editor?.querySelector('.content-preview'), destination = editor?.querySelector('.content-box[data-role=destination]');
+        if (!host || !destination) return false;
+        const frame = destination.getBoundingClientRect(), visible = host.getBoundingClientRect(), sample = window.__iphoneEditorPreview;
+        const fullyVisible = frame.width > 0 && frame.height > 0 && frame.left >= visible.left - 1 && frame.right <= visible.right + 1
+          && frame.top >= visible.top - 1 && frame.bottom <= visible.bottom + 1 && visible.top >= 0 && visible.bottom <= innerHeight;
+        const stationary = sample.scrollTop === host.scrollTop && sample.scrollLeft === host.scrollLeft
+          && sample.left === frame.left && sample.top === frame.top && sample.width === frame.width && sample.height === frame.height;
+        sample.stableFrames = editor.dataset.previewState === 'ready' && fullyVisible && stationary ? sample.stableFrames + 1 : 0;
+        Object.assign(sample, { fullyVisible, previewState: editor.dataset.previewState, scrollTop: host.scrollTop, scrollLeft: host.scrollLeft,
+          left: frame.left, top: frame.top, width: frame.width, height: frame.height,
+          viewport: { left: visible.left, top: visible.top, right: visible.right, bottom: visible.bottom } });
+        return sample.stableFrames >= 3;
+      }, undefined, { polling: 'raf' });
+      return page.evaluate(() => window.__iphoneEditorPreview);
+    };
+    const intent = async value => {
+      await page.getByRole('button', { name: value === 'duplicate' ? 'Duplicar' : 'Eliminar', exact: true }).tap(); await ready(value);
+    };
+    const commit = async (value = 'edit') => {
+      await ready(value);
+      await reachableTap(page.getByRole('button', { name: value === 'duplicate' ? 'Aplicar duplicación' : value === 'delete' ? 'Aplicar eliminación' : 'Aplicar cambios', exact: true }));
+      await picker();
+    };
+    const reachableTap = async button => {
+      await button.scrollIntoViewIfNeeded();
+      const bounds = await button.boundingBox(); assert(bounds && bounds.width >= 43.5 && bounds.height >= 43.5, 'Editor action must retain a touch-sized target.');
+      const viewport = page.viewportSize(); assert(bounds.x >= -1 && bounds.y >= -1 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1,
+        `Editor action must be fully reachable within the mobile viewport: ${JSON.stringify(bounds)}`);
+      assert(await button.evaluate(element => {
+        const box = element.getBoundingClientRect(), target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return !!target && (element === target || element.contains(target));
+      }), 'Editor action must not be obscured by another panel.');
+      await button.tap(); await focusAppearance(page);
+    };
+    const history = async direction => {
+      const previous = await page.locator('.pdf-content-picker').elementHandle();
+      await reachableTap(page.getByRole('button', { name: direction, exact: true }));
+      await page.waitForFunction(element => !element.isConnected, previous, { timeout: 60000 }); await picker();
+    };
+    await actions(page); await page.getByRole('button', { name: 'Herramientas', exact: true }).tap();
+    await page.getByRole('dialog', { name: 'Herramientas', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Editar PDF', exact: true }).tap();
+    const editor = page.getByRole('dialog', { name: 'Editar PDF', exact: true }); await editor.waitFor(); await picker();
+    assert.equal(await page.locator('.workspace-editor').count(), 0, 'Mobile editing uses its bounded sheet, separately from desktop inline editing.');
+    await page.getByRole('button', { name: 'Párrafo: MOBILE ORIGINAL', exact: true }).tap(); await ready();
+    const text = page.getByRole('textbox', { name: 'Texto', exact: true }); await text.tap(); await text.fill('MOBILE EDITED');
+    await focusAppearance(page, text); await ready(); assertScreen(await geometry(page));
+    const portraitPreview = await centeredPreview();
+    await page.screenshot({ path: path.join(output, 'iphone-editor-portrait.png'), animations: 'disabled' });
+    await commit();
+    await page.locator('.pdf-content-item[data-kind="image"][data-editable="true"]').tap(); await ready();
+    await intent('duplicate'); await page.getByLabel('Posición X', { exact: true }).fill('200'); await ready('duplicate');
+    await page.setViewportSize({ width: 844, height: 390 }); await ready('duplicate');
+    assertScreen(await geometry(page));
+    const landscapePreview = await centeredPreview();
+    await page.screenshot({ path: path.join(output, 'iphone-editor-landscape.png'), animations: 'disabled' });
+    await commit('duplicate');
+    assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 2);
+    const selectCopy = async () => {
+      const items = page.locator('.pdf-content-item[data-kind="image"][data-editable="true"]');
+      const lefts = await items.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().left));
+      await items.nth(lefts.indexOf(Math.max(...lefts))).tap(); await ready();
+    };
+    await selectCopy(); await intent('delete'); await reachableTap(page.getByRole('button', { name: 'Descartar borrador', exact: true })); await picker();
+    assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 2, 'Cancelling deletion must retain both images.');
+    await selectCopy(); await intent('delete'); await commit('delete');
+    assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 1);
+    await history('Deshacer'); assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 2);
+    await history('Rehacer'); assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 1);
+    await history('Deshacer'); assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 2);
+    await reachableTap(page.getByRole('button', { name: 'Listo', exact: true })); await editor.waitFor({ state: 'detached' });
+    await page.setViewportSize({ width: 390, height: 844 }); await waitForReadingPage(page, 1);
+    const saved = await save(page, 'iphone-editor-export.pdf'), texts = operateDocument(saved.bytes, { operation: 'text' });
+    assert(texts[0].includes('MOBILE EDITED') && !texts[0].includes('MOBILE ORIGINAL') && texts[0].includes('KEEP NEIGHBOR'));
+    assert(saved.inspection.annotations.some(item => item.text === 'KEEP MOBILE NOTE'));
+    assert.equal(operateDocument(saved.bytes, { operation: 'page-content', page: 1 }).items.filter(item => item.kind === 'image').length, 2);
+    const rendered = new mupdf.PDFDocument(saved.bytes), renderedPage = rendered.loadPage(0), pixmap = renderedPage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);
+    try {
+      const pixels = pixmap.getPixels(), pixel = (x, y) => [...pixels.subarray((y * pixmap.getWidth() + x) * 3, (y * pixmap.getWidth() + x) * 3 + 3)];
+      for (const point of [[60, 310], [230, 310]]) { const value = pixel(...point); assert(value[1] > value[0] + 100 && value[1] > value[2] + 80, 'The original image and its copy must exist as rendered PDF pixels.'); }
+    } finally { pixmap.destroy(); renderedPage.destroy(); rendered.destroy(); }
+    await page.reload(); await open(page, saved.file);
+    await page.locator('.textLayer span').filter({ hasText: 'MOBILE EDITED' }).waitFor();
+    return { mobileModalEditor: true, touchTextReplacement: true, touchImageDuplication: true, cancelledImageDeletionRetainsCopies: true,
+      touchDeleteUndoRedo: true, portraitAndLandscapeActionsReachable: true, selectedFrameVisibleAfterRotation: { portrait: portraitPreview, landscape: landscapePreview }, exportedTextNeighborsAndNotePreserved: true,
+      exportedOriginalAndCopyImagePixels: true, exportedImages: 2, exportedPdfReopened: true, originalSourceSha256: originals.get(editorSource),
+      physicalKeyboardAndUIKitNotAutomated: true };
+  }, { file: editorSource });
 
   for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }, { width: 768, height: 1024 }]) {
     await check(`reading-layout-${viewport.width}x${viewport.height}`, async page => {
@@ -824,12 +1080,13 @@ try {
     return { originalFileRememberedInWebKit: true, reopenFromRecentUi: true, modifiedPdfBytesRecoveredAfterReload: true, recoveredPageOrder: [2, 1], storageSnapshots: [beforeSummary, afterSummary, reopenedSummary], storageErrorToast: false };
   });
 } finally {
-  await browser?.close(); server.kill();
+  await browser?.close();
+  if (server.exitCode === null) { const exited = new Promise(resolve => server.once('exit', resolve)); server.kill(); await exited; }
   if (snapshot) { assert(snapshot.startsWith(snapshotRoot + path.sep)); fs.rmSync(snapshot, { recursive: true, force: true }); }
   const report = { capturedAt: new Date().toISOString(), passed: results.length > 0 && results.every(result => result.status === 'passed') && errors.length === 0, results, errors,
-    builtIndexSha256: builtIndexHash,
+    builtIndexSha256: builtIndexHash, frontendEntry, browser: browserName, hostPlatform: process.platform,
     scope: 'Real browser PDF rendering, text Range, UI touch taps, standard PDF export and persistence.',
-    limitations: ['The WebKit browser harness does not automate UIKit Files or Share sheets.', 'Native iOS text-selection handles and physical pinch gestures need separate simulator/device validation.', 'Viewport sizes do not emulate actual notch safe-area insets.'],
+    limitations: ['The WebKit browser harness does not automate UIKit Files or Share sheets.', 'Native iOS text-selection handles and physical pinch gestures need separate simulator/device validation.', 'Continuous sheet touch drags are not driven by the WebKit tap API.', 'DOM autofocus and viewport resizing do not automate the iOS keyboard or keyboard safe-area changes.', 'Viewport sizes do not emulate actual notch safe-area insets.'],
     ...(results.some(result => result.status === 'failed') ? { serverLog: log } : {}) };
   fs.writeFileSync(path.join(output, 'iphone-results.json'), JSON.stringify(report, null, 2));
   if (!report.passed) process.exitCode = 1;

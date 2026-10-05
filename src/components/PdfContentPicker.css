@@ -49,19 +49,19 @@
   .pdf-content-picker .pdf-picker-footer{padding-top:7px}
   .pdf-content-picker .pdf-picker-footer>p{font-size:11px;line-height:1.4}
 }
-html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-height:40px}
+html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-width:44px;min-height:44px}
 html[data-phone] .pdf-content-picker .pdf-picker-level>select{width:112px}
 @media(max-height:500px){.pdf-content-picker{gap:6px}.pdf-picker-toolbar{gap:5px 8px}.pdf-picker-toolbar button{min-height:29px;padding:4px 7px;font-size:11px}.pdf-picker-pagination>input,.pdf-picker-level>select{height:29px}.pdf-picker-viewport{min-height:70px;padding:10px}.pdf-picker-footer{padding-top:5px;max-height:90px}.pdf-picker-footer>p{font-size:11px}}
 @media(max-height:500px){
   html[data-phone] .pdf-content-picker .pdf-picker-toolbar{gap:5px 8px}
-  html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-height:40px;height:40px;padding:6px 7px;font-size:12px;white-space:nowrap}
+  html[data-phone] .pdf-content-picker .pdf-picker-toolbar button{min-height:44px;height:44px;padding:6px 7px;font-size:12px;white-space:nowrap}
   html[data-phone] .pdf-content-picker .pdf-picker-tools{width:auto;justify-content:flex-start;flex-wrap:nowrap}
   html[data-phone] .pdf-content-picker .pdf-picker-tools>button{flex:none}
   html[data-phone] .pdf-content-picker .pdf-picker-full-label,html[data-phone] .pdf-content-picker .pdf-picker-zoom>span,html[data-phone] .pdf-content-picker .pdf-picker-level>span{display:none}
   html[data-phone] .pdf-content-picker .pdf-picker-short-label{display:inline}
   html[data-phone] .pdf-content-picker .pdf-picker-pagination{margin-left:0;flex-wrap:nowrap}
   html[data-phone] .pdf-content-picker .pdf-picker-level{gap:0}
-  html[data-phone] .pdf-content-picker .pdf-picker-pagination>input,html[data-phone] .pdf-content-picker .pdf-picker-level>select{min-height:40px!important;height:40px;padding:4px 5px}
+  html[data-phone] .pdf-content-picker .pdf-picker-pagination>input,html[data-phone] .pdf-content-picker .pdf-picker-level>select{min-height:44px!important;height:44px;padding:4px 5px}
   html[data-phone] .pdf-content-picker .pdf-picker-level>select{width:112px}
   html[data-phone] .pdf-content-picker .pdf-picker-viewport{min-height:0}
   html[data-phone] .pdf-content-picker .pdf-picker-footer{max-height:70px}

@@ -57,7 +57,14 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
   const pointerClickArmed = useRef(false);
   const titleId = useId();
   useEffect(() => {
-    ref.current?.showModal();
+    const dialog = ref.current;
+    // React focuses autoFocus controls while the dialog is still closed.
+    // Mark the intended field before showModal so WebKit's dialog focusing
+    // steps choose it, rather than the sheet's first dismissal button.
+    const initialFocus = dialog?.querySelector<HTMLElement>('[data-autofocus], [autofocus]');
+    initialFocus?.setAttribute('autofocus', '');
+    dialog?.showModal();
+    initialFocus?.focus({ preventScroll: true });
     const stopViewport = ref.current ? watchDesktopModalViewport(ref.current) : () => {};
     return () => { stopViewport(); ref.current?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
   }, []);

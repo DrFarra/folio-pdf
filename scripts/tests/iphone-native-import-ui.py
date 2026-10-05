@@ -84,8 +84,9 @@ def main():
         types = json.loads(run('xcrun', 'simctl', 'list', 'devicetypes', '--json'))['devicetypes']
         phone = next((d for d in types if d['name'] == 'iPhone 16 Pro'), next(d for d in types if 'iPhone' in d['name']))
         device = run('xcrun', 'simctl', 'create', 'Folio-UIKit-Import-' + uuid.uuid4().hex[:6], phone['identifier'], runtime['identifier'])
-        report.update({'runtime': runtime['name'], 'device': phone['name']})
+        report.update({'runtime': runtime['name'], 'device': phone['name'], 'systemAppearance': 'dark'})
         run('xcrun', 'simctl', 'boot', device); run('xcrun', 'simctl', 'bootstatus', device, '-b')
+        run('xcrun', 'simctl', 'ui', device, 'appearance', 'dark')
         run('xcrun', 'simctl', 'status_bar', device, 'override', '--time', '9:41', '--batteryState', 'charged', '--batteryLevel', '100')
         # Ad hoc signing is local to the simulator copy. The source bundle and
         # the executable hash referenced by the delivery smoke stay unchanged.

@@ -85,6 +85,13 @@ html:not([data-phone]) .app-shell .workbench .content-inspector-scroll label{fon
 
 .workspace-editor .content-editor{flex:1;min-height:0;min-width:0}
 .workspace-editor .content-editor-body{min-width:0;min-height:0}
+/* Keep touch controls usable in portrait and landscape, independently of the
+   compact desktop preview controls. */
+html[data-phone] .content-zoom-toolbar button{min-width:44px;min-height:44px;font-size:13px;padding:6px 8px}
+html[data-phone] .content-zoom-controls button{width:44px}
+html[data-phone] .content-reset{width:44px;height:44px}
+html[data-phone] .content-editor-actions button,html[data-phone] .content-editor-footer button,html[data-phone] .content-suggestion .secondary-button{min-height:44px}
+html[data-phone] .content-editor-source-info>summary{min-height:44px;padding-top:10px;padding-bottom:10px}
 @media(min-width:751px) and (max-width:1100px){.content-editor-body,.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr) 280px;gap:12px}}
 @media(max-width:750px){
   .content-editor-body,.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(170px,1fr) minmax(0,1fr);gap:10px}

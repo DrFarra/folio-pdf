@@ -1,7 +1,6 @@
-.sheet-handle{display:none}
+.sheet-handle{display:none;outline:none}
 html[data-phone] .sheet-handle{display:flex;align-items:center;justify-content:center;width:100%;height:44px;min-height:44px;padding:0;margin:0;touch-action:none;color:var(--muted);flex-shrink:0;border-radius:12px}
 html[data-phone] .sheet-handle>span{width:36px;height:5px;border-radius:3px;background:currentColor;opacity:.55}
-html[data-phone] .sheet-handle:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 html[data-phone] dialog.modal.mobile-sheet{top:auto;bottom:calc(100dvh - var(--visible-height,100dvh) - var(--visible-top,0px) + env(safe-area-inset-bottom,0px) + 4px);padding-top:0;border-radius:20px 20px 12px 12px;transition:translate .18s ease}
 html[data-phone] dialog.modal.mobile-sheet .modal-heading{top:0}
 html[data-phone] .sheet-dragging{transition:none!important}

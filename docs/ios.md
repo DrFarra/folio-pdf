@@ -1,13 +1,19 @@
 # Folio para iPhone e iPad
 
-Folio 0.6.0 requiere iOS 17 o posterior. La interfaz permite usar el lector con
+Folio 0.8.3 requiere iOS 17 o posterior. La interfaz permite usar el lector con
 toques, seleccionar texto, resaltar, organizar marcadores, cambiar entre PDFs y
 guardar copias. El motor PDF, sus recursos y el OCR se incluyen en la aplicación;
 los documentos se procesan en el dispositivo.
 
+La versión 0.8.3 incorpora la eliminación de los contornos de foco también en
+la entrega de iPhone. El tirador de las hojas mantiene sus acciones de cierre
+por toque y arrastre. Los campos de página, notas y contraseña reciben el foco
+al abrir su diálogo, y los controles de zoom y acciones del editor se adaptan
+al toque tanto en vertical como en horizontal.
+
 ## Instalar con Feather
 
-La entrega `Folio_0.6.0_iphone_arm64_unsigned.ipa` es para un iPhone o iPad físico
+La entrega `Folio_0.8.3_iphone_arm64_unsigned.ipa` es para un iPhone o iPad físico
 con procesador arm64. No tiene un certificado ni perfil de Apple incorporado.
 En Feather, importa el archivo IPA, selecciona tu certificado y perfil de
 aprovisionamiento válidos, firma la aplicación e instálala. Feather requiere
@@ -90,7 +96,13 @@ el modo `full` exige pruebas móviles y nativas antes de empaquetar.
 ## Alcance de la verificación
 
 Las pruebas WebKit móviles cubren el diseño y las operaciones de lectura y
-edición. El smoke nativo instala y abre el bundle arm64 de simulador, verifica
+edición, incluidos los paneles con ambos temas, la edición de texto e imágenes,
+el contenido y los píxeles del PDF exportado y su reapertura. El empaquetado exige
+los informes completos de estas pruebas, los 48 casos del motor y los contratos
+del puente simulado, ligados a la fuente y a la interfaz compilada de la entrega.
+Las comprobaciones UIKit de producción cierran la hoja de documentos con toques
+y arrastre y cambian entre los PDFs importados, conservando capturas.
+El smoke nativo instala y abre el bundle arm64 de simulador, verifica
 el PDF real y su capa de texto, búsqueda, el puente Swift/UIKit y la persistencia
 Rust, y toma una captura. La prueba PDFKit ejecuta la importación Swift, abre
 un PDF sintético válido de más de 2 GiB, extrae palabras y dibuja páginas con

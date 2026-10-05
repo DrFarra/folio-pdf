@@ -47,6 +47,16 @@ jobs:
           python3 scripts/generate-notices.py --platform ios --cargo-metadata test-results/ios/cargo-metadata-ios.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
           npm run build
           cargo test --manifest-path crates/folio-core/Cargo.toml --locked
+      - name: Capture the exact source and frontend tested by the delivery suites
+        if: inputs.mode == 'full'
+        run: python3 scripts/package-ios.py --capture-report-inputs
+      - name: Verify the current PDF content and editing engine
+        if: inputs.mode == 'full'
+        run: |
+          npm run test:operations
+          npm run test:page-content:engine
+          npm run test:content-editor:engine
+          npm run test:content-actions:engine
       - name: Verify touch layouts and editing in mobile WebKit
         if: inputs.mode == 'full'
         run: |
@@ -55,6 +65,9 @@ jobs:
           node scripts/tests/iphone-native-contract.mjs
           node scripts/tests/native-pdf-adapter.mjs
           node scripts/tests/iphone-native-big-contract.mjs
+      - name: Reject failed or stale mobile WebKit and mock IPC evidence
+        if: inputs.mode == 'full'
+        run: python3 scripts/package-ios.py --validate-reports-only
       - name: Build real arm64 iPhone Simulator diagnostics
         id: ios_qa_build
         run: |
@@ -102,5 +115,9 @@ jobs:
             test-results/ios/*.xcresult/**
             test-results/iphone/*.json
             test-results/iphone/*.png
+            test-results/operations-results.json
+            test-results/page-content-engine-results.json
+            test-results/content-editor-engine-results.json
+            test-results/content-actions-engine-results.json
           if-no-files-found: ignore
           retention-days: 1
