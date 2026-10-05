@@ -59,9 +59,28 @@ final class ImportTests: XCTestCase {
         }
         let file = fixture(); XCTAssertTrue(file.waitForExistence(timeout: 15), "The actual picker did not show " + filename)
         attach("picker-" + basename, app: folio); file.tap()
-        // Multiple selection requires the picker Open confirmation on iOS.
+        // Files changes Cancel to Open after selecting a cell. An AX tap can
+        // be acknowledged during that transition without activating Open.
+        // Confirm the selected cell and actual dismissal, not just the tap.
         let confirm = folio.buttons["Open"].firstMatch
-        if confirm.waitForExistence(timeout: 2) && confirm.isHittable { XCTAssertTrue(confirm.isEnabled); confirm.tap() }
+        if confirm.waitForExistence(timeout: 5) {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                file.exists && file.isSelected
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed, "Files did not select the exact requested PDF")
+            for attempt in 1...2 {
+                XCTAssertTrue(confirm.isEnabled); XCTAssertTrue(confirm.isHittable)
+                confirm.tap()
+                if confirm.waitForNonExistence(timeout: 5) { return }
+                attach("picker-open-still-visible-\(basename)-\(attempt)", app: folio)
+                // Retry only the unchanged system picker and exact selection.
+                // A persistent failure or a different UI must fail the test.
+                XCTAssertTrue(file.exists && file.isSelected, "The picker changed without opening the selected PDF")
+            }
+            XCTFail("Files did not dismiss after confirming the selected PDF")
+        } else {
+            XCTAssertTrue(folio.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 10), "The file picker never completed")
+        }
     }
     func test01CancelThenSelectTwoActualProviderDocuments() {
         prepareHost()
