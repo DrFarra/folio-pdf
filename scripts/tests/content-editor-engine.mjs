@@ -40,19 +40,43 @@ function imageBytes(solid) {
   } finally { pixmap.destroy(); }
 }
 const picture = imageBytes(), green = imageBytes([0, 255, 0]);
-function raster(bytes) {
-  const doc = new mupdf.PDFDocument(bytes), page = doc.loadPage(0), scale = 2;
+function rendered(bytes, index = 0) {
+  const doc = new mupdf.PDFDocument(bytes), page = doc.loadPage(index), scale = 2;
   let pixmap;
   try {
     pixmap = page.toPixmap([scale, 0, 0, scale, 0, 0], mupdf.ColorSpace.DeviceRGB, false);
     const data = new Uint8Array(pixmap.getPixels()), stride = pixmap.getStride(), components = pixmap.getNumberOfComponents();
     const ox = pixmap.getX(), oy = pixmap.getY(), transform = page.getTransform();
-    return (x, y) => {
-      const px = Math.floor((x * transform[0] + y * transform[2] + transform[4]) * scale - ox);
-      const py = Math.floor((x * transform[1] + y * transform[3] + transform[5]) * scale - oy);
-      return Array.from(data.slice(py * stride + px * components, py * stride + px * components + 3));
-    };
+    return { data, stride, components, ox, oy, transform, scale, width: pixmap.getWidth(), height: pixmap.getHeight() };
   } finally { pixmap?.destroy(); page.destroy(); doc.destroy(); }
+}
+function raster(bytes) {
+  const { data, stride, components, ox, oy, transform, scale } = rendered(bytes);
+  return (x, y) => {
+    const px = Math.floor((x * transform[0] + y * transform[2] + transform[4]) * scale - ox);
+    const py = Math.floor((x * transform[1] + y * transform[3] + transform[5]) * scale - oy);
+    return Array.from(data.slice(py * stride + px * components, py * stride + px * components + 3));
+  };
+}
+function coloredInk(image, color) {
+  let count = 0; const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const offset = y * image.stride + x * image.components;
+    if (!color.every((value, component) => Math.abs(image.data[offset + component] - value) <= 30)) continue;
+    count++;
+    bounds[0] = Math.min(bounds[0], (x + image.ox) / image.scale); bounds[1] = Math.min(bounds[1], (y + image.oy) / image.scale);
+    bounds[2] = Math.max(bounds[2], (x + 1 + image.ox) / image.scale); bounds[3] = Math.max(bounds[3], (y + 1 + image.oy) / image.scale);
+  }
+  return { count, bounds };
+}
+function unchangedOutside(before, after, box) {
+  assert.equal(after.width, before.width); assert.equal(after.height, before.height);
+  for (let y = 0; y < before.height; y++) for (let x = 0; x < before.width; x++) {
+    const vx = (x + before.ox) / before.scale, vy = (y + before.oy) / before.scale;
+    if (vx >= box[0] - 1 && vx <= box[2] + 1 && vy >= box[1] - 1 && vy <= box[3] + 1) continue;
+    const offset = y * before.stride + x * before.components;
+    for (let channel = 0; channel < before.components; channel++) assert.equal(after.data[offset + channel], before.data[offset + channel], `Original pixel changed at ${vx},${vy}.`);
+  }
 }
 const near = (actual, expected, tolerance = 3) => actual.forEach((number, index) => assert(Math.abs(number - expected[index]) <= tolerance, `${actual} != ${expected}`));
 
@@ -119,6 +143,114 @@ await check('image-fit-opacity-and-quarter-rotation-preserve-pixel-geometry', ()
   const halfTurn = raster(operateDocument(blank, { ...options, fit: 'contain', rotation: 180 })); near(halfTurn(110, 150), [0, 0, 255]);
   save('image-cover', coverBytes);
   return { contain: true, coverClipped: true, alpha: .5, rotations: [0, 90, 180, 270], oldStretchPreserved: true };
+});
+
+await check('appended-content-is-visible-after-ocr-clipping-transparency-and-page-rotation', async () => {
+  const cases = [], viewportBox = [80, 80, 330, 200];
+  for (const rotation of [0, 90, 180, 270]) for (const state of ['invisible-ocr', 'ctm-clip-alpha']) {
+    const document = await PDFDocument.create(), fixturePage = document.addPage([485.52, 578.16]);
+    fixturePage.setCropBox(2.83466, 65.1969, 479.85034, 510.1281); fixturePage.setRotation(degrees(rotation));
+    fixturePage.drawRectangle({ x: 220, y: 420, width: 12, height: 12, color: rgb(0, 0, 1) });
+    let source = writeAnnotations(await document.save(), [{ id: 'append-preserved-note', kind: 'note', page: 1, rect: [440, 440, 440, 440], color: '#f5d164', text: 'Keep original comment', created: 1 }]);
+    const doc = new mupdf.PDFDocument(source), page = doc.loadPage(0), object = page.getObject(), originalContents = object.get('Contents');
+    const originals = originalContents.isArray() ? Array.from({ length: originalContents.length }, (_, i) => originalContents.get(i)) : [originalContents];
+    const sourceRect = mupdf.Rect.transform(viewportBox, mupdf.Matrix.invert(page.getTransform()));
+    if (state === 'invisible-ocr') {
+      // Searchable scanned PDFs often leave invisible OCR text mode active at the end of a single stream.
+      const streams = originals.map(stream => { const buffer = stream.readStream(); try { return buffer.asString(); } finally { buffer.destroy(); } });
+      object.put('Contents', doc.addStream(streams.join('\n') + '\nBT 3 Tr 7 Tc 11 Tw 40 Tz 17 Ts ET\n', {}));
+    } else {
+      // A Contents array has shared state too, including the CTM, clipping path and ExtGState.
+      const resources = object.getInheritable('Resources'), ext = doc.newDictionary();
+      ext.put('Inherited', doc.addObject({ Type: 'ExtGState', ca: .15, CA: .15, BM: 'Multiply' })); resources.put('ExtGState', ext);
+      const contents = doc.newArray(); originals.forEach(stream => contents.push(stream));
+      contents.push(doc.addStream('2 0 0 2 700 600 cm\n0 0 10 10 re W n\n/Inherited gs\n', {})); object.put('Contents', contents);
+    }
+    const buffer = doc.saveToBuffer('garbage=4,compress=yes'); source = new Uint8Array(buffer.asUint8Array()); buffer.destroy(); page.destroy(); doc.destroy();
+    const before = hash(source), sourceImage = rendered(source), annotations = inspectDocument(source).annotations;
+    const options = { operation: 'add-text', page: 1, rect: sourceRect, text: 'VISIBLE TEST', size: 12, color: '#ff0000', wrap: true };
+    const textBytes = operateDocument(source, options), textImage = rendered(textBytes), ink = coloredInk(textImage, [255, 0, 0]);
+    assert(ink.count > 300, `${rotation}/${state}: added text has no visible ink (${ink.count}).`); assert(text(textBytes).includes(options.text));
+    assert(ink.bounds[0] >= viewportBox[0] && ink.bounds[1] >= viewportBox[1] && ink.bounds[2] <= viewportBox[2] && ink.bounds[3] <= viewportBox[3], `${rotation}/${state}: added glyphs fall outside the selected area: ${ink.bounds}.`);
+    unchangedOutside(sourceImage, textImage, viewportBox); assert.deepEqual(inspectDocument(textBytes).annotations, annotations);
+    const imageBytes = operateDocument(source, { operation: 'add-image', page: 1, rect: sourceRect, image: green, fit: 'stretch' }), image = rendered(imageBytes), imageInk = coloredInk(image, [0, 255, 0]);
+    assert.equal(imageInk.count, 120000); near(imageInk.bounds, viewportBox, .01); unchangedOutside(sourceImage, image, viewportBox);
+    assert.deepEqual(inspectDocument(imageBytes).annotations, annotations);
+    // The preview extracts the page before editing. Its actual pixels must equal the exported full-document operation.
+    const extracted = operateDocument(source, { operation: 'pages', plan: [{ page: 1 }] });
+    assert.deepEqual(rendered(operateDocument(extracted, options)).data, textImage.data);
+    const secondRect = mupdf.Rect.transform([350, 80, 420, 200], mupdf.Matrix.invert(sourceImage.transform));
+    const repeated = operateDocument(textBytes, { operation: 'add-image', page: 1, rect: secondRect, image: green });
+    assert.deepEqual(coloredInk(rendered(repeated), [255, 0, 0]), ink, 'A later edit must preserve visible earlier edits.');
+    assert.equal(hash(source), before); cases.push({ rotation, state, textPixels: ink.count, imagePixels: imageInk.count });
+  }
+  return { cases, originalPixelsAndAnnotationsPreserved: true, extractedPreviewEqualsExport: true, repeatedEditsPreserved: true };
+});
+
+await check('same-font-sequential-multipage-edits-survive-export-compression-and-ocr', async () => {
+  const rotations = [90, 180, 270, 0], document = await PDFDocument.create(), viewportBox = [120, 100, 360, 180];
+  const notes = rotations.map((rotation, index) => {
+    const page = document.addPage([485.52, 578.16]); page.setCropBox(2.83466, 65.1969, 479.85034, 510.1281); page.setRotation(degrees(rotation));
+    page.drawText(`SOURCE ${rotation}`, { x: 60, y: 470, size: 16, color: rgb(.75, .75, .75) });
+    return { id: `sequential-note-${index}`, kind: 'note', page: index + 1, rect: [440, 440, 440, 440], text: `Original note ${index}`, color: '#f5d164', created: 1 };
+  });
+  const annotated = writeAnnotations(await document.save(), notes), doc = new mupdf.PDFDocument(annotated), hiddenMode = doc.addStream('BT 3 Tr ET\n', {}), rects = [];
+  for (let index = 0; index < rotations.length; index++) {
+    const page = doc.loadPage(index), object = page.getObject(), before = object.get('Contents'), contents = doc.newArray();
+    if (before.isArray()) for (let i = 0; i < before.length; i++) contents.push(before.get(i)); else contents.push(before);
+    contents.push(hiddenMode); object.put('Contents', contents); rects.push(mupdf.Rect.transform(viewportBox, mupdf.Matrix.invert(page.getTransform()))); page.destroy();
+  }
+  const buffer = doc.saveToBuffer('garbage=4,compress=yes'), original = new Uint8Array(buffer.asUint8Array()); buffer.destroy(); doc.destroy();
+  const font = new Uint8Array(fs.readFileSync('public/fonts/dm-sans-regular.ttf')), sourceHash = hash(original), history = [original], inkCounts = [];
+  const verify = (bytes, count) => {
+    const textPages = operateDocument(bytes, { operation: 'text' }), opened = new mupdf.PDFDocument(bytes);
+    try {
+      for (let index = 0; index < count; index++) {
+        assert(textPages[index].includes(`NEW ${rotations[index]}`), `Page ${index + 1} lost added text after saving.`);
+        opened.findPage(index).getInheritable('Resources').get('XObject').forEach((form, name) => assert(form.isStream(), `Saved ${name} became a dictionary without stream data.`));
+        const ink = coloredInk(rendered(bytes, index), [255, 0, 255]); assert(ink.count > 100, `Page ${index + 1} has no added visible text (${ink.count} pixels).`);
+        assert(ink.bounds[0] >= viewportBox[0] && ink.bounds[1] >= viewportBox[1] && ink.bounds[2] <= viewportBox[2] && ink.bounds[3] <= viewportBox[3]);
+      }
+    } finally { opened.destroy(); }
+  };
+  for (let index = 0; index < rotations.length; index++) {
+    const prior = history.at(-1), priorHash = hash(prior);
+    const edited = operateDocument(prior, { operation: 'add-text', page: index + 1, rect: rects[index], text: `NEW ${rotations[index]}`, size: 12, color: '#ff00ff', font, wrap: true });
+    verify(edited, index + 1); assert.equal(hash(prior), priorHash);
+    unchangedOutside(rendered(prior, index), rendered(edited, index), viewportBox);
+    for (let other = 0; other < rotations.length; other++) if (other !== index) assert.deepEqual(rendered(edited, other).data, rendered(prior, other).data);
+    const inspected = inspectDocument(edited); assert.deepEqual(inspected.annotations.map(note => [note.id, note.text, note.page]), notes.map(note => [note.id, note.text, note.page]));
+    verify(inspected.previewBytes, index + 1);
+    const exported = writeAnnotations(edited, inspected.annotations); verify(exported, index + 1);
+    for (let other = 0; other < rotations.length; other++) assert.deepEqual(rendered(exported, other).data, rendered(edited, other).data);
+    history.push(exported); inkCounts.push(coloredInk(rendered(exported, index), [255, 0, 255]).count);
+  }
+  const compressed = operateDocument(history.at(-1), { operation: 'compress' }); verify(compressed, 4);
+  for (let index = 0; index < 4; index++) assert.deepEqual(rendered(compressed, index).data, rendered(history.at(-1), index).data);
+  // OCR adds several new Forms with the same font in one operation; its words stay searchable and invisible.
+  const ocr = operateDocument(original, { operation: 'ocr', font, pages: rects.map((rect, index) => ({ page: index + 1, words: [{ rect, text: `OCR${rotations[index]}` }] })) });
+  const ocrText = operateDocument(writeAnnotations(ocr, inspectDocument(ocr).annotations), { operation: 'text' });
+  for (let index = 0; index < 4; index++) { assert(ocrText[index].includes(`OCR${rotations[index]}`)); assert.deepEqual(rendered(ocr, index).data, rendered(original, index).data); }
+  assert.equal(hash(original), sourceHash); history.forEach((bytes, index) => verify(bytes, index));
+  return { rotations, visibleTextPixels: inkCounts, sameEmbeddedFont: true, sharedOriginalStream: true, annotationExportAndReadingCopy: true, compressedPixelsIdentical: true, historySnapshotsPreserved: true, multiPageOcr: true };
+});
+
+await check('content-normalization-keeps-passwords-encryption-and-prior-edits', () => {
+  const protectedBytes = operateDocument(blank, { operation: 'protect', userPassword: 'reader', ownerPassword: 'owner', permissions: 4095 });
+  const before = hash(protectedBytes), font = new Uint8Array(fs.readFileSync('public/fonts/dm-sans-regular.ttf'));
+  const first = operateDocument(protectedBytes, { operation: 'add-text', page: 1, rect: [40, 170, 280, 250], text: 'FIRST PROTECTED', size: 18, color: '#ff00ff', font, wrap: true }, 'reader');
+  const second = operateDocument(first, { operation: 'add-text', page: 1, rect: [40, 50, 280, 130], text: 'SECOND PROTECTED', size: 18, color: '#ff00ff', font, wrap: true }, 'reader');
+  const exported = writeAnnotations(second, [], 'reader'), compressed = operateDocument(exported, { operation: 'compress' }, 'reader');
+  for (const bytes of [first, second, exported, compressed]) {
+    const doc = new mupdf.PDFDocument(bytes);
+    try { assert(doc.needsPassword()); assert.equal(doc.authenticatePassword('wrong'), 0); assert(doc.authenticatePassword('reader')); assert(doc.hasPermission('edit')); }
+    finally { doc.destroy(); }
+    assert(operateDocument(bytes, { operation: 'text' }, 'reader')[0].includes('FIRST PROTECTED'));
+  }
+  assert(operateDocument(compressed, { operation: 'text' }, 'reader')[0].includes('SECOND PROTECTED'));
+  assert.throws(() => operateDocument(compressed, { operation: 'text' }, 'wrong'), /contraseña correcta/);
+  assert.equal(hash(protectedBytes), before);
+  return { encryptedOutput: true, originalUserPasswordRetained: true, wrongPasswordRejected: true, sameFontRepeatedEditsRetained: true, sourceUnchanged: true };
 });
 
 const fixture = await PDFDocument.create(), regular = await fixture.embedFont(StandardFonts.Helvetica), bold = await fixture.embedFont(StandardFonts.HelveticaBold);

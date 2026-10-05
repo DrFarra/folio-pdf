@@ -20,19 +20,19 @@
     "id": "first-text-image-editor",
     "title": "Primer editor de texto e imágenes",
     "status": "verificado",
-    "label": "Editor 0.7.0 verificado",
-    "verification": "Verificado en Folio 0.7.0: 9 pruebas del motor, 8 de edición/guardado y 6 de diseño de ventana, con cero errores de navegador. Las pruebas móviles usan Chromium y no equivalen a una instalación física en Apple.",
+    "label": "Editor 0.7.1 verificado",
+    "verification": "Verificado en Folio 0.7.1: 12 pruebas del motor, 8 de edición/guardado y 6 de diseño de ventana, con cero errores de navegador. Incluye comprobación de píxeles visibles en páginas giradas y recortadas, incluso con texto OCR invisible, conservación del contenido original, ediciones sucesivas y cifrado conservado. Las pruebas móviles usan Chromium y no equivalen a una instalación física en Apple.",
     "scope": "Edición por región de texto e imágenes con página visible, caja movible/redimensionable, propiedades numéricas, formato, ajuste de líneas, proporción, opacidad, giro y vista previa generada con el motor PDF. Aplicar confirma un paso de deshacer; cancelar conserva el documento.",
     "baseline_distinction": "Este editor no forma parte de las capacidades atribuidas al commit df6a70a. Las filas de edición describen el estado anterior y las mejoras necesarias.",
     "limits": "No se promete editar cualquier objeto o recuperar la estructura original de todos los PDF. Las fuentes, imágenes compartidas, máscaras, formularios y páginas escaneadas requieren cobertura específica.",
-    "version": "0.7.0"
+    "version": "0.7.1"
   },
   "deliveries_in_progress": [
     {
       "id": "save-history",
       "title": "Conservar Deshacer y Rehacer después de guardar una copia",
       "status": "verificado",
-      "label": "Implementado y verificado en 0.7.0",
+      "label": "Implementado y verificado en 0.7.1",
       "addresses": [
         "save"
       ],

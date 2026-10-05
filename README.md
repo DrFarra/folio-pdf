@@ -1,8 +1,9 @@
-# Folio 0.7.0
+# Folio 0.7.1
 
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
-Cada instalador se compila en su plataforma. Las pruebas de Windows y sus límites
-constan en docs/acceptance-windows.md. La entrega original 0.2.0 se conserva aparte.
+Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
+constan en docs/acceptance-windows.md; la entrega actual acredita sus comprobaciones
+y hashes en windows-manifest.json. La entrega original 0.2.0 se conserva aparte.
 
 ## Interfaz
 
@@ -124,7 +125,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.7.0_x64-setup.exe.
+Salida: src-tauri/target/release/bundle/nsis/Folio_0.7.1_x64-setup.exe.
 Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
 Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
 las herramientas portátiles de esta estación; .tools no se distribuye.

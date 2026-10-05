@@ -22,11 +22,25 @@ for (let number = 1; number <= 2; number++) {
 let original = writeAnnotations(await fixture.save(), [{ id: 'editor-note', page: 1, kind: 'note', rect: [45, 347, 62, 364], color: '#f4cc59', text: 'Keep this note', created: 1 }]);
 fs.writeFileSync(source, original);
 const rotated = await PDFDocument.create();
-for (const angle of [90, 180, 270]) {
-  const page = rotated.addPage([500, 600]); page.setCropBox(30, 50, 400, 480); page.setRotation(degrees(angle));
-  page.drawText(`ROTATED ${angle}`, { x: 60, y: 470, size: 16, font: await rotated.embedFont(StandardFonts.Helvetica) });
+const rotations = [90, 180, 270, 0], crop = [2.83466, 65.1969, 482.685, 575.325];
+for (const angle of rotations) {
+  const page = rotated.addPage([485.52, 578.16]); page.setCropBox(crop[0], crop[1], crop[2] - crop[0], crop[3] - crop[1]); page.setRotation(degrees(angle));
+  // Light gray source glyphs cannot contaminate the magenta ink predicate with
+  // LCD/subpixel color fringes around dark original text on Windows.
+  page.drawText(`ROTATED ${angle}`, { x: 60, y: 470, size: 16, font: await rotated.embedFont(StandardFonts.Helvetica), color: rgb(.75, .75, .75) });
 }
-const rotatedSource = path.join(output, 'content-editor-rotated.pdf'); fs.writeFileSync(rotatedSource, await rotated.save());
+const rotatedSource = path.join(output, 'content-editor-rotated.pdf');
+// Scanned PDFs commonly finish with invisible OCR text. Its rendering mode is
+// inherited by later streams unless the original content is properly isolated.
+const inheritedTextMode = new mupdf.PDFDocument(await rotated.save());
+for (let index = 0; index < rotations.length; index++) {
+  const target = inheritedTextMode.findPage(index), previous = target.get('Contents'), contents = inheritedTextMode.newArray();
+  if (previous.isArray()) for (let stream = 0; stream < previous.length; stream++) contents.push(previous.get(stream));
+  else if (!previous.isNull()) contents.push(previous);
+  contents.push(inheritedTextMode.addStream('BT 3 Tr ET\n', {})); target.put('Contents', contents);
+}
+const inheritedBuffer = inheritedTextMode.saveToBuffer('garbage=4,compress=yes');
+fs.writeFileSync(rotatedSource, new Uint8Array(inheritedBuffer.asUint8Array())); inheritedBuffer.destroy(); inheritedTextMode.destroy();
 const imageFixture = await PDFDocument.create(), imagePage = imageFixture.addPage([100, 50]);
 imagePage.drawRectangle({ x: 0, y: 0, width: 50, height: 50, color: rgb(1, 0, 0) });
 imagePage.drawRectangle({ x: 50, y: 0, width: 50, height: 50, color: rgb(0, .7, 0) });
@@ -40,8 +54,8 @@ const imageSource = path.join(output, 'content-editor-image-source.pdf'); fs.wri
 
 const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
 assert(chrome, 'A Chromium executable is required.');
-const origin = 'http://127.0.0.1:4201';
-const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', '4201', '--strictPort'], { windowsHide: true, stdio: 'pipe' });
+const port = process.env.FOLIO_EDITOR_UI_PORT || '4201', origin = 'http://127.0.0.1:' + port;
+const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
 let log = '', browser; const results = [], errors = [];
 server.stdout.on('data', chunk => { log += chunk; }); server.stderr.on('data', chunk => { log += chunk; });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -55,17 +69,19 @@ async function open(page, file = source) {
   await page.locator('.reading-area').evaluate(node => { node.scrollTop = 0; });
   await page.locator('.pdf-page-wrap').first().locator('.page-loading').waitFor({ state: 'detached' });
 }
-async function editor(page, action, box) {
+async function editor(page, action, box, number = 1) {
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
   await page.getByRole('button', { name: action, exact: true }).click();
-  const bounds = await page.locator('.pdf-page').first().boundingBox(); assert(bounds);
+  const bounds = await page.locator('.pdf-page-wrap[data-page-number="' + number + '"] .pdf-page').boundingBox(); assert(bounds);
   await page.mouse.move(bounds.x + box[0], bounds.y + box[1]); await page.mouse.down();
   await page.mouse.move(bounds.x + box[2], bounds.y + box[3], { steps: 8 }); await page.mouse.up();
   await page.locator('.content-editor').waitFor(); await page.locator('.content-preview canvas').waitFor();
 }
 async function ready(page) {
   await page.locator('.content-editor[data-preview-state=ready]').waitFor({ timeout: 60000 });
-  assert(await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).isEnabled());
+  // ResizeObserver may schedule one more render after the viewport changes.
+  // Trial action waits for an enabled, stable button without committing edits.
+  await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click({ trial: true, timeout: 60000 });
 }
 async function apply(page) {
   await ready(page); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click();
@@ -133,6 +149,11 @@ try {
     await page.getByLabel('Texto', { exact: true }).fill('TEXT THAT CANNOT FIT INTO THIS BOX');
     await page.locator('.content-editor[data-preview-state=error]').waitFor();
     assert(await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).isDisabled());
+    const visibleFailure = page.locator('.content-editor-footer .content-footer-error');
+    await visibleFailure.waitFor();
+    assert((await visibleFailure.textContent()).includes('El texto no cabe'), 'The actual fit error must be visible in the fixed footer.');
+    const failureBounds = await visibleFailure.boundingBox(), screen = page.viewportSize();
+    assert(failureBounds && failureBounds.y >= 0 && failureBounds.y + failureBounds.height <= screen.height, 'The footer error must stay inside the viewport.');
     await page.getByRole('button', { name: 'Cancelar', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
     assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled()); assert.equal(await page.locator('.modified-dot').count(), 0);
     const bytes = await save(page, 'editor-canceled.pdf'); assert.deepEqual(text(bytes), text(original));
@@ -240,21 +261,58 @@ try {
     return { uploadRaceGuarded: true, pointerOrLatestPositionPreserved: true, configurationLockedDuringUpload: blocked };
   });
   await check('rotated-cropped-page-box-mapping-and-short-window-footer', async page => {
-    await open(page, rotatedSource); await editor(page, 'Añadir texto', [90, 80, 310, 170]);
-    await page.getByLabel('Texto', { exact: true }).fill('ROTATED NEW TEXT');
-    await page.getByLabel('Posición X', { exact: true }).fill('120');
-    await page.getByLabel('Posición Y', { exact: true }).fill('100');
-    await page.getByLabel('Ancho', { exact: true }).fill('240');
-    await page.getByLabel('Alto', { exact: true }).fill('80'); await ready(page);
-    const canvas = await page.locator('.content-preview canvas').boundingBox(), box = await page.locator('.content-box[data-role=destination]').boundingBox(); assert(canvas && box);
-    assert(Math.abs((box.x - canvas.x) / canvas.width * 480 - 120) < 2);
-    assert(Math.abs((box.y - canvas.y) / canvas.height * 400 - 100) < 2);
-    await page.setViewportSize({ width: 1024, height: 600 }); await ready(page);
-    const applyBounds = await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).boundingBox(), cancelBounds = await page.getByRole('button', { name: 'Cancelar', exact: true }).boundingBox();
-    assert(applyBounds && cancelBounds && applyBounds.y + applyBounds.height <= 600 && cancelBounds.y + cancelBounds.height <= 600);
-    await apply(page); const bytes = await save(page, 'editor-rotated.pdf'); assert(text(bytes)[0].includes('ROTATED NEW TEXT'));
-    const doc = new mupdf.PDFDocument(bytes); assert.equal(doc.findPage(0).getInheritable('Rotate').asNumber(), 90); doc.destroy();
-    return { cropAndRotationMapped: true, shortWindowButtonsVisible: true, actualRotatedPdfExport: true };
+    await open(page, rotatedSource); const painted = [];
+    for (const [index, angle] of rotations.entries()) {
+      await page.setViewportSize({ width: 1360, height: 720 });
+      const number = index + 1, width = angle % 180 ? crop[3] - crop[1] : crop[2] - crop[0], height = angle % 180 ? crop[2] - crop[0] : crop[3] - crop[1];
+      if (index) {
+        await page.getByLabel('Número de página', { exact: true }).fill(String(number));
+        await page.getByLabel('Número de página', { exact: true }).press('Enter');
+        await page.locator('.pdf-page-wrap[data-page-number="' + number + '"] .page-loading').waitFor({ state: 'detached' });
+      }
+      await editor(page, 'Añadir texto', [90, 80, 310, 170], number);
+      await page.getByLabel('Texto', { exact: true }).fill('ROTATED NEW TEXT ' + angle);
+      await page.getByLabel('Color', { exact: true }).fill('#ff00ff');
+      await page.getByLabel('Posición X', { exact: true }).fill('120');
+      await page.getByLabel('Posición Y', { exact: true }).fill('100');
+      await page.getByLabel('Ancho', { exact: true }).fill('240');
+      await page.getByLabel('Alto', { exact: true }).fill('80'); await ready(page);
+      const canvas = await page.locator('.content-preview canvas').boundingBox(), box = await page.locator('.content-box[data-role=destination]').boundingBox(); assert(canvas && box);
+      assert(Math.abs((box.x - canvas.x) / canvas.width * width - 120) < 2);
+      assert(Math.abs((box.y - canvas.y) / canvas.height * height - 100) < 2);
+      const previewInk = await page.locator('.content-preview canvas').evaluate((canvas, dimensions) => {
+        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let count = 0, left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+          const offset = (y * canvas.width + x) * 4;
+          if (pixels[offset] > 200 && pixels[offset + 1] < 150 && pixels[offset + 2] > 200 && pixels[offset] - pixels[offset + 1] > 80 && pixels[offset + 2] - pixels[offset + 1] > 80) { count++; left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + 1); bottom = Math.max(bottom, y + 1); }
+        }
+        return { count, left: left / canvas.width * dimensions.width, top: top / canvas.height * dimensions.height, right: right / canvas.width * dimensions.width, bottom: bottom / canvas.height * dimensions.height };
+      }, { width, height });
+      await page.screenshot({ path: path.join(output, 'content-editor-rotated-preview-' + angle + '.png') });
+      assert(previewInk.count > 10 && previewInk.right - previewInk.left > 50 && previewInk.bottom - previewInk.top > 3, 'Preview must paint actual text ink across a meaningful glyph span, not merely retain extractable text: ' + JSON.stringify({ angle, previewInk }));
+      assert(previewInk.left >= 118 && previewInk.top >= 98 && previewInk.right <= 362 && previewInk.bottom <= 182, 'Preview text ink must be inside the destination box: ' + JSON.stringify({ angle, previewInk }));
+      await page.setViewportSize({ width: 1024, height: 600 }); await ready(page);
+      const applyBounds = await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).boundingBox(), cancelBounds = await page.getByRole('button', { name: 'Cancelar', exact: true }).boundingBox();
+      assert(applyBounds && cancelBounds && applyBounds.y + applyBounds.height <= 600 && cancelBounds.y + cancelBounds.height <= 600);
+      await apply(page); const bytes = await save(page, 'editor-rotated-' + angle + '.pdf'); assert(text(bytes)[index].includes('ROTATED NEW TEXT ' + angle));
+      const doc = new mupdf.PDFDocument(bytes), pdfPage = doc.loadPage(index), pixmap = pdfPage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);
+      try {
+        assert.equal(doc.findPage(index).getInheritable('Rotate').asNumber(), angle);
+        const pixels = pixmap.getPixels(), rasterWidth = pixmap.getWidth();
+        let count = 0, left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+        for (let y = 0; y < pixmap.getHeight(); y++) for (let x = 0; x < rasterWidth; x++) {
+          const offset = (y * rasterWidth + x) * 3;
+          if (pixels[offset] > 200 && pixels[offset + 1] < 150 && pixels[offset + 2] > 200 && pixels[offset] - pixels[offset + 1] > 80 && pixels[offset + 2] - pixels[offset + 1] > 80) { count++; left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + 1); bottom = Math.max(bottom, y + 1); }
+        }
+        const exportInk = { count, left, top, right, bottom };
+        assert(count > 10 && right - left > 50 && bottom - top > 3, 'The saved PDF must also paint the inserted text across a meaningful glyph span: ' + JSON.stringify({ angle, exportInk }));
+        assert(left >= 118 && top >= 98 && right <= 362 && bottom <= 182, 'Export text must be inside the destination box: ' + JSON.stringify({ angle, exportInk }));
+        for (const edge of ['left', 'top', 'right', 'bottom']) assert(Math.abs(previewInk[edge] - exportInk[edge]) < 3, 'Preview and saved glyph bounds must agree: ' + JSON.stringify({ angle, previewInk, exportInk }));
+        painted.push({ angle, previewInk, exportInk });
+      } finally { pixmap.destroy(); pdfPage.destroy(); doc.destroy(); }
+    }
+    return { cropAndRotationMapped: true, shortWindowButtonsVisible: true, actualRotatedPdfExport: true, paintedTextInsideDestination: true, previewAndExportAgree: true, painted };
   });
 } finally {
   await browser?.close(); server.kill();

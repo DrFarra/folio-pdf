@@ -136,6 +136,7 @@ export default function ContentEditor({ doc, area, kind, active, busy, getBytes,
   const renderKey = draftKey + ':' + hostSize.width + ':' + hostSize.height;
   const previewReady = previewResult?.key === renderKey && !previewResult.error && !dragging;
   const previewError = previewResult?.key === renderKey ? previewResult.error : '';
+  const failureMessage = inputError || sourceError || fontError || previewError;
   const canApply = !!operation && !!snapshot && previewReady && !busy && !dragging && !imageLoading && !inputError;
   const previewState = sourceError || fontError || previewError || inputError || validation ? 'error' : previewReady && !imageLoading ? 'ready' : 'updating';
 
@@ -292,10 +293,10 @@ export default function ContentEditor({ doc, area, kind, active, busy, getBytes,
           </>}
           {box && <><h3>Posición y dimensiones</h3><p className="content-editor-note">Puntos desde la esquina superior izquierda de la página visible.</p><div className="content-property-row"><label>Posición X<input aria-label="Posición X" type="number" min={0} step={.5} value={rounded(box.x)} onChange={event => updateBox({ ...box, x: Number(event.target.value) })} /></label><label>Posición Y<input aria-label="Posición Y" type="number" min={0} step={.5} value={rounded(box.y)} onChange={event => updateBox({ ...box, y: Number(event.target.value) })} /></label></div><div className="content-property-row"><label>Ancho<input aria-label="Ancho" type="number" min={1} step={.5} value={rounded(box.width)} onChange={event => resizeWithRatio({ ...box, width: Number(event.target.value) }, 'width')} /></label><label>Alto<input aria-label="Alto" type="number" min={1} step={.5} value={rounded(box.height)} onChange={event => resizeWithRatio({ ...box, height: Number(event.target.value) }, 'height')} /></label></div></>}
         </fieldset>
-        {(inputError || sourceError || fontError || previewError) && <p className="operation-error" role="alert">{inputError || sourceError || fontError || previewError}</p>}
+        {failureMessage && <p className="operation-error">{failureMessage}</p>}
         {validation && <p className="content-editor-note">{validation}</p>}
       </div>
     </div>
-    <div className="content-editor-footer"><span role="status">{busy ? 'Aplicando cambios…' : previewError || inputError || sourceError || fontError ? 'Ajusta el borrador para continuar.' : imageLoading ? 'Leyendo imagen…' : previewReady && operation ? 'Vista previa lista. El PDF aún no se ha modificado.' : validation || 'Preparando vista previa…'}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}Aplicar cambios</button></div>
+    <div className="content-editor-footer"><span className={failureMessage ? 'content-footer-error' : undefined} role={failureMessage ? 'alert' : 'status'}>{busy ? 'Aplicando cambios…' : failureMessage || (imageLoading ? 'Leyendo imagen…' : previewReady && operation ? 'Vista previa lista. El PDF aún no se ha modificado.' : validation || 'Preparando vista previa…')}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}Aplicar cambios</button></div>
   </div>;
 }

@@ -1,6 +1,6 @@
 {
   "platform": "windows",
-  "appVersion": "0.7.0",
+  "appVersion": "0.7.1",
   "npm": [
     {
       "name": "@babel/code-frame",

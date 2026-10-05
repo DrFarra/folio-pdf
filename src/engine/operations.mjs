@@ -164,13 +164,30 @@ function appendDrawing(doc, page, draw) {
     const transform = mupdf.Matrix.concat(generatedPage.getTransform(), mupdf.Matrix.invert(page.getTransform())); generatedPage.destroy();
     const stream = doc.addStream(`q ${transform.join(' ')} cm /${name} Do Q\n`, {});
     const contents = target.get('Contents'), list = doc.newArray();
-    if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
-    else if (!contents.isNull()) list.push(contents);
+    if (!contents.isNull()) {
+      // Contents streams share graphics and text state. Restore the page defaults
+      // after the original content, which may leave invisible OCR text (3 Tr),
+      // transforms, clipping or transparency active for a subsequently added Form.
+      list.push(doc.addStream('q\n', {}));
+      if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
+      else list.push(contents);
+      list.push(doc.addStream('Q\n', {}));
+    }
     list.push(stream); target.put('Contents', list);
   } finally {
     if (!closed) { try { writer.close(); } catch {} }
     generated?.destroy(); writer.destroy(); buffer.destroy();
   }
+}
+
+function saveDrawnDocument(doc, password) {
+  // MuPDF 1.28.1 can lose a newly grafted Form's stream when deduplicating
+  // an embedded font already present in the document. Persist the new streams
+  // before the deduplication pass; reopening preserves their data when renumbered.
+  const serialized = save(doc, 'garbage=2,compress=yes,encrypt=keep');
+  const normalized = open(serialized, password);
+  try { return save(normalized); }
+  finally { normalized.destroy(); }
 }
 
 function textDrawing(device, box, options) {
@@ -554,7 +571,7 @@ export function operateDocument(bytes, options, password = '') {
       if (doc.needsPassword() && !(doc.authenticatePassword(password) & 4)) fail('Necesitas la contraseña de propietario para quitar la protección.');
       return save(doc, 'garbage=4,compress=yes,encrypt=no');
     } else fail('Operación desconocida.');
-    const output = save(doc);
+    const output = ['add-text', 'add-image', 'ocr'].includes(operation) ? saveDrawnDocument(doc, password) : save(doc);
     return operation === 'compress' && output.length >= bytes.length ? new Uint8Array(bytes) : output;
   } finally { doc.destroy(); mupdf.emptyStore(); }
 }
