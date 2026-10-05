@@ -100,35 +100,31 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(tabExists("Folio selección uno.PDF"), "The exact canonical first PDF tab is missing or duplicated")
         XCTAssertTrue(tabExists("Folio selección dos.pdf"), "The exact canonical second PDF tab is missing or duplicated")
         attach("picker-two-tabs", app: folio)
-        // Exercise the production WKWebView sheet seen in the focus-ring bug.
-        // XCTest supplies real UIKit touches; neither JS pointer events nor
-        // a native-qa build substitute for these dismissal interactions.
-        let handle = folio.buttons["Cerrar hoja"].firstMatch
-        XCTAssertTrue(handle.waitForExistence(timeout: 10))
-        XCTAssertTrue(handle.isHittable)
-        XCTAssertGreaterThanOrEqual(handle.frame.height, 44)
-        attach("iphone-documents-sheet-autofocus", app: folio)
-        handle.tap()
-        XCTAssertTrue(folio.staticTexts["Documentos abiertos"].firstMatch.waitForNonExistence(timeout: 10))
-        reading("FOLIO PICKER DOS", screenshot: "iphone-documents-handle-tap-return")
+        // The document switcher is now a modeless anchored popup. Exercise
+        // its actual UIKit trigger and outside taps rather than the removed
+        // bottom-sheet handle; both imported documents must survive each exit.
+        let firstTab = folio.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Abrir pestaña '")).firstMatch
         documents.tap()
-        XCTAssertTrue(handle.waitForExistence(timeout: 10)); XCTAssertTrue(handle.isHittable)
-        attach("iphone-documents-sheet-before-drag", app: folio)
-        let origin = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        let destination = origin.withOffset(CGVector(dx: 0, dy: 100))
-        origin.press(forDuration: 0.15, thenDragTo: destination)
-        XCTAssertTrue(folio.staticTexts["Documentos abiertos"].firstMatch.waitForNonExistence(timeout: 10))
-        reading("FOLIO PICKER DOS", screenshot: "iphone-documents-handle-drag-return")
+        XCTAssertTrue(firstTab.waitForNonExistence(timeout: 10))
+        reading("FOLIO PICKER DOS", screenshot: "iphone-documents-trigger-dismiss-return")
         documents.tap()
-        XCTAssertTrue(tabExists("Folio selección uno.PDF"), "Dismissing the sheet lost the first PDF")
-        XCTAssertTrue(tabExists("Folio selección dos.pdf"), "Dismissing the sheet lost the second PDF")
+        XCTAssertTrue(tabExists("Folio selección uno.PDF"))
+        attach("iphone-documents-popup-before-outside-tap", app: folio)
+        folio.buttons["Ir a página"].firstMatch.tap()
+        XCTAssertTrue(firstTab.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(folio.textFields["Número de página"].firstMatch.waitForExistence(timeout: 10))
+        folio.buttons["Cancelar"].firstMatch.tap()
+        reading("FOLIO PICKER DOS", screenshot: "iphone-documents-outside-dismiss-return")
+        documents.tap()
+        XCTAssertTrue(tabExists("Folio selección uno.PDF"), "Dismissing the popup lost the first PDF")
+        XCTAssertTrue(tabExists("Folio selección dos.pdf"), "Dismissing the popup lost the second PDF")
         func switchDocument(_ filename: String, text: String, screenshot: String) {
             let expected = ("Abrir pestaña " + filename).precomposedStringWithCanonicalMapping
             guard let tab = folio.buttons.allElementsBoundByIndex.first(where: {
                 $0.label.precomposedStringWithCanonicalMapping == expected && $0.exists
             }) else { XCTFail("No exact canonical document button: " + filename); return }
             XCTAssertTrue(tab.isHittable); tab.tap()
-            XCTAssertTrue(folio.staticTexts["Documentos abiertos"].firstMatch.waitForNonExistence(timeout: 10))
+            XCTAssertTrue(firstTab.waitForNonExistence(timeout: 10))
             reading(text, screenshot: screenshot)
         }
         switchDocument("Folio selección uno.PDF", text: "FOLIO PICKER UNO", screenshot: "iphone-documents-switch-first")

@@ -1,11 +1,11 @@
-Folio 0.8.10 — Windows source and build information
+Folio 0.8.11 — Windows source and build information
 
-Application source: folio-0.8.10-fuente.zip, provided with this release.
+Application source: folio-0.8.11-fuente.zip, provided with this release.
 License: AGPL-3.0-or-later; the complete license is included in LICENSE.
 Locked dependency versions and integrity: package-lock.json,
 src-tauri/Cargo.lock.
 Native PDF operations are implemented in the local crates/folio-core source.
-The complete application source includes the Windows, macOS and iOS adapters.
+The complete application source includes the Windows, macOS, iOS and Android adapters.
 
 Build Windows x64 on Windows with Node, Rust stable and the Microsoft C++/SDK
 build tools installed:
@@ -29,7 +29,9 @@ actual local compiler, SDK and bundler versions.
 
 Build macOS on a Mac: npm ci; node scripts/build-macos.mjs.
 Build iPhone/iPad on a Mac with full Xcode: npm ci; node scripts/build-ios.mjs.
-See docs/macos.md and docs/ios.md for target-specific requirements. Apple
+Build Android arm64 with the Android SDK, NDK and JDK configured:
+  node scripts/build-android.mjs
+See docs/android.md, docs/macos.md and docs/ios.md for target requirements. Apple
 packages include their own platform notices and actual build/test evidence.
 Windows compilation does not establish acceptance on an Apple platform.
 

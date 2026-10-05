@@ -83,7 +83,7 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":ink_info.token,"path":ink_path,"id":ink_info.id,"revision":ink_info.revision,"size":ink_info.size,"password":""})).await?;
         let ink_page = mobile_call(app.clone(), "pdfPageInfo", serde_json::json!({"token":ink_info.token,"page":1})).await?;
         let ink = ink_page["annotations"].as_array().into_iter().flatten().find(|a| a["kind"] == "ink").ok_or("El dibujo no se guardó en el PDF nativo.")?;
-        if ink["inkPaths"] != ink_paths || ink["strokeWidth"].as_f64() != Some(3.0) { return Err(format!("El dibujo nativo cambió sus trazos o grosor: {ink}")); }
+        if serde_json::from_value::<Vec<Vec<f64>>>(ink["inkPaths"].clone()).ok() != Some(vec![vec![80.0,300.0,120.0,325.0,170.0,310.0],vec![190.0,320.0,230.0,345.0]]) || ink["strokeWidth"].as_f64() != Some(3.0) { return Err(format!("El dibujo nativo cambió sus trazos o grosor: {ink}")); }
         let erased_path = folder.join("ink-erased.pdf");
         let retained: Vec<_> = ink_page["annotations"].as_array().into_iter().flatten().filter(|a| a["kind"] != "ink").cloned().collect();
         mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":ink_info.token,"path":erased_path,"annotations":retained,"removedSourceRefs":[ink["nativeSourceRef"]]})).await?;

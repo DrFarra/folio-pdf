@@ -1,5 +1,7 @@
 # Folio 0.8.10
 
+Descargas y versiones verificadas de cada plataforma: [publicaciones](docs/releases.md).
+
 Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior, Android e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
 Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
 constan en docs/acceptance-windows.md; la entrega actual acredita sus comprobaciones
