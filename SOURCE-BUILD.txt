@@ -1,4 +1,4 @@
-Folio 0.6.0 — Windows source and build information
+Folio 0.6.1 — Windows source and build information
 
 Application source: folio-0.6.1-fuente.zip, provided with this release.
 License: AGPL-3.0-or-later; the complete license is included in LICENSE.
