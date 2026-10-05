@@ -1,0 +1,49 @@
+name: Folio focused iOS UIKit check
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Full iOS workflow run containing Folio-iOS-candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  uikit:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare the native UI test tools
+        run: |
+          xcodebuild -version
+          command -v xcodegen || brew install xcodegen
+          xcrun simctl list runtimes
+      - name: Restore and verify the exact production simulator candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: python3 scripts/tests/ios-ui-restore.py
+      - name: Exercise actual UIKit PDF picker and cold and warm Open In
+        run: python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-ui-restored/Folio.app
+      - name: Upload focused UIKit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-iOS-focused-evidence
+          path: |
+            test-results/ios/*.json
+            test-results/ios/*.png
+            test-results/ios/*.log
+            test-results/ios/*.xcresult/**
+          if-no-files-found: ignore
+          retention-days: 1
