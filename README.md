@@ -127,10 +127,10 @@ anotaciones y formularios se conservan; las selecciones ambiguas se rechazan.
 
 **Guardar una copia** y **Ctrl+S** permiten guardar desde el editor después de
 aplicar o descartar el borrador. La copia queda registrada en la biblioteca y
-mantiene la edición, página, pestaña e historial. El inspector ocupa menos espacio
-y los controles se mantienen en una fila incluso en 800×600.
+mantiene la edición, página, pestaña e historial. El panel identifica el elemento y agrupa sus propiedades.
+Los controles se mantienen en una fila incluso en 800×600.
 
-Verificación actual: 33 casos sobre la compilación de interfaz y
+Verificación actual: 39 casos sobre la compilación de interfaz y
 56 sobre motor/módulos fuente. Las nuevas suites son
 `npm run test:content-actions:engine` y `npm run test:content-actions:ui`.
 La aceptación nativa se registra por separado en el paquete de Windows.

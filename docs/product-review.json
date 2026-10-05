@@ -1950,7 +1950,7 @@
       "date": "2026-10-05",
       "status": "verificado_en_pruebas_automatizadas",
       "label": "0.8.2: acciones de contenido y guardado integrado",
-      "frontend_entry": "/assets/index-CdH82sdv.js",
+      "frontend_entry": "/assets/index-D9pmS5Ir.js",
       "baseline_distinction": "Se conservan los 35 apartados y 89 referencias del commit base y todas las entregas anteriores. Esta entrada sólo registra la evolución posterior.",
       "platform_scope": "Windows, Chromium y documentos sintéticos. Los casos de teléfono son simulados; la aceptación del ejecutable instalado tiene su registro independiente.",
       "capabilities": [
@@ -1959,7 +1959,7 @@
         "La eliminación de imágenes retira la instancia completa cuando su selección es segura. Se conservan anotaciones, widgets, metadatos y marcas de censura pendientes; los solapes ambiguos se rechazan.",
         "Restablecer devuelve texto, imagen, propiedades y marco a la selección original sin modificar el documento ni añadir un paso al historial. Descartar conserva el PDF y aplicar permite Deshacer/Rehacer.",
         "Guardar una copia y Ctrl+S funcionan desde el editor después de aplicar o descartar el borrador. La copia se registra en la biblioteca sin abandonar la edición ni perder la página, pestaña o historial.",
-        "Inspector compacto con cuatro acciones visibles, formato original plegable y Cambiar imagen. La navegación mantiene una sola fila en 800×600, con la página y los botones de aplicar y descartar visibles."
+        "Editor organizado por contexto: el tipo de elemento y sus acciones permanecen visibles; Contenido, Formato, Distribución y Posición son grupos separados. El zoom pertenece a la página, Restablecer tiene menor énfasis y la vista previa indica que estos cambios siguen sin aplicar. La navegación cabe en una fila en 800×600 y se revisaron temas claro y oscuro con el PDF de ejemplo."
       ],
       "limits": [
         "La selección automática sigue siendo edición por regiones verificadas. Los documentos complejos, OCR invisible, imágenes con máscaras, recortes residuales o solapes pueden requerir otro flujo y se explican cuando no son editables.",
@@ -1968,13 +1968,29 @@
         "La prueba de guardado con puente nativo usa un contrato simulado en Chromium. La aplicación instalada se comprueba por separado y se registra en el manifiesto de cada paquete."
       ],
       "verification": {
+        "content-editor-layout": {
+          "status": "verificado",
+          "passed": 6,
+          "failed": 0,
+          "report": "test-results/content-editor-layout-results.json",
+          "scope": "built_browser",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
+          "cases": [
+            "desktop-1360x720",
+            "desktop-1360x600",
+            "desktop-1024x600",
+            "desktop-760x600",
+            "phone-390x844",
+            "phone-844x390"
+          ]
+        },
         "content-actions-ui": {
           "status": "verificado",
           "passed": 5,
           "failed": 0,
           "report": "test-results/content-actions-ui-results.json",
           "scope": "built_browser",
-          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
           "cases": [
             "duplicate-delete-text-history",
             "duplicate-delete-image-pixels",
@@ -1989,7 +2005,7 @@
           "failed": 0,
           "report": "test-results/pdf-editing-ui-results.json",
           "scope": "built_browser",
-          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
           "cases": [
             "direct-selection-continuous-history",
             "cancel-zoom-and-frame",
@@ -2005,7 +2021,7 @@
           "failed": 0,
           "report": "test-results/pdf-content-picker-ui-results.json",
           "scope": "built_browser",
-          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
           "cases": [
             "levels-zoom-pagination-and-contained-pan",
             "crop-rotate90-overlay-contains-painted-glyph",
@@ -2027,7 +2043,7 @@
           "failed": 0,
           "report": "test-results/inline-editor-integration-results.json",
           "scope": "built_browser",
-          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
           "cases": [
             "inline-draft-guards-tabs-shortcuts-and-document-actions",
             "inline-page-navigation-and-reader-zoom-scroll-restoration"
@@ -2039,7 +2055,7 @@
           "failed": 0,
           "report": "test-results/content-editor-ui-results.json",
           "scope": "built_browser",
-          "frontend_entry": "/assets/index-CdH82sdv.js",
+          "frontend_entry": "/assets/index-D9pmS5Ir.js",
           "cases": [
             "replacement-preview-move-export-and-one-history-step",
             "cancel-stale-preview-invalid-draft-and-return-to-tools",
@@ -2162,7 +2178,7 @@
           ]
         }
       },
-      "total_browser_cases": 33,
+      "total_browser_cases": 39,
       "total_source_cases": 56,
       "acceptance_register": {
         "report": "windows-manifest.json",

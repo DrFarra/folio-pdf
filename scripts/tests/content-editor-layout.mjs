@@ -17,7 +17,7 @@ const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Appli
 assert(chrome, 'A Chromium executable is required.');
 const port = process.env.FOLIO_EDITOR_LAYOUT_PORT || '4202', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
-let log = '', browser; const results = [], errors = [];
+let log = '', browser, frontendEntry; const results = [], errors = [];
 server.stdout.on('data', bytes => { log += bytes; }); server.stderr.on('data', bytes => { log += bytes; });
 const iphoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const cases = [
@@ -34,19 +34,23 @@ const geometry = page => page.evaluate(() => {
   return { width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight,
     scrollX, scrollY, phone: document.documentElement.hasAttribute('data-phone'), dialog: measure('.content-workbench'),
     editor: measure('.content-editor'), body: measure('.content-editor-body'), preview: measure('.content-preview'),
-    canvas: measure('.content-preview canvas'), inspector: measure('.content-inspector'), footer: measure('.content-editor-footer') };
+    canvas: measure('.content-preview canvas'), inspector: measure('.content-inspector'),
+    inspectorTop: measure('.content-inspector-top'), inspectorScroll: measure('.content-inspector-scroll'), footer: measure('.content-editor-footer') };
 });
 function assertBounds(value, phone) {
   assert.equal(value.scrollX, 0); assert.equal(value.scrollY, 0);
   assert.equal(value.documentWidth, value.width, 'The app must not overflow horizontally.');
   assert.equal(value.documentHeight, value.height, 'The page itself must not scroll.');
-  for (const key of ['dialog', 'editor', 'body', 'preview', 'canvas', 'inspector', 'footer']) {
+  for (const key of ['dialog', 'editor', 'body', 'preview', 'canvas', 'inspector', 'inspectorTop', 'inspectorScroll', 'footer']) {
     const bounds = value[key]; assert(bounds && bounds.width > 0 && bounds.height > 0, key + ' must have usable space.');
     assert(bounds.x >= -.5 && bounds.y >= -.5 && bounds.right <= value.width + .5 && bounds.bottom <= value.height + .5, key + ' must stay inside the viewport: ' + JSON.stringify(bounds));
     if (key !== 'canvas') assert(bounds.scrollWidth <= bounds.clientWidth + 1, key + ' must not scroll horizontally.');
   }
   assert.equal(value.dialog.scrollTop, 0, 'Only the inspector should scroll to expose its controls.');
   assert.equal(value.body.scrollTop, 0); assert.equal(value.editor.scrollTop, 0);
+  assert.equal(value.inspector.scrollTop, 0, 'The selection heading must stay fixed while properties scroll.');
+  assert(value.inspectorScroll.y >= value.inspectorTop.bottom - 1, 'Properties must stay below the fixed selection heading.');
+  assert(value.inspectorScroll.bottom <= value.inspector.bottom + 1);
   assert(value.canvas.height >= (phone && value.height < 500 ? 80 : 150), 'The PDF preview is too small.');
   assert.equal(value.phone, phone);
 }
@@ -69,7 +73,7 @@ try {
   }
   assert(ready, log || 'The preview server did not start.');
   const html = await (await fetch(origin)).text();
-  const frontendEntry = html.match(/src="([^"]+\.js)"/)?.[1];
+  frontendEntry = html.match(/src="([^"]+\.js)"/)?.[1]; assert(frontendEntry, 'The report must identify the tested frontend build.');
   browser = await chromium.launch({ executablePath: chrome, headless: true });
   for (const specification of cases) {
     const { phone = false, width, height } = specification, id = (phone ? 'phone-' : 'desktop-') + width + 'x' + height;
@@ -95,31 +99,39 @@ try {
       await page.locator('.content-editor[data-preview-state=ready]').waitFor({ timeout: 60000 });
       const before = await geometry(page); assertBounds(before, phone);
       const applyBefore = await ensureButton(page, 'Aplicar cambios'), cancelBefore = await ensureButton(page, 'Cancelar');
-      const visited = [];
+      const visited = [], controlBounds = [];
       for (const label of ['Texto', 'Fuente', 'Tamaño', 'Color', 'Alineación', 'Interlineado', 'Ajustar líneas', 'Posición X', 'Posición Y', 'Ancho', 'Alto']) {
         const input = page.getByLabel(label, { exact: true }); await input.scrollIntoViewIfNeeded();
-        const inputBox = await input.boundingBox(), inspector = await page.locator('.content-inspector').boundingBox(); assert(inputBox && inspector);
-        assert(inputBox.y >= inspector.y - 1 && inputBox.y + inputBox.height <= inspector.y + inspector.height + 1, label + ' must be reachable by scrolling the inspector.');
+        const inputBox = await input.boundingBox(), inspector = await page.locator('.content-inspector-scroll').boundingBox(); assert(inputBox && inspector);
+        assert(inputBox.y >= inspector.y - 1 && inputBox.y + inputBox.height <= inspector.y + inspector.height + 1, label + ' must be reachable below the fixed heading by scrolling properties.');
+        const reachable = await input.evaluate(element => {
+          const box = element.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return hit === element || element.contains(hit);
+        });
+        assert(reachable, label + ' must not be covered by the fixed heading or footer.');
+        controlBounds.push({ label, input: inputBox, properties: inspector, reachable });
         visited.push(label);
       }
       const after = await geometry(page); assertBounds(after, phone);
       assert.deepEqual(await ensureButton(page, 'Aplicar cambios'), applyBefore, 'Apply must remain stationary while scrolling controls.');
       assert.deepEqual(await ensureButton(page, 'Cancelar'), cancelBefore, 'Cancel must remain stationary while scrolling controls.');
-      assert(after.inspector.scrollTop > 0, 'The inspector should expose its last controls by vertical scrolling.');
+      assert(after.inspectorScroll.scrollTop > 0, 'The properties body should expose its last controls by vertical scrolling.');
+      assert.deepEqual(after.inspectorTop, before.inspectorTop, 'The selection heading must remain stationary while scrolling properties.');
       assert.equal(after.preview.scrollTop, before.preview.scrollTop);
       assert.equal(await page.locator('.modified-dot').count(), 0, 'Preview must not modify the source document.');
       await page.screenshot({ path: path.join(output, 'content-editor-layout-' + id + '.png'), animations: 'disabled' });
       await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
       await page.locator('.workbench').waitFor({ state: 'detached' });
-      results.push({ id, status: 'passed', simulatedPhone: phone, frontendEntry, previewHeight: before.canvas.height, inspectorScroll: after.inspector.scrollTop,
-        fixedFooter: true, allControlsReachable: visited, noHorizontalOverflow: true, originalUnchanged: true, geometry: after });
+      results.push({ id, status: 'passed', simulatedPhone: phone, frontendEntry, previewHeight: before.canvas.height, inspectorScroll: after.inspectorScroll.scrollTop,
+        fixedFooter: true, fixedSelectionHeading: true, allControlsReachable: visited, controlBounds, noHorizontalOverflow: true, originalUnchanged: true, geometry: after });
     } catch (error) {
-      results.push({ id, status: 'failed', error: error.stack }); process.exitCode = 1;
+      results.push({ id, status: 'failed', frontendEntry, error: error.stack }); process.exitCode = 1;
       await page.screenshot({ path: path.join(output, 'failure-editor-layout-' + id + '.png'), animations: 'disabled' }).catch(() => {});
     } finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
   }
 } finally {
-  await browser?.close(); server.kill();
-  fs.writeFileSync(path.join(output, 'content-editor-layout-results.json'), JSON.stringify({ platform: process.platform, browser: 'Chromium', nativeAppleDeviceTested: false, results, errors }, null, 2) + '\n');
+  await browser?.close();
+  if (server.exitCode === null) { const stopped = new Promise(resolve => server.once('exit', resolve)); server.kill(); await stopped; }
+  fs.writeFileSync(path.join(output, 'content-editor-layout-results.json'), JSON.stringify({ platform: process.platform, browser: 'Chromium', frontendEntry, nativeAppleDeviceTested: false, results, errors }, null, 2) + '\n');
   if (errors.length) { console.log(JSON.stringify({ errors })); process.exitCode = 1; }
 }

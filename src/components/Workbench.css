@@ -113,13 +113,17 @@ html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:100%;min-
 .app-shell .reader>.workbench.workspace-editor>.tool-categories{flex:1;min-width:0;min-height:0;margin-top:0;padding-bottom:4px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 @media(max-width:1100px){.app-shell .reader>.workbench.workspace-editor{padding:12px 14px}.workspace-editor>.workbench-navigation{margin-bottom:10px}}
 @media(max-width:750px){.app-shell .reader>.workbench.workspace-editor{padding:12px}.workspace-editor>.workbench-navigation{gap:7px;margin-bottom:9px}}
+@media(min-width:1101px) and (max-height:650px){.app-shell .reader>.workbench.workspace-editor{padding-top:12px;padding-bottom:12px}}
 html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:12px}
 @media(max-height:500px){.app-shell .reader>.workbench.workspace-editor{padding:8px 12px}.workspace-editor>.workbench-navigation{margin-bottom:6px}.workspace-editor>.modal-heading,.workspace-editor>.workspace-editor-heading{margin-bottom:6px}}
 @media(max-height:500px){html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:7px 10px}.workspace-editor .edit-pdf-history{flex-basis:auto}.workspace-editor>.workbench-navigation{flex-wrap:nowrap;gap:6px}.workspace-editor .workbench-back{white-space:nowrap;font-size:12px}}
-@media(max-width:850px){
-  html:not([data-phone]) .workspace-editor .edit-history-label{display:none}
-  html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label){width:36px;min-width:36px;min-height:36px;padding:8px;gap:0}
-}
+html:not([data-phone]) .workspace-editor .edit-history-label{display:none}
+html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label){width:34px;min-width:34px;min-height:34px;padding:8px;gap:0;border-color:transparent;background:transparent;color:var(--muted)}
+html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label):hover:not(:disabled){background:var(--hover);color:var(--text)}
+html:not([data-phone]) .app-shell .workspace-editor .workbench-back{margin-left:0;padding:7px 8px;min-height:36px;border-color:transparent;background:transparent;font-size:12px;color:var(--muted)}
+html:not([data-phone]) .app-shell .workspace-editor .workbench-back:hover:not(:disabled){background:var(--hover);color:var(--text)}
+.workspace-editor .edit-pdf-history .edit-pdf-save{min-height:36px;padding:8px 12px;box-shadow:none}
+.workspace-editor .edit-pdf-history .edit-pdf-done{min-height:36px;padding:8px 12px}
 @media(min-width:701px) and (max-width:850px){
   html:not([data-phone]) .workspace-editor>.workbench-navigation{flex-wrap:nowrap}
   html:not([data-phone]) .workspace-editor .edit-pdf-history{flex-wrap:nowrap;gap:6px}

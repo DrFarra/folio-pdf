@@ -96,7 +96,7 @@ try {
   });
   await check('cancel-zoom-and-frame', async page => {
     await selectText(page); await page.getByRole('button', { name: 'Al área', exact: true }).click(); await ready(page);
-    assert(Number(await page.locator('.content-zoom-toolbar>span').innerText().then(value => value.replace('%', ''))) > 100);
+    assert(Number(await page.locator('.content-zoom-controls>span').innerText().then(value => value.replace('%', ''))) > 100);
     await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('DISCARD THIS');
     await page.getByRole('button', { name: 'Restablecer', exact: true }).click(); await ready(page);
     assert.equal(await page.getByRole('textbox', { name: 'Texto', exact: true }).inputValue(), 'ORIGINAL 1', 'Reset restores the selected source draft without modifying the document.');
@@ -162,16 +162,29 @@ try {
         const footer = editor.querySelector('.content-editor-footer .primary-button').getBoundingClientRect(), inspector = editor.querySelector('.content-inspector').getBoundingClientRect();
         const box = editor.querySelector('.content-box').getBoundingClientRect(), preview = editor.querySelector('.content-preview').getBoundingClientRect();
         const actions = [...editor.querySelectorAll('.content-editor-actions button')].map(button => { const bounds = button.getBoundingClientRect(); return { label: button.textContent.trim(), left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, visible: bounds.top >= inspector.top && bounds.bottom <= inspector.bottom && bounds.left >= inspector.left && bounds.right <= inspector.right }; });
-        const firstControls = ['Texto', 'Fuente', 'Tamaño', 'Color'].map(label => { const control = editor.querySelector(`[aria-label="${label}"]`), bounds = control.getBoundingClientRect(); return { label, top: bounds.top, bottom: bounds.bottom, visible: bounds.top >= inspector.top && bounds.bottom <= inspector.bottom }; });
-        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, previewHeight: preview.height, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom, actionButtons: actions, firstControls, compactTextRows: editor.querySelector('textarea[aria-label="Texto"]').rows, originalDetailsClosed: !editor.querySelector('.content-editor-source-info')?.open };
+        const heading = editor.querySelector('.content-inspector-heading'), reset = editor.querySelector('.content-reset').getBoundingClientRect(), top = editor.querySelector('.content-inspector-top').getBoundingClientRect();
+        const scrollBounds = editor.querySelector('.content-inspector-scroll').getBoundingClientRect(), initialControls = ['Texto', 'Fuente', 'Tamaño', 'Color'].map(label => { const bounds = editor.querySelector(`[aria-label="${label}"]`).getBoundingClientRect(); return { label, top: bounds.top, bottom: bounds.bottom, visible: bounds.top >= scrollBounds.top && bounds.bottom <= scrollBounds.bottom }; });
+        return { width: innerWidth, applyBottom: footer.bottom, inspectorWidth: inspector.width, previewHeight: preview.height, horizontalOverflow: document.documentElement.scrollWidth - innerWidth, areaVisible: box.left >= preview.left && box.right <= preview.right && box.top >= preview.top && box.bottom <= preview.bottom, actionButtons: actions, objectHeading: heading.querySelector('h3').textContent, propertySections: [...editor.querySelectorAll('.content-property-section>h4')].map(title => title.textContent), compactTextRows: editor.querySelector('textarea[aria-label="Texto"]').rows, originalDetailsClosed: !editor.querySelector('.content-editor-source-info')?.open, inspectorTop: { top: top.top, bottom: top.bottom }, resetVisible: reset.top >= top.top && reset.bottom <= top.bottom && reset.left >= top.left && reset.right <= top.right, initialControls };
       });
       assert(value.applyBottom <= 592); assert(value.inspectorWidth >= 240); assert(value.horizontalOverflow <= 1); assert(value.areaVisible); assert(value.previewHeight >= 200);
-      assert.deepEqual(value.actionButtons.map(action => action.label), ['Editar', 'Duplicar', 'Eliminar', 'Restablecer']);
+      assert.deepEqual(value.actionButtons.map(action => action.label), ['Editar', 'Duplicar', 'Eliminar']);
       assert(value.actionButtons.every(action => action.visible), 'Object actions must be visible without scrolling the inspector.');
-      assert(value.firstControls.every(control => control.visible), 'Text, font, size and color must be visible together in the compact inspector.');
+      assert.equal(value.objectHeading, 'Texto'); assert(value.resetVisible);
+      assert(value.initialControls.every(control => control.visible), 'Text, font, size and color should remain fully visible when a block opens.');
+      assert.deepEqual(value.propertySections, ['Formato', 'Distribución', 'Posición y tamaño']);
       assert(value.compactTextRows <= 3); assert(value.originalDetailsClosed);
+      await page.getByLabel('Posición X', { exact: true }).scrollIntoViewIfNeeded();
+      const scrolled = await page.locator('.content-editor').evaluate(editor => {
+        const top = editor.querySelector('.content-inspector-top').getBoundingClientRect(), footer = editor.querySelector('.content-editor-footer .primary-button').getBoundingClientRect();
+        return { scrollTop: editor.querySelector('.content-inspector-scroll').scrollTop, top: top.top, bottom: top.bottom, applyBottom: footer.bottom };
+      });
+      assert(scrolled.scrollTop > 0, 'Position fields must remain reachable by scrolling properties.');
+      assert.equal(scrolled.top, value.inspectorTop.top); assert.equal(scrolled.bottom, value.inspectorTop.bottom); assert.equal(scrolled.applyBottom, value.applyBottom);
+      await page.locator('.content-inspector-scroll').evaluate(element => { element.scrollTop = 0; });
+      value.propertiesScrollable = true; value.inspectorHeadingAndFooterFixed = true;
       assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), originalArea); metrics.push({ ...value, workspace });
       if (width === 800 || width === 900) await page.screenshot({ path: path.join(output, `pdf-editing-medium-${width}x600.png`) });
+      if (width === 1360) await page.screenshot({ path: path.join(output, 'pdf-editing-wide-low-1360x600.png') });
     }
     return { resizingKeepsDraft: true, selectedAreaReadableAndVisible: true, sameReaderView: true, appHeaderAndTabsVisible: true, noDialog: true, metrics };
   });

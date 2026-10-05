@@ -66,12 +66,24 @@ async function check(id, run, specification = { width: 1360, height: 720 }) {
 }
 async function layout(page, specification) {
   await picker(page);
-  const geometry = await page.locator('.pdf-content-picker').evaluate(element => {
+  // Read the ready state and geometry in one frame: a resize observer may start
+  // another render between a separate readiness wait and an evaluate call.
+  const geometryHandle = await page.waitForFunction(({ baseWidth, baseHeight }) => {
+    const element = document.querySelector('.pdf-content-picker');
+    if (element?.dataset.pickerState !== 'ready') return false;
     const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, right: bounds.right, bottom: bounds.bottom, overflowX: node.scrollWidth - node.clientWidth }; };
     const container = element.closest('.workspace-editor,dialog'), phone = document.documentElement.hasAttribute('data-phone');
+    const canvas = rect(element.querySelector('canvas'));
+    if (!canvas.width || !canvas.height || getComputedStyle(element.querySelector('.pdf-picker-stage')).visibility === 'hidden') return false;
+    if (element.querySelector('[aria-label="Ajustar página"]').getAttribute('aria-pressed') === 'true') {
+      const host = element.querySelector('.pdf-picker-viewport'), style = getComputedStyle(host);
+      const scale = Math.max(.05, Math.min((host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / baseWidth, (host.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / baseHeight, 3));
+      if (Math.abs(canvas.width - baseWidth * scale) >= 1 || Math.abs(canvas.height - baseHeight * scale) >= 1) return false;
+    }
     const navigation = container.querySelector('.workbench-navigation'), controls = [...navigation.querySelectorAll('button')].map(button => button.getBoundingClientRect()), centers = controls.map(box => (box.top + box.bottom) / 2);
     return { width: innerWidth, height: innerHeight, phone, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')), navigationHeight: navigation.getBoundingClientRect().height, navigationControlHeight: Math.max(...controls.map(box => box.height)), navigationCenterSpread: Math.max(...centers) - Math.min(...centers) };
-  });
+  }, { baseWidth: 500, baseHeight: 400 }, { timeout: 60000 });
+  const geometry = await geometryHandle.jsonValue(); await geometryHandle.dispose();
   assert.equal(geometry.phone, !!specification.phone); assert.equal(geometry.documentWidth, geometry.width); assert.equal(geometry.documentHeight, geometry.height);
   if (!specification.phone) {
     assert.equal(geometry.inlineWorkspace, true, 'Desktop editing must stay in the main reader.');
