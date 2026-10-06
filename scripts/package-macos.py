@@ -127,7 +127,7 @@ def frontend_identity():
         html = (distribution / 'index.html').read_text(encoding='utf-8')
     except OSError as error:
         raise PackageError(f'Falta la interfaz compilada que se probó: {error}') from error
-    entries = re.findall(r'<script\b[^>]*\bsrc=["\']([^"\']+\.js)["\']', html)
+    entries = re.findall(r'<script\b[^>]*\btype=["\']module["\'][^>]*\bsrc=["\']([^"\']+\.js)["\']', html)
     require(len(entries) == 1 and entries[0].startswith('/assets/'),
             'dist/index.html no identifica una única entrada JavaScript de producción.')
     assets = [{'path': path.relative_to(distribution).as_posix(), 'bytes': path.stat().st_size, 'sha256': sha256(path)}

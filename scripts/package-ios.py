@@ -53,7 +53,7 @@ def report(name):
 def frontend_identity():
     distribution = ROOT / 'dist'
     index = distribution / 'index.html'
-    entries = re.findall(r'<script\b[^>]*\bsrc=["\']([^"\']+\.js)["\']', index.read_text(encoding='utf-8'))
+    entries = re.findall(r'<script\b[^>]*\btype=["\']module["\'][^>]*\bsrc=["\']([^"\']+\.js)["\']', index.read_text(encoding='utf-8'))
     require(len(entries) == 1 and entries[0].startswith('/assets/'), 'Falta la entrada única de la interfaz de producción.')
     assets = [{'path': path.relative_to(distribution).as_posix(), 'bytes': path.stat().st_size, 'sha256': sha(path)}
               for path in sorted(distribution.rglob('*')) if path.is_file() and path.suffix in {'.js', '.css'}]
