@@ -1,0 +1,66 @@
+name: Folio Windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  x64:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install locked dependencies and Rust target
+        run: |
+          npm ci
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+          mkdir -p test-results
+      - name: Download and verify the corresponding MuPDF source
+        run: |
+          curl --fail --location --retry 3 https://mupdf.com/downloads/archive/mupdf-1.28.1-source.tar.gz -o test-results/mupdf-1.28.1-source.tar.gz
+          echo 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3  test-results/mupdf-1.28.1-source.tar.gz' | sha256sum -c -
+      - name: Generate Windows dependency notices
+        run: |
+          node scripts/prepare-resources.mjs
+          cargo metadata --manifest-path src-tauri/Cargo.toml --locked --filter-platform x86_64-pc-windows-msvc --format-version 1 > test-results/cargo-metadata-windows.json
+          python scripts/generate-notices.py --platform windows --cargo-metadata test-results/cargo-metadata-windows.json --mupdf-source test-results/mupdf-1.28.1-source.tar.gz
+      - name: Configure installed Google OAuth client
+        env:
+          FOLIO_OAUTH_CONFIG: ${{ secrets.FOLIO_GOOGLE_DESKTOP_CREDENTIALS_JSON }}
+        if: env.FOLIO_OAUTH_CONFIG != ''
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          config = json.loads(os.environ['FOLIO_OAUTH_CONFIG'])
+          assert config['installed']['client_id'] and config['installed']['client_secret']
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'folio-google-installed.json'
+          path.write_text(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'FOLIO_GOOGLE_DESKTOP_CREDENTIALS={path}\n')
+          PY
+      - name: Build the NSIS installer
+        run: npm run desktop:windows -- --ci -- --locked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-Windows
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
