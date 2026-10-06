@@ -101,7 +101,8 @@
     for (let n = 0; n < 60; n++) {
       await pause(100);
       const state = snapshot().search;
-      if (state.query === query && !state.summary.includes('Preparando')) {
+      // Search waits for a pause in typing, so the count appears a moment after the query.
+      if (state.query === query && state.summary && !state.summary.includes('Preparando')) {
         return { ...state, found: state.resultCount > 0 };
       }
     }
