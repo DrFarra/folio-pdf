@@ -141,7 +141,7 @@ try {
   mark('native-2gib-metadata-opens-with-page-pixels-and-no-whole-file-read-or-js-worker');
 
   await annotations();
-  const importedCard = page.locator('.annotation-card').filter({ hasText: 'Imported highlight A' }); await importedCard.getByRole('button', { name: 'Eliminar anotación', exact: true }).tap();
+  const importedCard = page.locator('.annotation-card').filter({ hasText: 'Imported highlight A' }); await importedCard.getByRole('button', { name: /^Eliminar anotación de la página / }).tap();
   await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
   const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'Original native text page 1.' }).first();
@@ -255,7 +255,7 @@ try {
   await page.getByRole('alert').filter({ hasText: 'varias anotaciones originales' }).waitFor();
   await page.waitForFunction(() => window.__nativeBigContract.sessions['0'.repeat(64)]?.nativeLegacySession === true);
   await action('Guardar una copia del PDF');
-  await page.getByRole('alert').filter({ hasText: 'La copia no se ha guardado.' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'La copia no se guardó.' }).waitFor();
   await readyDocument('Ambiguous.pdf');
   state = await capture(); assert.equal(state.outputs.length, 0, 'Ambiguous migration must be rejected before native export.');
   const unresolved = state.sessions['0'.repeat(64)];
