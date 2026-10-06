@@ -32,8 +32,8 @@ MAC_EVIDENCE = ['native-smoke-macos.json', 'native-smoke-macos-qa.json', 'mac-pl
                 'content-editor-layout-desktop-1360x720.png', 'content-editor-layout-desktop-1360x600.png',
                 'content-editor-layout-desktop-1024x600.png', 'content-editor-layout-desktop-760x600.png',
                 'content-editor-layout-phone-390x844.png', 'content-editor-layout-phone-844x390.png']
-ENGINE_REPORTS = {'operations-results.json': 13, 'page-content-engine-results.json': 10,
-                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 13}
+ENGINE_REPORTS = {'operations-results.json': 19, 'page-content-engine-results.json': 11,
+                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 15}
 EDITOR_REPORTS = {'pdf-editing-ui-results.json': 6, 'content-actions-ui-results.json': 5,
                   'content-editor-layout-results.json': 6}
 

@@ -6,8 +6,8 @@ from ios_icon_audit import verify_compiled_icons
 
 ROOT = Path(__file__).resolve().parent.parent
 MUPDF_SHA = 'dc94c60b2537e2ac9a2d379dd3801545f84a3a302d15c9da358362a1270707c3'
-ENGINE_REPORTS = {'operations-results.json': 13, 'page-content-engine-results.json': 10,
-                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 13}
+ENGINE_REPORTS = {'operations-results.json': 19, 'page-content-engine-results.json': 11,
+                  'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 15}
 IPC_REPORTS = {'iphone-native-contract-results.json': 3, 'native-pdf-adapter-results.json': 1,
                'iphone-native-big-contract-results.json': 11}
 FOCUS_CASES = {'touch-focus-document-sheet-light', 'touch-focus-document-sheet-dark',
