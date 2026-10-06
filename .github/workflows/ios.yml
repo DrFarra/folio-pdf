@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Native bridge check or complete verified delivery
+        description: Native bridge check, complete verified delivery, or the device IPA alone without tests
         type: choice
-        options: [full, build-check]
+        options: [full, build-check, ipa-only]
         default: full
 
 permissions:
@@ -72,10 +72,12 @@ jobs:
         run: python3 scripts/package-ios.py --validate-reports-only
       - name: Build real arm64 iPhone Simulator diagnostics
         id: ios_qa_build
+        if: inputs.mode != 'ipa-only'
         run: |
           set -o pipefail
           node scripts/build-ios.mjs --simulator --qa 2>&1 | tee test-results/ios/ios-qa-build.log
       - name: Test actual iPhone WKWebView, selection, search and Rust persistence
+        if: inputs.mode != 'ipa-only'
         run: |
           python3 scripts/tests/native-smoke-ios.py --qa --app test-results/ios-build/qa/Folio.app
       - name: Build the production simulator and unsigned device IPA
@@ -113,6 +115,20 @@ jobs:
         with:
           name: Folio-iOS
           path: release/Folio-ios/
+          if-no-files-found: error
+          retention-days: 1
+      # Untested quick delivery: no QA build, smoke or UIKit evidence, so it skips package-ios.py.
+      - name: Build the unsigned device IPA only
+        if: inputs.mode == 'ipa-only'
+        run: |
+          set -o pipefail
+          node scripts/build-ios.mjs --device 2>&1 | tee test-results/ios/ios-device-build.log
+      - name: Upload the untested device IPA
+        if: inputs.mode == 'ipa-only'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Folio-iOS-untested
+          path: test-results/ios-build/*.ipa
           if-no-files-found: error
           retention-days: 1
       - name: Upload native and mobile UI evidence
