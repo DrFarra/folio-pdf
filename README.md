@@ -96,8 +96,9 @@ npm run test:native   # pruebas Rust del núcleo de archivos
 ```
 
 Las pruebas de interfaz usan Chrome o Chromium: indica su ruta con `CHROME_PATH`
-(en Windows se busca Chrome o Edge). `test:interop` necesita Python 3 con
-pymupdf, pypdf y cryptography, y OpenSSL (`OPENSSL_PATH`). Los resultados quedan
+(si no, se busca Chrome, Edge o Chromium en las rutas habituales de Windows, macOS
+y Linux). `test:interop` necesita Python 3 con pymupdf, pypdf y cryptography, y
+OpenSSL (`OPENSSL_PATH` o el `openssl` del PATH). Los resultados quedan
 en `test-results/`. Hay suites por plataforma: `test:android`, `test:drive`,
 `test:iphone`, `test:macos` y `test:windows-native`. `test:iphone` y `test:macos`
 usan además WebKit de Playwright, que otras suites usan con

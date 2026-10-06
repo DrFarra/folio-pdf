@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -14,7 +15,7 @@ sheet.drawText('CONTENT EDITOR LAYOUT', { x: 32, y: 350, size: 18, font });
 sheet.drawText('An original PDF page stays visible while adjusting the draft.', { x: 32, y: 315, size: 12, font });
 fs.writeFileSync(fixture, await document.save());
 const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
-const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+const chrome = findChrome();
 if (!useWebKit) assert(chrome, 'A Chromium executable is required.');
 const port = process.env.FOLIO_EDITOR_LAYOUT_PORT || '4202', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
@@ -55,6 +56,12 @@ function assertBounds(value, phone) {
   assert(value.canvas.height >= (phone && value.height < 500 ? 80 : 150), 'The PDF preview is too small.');
   assert.equal(value.phone, phone);
 }
+// Choosing a tool changes the hint below the page, which can resize and re-render the page: draw once it is stable.
+const stageSettled = page => page.waitForFunction(() => new Promise(resolve => {
+  const stage = document.querySelector('.pdf-content-picker[data-picker-state="ready"] .pdf-picker-stage'); if (!stage) { resolve(false); return; }
+  const before = JSON.stringify(stage.getBoundingClientRect());
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve(stage.isConnected && stage.closest('.pdf-content-picker').dataset.pickerState === 'ready' && JSON.stringify(stage.getBoundingClientRect()) === before)));
+}));
 async function ensureButton(page, name) {
   const button = page.getByRole('button', { name, exact: true });
   assert(await button.isEnabled());
@@ -94,16 +101,19 @@ try {
       await page.locator('.loading-overlay').waitFor({ state: 'detached' });
       if (phone) await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
       else await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
+      // Adding text lives in Editar PDF: draw the area on the selector's page.
       await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
-      await page.getByRole('button', { name: 'Añadir texto', exact: true }).click();
-      const bounds = await page.locator('.pdf-page').first().boundingBox(); assert(bounds);
+      await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
+      const picker = page.locator('.pdf-content-picker[data-picker-state="ready"]'); await picker.waitFor({ timeout: 60000 });
+      await picker.getByRole('button', { name: 'Añadir texto', exact: true }).click(); await stageSettled(page);
+      const bounds = await picker.locator('.pdf-picker-stage').boundingBox(); assert(bounds);
       await page.mouse.move(bounds.x + bounds.width * .1, bounds.y + bounds.height * .3); await page.mouse.down();
       await page.mouse.move(bounds.x + bounds.width * .75, bounds.y + bounds.height * .75, { steps: 8 }); await page.mouse.up();
       await page.locator('.content-editor').waitFor();
       await page.getByLabel('Texto', { exact: true }).fill('Vista previa real del editor.');
       await page.locator('.content-editor[data-preview-state=ready]').waitFor({ timeout: 60000 });
       const before = await geometry(page); assertBounds(before, phone);
-      const applyBefore = await ensureButton(page, 'Aplicar cambios'), cancelBefore = await ensureButton(page, 'Cancelar');
+      const applyBefore = await ensureButton(page, 'Aplicar cambios'), cancelBefore = await ensureButton(page, 'Descartar edición');
       const visited = [], controlBounds = [];
       for (const label of ['Texto', 'Fuente', 'Tamaño', 'Color', 'Alineación', 'Interlineado', 'Ajustar líneas', 'Posición X', 'Posición Y', 'Ancho', 'Alto']) {
         const input = page.getByLabel(label, { exact: true }); await input.scrollIntoViewIfNeeded();
@@ -119,14 +129,14 @@ try {
       }
       const after = await geometry(page); assertBounds(after, phone);
       assert.deepEqual(await ensureButton(page, 'Aplicar cambios'), applyBefore, 'Apply must remain stationary while scrolling controls.');
-      assert.deepEqual(await ensureButton(page, 'Cancelar'), cancelBefore, 'Cancel must remain stationary while scrolling controls.');
+      assert.deepEqual(await ensureButton(page, 'Descartar edición'), cancelBefore, 'Discard must remain stationary while scrolling controls.');
       assert(after.inspectorScroll.scrollTop > 0, 'The properties body should expose its last controls by vertical scrolling.');
       assert.deepEqual(after.inspectorTop, before.inspectorTop, 'The selection heading must remain stationary while scrolling properties.');
       assert.equal(after.preview.scrollTop, before.preview.scrollTop);
       assert.equal(await page.locator('.modified-dot').count(), 0, 'Preview must not modify the source document.');
       await page.screenshot({ path: path.join(output, 'content-editor-layout-' + id + '.png'), animations: 'disabled' });
-      await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
-      await page.locator('.workbench').waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: 'Descartar edición', exact: true }).click();
+      await page.locator('.content-editor').waitFor({ state: 'detached' }); await picker.waitFor();
       results.push({ id, status: 'passed', simulatedPhone: phone, frontendEntry, previewHeight: before.canvas.height, inspectorScroll: after.inspectorScroll.scrollTop,
         fixedFooter: true, fixedSelectionHeading: true, allControlsReachable: visited, controlBounds, noHorizontalOverflow: true, originalUnchanged: true, geometry: after });
     } catch (error) {

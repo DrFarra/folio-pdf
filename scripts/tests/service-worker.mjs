@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 
 // The installed web app opens offline, keeps one cache per version and never
 // answers unhashed files from the cache while the network works.
@@ -13,7 +14,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'previe
 const results = []; let browser;
 try {
   for (let attempt = 0; attempt < 100; attempt++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 100)); }
-  const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+  const chrome = findChrome();
   browser = await chromium.launch({ executablePath: chrome });
   const context = await browser.newContext(), page = await context.newPage(); page.setDefaultTimeout(20000);
   // A cache left by an earlier version of the worker.

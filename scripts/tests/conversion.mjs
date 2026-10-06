@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import * as mupdf from 'mupdf';
@@ -25,7 +26,7 @@ const annotated = writeAnnotations(source, [{ id: 'conversion-highlight', kind: 
 const oversized = await PDFDocument.create(); oversized.addPage([2000, 2000]);
 const oversizedBytes = new Uint8Array(await oversized.save());
 const digest = bytes => createHash('sha256').update(bytes).digest('hex'), originalHash = digest(source);
-const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+const executablePath = findChrome();
 assert(executablePath, 'A Chromium executable is required.');
 const origin = 'http://127.0.0.1:4248';
 // Test the source module through Vite without modifying or rebuilding shared dist.

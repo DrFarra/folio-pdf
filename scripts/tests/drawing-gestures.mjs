@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const out = 'test-results/drawing'; fs.mkdirSync(out, { recursive: true });
@@ -15,7 +16,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'previe
 const results = []; let browser;
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(fs.existsSync);
+  const chrome = findChrome();
   browser = await chromium.launch({ executablePath: chrome, headless: true });
   for (const [layout, width, height] of [['desktop', 1360, 980], ['tablet', 800, 1000], ['phone', 390, 844]]) {
     const mobile = layout !== 'desktop';

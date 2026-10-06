@@ -54,7 +54,7 @@ export default function ReadingSettings(props: Props) {
     </details>
     <h3>Acerca de Folio</h3>
     <p className="modal-description">Folio es software libre bajo la licencia AGPL-3.0 o posterior y se ofrece sin ninguna garantía.</p>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+    <div className="settings-about-links">
       <button className="secondary-button" onClick={showLicense}>Ver licencia</button>
       <button className="secondary-button" onClick={() => visit(`https://raw.githubusercontent.com/FarraPY/folio-pdf/v${version}/THIRD-PARTY-NOTICES.txt`)}>Avisos de terceros</button>
       <button className="secondary-button" onClick={() => visit(`https://github.com/FarraPY/folio-pdf/releases/tag/v${version}`)}>Código fuente</button>
@@ -64,7 +64,7 @@ export default function ReadingSettings(props: Props) {
     <div className="modal-actions"><span className="folio-version">Folio · {version}</span><button className="primary-button" onClick={props.onClose}><Check size={15} />Listo</button></div>
   </Modal>
   {license && <Modal title="Licencia de Folio" onClose={() => setLicense(null)}>
-    {license.text ? <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, lineHeight: 1.5 }}>{license.text}</pre> : <p className="modal-description" role={license.failed ? 'alert' : 'status'}>{license.failed ? 'No se pudo abrir la licencia. Puedes leerla en gnu.org/licenses/agpl-3.0.' : 'Cargando la licencia…'}</p>}
+    {license.text ? <pre className="license-text">{license.text}</pre> : <p className="modal-description" role={license.failed ? 'alert' : 'status'}>{license.failed ? 'No se pudo abrir la licencia. Puedes leerla en gnu.org/licenses/agpl-3.0.' : 'Cargando la licencia…'}</p>}
   </Modal>}
   </>;
 }

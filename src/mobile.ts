@@ -66,5 +66,3 @@ export function visibleBounds() {
   const left = (viewport?.offsetLeft || 0) + safe('left'), top = (viewport?.offsetTop || 0) + safe('top');
   return { left, top, right: (viewport?.offsetLeft || 0) + (viewport?.width || innerWidth) - safe('right'), bottom: (viewport?.offsetTop || 0) + (viewport?.height || innerHeight) - safe('bottom') };
 }
-
-export function usePhoneLayout() { return useDeviceLayout() === 'phone'; }

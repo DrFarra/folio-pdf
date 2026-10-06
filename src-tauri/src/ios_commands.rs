@@ -21,9 +21,10 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
     let input = home.join("Documents").join("FolioNativeFixtures");
     let paths = [input.join("Folio native pequeño.PDF"), input.join("Folio native 2GiB.pdf")];
     let response = mobile_call(app.clone(), "importPaths", serde_json::json!({"paths":paths})).await?;
-    let documents = register_imports(&desktop, response)?;
+    let opened = register_imports(&desktop, response)?;
+    if let Some(error) = opened.errors.into_iter().next() { return Err(error); }
     let mut reports = Vec::new();
-    for info in documents {
+    for info in opened.documents {
         let (path, _) = pdf_source(&desktop, &info.token)?;
         let metadata = mobile_call(app.clone(), "pdfOpen", serde_json::json!({"token":info.token,"path":path,"id":info.id,"revision":info.revision,"size":info.size,"password":""})).await?;
         if metadata["numPages"].as_u64() != Some(2) || metadata["locked"] != false { return Err("PDFKit no abrió las dos páginas del fixture.".into()); }
@@ -136,21 +137,26 @@ async fn mobile_call(app: tauri::AppHandle, command: &'static str, args: Value) 
     })).await.map_err(|_| FAILED.to_string())?
 }
 
-fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
+/// Swift keeps the copies that worked and reports each PDF that failed.
+fn register_imports(desktop: &Desktop, response: Value) -> Result<SystemOpen, String> {
     let paths = response["paths"].as_array().ok_or("No se recibieron los archivos elegidos.")?;
-    paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
+    let mut opened = SystemOpen { documents: Vec::new(), errors: response["errors"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(str::to_owned)).collect() };
+    for path in paths {
+        match path.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p))) {
+            Ok(info) => opened.documents.push(info),
+            Err(error) => opened.errors.push(error),
+        }
+    }
+    Ok(opened)
 }
 
 #[tauri::command]
 pub async fn pick_documents(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Vec<DocumentInfo>, String> {
-    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":true})).await?;
-    register_imports(&desktop, response)
-}
-
-#[tauri::command]
-pub async fn pick_document(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
-    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":false})).await?;
-    Ok(register_imports(&desktop, response)?.into_iter().next())
+    let response = mobile_call(app.clone(), "pickDocuments", serde_json::json!({"multiple":true})).await?;
+    let opened = register_imports(&desktop, response)?;
+    // A file that cannot be opened is reported on its own; the others still open.
+    for error in opened.errors { let _ = app.emit("folio-open-error", error); }
+    Ok(opened.documents)
 }
 
 fn reserve_output(desktop: &Desktop, source: Option<String>, name: String, format: String) -> Result<String, String> {
@@ -276,10 +282,6 @@ pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHan
     response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
-fn source_path(desktop: &Desktop, token: &str) -> Result<PathBuf, String> {
-    desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.get(token).map(|s| s.path.clone()).ok_or("El documento no está disponible.".into())
-}
-
 fn pdf_source(desktop: &Desktop, token: &str) -> Result<(PathBuf, DocumentInfo), String> {
     let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
     let source = files.sources.get(token).ok_or("El documento no está disponible.")?;
@@ -358,35 +360,18 @@ pub async fn native_pdf_present(token: String, name: String, action: String, ann
     response.map(|_| if action == "save" { Value::Null } else { Value::Bool(completed) })
 }
 
-#[tauri::command]
-pub async fn share_document(token: String, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
-    let path = source_path(&desktop, &token)?;
-    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path})).await?;
-    Ok(response["completed"].as_bool() == Some(true))
-}
-
-#[tauri::command]
-pub async fn print_document(token: String, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
-    let path = source_path(&desktop, &token)?;
-    let response = mobile_call(app, "printFile", serde_json::json!({"path":path})).await?;
-    Ok(response["completed"].as_bool() == Some(true))
-}
-
 pub fn open_urls(app: tauri::AppHandle, urls: Vec<tauri::Url>) {
     let paths = file_url_paths(urls).into_iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
     if paths.is_empty() { return; }
     tauri::async_runtime::spawn(async move {
         match mobile_call(app.clone(), "importPaths", serde_json::json!({"paths":paths})).await {
             Ok(response) => {
-                let copies = response["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect();
-                open_from_system(&app, copies);
+                let errors = response["errors"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(str::to_owned)).collect::<Vec<_>>();
+                if !errors.is_empty() { deliver(&app, SystemOpen { documents: Vec::new(), errors }); }
+                let copies = response["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect::<Vec<_>>();
+                if !copies.is_empty() { open_from_system(&app, copies); }
             }
-            Err(error) => {
-                let opened = SystemOpen { documents: Vec::new(), errors: vec![error] };
-                if let Ok(mut files) = app.state::<Desktop>().files.lock() {
-                    if let Some(opened) = files.queue_system_open(opened) { for error in opened.errors { let _ = app.emit("folio-open-error", error); } }
-                };
-            }
+            Err(error) => deliver(&app, SystemOpen { documents: Vec::new(), errors: vec![error] }),
         }
     });
 }

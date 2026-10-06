@@ -1,4 +1,4 @@
-Build environment used for Folio 0.6.0, 2026-10-04
+Windows portable build environment (scripts/windows-env.ps1)
 
 Host: Windows x64; Node 24.19.0, npm 11.17.0, Rust 1.99.0 MSVC.
 A project-local toolchain was used without changing the system PATH:
@@ -18,52 +18,32 @@ archive. A standard Visual Studio C++/SDK installation can build the project
 with npm ci followed by npm run desktop:build, without this adapter.
 
 The release build uses the default production identifier org.folio.pdf and
-does not enable native-qa or a WebView2 remote-debugging port. The current
-delivery's evidence records actual build hashes, frontend asset hashes and
-the scope/version of each test. The installer was built without executing it.
-Historical runtime acceptance is recorded in docs/acceptance-windows.md;
-those reports establish acceptance only for their recorded versions.
+does not enable native-qa or a WebView2 remote-debugging port.
 
-Original 0.2.0 build record follows:
+Linux cross-compilation (experimental)
 
-Build environment used for Folio 0.2.0, 2026-10-03
+Host: Debian 13 Linux x86_64. Windows target: x86_64-pc-windows-msvc.
+Tauri CLI: locked npm dependency. Native dependency graph: src-tauri/Cargo.lock.
 
-Host: Debian 13 Linux x86_64, Node 24.19.0, Python 3.12.14,
-Rust 1.99.0 (b940084d7 2026-09-28). Tests: Chromium headless on Linux.
-Windows target: x86_64-pc-windows-msvc.
-Tauri CLI: 2.12.1, locked npm dependency.
-Native dependency graph: src-tauri/Cargo.lock.
-
-Cross-compile image: folio-windows-build, built from rust:slim-bookworm.
-Image ID: sha256:d13a6102ad6fa95938f6f2aa7329d97d1fe01ad792502f34c9aa5ad18e010e5b
-Dockerfile is supplied in docs/windows-build.Dockerfile.
-It installs clang/lld/llvm/NSIS, cargo-xwin and the MSVC Rust target.
-BuildKit secret ca_bundle supplies the environment's combined CA certificate.
-Keep proxy and TLS settings configured by the execution environment.
-
-Example image build, from a host with Docker and its trusted CA bundle:
+docs/windows-build.Dockerfile builds the folio-windows-build image from
+rust:slim-bookworm. It installs clang/lld/llvm/NSIS, cargo-xwin and the MSVC
+Rust target. BuildKit secret ca_bundle supplies the host's trusted CA bundle:
   docker build --secret id=ca_bundle,src=/path/to/combined-ca.crt \
     -t folio-windows-build -f docs/windows-build.Dockerfile .
-The supplied scripts/cargo-windows.sh uses local Docker, mounts the workspace,
-its CA bundle and named caches, and accepts the Microsoft SDK/CRT terms required
-by cargo-xwin. Review these terms before independently using that build route.
+scripts/cargo-windows.sh runs cargo xwin in that image with local Docker,
+mounting the workspace, its CA bundle and named caches, and accepts the
+Microsoft SDK/CRT terms required by cargo-xwin. Review these terms before
+using this build route.
 
-Command used from the application root:
+From the application root:
   npx tauri build --target x86_64-pc-windows-msvc --no-bundle \
-    --runner /workspace/sites/folio-pdf/scripts/cargo-windows.sh
-
-NSIS bundle generated with Linux NSIS 3.08, Tauri's downloaded
-nsis_tauri_utils-v0.5.3.dll, and Win/RestartManager.nsh from upstream NSIS.
-The additional header is supplied in docs/nsis/RestartManager.nsh.
-Tauri's latest template needs that header; NSIS 3.08 does not include it.
-The local makensis wrapper ran the tool inside the Docker image while mounting
-the workspace, Tauri cache and the supplied header. A normal Windows build uses
-Tauri's Windows bundling tools and does not need this Linux wrapper.
-
-Bundle command used:
+    --runner "$PWD/scripts/cargo-windows.sh"
   npx tauri bundle --target x86_64-pc-windows-msvc --ci
 
-Cross-platform bundling is marked experimental by Tauri. The MSVC binary is
-PE32+ Windows x64. This verifies compilation and packaging, not Windows startup,
-dialogs, associations, installation or SmartScreen acceptance. No signing
-certificate, auto-updater or Windows CI execution was used for this release.
+Bundling on Linux uses NSIS from the image, Tauri's downloaded
+nsis_tauri_utils DLL and Win/RestartManager.nsh from upstream NSIS, supplied in
+docs/nsis/RestartManager.nsh because Debian's NSIS 3.08 does not include it.
+Tauri marks cross-platform bundling as experimental. This route verifies
+compilation and packaging, not Windows startup, dialogs, file associations,
+installation or SmartScreen acceptance; a normal Windows build uses Tauri's
+Windows bundling tools.

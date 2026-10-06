@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 
@@ -16,7 +17,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'previe
 let browser;
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch('http://127.0.0.1:4281')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  browser = await chromium.launch({ executablePath: findChrome(), headless: true });
   for (const [layout, width, height] of [['tablet', 1280, 800], ['phone', 390, 844]]) {
     if (process.env.FOLIO_SAVE_LAYOUT && process.env.FOLIO_SAVE_LAYOUT !== layout) continue;
     const context = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true, userAgent: `Mozilla/5.0 (Linux; Android 15; ${layout}) AppleWebKit/537.36 Chrome/140.0.0.0 ${layout === 'phone' ? 'Mobile ' : ''}Safari/537.36` });

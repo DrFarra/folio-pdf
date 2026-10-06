@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -25,7 +26,7 @@ for (const letter of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']) {
   sources.push({ letter, file, name: path.basename(file), hash: createHash('sha256').update(bytes).digest('hex') });
 }
 const [a, b, c] = sources;
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'An installed Chrome or Edge is required.');
 const origin = 'http://127.0.0.1:4178';
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', '4178', '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
@@ -207,6 +208,21 @@ try {
     assert.deepEqual(await tabOrder(page), [...sources.slice(1).map(source => source.name), a.name]); await active(page, sources.at(-1));
     await page.keyboard.press('Control+Tab'); await active(page, a);
     return { edgeAutoScroll: true, movedFirstTabToLastPosition: true, activeDocumentPreserved: true, keyboardOrderAfterScroll: true };
+  });
+
+  await check('wheel-scrolls-overflowing-strip-by-whole-tabs', async page => {
+    await page.setViewportSize({ width: 1000, height: 690 });
+    await page.locator('.app-header input[type=file]').setInputFiles(sources.slice(1).map(source => source.file)); await active(page, sources.at(-1));
+    const strip = page.locator('.document-tab-strip'); await strip.evaluate(node => { node.scrollLeft = 0; });
+    const stops = await strip.evaluate(node => [...node.children].map(tab => Math.min(tab.offsetLeft - node.offsetLeft, node.scrollWidth - node.clientWidth)));
+    const reaches = stop => page.waitForFunction(stop => Math.abs(document.querySelector('.document-tab-strip').scrollLeft - stop) < 2, stop);
+    const bounds = await strip.boundingBox(); assert(bounds); await page.mouse.move(bounds.x + 40, bounds.y + bounds.height / 2);
+    await page.mouse.wheel(0, 100); await reaches(stops[1]);
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, 10);
+    await page.waitForTimeout(200); assert(Math.abs(await strip.evaluate(node => node.scrollLeft) - stops[1]) < 2, 'Small trackpad steps must add up before the strip moves a whole tab.');
+    await page.mouse.wheel(0, 10); await reaches(stops[2]);
+    await page.mouse.wheel(0, -100); await reaches(stops[1]);
+    return { verticalWheelScrollsStrip: true, stopsAtTabStarts: true, smallStepsAccumulate: true };
   });
 
   await check('each-tab-restores-page-zoom-and-scroll', async page => {

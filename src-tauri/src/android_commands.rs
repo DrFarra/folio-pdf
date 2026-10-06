@@ -20,6 +20,7 @@ pub fn watch_system_documents(app: tauri::AppHandle) {
         if let InvokeResponseBody::Json(json) = body {
             let value: Value = serde_json::from_str(&json)?;
             if let Some(error) = value["error"].as_str() { incoming_error(&receiver, error.to_owned()); }
+            for error in value["errors"].as_array().into_iter().flatten().filter_map(Value::as_str) { incoming_error(&receiver, error.to_owned()); }
             let paths = value["paths"].as_array().into_iter().flatten().filter_map(|path| path.as_str().map(PathBuf::from)).collect::<Vec<_>>();
             if !paths.is_empty() { open_from_system(&receiver, paths); }
         }
@@ -41,21 +42,26 @@ async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Resul
         _ => FAILED.into(),
     })).await.map_err(|_| FAILED.to_string())?
 }
-fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
+/// Kotlin keeps the copies that worked and reports each PDF that failed.
+fn register_imports(desktop: &Desktop, response: Value) -> Result<SystemOpen, String> {
     let paths = response["paths"].as_array().ok_or("No se recibieron los archivos elegidos.")?;
-    paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
+    let mut opened = SystemOpen { documents: Vec::new(), errors: response["errors"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(str::to_owned)).collect() };
+    for path in paths {
+        match path.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p))) {
+            Ok(info) => opened.documents.push(info),
+            Err(error) => opened.errors.push(error),
+        }
+    }
+    Ok(opened)
 }
 
 #[tauri::command]
 pub async fn pick_documents(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Vec<DocumentInfo>, String> {
-    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":true})).await?;
-    register_imports(&desktop, response)
-}
-
-#[tauri::command]
-pub async fn pick_document(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<DocumentInfo>, String> {
-    let response = mobile_call(app, "pickDocuments", serde_json::json!({"multiple":false})).await?;
-    Ok(register_imports(&desktop, response)?.into_iter().next())
+    let response = mobile_call(app.clone(), "pickDocuments", serde_json::json!({"multiple":true})).await?;
+    let opened = register_imports(&desktop, response)?;
+    // A file that cannot be opened is reported on its own; the others still open.
+    for error in opened.errors { let _ = app.emit("folio-open-error", error); }
+    Ok(opened.documents)
 }
 
 fn reserve_output(desktop: &Desktop, source: Option<String>, name: String, format: String) -> Result<String, String> {

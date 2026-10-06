@@ -1,10 +1,10 @@
-import fs from 'node:fs';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {chromium} from 'playwright-core';
+import fs from 'node:fs';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {chromium} from 'playwright-core';import { findChrome } from './browser.mjs';
 const out='test-results/android';fs.mkdirSync(out,{recursive:true});
 const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port','4277'],{stdio:'ignore',windowsHide:true});
 let browser;const results=[];
 try{
 for(let i=0;i<60;i++){try{if((await fetch('http://127.0.0.1:4277')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
-browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+browser=await chromium.launch({executablePath:findChrome(),headless:true});
 for(const [name,width,height,sw,sh]of [['tablet-portrait',800,1280,800,1280],['tablet-landscape',1280,800,800,1280],['tablet-small',600,960,600,960],['phone',390,844,390,844],['phone-landscape',844,390,390,844],['tablet-split',480,800,800,1280],['desktop',1360,900,1360,900]]){
 if(process.env.FOLIO_UI_CASE&&process.env.FOLIO_UI_CASE!==name)continue;
 const mobile=name!=='desktop',phone=width<600||Math.min(sw,sh)<600;
@@ -78,13 +78,19 @@ if(name==='tablet-landscape'){
   await page.getByRole('dialog',{name:'Anotaciones',exact:true}).getByText('Dibujo a mano').waitFor();
   await page.getByRole('button',{name:'Cerrar panel',exact:true}).click();
   await page.getByRole('button',{name:'Buscar en el PDF',exact:true}).click();
-  await page.getByRole('textbox',{name:'Buscar texto en el PDF'}).fill('observar');
+  await page.getByRole('textbox',{name:'Buscar texto en el PDF'}).fill('marcador');
   await page.locator('.search-result').first().click();
   await page.getByRole('toolbar',{name:'Resultados de búsqueda'}).waitFor();
   await page.getByRole('button',{name:'Resultado siguiente',exact:true}).click();
   await page.getByRole('button',{name:'Cerrar búsqueda',exact:true}).click();
   await page.getByRole('button',{name:'Documentos abiertos y recientes',exact:true}).click();
   await page.getByRole('dialog',{name:'Documentos abiertos y recientes'}).getByRole('button',{name:'Cambiar a sample.pdf'}).click();
+  // The results are on page 6; the ink is on page 1, which is only rendered near the reading position.
+  await page.getByRole('button',{name:'Ir a página',exact:true}).click();
+  await page.getByRole('textbox',{name:/^Página \(1–/}).fill('1');
+  await page.getByRole('dialog',{name:'Ir a página'}).getByRole('button',{name:'Ir a página',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.tablet-page-jump')?.textContent?.trim().startsWith('1 /'));
+  await page.locator('[data-ink-id]').first().waitFor();
   assert.equal(await page.locator('[data-ink-id]').count(),1);
   await page.getByRole('button',{name:'Más acciones del documento',exact:true}).click();
   await page.getByRole('button',{name:'Vista del documento',exact:true}).click();

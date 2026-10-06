@@ -60,7 +60,7 @@ class OriginalDocumentTest {
         provider.file = File(context.cacheDir, "Apuntes.pdf").apply { writeBytes(before) }
         provider.attachInfo(context, ProviderInfo().apply { authority = "originals" })
         ShadowContentResolver.registerProviderInternal("originals", provider)
-        source = importDocuments(context, listOf(uri)).single()
+        source = importDocuments(context, listOf(uri)).files.single()
     }
     private fun edited(name: String = "save1") = File(File(context.filesDir, name).apply { mkdirs() }, "Apuntes.pdf").apply { writeBytes(after) }
 

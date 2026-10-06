@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
@@ -90,11 +91,7 @@ function pdfAnnotations(bytes) {
 const retainedOriginal = pdfAnnotations(importedBytes).filter(annotation => annotation.name !== targetName);
 assert(retainedOriginal.find(annotation => annotation.name === retainedName)?.appearance);
 
-const chrome = process.env.CHROME_PATH || [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/chromium', '/usr/bin/google-chrome',
-].find(fs.existsSync);
+const chrome = findChrome();
 assert(process.env.FOLIO_TEST_BROWSER === 'webkit' || chrome, 'CHROME_PATH must identify an installed Chrome or Edge.');
 const port = process.env.FOLIO_REMOVE_HIGHLIGHT_PORT || '4183', origin = `http://127.0.0.1:${port}`;
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'),

@@ -15,26 +15,29 @@ import java.util.concurrent.Executor
 
 /** Both the system picker and external apps import through ContentResolver.
  * A content:// URI is a temporary grant, not a filesystem path. Keep our copy
- * so that recent documents still work after the sending app releases it. */
-internal fun importDocuments(context: Context, uris: List<Uri>, flags: Int = 0): List<File> {
-    val copied = mutableListOf<File>()
-    try {
-        val unique = uris.distinct()
-        ensure(unique.size <= 20) { "Importa un máximo de 20 PDF a la vez." }
-        for (uri in unique) {
+ * so that recent documents still work after the sending app releases it.
+ * A PDF that cannot be imported is reported in [Imported.errors] and only its
+ * copy is removed: the others still open. */
+internal class Imported(val files: List<File>, val errors: List<String>)
+internal fun importDocuments(context: Context, uris: List<Uri>, flags: Int = 0): Imported {
+    val unique = uris.distinct()
+    ensure(unique.size <= 20) { "Importa un máximo de 20 PDF a la vez." }
+    val copied = mutableListOf<File>(); val errors = mutableListOf<String>()
+    for (uri in unique) {
+        var name: String? = null; var folder: File? = null
+        try {
             // A file:// URI would let another app make Folio read its own private files.
             ensure(uri.scheme == "content") { "La aplicación no envió un archivo PDF accesible." }
-            var name = runCatching {
+            name = (runCatching {
                 context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                     val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
                 }
-            }.getOrNull() ?: uri.lastPathSegment ?: "Documento.pdf"
-            name = name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\p{Cntrl}]"), "_").take(180)
-            if (name.isBlank()) name = "Documento.pdf"
-            if (!name.endsWith(".pdf", true)) name += ".pdf"
-            val folder = File(context.filesDir, "FolioImports/${UUID.randomUUID()}").apply { mkdirs() }
-            val file = File(folder, name); copied.add(file)
+            }.getOrNull() ?: uri.lastPathSegment ?: "Documento.pdf")
+                .substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\p{Cntrl}]"), "_").take(180)
+                .ifBlank { "Documento.pdf" }.let { if (it.endsWith(".pdf", true)) it else "$it.pdf" }
+            folder = File(context.filesDir, "FolioImports/${UUID.randomUUID()}").apply { mkdirs() }
+            val file = File(folder, name)
             val source = try { context.contentResolver.openInputStream(uri) }
                 catch (_: SecurityException) { throw FolioError("Folio no tiene permiso para abrir este PDF. Ábrelo de nuevo desde la aplicación de origen.") }
                 catch (_: FileNotFoundException) { throw FolioError("No se pudo leer el PDF. Comprueba que siga disponible y vuelve a intentarlo.") }
@@ -52,12 +55,14 @@ internal fun importDocuments(context: Context, uris: List<Uri>, flags: Int = 0):
             }) { "El archivo recibido no es un PDF." }
             retainDocumentAccess(context, uri, flags)
             rememberOriginal(file, uri)
+            copied.add(file)
+        } catch (error: Exception) {
+            folder?.deleteRecursively()
+            val message = userMessage(error, "No se pudo importar el PDF.")
+            errors.add(if (name != null && unique.size > 1) "«$name»: $message" else message)
         }
-        return copied
-    } catch (error: Exception) {
-        copied.forEach { File(it.parentFile, it.name + ".origin.json").delete(); it.delete(); it.parentFile?.delete() }
-        throw error
     }
+    return Imported(copied, errors)
 }
 
 /** Imports live in filesDir. Rust keeps saved copies and drafts in Tauri's app
@@ -115,7 +120,7 @@ internal class IncomingDocuments(private val context: Context, private val io: E
             val event = try {
                 val incoming = uris.getOrThrow()
                 ensure(incoming.isNotEmpty()) { "La aplicación no envió el archivo. Prueba a compartir el PDF con Folio." }
-                paths(importDocuments(context, incoming, intent.flags))
+                importDocuments(context, incoming, intent.flags).let { paths(it.files, it.errors) }
             } catch (error: Exception) { JSObject().put("error", userMessage(error, "No se pudo abrir el PDF recibido.")) }
             dispatch(event)
         }
@@ -124,7 +129,8 @@ internal class IncomingDocuments(private val context: Context, private val io: E
     /** Opens a PDF that Folio wrote itself, such as a recovered previous version. */
     fun deliver(files: List<File>) = io.execute { dispatch(paths(files)) }
 
-    private fun paths(files: List<File>) = JSObject().put("paths", JSArray().apply { files.forEach { put(it.absolutePath) } })
+    private fun paths(files: List<File>, errors: List<String> = emptyList()) = JSObject().put("paths", JSArray().apply { files.forEach { put(it.absolutePath) } })
+        .apply { if (errors.isNotEmpty()) put("errors", JSArray().apply { errors.forEach { put(it) } }) }
     private fun dispatch(event: JSObject) {
         val callback = listener
         if (callback == null) pending.add(event) else callback(event)

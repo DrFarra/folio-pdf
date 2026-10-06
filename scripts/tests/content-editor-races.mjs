@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -55,7 +56,7 @@ createRoot(document.getElementById('root')).render(<ContentEditor doc={doc} area
  onApply={async operation => { window.__race.applied = { ...operation, image: Array.from(operation.image) }; }} onCancel={() => {}} />);
 `);
 
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'A Chromium executable is required.');
 const port = process.env.FOLIO_EDITOR_RACES_PORT || '4259', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });

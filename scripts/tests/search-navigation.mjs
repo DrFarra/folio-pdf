@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { build } from 'vite';
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 
 // Real PDF.js extraction/DOM and reader interactions; PDFKit IPC is mocked
 // explicitly to check only the adapter contract, not native device behavior.
@@ -52,7 +53,7 @@ const outlineChild = fixture.context.register(fixture.context.obj({ Title: PDFSt
 for (const ref of [outlineRoot, outlineParent]) { fixture.context.lookup(ref).set(PDFName.of('First'), ref === outlineRoot ? outlineParent : outlineChild); fixture.context.lookup(ref).set(PDFName.of('Last'), ref === outlineRoot ? outlineParent : outlineChild); }
 fixture.catalog.set(PDFName.of('Outlines'), outlineRoot);
 const bytes = [...await fixture.save()];
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'CHROME_PATH must identify installed Chrome or Edge.');
 const port = process.env.FOLIO_SEARCH_TEST_PORT || '4205', origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--outDir', previewDirectory, '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe', windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });

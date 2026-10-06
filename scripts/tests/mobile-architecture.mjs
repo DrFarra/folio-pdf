@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
 import { storedSession, waitForSession } from './session-helpers.mjs';
 
@@ -113,7 +114,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert(ready, log || 'The app server did not become ready.');
-  const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find(fs.existsSync);
+  const executablePath = findChrome();
   browser = process.env.FOLIO_TEST_BROWSER === 'webkit' ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath, headless: true });
 
   await check('library-is-root-and-back-preserves-document', async page => {

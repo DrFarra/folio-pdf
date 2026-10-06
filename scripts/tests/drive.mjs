@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { writeAnnotations, inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 const out='test-results/drive';fs.mkdirSync(out,{recursive:true});
 const original=fs.readFileSync('public/sample.pdf');
@@ -18,7 +19,7 @@ let browser;const results=[];
 try {
   for(let n=0;n<80;n++){try{if((await fetch('http://127.0.0.1:4291')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
   const engine=process.env.FOLIO_TEST_BROWSER==='webkit'?'webkit':'chromium';
-  browser=engine==='webkit'?await webkit.launch({headless:true}):await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+  browser=engine==='webkit'?await webkit.launch({headless:true}):await chromium.launch({executablePath:findChrome(),headless:true});
   const layouts=[
     ['android-phone',390,844,'Linux; Android 15; Pixel Mobile',true],
     ['android-tablet',800,1280,'Linux; Android 15; Tablet',true],

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -54,7 +55,7 @@ imagePixmap.destroy(); imageMuPage.destroy(); imageDoc.destroy();
 const withImage = operateDocument(original, { operation: 'add-image', page: 1, rect: [40, 60, 240, 160], image: imageBytes });
 const imageSource = path.join(output, 'content-editor-image-source.pdf'); fs.writeFileSync(imageSource, withImage);
 
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'A Chromium executable is required.');
 const port = process.env.FOLIO_EDITOR_UI_PORT || '4201', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
@@ -71,24 +72,54 @@ async function open(page, file = source) {
   await page.locator('.reading-area').evaluate(node => { node.scrollTop = 0; });
   await page.locator('.pdf-page-wrap').first().locator('.page-loading').waitFor({ state: 'detached' });
 }
-async function editor(page, action, box, number = 1) {
-  await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
-  await page.getByRole('button', { name: action, exact: true }).click();
-  const bounds = await page.locator('.pdf-page-wrap[data-page-number="' + number + '"] .pdf-page').boundingBox(); assert(bounds);
-  await page.mouse.move(bounds.x + box[0], bounds.y + box[1]); await page.mouse.down();
-  await page.mouse.move(bounds.x + box[2], bounds.y + box[3], { steps: 8 }); await page.mouse.up();
+const picker = (page, number) => page.locator(`.pdf-content-picker${number ? `[data-page="${number}"]` : ''}[data-picker-state="ready"]`).waitFor({ timeout: 60000 });
+// Adding and replacing content lives in Herramientas → Editar PDF: add tools draw
+// on the selector page at 100 % (1 pt = 1 px); replace tools select a detected item.
+async function editor(page, action, box = null, number = 1) {
+  if (!await page.locator('.pdf-content-picker').count()) {
+    await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
+    await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
+  }
+  const selector = page.locator('.pdf-content-picker'); await picker(page);
+  if (await selector.getAttribute('data-page') !== String(number)) { await selector.getByLabel('Página del editor', { exact: true }).fill(String(number)); await selector.getByLabel('Página del editor', { exact: true }).press('Enter'); }
+  await picker(page, number);
+  if (await selector.getByRole('button', { name: '100 %', exact: true }).getAttribute('aria-pressed') !== 'true') { await selector.getByRole('button', { name: '100 %', exact: true }).click(); await page.waitForFunction(() => document.querySelector('.pdf-content-picker [aria-label="Zoom actual"]')?.textContent === '100 %'); }
+  await picker(page, number);
+  if (action === 'Reemplazar texto') await selector.getByRole('button', { name: /^(Párrafo|Texto): ORIGINAL TEXT$/ }).first().click();
+  else if (action === 'Reemplazar imagen') await selector.locator('.pdf-content-item[data-kind="image"][data-editable="true"]').first().click();
+  else {
+    await selector.getByRole('button', { name: action, exact: true }).click(); await stageSettled(page);
+    const bounds = await selector.locator('.pdf-picker-stage').boundingBox(); assert(bounds);
+    await page.mouse.move(bounds.x + box[0], bounds.y + box[1]); await page.mouse.down();
+    await page.mouse.move(bounds.x + box[2], bounds.y + box[3], { steps: 8 }); await page.mouse.up();
+  }
   await page.locator('.content-editor').waitFor(); await page.locator('.content-preview canvas').waitFor();
 }
+// Choosing a tool changes the hint below the page, which can resize and re-render the page: draw once it is stable.
+const stageSettled = page => page.waitForFunction(() => new Promise(resolve => {
+  const stage = document.querySelector('.pdf-content-picker[data-picker-state="ready"] .pdf-picker-stage'); if (!stage) { resolve(false); return; }
+  const before = JSON.stringify(stage.getBoundingClientRect());
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve(stage.isConnected && stage.closest('.pdf-content-picker').dataset.pickerState === 'ready' && JSON.stringify(stage.getBoundingClientRect()) === before)));
+}));
 async function ready(page) {
   await page.locator('.content-editor[data-preview-state=ready]').waitFor({ timeout: 60000 });
   // ResizeObserver may schedule one more render after the viewport changes.
   // Trial action waits for an enabled, stable button without committing edits.
   await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click({ trial: true, timeout: 60000 });
 }
+// The inline editor stays open on the selector after applying or discarding; Listo returns to the reader.
+async function closeEditor(page) {
+  await picker(page); await page.getByRole('button', { name: 'Listo', exact: true }).click();
+  await page.locator('.workspace-editor').waitFor({ state: 'detached', timeout: 60000 });
+  await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+}
 async function apply(page) {
   await ready(page); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click();
-  await page.locator('.workbench').waitFor({ state: 'detached', timeout: 60000 });
-  await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+  await page.locator('.content-editor').waitFor({ state: 'detached', timeout: 60000 }); await closeEditor(page);
+}
+async function discard(page) {
+  await page.getByRole('button', { name: 'Descartar edición', exact: true }).click();
+  await page.locator('.content-editor').waitFor({ state: 'detached' }); await closeEditor(page);
 }
 async function save(page, name) {
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Descargar', exact: true }).click();
@@ -112,8 +143,8 @@ try {
   for (let attempt = 0; attempt < 100; attempt++) { try { if ((await fetch(origin)).ok) break; } catch {} if (server.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }
   browser = await chromium.launch({ executablePath: chrome, headless: true });
   await check('replacement-preview-move-export-and-one-history-step', async page => {
-    await editor(page, 'Reemplazar texto', [35, 128, 215, 159]);
-    await page.getByRole('button', { name: 'Usar texto del área', exact: true }).click();
+    await editor(page, 'Reemplazar texto');
+    // The selected text starts as the editable value.
     await page.waitForFunction(() => document.querySelector('.content-editor textarea')?.value.includes('ORIGINAL TEXT'));
     await page.getByLabel('Texto', { exact: true }).fill('REPLACED CONTENT');
     await page.getByLabel('Tamaño', { exact: true }).fill('14');
@@ -148,7 +179,8 @@ try {
     await page.getByLabel('Texto', { exact: true }).fill('LATEST DRAFT'); await ready(page);
     const latest = await page.locator('.content-preview canvas').evaluate(canvas => canvas.toDataURL());
     await page.getByRole('button', { name: 'Volver a Herramientas', exact: true }).click();
-    await page.getByRole('button', { name: 'Añadir texto', exact: true }).click();
+    await page.getByText('Tienes una edición sin aplicar.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
     assert.equal(await page.getByLabel('Texto', { exact: true }).inputValue(), 'LATEST DRAFT'); await ready(page);
     assert.equal(await page.locator('.content-preview canvas').evaluate(canvas => canvas.toDataURL()), latest);
     await page.getByLabel('Tamaño', { exact: true }).fill('200');
@@ -160,7 +192,7 @@ try {
     assert((await visibleFailure.textContent()).includes('El texto no cabe'), 'The actual fit error must be visible in the fixed footer.');
     const failureBounds = await visibleFailure.boundingBox(), screen = page.viewportSize();
     assert(failureBounds && failureBounds.y >= 0 && failureBounds.y + failureBounds.height <= screen.height, 'The footer error must stay inside the viewport.');
-    await page.getByRole('button', { name: 'Cancelar', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await discard(page);
     assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled()); assert.equal(await page.locator('.modified-dot').count(), 0);
     const bytes = await save(page, 'editor-canceled.pdf'); assert.deepEqual(text(bytes), text(original));
     return { staleResultsDiscarded: true, draftSurvivesTools: true, invalidApplyBlocked: true, canceledDocumentUnchanged: true };
@@ -208,7 +240,7 @@ try {
     return { defaultPreservesAspect: true, dragAndResize: true, actualOpacityAndRotation: true, originalTextPreserved: true };
   });
   await check('replace-image-clears-original-region-and-keeps-neighbors', async page => {
-    await open(page, imageSource); await editor(page, 'Reemplazar imagen', [35, 335, 245, 445]);
+    await open(page, imageSource); await editor(page, 'Reemplazar imagen');
     await page.locator('.content-editor input[type=file]').setInputFiles(imageFile);
     await page.getByLabel('Bloquear proporción', { exact: true }).uncheck();
     await page.getByLabel('Ancho', { exact: true }).fill('100');
@@ -231,7 +263,7 @@ try {
     await page.locator('.content-editor[data-preview-state=error]').waitFor();
     assert(await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).isDisabled());
     await page.locator('.content-editor input[type=file]').setInputFiles(imageFile); await ready(page);
-    await page.getByRole('button', { name: 'Cancelar', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await discard(page);
     assert.equal(await page.locator('.modified-dot').count(), 0); assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled());
     return { corruptImageBlocked: true, validImageRecovery: true, canceledWithoutMutation: true };
   });
@@ -263,7 +295,7 @@ try {
     await page.evaluate(() => globalThis.__resumeEditorImage()); await ready(page);
     if (blocked) assert.equal(Number(await xInput.inputValue()), before);
     else { assert(Number(await xInput.inputValue()) >= 159); assert.equal(await page.getByLabel('Rotación', { exact: true }).inputValue(), '90'); }
-    await page.getByRole('button', { name: 'Cancelar', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await discard(page);
     return { uploadRaceGuarded: true, pointerOrLatestPositionPreserved: true, configurationLockedDuringUpload: blocked };
   });
   await check('rotated-cropped-page-box-mapping-and-short-window-footer', async page => {
@@ -299,7 +331,7 @@ try {
       assert(previewInk.count > 10 && previewInk.right - previewInk.left > 50 && previewInk.bottom - previewInk.top > 3, 'Preview must paint actual text ink across a meaningful glyph span, not merely retain extractable text: ' + JSON.stringify({ angle, previewInk }));
       assert(previewInk.left >= 118 && previewInk.top >= 98 && previewInk.right <= 362 && previewInk.bottom <= 182, 'Preview text ink must be inside the destination box: ' + JSON.stringify({ angle, previewInk }));
       await page.setViewportSize({ width: 1024, height: 600 }); await ready(page);
-      const applyBounds = await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).boundingBox(), cancelBounds = await page.getByRole('button', { name: 'Cancelar', exact: true }).boundingBox();
+      const applyBounds = await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).boundingBox(), cancelBounds = await page.getByRole('button', { name: 'Descartar edición', exact: true }).boundingBox();
       assert(applyBounds && cancelBounds && applyBounds.y + applyBounds.height <= 600 && cancelBounds.y + cancelBounds.height <= 600);
       await apply(page); const bytes = await save(page, 'editor-rotated-' + angle + '.pdf'); assert(text(bytes)[index].includes('ROTATED NEW TEXT ' + angle));
       const doc = new mupdf.PDFDocument(bytes), pdfPage = doc.loadPage(index), pixmap = pdfPage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);

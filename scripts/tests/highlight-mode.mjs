@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
@@ -20,7 +21,7 @@ lines.forEach((text, index) => sheet.drawText(text, { x: 60, y: 670 - 42 * index
 const originalBytes = await document.save(), sourceHash = createHash('sha256').update(originalBytes).digest('hex');
 fs.writeFileSync(source, originalBytes);
 const originalText = operateDocument(originalBytes, { operation: 'text' });
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'An installed Chrome or Edge is required.');
 const port = process.env.FOLIO_HIGHLIGHT_MODE_PORT || '4180', origin = `http://127.0.0.1:${port}`;
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });

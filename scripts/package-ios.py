@@ -177,7 +177,7 @@ certificado caduca o se revoca, vuelve a firmar la aplicación con uno válido.
 
 ## Primeros pasos
 
-Pulsa **Importar PDF** para elegir PDFs en Archivos, o abre un PDF desde otra
+Pulsa **Abrir PDF** para elegir PDFs en Archivos, o abre un PDF desde otra
 aplicación y elige Folio. Folio trabaja con una copia guardada en el
 dispositivo; el archivo original no cambia. **Guardar una copia** crea un PDF
 nuevo con tus anotaciones.
@@ -185,8 +185,8 @@ nuevo con tus anotaciones.
 ## Tus datos
 
 Los documentos se procesan en el dispositivo. Folio solo usa la cámara si
-eliges «Hacer foto» al añadir una imagen. En la biblioteca, **Eliminar copia
-local…** borra la copia de un PDF y sus cambios.
+eliges «Hacer foto» al añadir una imagen. En la **Biblioteca**, el menú de cada
+PDF ofrece **Eliminar de la biblioteca…**, que borra su copia y sus cambios.
 
 `Folio-{version}-ios-simulator-arm64.app.zip` es solo para el simulador de
 Xcode y no se puede instalar en un iPhone.

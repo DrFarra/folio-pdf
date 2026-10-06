@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { build, preview } from 'vite';
 
 // Exercise real IndexedDB with the application storage module, including the
@@ -25,12 +26,7 @@ try {
   const address = server.httpServer.address();
   assert(address && typeof address === 'object');
   const origin = `http://127.0.0.1:${address.port}`;
-  const executablePath = process.env.CHROME_PATH || [
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ].find(fs.existsSync);
+  const executablePath = findChrome();
   browser = process.env.FOLIO_TEST_BROWSER === 'webkit'
     ? await webkit.launch({ headless: true })
     : await chromium.launch({ executablePath, headless: true });

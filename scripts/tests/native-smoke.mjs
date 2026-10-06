@@ -196,11 +196,12 @@ try {
     throw new Error('El borrador nativo no contiene el resultado esperado.');
   }
   const editId = await openFixture('workbench-source.pdf');
-  await tool('Reemplazar texto'); await page.getByRole('combobox',{name:'Nivel de zoom'}).selectOption('100');
-  const bounds=await page.locator('.pdf-page').first().boundingBox();
-  await page.mouse.move(bounds.x+35,bounds.y+128); await page.mouse.down(); await page.mouse.move(bounds.x+210,bounds.y+156,{steps:8}); await page.mouse.up();
-  await page.getByRole('textbox',{name:'Texto del PDF'}).fill('NATIVE EDIT'); await page.getByRole('button',{name:'Aplicar texto',exact:true}).click();
-  await page.locator('.workbench').waitFor({state:'detached'});
+  // Editar PDF selects the detected text; the inline editor stays open after applying.
+  await tool('Editar PDF'); const picker=page.locator('.pdf-content-picker[data-picker-state="ready"]'); await picker.waitFor({timeout:60000});
+  await picker.getByRole('button',{name:/^(Párrafo|Texto): SECRET 123456$/}).first().click();
+  await page.getByRole('textbox',{name:'Texto',exact:true}).fill('NATIVE EDIT'); await page.locator('.content-editor[data-preview-state="ready"]').waitFor({timeout:60000});
+  await page.getByRole('button',{name:'Aplicar cambios',exact:true}).click(); await picker.waitFor({timeout:60000});
+  await page.getByRole('button',{name:'Listo',exact:true}).click(); await page.locator('.workspace-editor').waitFor({state:'detached'});
   await draft(editId, bytes=>operateDocument(bytes,{operation:'text'})[0].includes('NATIVE EDIT'));
   nativeModules.realEditingAndBinaryDraft = true;
   await tool('Firmas digitales'); await page.locator('.signing-form input[type=file]').setInputFiles(path.join(output,'qa-identity.p12'));

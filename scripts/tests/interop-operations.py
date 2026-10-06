@@ -1,6 +1,6 @@
 """Independent checks of actual operation/UI exports using pypdf and PyMuPDF."""
 from pathlib import Path
-import json, traceback, subprocess, os
+import json, traceback, subprocess, os, shutil
 import pymupdf as fitz
 from pypdf import PdfReader
 
@@ -84,7 +84,7 @@ def signatures():
     sig=next(f for f in a.get_fields().values() if f.get('/FT')=='/Sig')['/V']
     ranges=list(sig['/ByteRange'])
     assert ranges[0]==0 and ranges[2]+ranges[3]==(output/'ui-signed.pdf').stat().st_size
-    openssl=Path(os.environ.get('OPENSSL_PATH',r'C:\Program Files\Git\usr\bin\openssl.exe'))
+    openssl=Path(os.environ.get('OPENSSL_PATH') or shutil.which('openssl') or r'C:\Program Files\Git\usr\bin\openssl.exe')
     assert openssl.exists(),'Define OPENSSL_PATH para la verificación CMS independiente.'
     file=(output/'ui-signed.pdf').read_bytes()
     content=file[ranges[0]:ranges[0]+ranges[1]]+file[ranges[2]:ranges[2]+ranges[3]]

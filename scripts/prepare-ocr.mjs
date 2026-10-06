@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, copyFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, copyFile, readdir, chmod } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 const root = new URL('../public/ocr/', import.meta.url);
 await mkdir(root, { recursive: true });
@@ -6,6 +6,7 @@ await copyFile(new URL('../node_modules/tesseract.js/dist/worker.min.js', import
 await mkdir(new URL('core/', root), { recursive: true });
 for (const name of await readdir(new URL('../node_modules/tesseract.js-core/', import.meta.url))) if (/lstm\.wasm(?:\.js)?$/.test(name)) {
   await copyFile(new URL(`../node_modules/tesseract.js-core/${name}`, import.meta.url), new URL(`core/${name}`, root));
+  await chmod(new URL(`core/${name}`, root), 0o644); // The package ships some as executable.
 }
 await copyFile(new URL('../node_modules/tesseract.js-core/LICENSE', import.meta.url), new URL('core/LICENSE', root));
 const revision = '87416418657359cb625c412a48b6e1d6d41c29bd';

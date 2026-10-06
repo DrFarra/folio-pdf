@@ -1,20 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const output = path.join(root, 'test-results');
 await mkdir(output, { recursive: true });
-const chrome = process.env.CHROME_PATH || [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/chromium', '/usr/bin/google-chrome',
-].find(existsSync);
+const chrome = findChrome();
 assert(chrome, 'CHROME_PATH debe apuntar a Chrome, Edge o Chromium.');
 
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'),

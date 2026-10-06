@@ -44,7 +44,7 @@ export default function HighlightAnnotationMenu({ x, y, onRemove, onClose, color
       }
       if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopPropagation(); onRemove(); }
     }}>
-    {onColorChange && <HighlightColorPicker color={color || '#f5d164'} onChange={value => { onColorChange(value); onClose(); }} />}
+    {onColorChange && <HighlightColorPicker color={color || '#f5d164'} onChange={value => { onColorChange(value); onClose(true); }} />}
     {onComment && <button role="menuitem" aria-label="Comentar resaltado" onClick={onComment}><MessageSquare size={15} /><span>Comentar</span></button>}
     <button role="menuitem" aria-label="Eliminar resaltado" onClick={onRemove}><Trash2 size={15} /><span>Eliminar resaltado</span></button>
   </div>, document.body);

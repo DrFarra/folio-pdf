@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument } from 'pdf-lib';
 import { waitForSession } from './session-helpers.mjs';
 
@@ -16,7 +17,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'previe
 const results = [], errors = []; let browser;
 try {
   for (let attempt = 0; attempt < 100; attempt++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 100)); }
-  const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+  const chrome = findChrome();
   browser = process.env.FOLIO_TEST_BROWSER === 'webkit' ? await webkit.launch() : await chromium.launch({ executablePath: chrome });
   const context = await browser.newContext({ viewport: { width: 1360, height: 850 } }), page = await context.newPage();
   page.setDefaultTimeout(20000); page.on('pageerror', error => errors.push(error.message));

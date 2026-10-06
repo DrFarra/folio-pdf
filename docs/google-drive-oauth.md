@@ -36,7 +36,7 @@ presenta como permiso para ver, editar y borrar todos los archivos de Drive.
 El producto solicitado solo necesita navegar carpetas y abrir/editar PDF; no
 implementar borrado masivo ni modificaciones ajenas a los documentos elegidos.
 
-El flujo pedido es: sección **Google Drive** → **Conectar con Google Drive** →
+El flujo pedido es: **Biblioteca** → **Google Drive** → **Conectar Google Drive** →
 navegar las carpetas existentes → abrir un PDF → editar → guardar en el mismo
 archivo y carpeta → abrir ese mismo documento actualizado desde otro dispositivo.
 No sustituir el guardado normal por copias nuevas. El usuario pidió mantener su

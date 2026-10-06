@@ -93,15 +93,19 @@ class IncomingDocumentsTest {
         incoming.listen(received::add)
         incoming.receive(view(Uri.parse("content://downloads/missing")))
         incoming.receive(view(uri(1))); flush()
-        assertTrue(received[0].has("error"))
+        assertEquals(1, received[0].getJSONArray("errors").length())
+        assertTrue(copies(received[0]).isEmpty())
         assertEquals(1, copies(received[1]).size)
     }
-    @Test fun malformedPdfIsRejectedAndPartialCopiesAreRemoved() {
+    @Test fun malformedPdfIsRejectedAndTheOthersStillOpen() {
         incoming.listen(received::add)
         val first = uri(1); val bad = uri(2, "Falso.pdf", "No es un PDF".toByteArray())
         incoming.receive(Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(first, bad))); flush()
-        assertTrue(received.single().getString("error").contains("no es un PDF"))
-        assertEquals(0, File(context.filesDir, "FolioImports").walkTopDown().count { it.isFile })
+        val errors = received.single().getJSONArray("errors")
+        assertEquals(1, errors.length())
+        assertTrue(errors.getString(0).startsWith("«Falso.pdf»") && errors.getString(0).contains("no es un PDF"))
+        assertEquals(listOf("Apuntes 1.pdf"), copies(received.single()).map { it.name })
+        assertEquals(listOf("Apuntes 1.pdf"), File(context.filesDir, "FolioImports").walkTopDown().filter { it.isFile && it.extension == "pdf" }.map { it.name }.toList())
     }
     @Test fun fileUrisAndLaunchesReplayedFromRecentsAreNotImported() {
         incoming.listen(received::add)
@@ -109,7 +113,7 @@ class IncomingDocumentsTest {
         assertTrue(received.isEmpty())
         val own = File(context.filesDir, "FolioImports/x/Privado.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
         incoming.receive(view(Uri.fromFile(own))); flush()
-        assertTrue(received.single().has("error"))
+        assertTrue(received.single().has("errors") && copies(received.single()).isEmpty())
     }
     @Test fun savedCopiesInTauriDataDirectoryBelongToFolio() {
         val saved = File(context.dataDir, "exports/token/Apuntes.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }

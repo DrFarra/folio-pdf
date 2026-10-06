@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -25,7 +26,7 @@ const source = path.join(output, 'pdf-content-picker-source.pdf'); fs.writeFileS
 const oracle = [1, 2, 3, 4].map(page => operateDocument(bytes, { operation: 'page-content', page }));
 const nativeGeometry = new mupdf.PDFDocument(bytes), rotatedPage = nativeGeometry.loadPage(1);
 const transform = rotatedPage.getTransform(), rotatedBounds = rotatedPage.getBounds(); rotatedPage.destroy(); nativeGeometry.destroy();
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync); assert(chrome);
+const chrome = findChrome(); assert(chrome);
 const port = process.env.FOLIO_PICKER_UI_PORT || '4253', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });
 let browser, log = '', frontendEntry; const results = [], errors = [];
@@ -158,7 +159,10 @@ try {
     await page.getByRole('button', { name: 'Reemplazar esta zona', exact: true }).click(); const editor = page.locator('.content-editor'); await editor.waitFor();
     assert.equal(await editor.getAttribute('data-kind'), 'replace-text'); assert.equal(await editor.getAttribute('data-selected'), 'false');
     (await editor.getAttribute('data-source-rect')).split(',').map(Number).forEach((value, index) => assert(Math.abs(value - item.rect[index]) < .01));
-    return { crop, rotation: 90, paintedGlyphPixels: ink.count, transformAligned: true, editable: item.editable, areaReplacementOpened: true };
+    // The area's own text can start the replacement.
+    await page.getByRole('button', { name: 'Usar texto del área', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.content-editor textarea')?.value.includes('CROPPED LABEL'));
+    return { crop, rotation: 90, paintedGlyphPixels: ink.count, transformAligned: true, editable: item.editable, areaReplacementOpened: true, areaTextSuggested: true };
   });
   await check('drawing-text-and-image-uses-crop-pdf-coordinates', async page => {
     await navigate(page, 2);

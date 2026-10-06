@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
@@ -63,11 +64,7 @@ fs.writeFileSync(importedSource, writeAnnotations(fragmentedBytes, [{ id: 'impor
   rect: [60, 660, wordX - 5, 675], quads: [[60, 675, wordX - 5, 675, 60, 660, wordX - 5, 660]],
   color: '#f5d164', text: words.join(' '), opacity: .25, created: Date.now() }]));
 
-const chrome = process.env.CHROME_PATH || [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/chromium', '/usr/bin/google-chrome',
-].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'CHROME_PATH must identify an installed Chrome or Edge.');
 const port = process.env.FOLIO_HIGHLIGHT_PORT || '4177';
 const origin = `http://127.0.0.1:${port}`;
@@ -249,9 +246,16 @@ try {
     assert(focused.data.filter((value, index) => value !== after.data[index]).length > 30, 'A clipped highlight must still show its keyboard focus indicator.');
     await page.keyboard.press('Enter'); await page.getByRole('menuitem', { name: 'Eliminar resaltado', exact: true }).waitFor();
     await page.keyboard.press('Escape');
+    // Escape, and choosing a colour from the keyboard, return focus to the highlight.
+    const focusOnHighlight = () => page.waitForFunction(() => document.activeElement?.classList.contains('highlight-annotation'));
+    await focusOnHighlight(); await page.keyboard.press('Enter');
+    const menu = page.locator('.highlight-annotation-menu'); await menu.waitFor();
+    await menu.getByRole('button', { name: 'Color del resaltador', exact: true }).focus(); await page.keyboard.press('Enter');
+    await page.locator('.highlight-color-palette').getByRole('button', { name: /^Color / }).nth(1).focus(); await page.keyboard.press('Enter');
+    await menu.waitFor({ state: 'detached' }); await focusOnHighlight();
     const annotations = await save(page, 'fragmented', { original: operateDocument(fragmentedBytes, { operation: 'text' }) });
     assert.equal(annotations[0].quads.length, 1); assert.equal(annotations[0].opacity, 1);
-    return { continuousLineQuads: 1, coloredInterwordGap: gap, blackInkPreserved: preserved / ink, exportedOpacity: 1, visibleKeyboardFocus: true };
+    return { continuousLineQuads: 1, coloredInterwordGap: gap, blackInkPreserved: preserved / ink, exportedOpacity: 1, visibleKeyboardFocus: true, keyboardColorKeepsFocus: true };
   }, fragmentedSource);
 
   await check('explicit-wide-spaces-are-included', async page => {

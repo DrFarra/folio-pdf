@@ -4,7 +4,7 @@ Android incorporó Drive en 0.8.9, junto al guardado en el archivo original de A
 
 ## Uso
 
-Documentos → Google Drive → Iniciar sesión con Google. Se muestran las carpetas
+Biblioteca → Google Drive → Conectar Google Drive. Se muestran las carpetas
 de Mi unidad y Compartidos conmigo; la búsqueda se limita a la carpeta actual.
 Hay paginación y una sección Sin conexión con los PDF descargados previamente.
 Los archivos de Google Docs/Sheets no se convierten ni editan como PDF.

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { enterAnnotationMode } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
@@ -29,13 +29,7 @@ const selected = id => !testFilter || testFilter.test(id);
 const chromeTests = ['chrome-mac-native-titlebar-and-startup-handshake', 'chrome-windows-controls-remain-unchanged', 'chrome-mac-command-and-legacy-api-fallback', 'chrome-mac-native-tab-layout', 'chrome-windows-native-tab-layout'];
 const webkitTests = ['webkit-mac-command-and-legacy-api-fallback', 'webkit-local-ocr-and-font-assets', 'webkit-rapid-three-documents-search'];
 const runChrome = chromeTests.some(selected), runWebKit = webkitTests.some(selected);
-const chrome = process.env.CHROME_PATH || [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  path.join(homedir(), 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
-  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-].find(fs.existsSync);
+const chrome = findChrome();
 if (runChrome) assert(chrome, 'Chrome or Edge must be installed, or set CHROME_PATH.');
 assert(runChrome || runWebKit, 'FOLIO_MAC_PLATFORM_TEST did not match any test.');
 const port = process.env.FOLIO_MAC_PLATFORM_PORT || '4183', origin = `http://127.0.0.1:${port}`;
@@ -159,8 +153,14 @@ async function tabLayout(page, mac) {
   assert(many.selectedLeft >= many.stripLeft - 1 && many.selectedRight <= many.stripRight + 1, JSON.stringify(many));
   assert(many.headerScrollWidth <= many.headerClientWidth + 1 && many.documentWidth <= many.windowWidth + 1, JSON.stringify(many));
   await page.screenshot({ path: path.join(output, `mac-layout-${mac ? 'mac1024' : 'windows1360'}.png`), animations: 'disabled' });
-  for (const [width, tabWidth] of [[800, 170], [600, 140]]) { await page.setViewportSize({ width, height: 760 }); const small = await geometry(); assert.equal(small.tabWidth, tabWidth); assert(small.headerScrollWidth <= small.headerClientWidth + 1 && small.documentWidth <= small.windowWidth + 1, JSON.stringify(small)); }
-  return { threeTabsFitWithoutScroll: true, elevenTabsScrollWithinHeader: true, responsiveWidths: [170, 140], three, many };
+  // Tabs size to their name within these limits; the '+' button stays right after the strip.
+  for (const [width, least, most] of [[800, 120, 228], [600, 100, 140]]) {
+    await page.setViewportSize({ width, height: 760 }); const small = await geometry();
+    assert(small.tabWidth >= least - .5 && small.tabWidth <= most + .5, JSON.stringify(small));
+    const plus = await page.locator('.app-header .new-document-tab').boundingBox(); assert(plus && plus.x >= small.stripRight - 1 && plus.x <= small.stripRight + 12, JSON.stringify({ plus, small }));
+    assert(small.headerScrollWidth <= small.headerClientWidth + 1 && small.documentWidth <= small.windowWidth + 1, JSON.stringify(small));
+  }
+  return { threeTabsFitWithoutScroll: true, elevenTabsScrollWithinHeader: true, responsiveWidths: [[120, 228], [100, 140]], newTabNextToStrip: true, three, many };
 }
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch(origin)).ok) break; } catch {} if (preview.exitCode !== null) throw new Error(log); await new Promise(resolve => setTimeout(resolve, 100)); }

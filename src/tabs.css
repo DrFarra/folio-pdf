@@ -1,5 +1,7 @@
 .document-tab-strip{display:flex;align-items:stretch;gap:4px;height:34px;min-width:0;flex:0 1 auto;max-width:calc(100% - 180px);overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior:contain}
 .document-tab-strip::-webkit-scrollbar{display:none}
+/* Whole tabs only: a half-hidden tab would show just its close button. Dragging autoscrolls freely. */
+.document-tab-strip{scroll-snap-type:x mandatory}.document-tab-strip.is-dragging{scroll-snap-type:none}.document-tab{scroll-snap-align:start}
 .document-tab-strip.drag-enabled .document-tab>[role=tab]{cursor:grab;user-select:none}
 .document-tab-strip.is-dragging,.document-tab-strip.is-dragging .document-tab>[role=tab]{cursor:grabbing;user-select:none}
 .document-tab.plan-tab-dragging{opacity:.5}

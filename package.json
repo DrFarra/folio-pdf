@@ -53,7 +53,7 @@
     "test:content-actions:ui": "node scripts/tests/content-actions-ui.mjs",
     "android:build": "node scripts/build-android.mjs",
     "test:drive": "node scripts/tests/drive.mjs",
-    "test:android": "node scripts/tests/ink.mjs && node scripts/tests/android-ui.mjs && node scripts/tests/android-save.mjs",
+    "test:android": "node scripts/tests/ink.mjs && node scripts/tests/android-ui.mjs && node scripts/tests/android-save.mjs && node scripts/tests/android-lifecycle.mjs",
     "test:file-picker": "node scripts/tests/file-picker-ui.mjs",
     "test:ink": "node scripts/tests/ink.mjs",
     "test:drawing": "node scripts/tests/drawing-gestures.mjs",

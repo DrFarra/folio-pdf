@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -24,7 +25,7 @@ let original = operateDocument(await fixture.save(), { operation: 'add-image', p
 original = writeAnnotations(original, [{ id: 'editing-note', page: 1, kind: 'note', rect: [340, 420, 360, 440], color: '#ffcc00', text: 'KEEP NOTE', created: 1 }]);
 const source = path.join(output, 'pdf-editing-source.pdf'); fs.writeFileSync(source, original);
 const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
-const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+const chrome = findChrome();
 if (!useWebKit) assert(chrome, 'Chrome or Edge is required, or set CHROME_PATH.');
 const port = process.env.FOLIO_EDITING_UI_PORT || '4251', origin = 'http://127.0.0.1:' + port;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { windowsHide: true, stdio: 'pipe' });

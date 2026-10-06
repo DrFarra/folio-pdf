@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -27,7 +28,7 @@ const png = new Uint8Array(pixmap.asPNG()); fs.writeFileSync(path.join(output, '
 const scanned = await PDFDocument.create(), scanImage = await scanned.embedPng(png), scan = scanned.addPage([600, 300]); scan.drawImage(scanImage, { x: 0, y: 0, width: 600, height: 300 });
 fs.writeFileSync(path.join(output, 'scan.pdf'), await scanned.save());
 const edited = operateDocument(fs.readFileSync(source), { operation: 'replace-text', page: 1, rect: [35, 344, 210, 372], text: 'PUBLIC TEXT', size: 16, color: '#000000' }); fs.writeFileSync(path.join(output, 'comparison-after.pdf'), edited);
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+const chrome = findChrome();
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', '4176', '--strictPort'], { stdio: 'pipe', windowsHide: true });
 const origin = 'http://127.0.0.1:4176'; let browser, log = ''; preview.stdout.on('data', data => { log += data; }); preview.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
@@ -302,10 +303,16 @@ try {
   });
   await check('create-form-field-and-fill-real-value', async page => {
     await tools(page,'Crear campo'); await drawArea(page,[40,30,220,65]);
+    // The drawn area can also be adjusted from the keyboard, in points from the page's top-left corner.
+    const field=label=>page.getByLabel(label,{exact:true});
+    assert(Math.abs(Number(await field('Posición X').inputValue())-40)<2); assert(Math.abs(Number(await field('Posición Y').inputValue())-435)<2);
+    await field('Ancho').fill('150'); await field('Alto').fill('35'); await field('Posición X').fill('50'); await field('Posición Y').fill('400');
     await page.getByLabel('Nombre del campo',{exact:true}).fill('created_by_user'); await page.getByRole('button',{name:'Crear campo',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});
     await tools(page,'Rellenar formulario'); await page.locator('.form-fields label').filter({hasText:'created_by_user'}).locator('input').fill('Nuevo valor');
     await page.getByRole('button',{name:'Aplicar valores',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});
-    const bytes=await save(page,'ui-created-field.pdf'); assert.equal(operateDocument(bytes,{operation:'fields'}).find(f=>f.name==='created_by_user').value,'Nuevo valor'); return { realWidgetCreated:true, valueAndAppearanceSaved:true };
+    const bytes=await save(page,'ui-created-field.pdf'), created=operateDocument(bytes,{operation:'fields'}).find(f=>f.name==='created_by_user'); assert.equal(created.value,'Nuevo valor');
+    created.rect.forEach((value,index)=>assert(Math.abs(value-[50,65,200,100][index])<1,`The typed area sets the field: ${JSON.stringify(created.rect)}`));
+    return { realWidgetCreated:true, valueAndAppearanceSaved:true, areaAdjustedFromKeyboard:true };
   });
   await check('image-to-pdf-creation', async page => {
     await page.getByRole('button',{name:'Biblioteca',exact:true}).click(); await page.getByRole('button',{name:'Crear PDF',exact:true}).first().click(); await page.getByLabel('Nombre',{exact:true}).fill('Desde imagen.pdf');

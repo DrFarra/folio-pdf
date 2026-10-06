@@ -118,8 +118,10 @@ class FolioPlugin(private val launch: Activity) : Plugin(launch) {
         if (uris.isEmpty()) result.data?.data?.let { uris.add(it) }
         io.execute {
             try {
-                val copied = importDocuments(activity, uris, result.data?.flags ?: 0)
-                val paths = JSArray(); copied.forEach { paths.put(it.absolutePath) }; invoke.resolve(JSObject().put("paths", paths))
+                val imported = importDocuments(activity, uris, result.data?.flags ?: 0)
+                val paths = JSArray(); imported.files.forEach { paths.put(it.absolutePath) }
+                val errors = JSArray(); imported.errors.forEach { errors.put(it) }
+                invoke.resolve(JSObject().put("paths", paths).put("errors", errors))
             } catch (e: Exception) { invoke.reject(userMessage(e, "No se pudo importar el PDF.")) }
         }
     }

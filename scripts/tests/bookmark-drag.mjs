@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { storedSession, waitForSession } from './session-helpers.mjs';
 
@@ -18,7 +19,7 @@ const original = [node('mother', 'Mother branch', null, null, 0, '#123abc'), nod
   node('subgroup', 'Nested group', null, 'mother', 1, '#8a64b4'), node('grandchild', 'Grandchild page', 3, 'subgroup', 0, '#c89728'),
   { ...node('target', 'Destination group', null, null, 1), collapsed: true }, node('target-child', 'Existing child', 1, 'target', 0),
   node('page-parent', 'Page parent', 1, null, 2, '#448764')];
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
+const chrome = findChrome();
 assert(process.env.FOLIO_TEST_BROWSER === 'webkit' || chrome, 'An installed Chrome or Edge is required.');
 const port = process.env.FOLIO_BOOKMARK_DRAG_PORT || '4187', origin = `http://127.0.0.1:${port}`;
 const viteArgs = process.env.FOLIO_BOOKMARK_DRAG_DEV ? [] : ['preview'];

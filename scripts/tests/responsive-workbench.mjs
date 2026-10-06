@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -18,7 +19,7 @@ for (let number = 1; number <= 12; number++) {
   }
 }
 form.updateFieldAppearances(font); fs.writeFileSync(fixture, await pdf.save());
-const chrome = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+const chrome = findChrome();
 assert(chrome, 'A Chromium executable is required.');
 const mode = process.env.FOLIO_RESPONSIVE_MODE || 'preview', port = process.env.FOLIO_RESPONSIVE_PORT || '4257';
 assert(['dev', 'preview'].includes(mode), 'FOLIO_RESPONSIVE_MODE must be dev or preview.');

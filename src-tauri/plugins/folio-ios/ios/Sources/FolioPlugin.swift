@@ -126,32 +126,36 @@ final class FolioPlugin: Plugin {
         }
     }
 
-    private func importURLs(_ urls: [URL]) throws -> [String] {
+    /// Copies each PDF to Documents/Imports/<uuid>/. A PDF that cannot be
+    /// imported is reported in `errors`; the others still open.
+    private func importURLs(_ urls: [URL]) throws -> (paths: [String], errors: [String]) {
         let manager = FileManager.default
         let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let imports = documents.appendingPathComponent("Imports", isDirectory: true)
         try manager.createDirectory(at: imports, withIntermediateDirectories: true)
-        var copies = [String]()
+        var copies = [String](), errors = [String]()
         for url in urls {
             guard url.isFileURL, url.pathExtension.lowercased() == "pdf" else {
-                throw NSError(domain: "Folio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Elige un archivo PDF."])
+                let notPDF = "Solo se pueden abrir archivos PDF."
+                if !errors.contains(notPDF) { errors.append(notPDF) }
+                continue
             }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             let folder = imports.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
             let destination = folder.appendingPathComponent(url.lastPathComponent)
             var coordinatorError: NSError?
             var copyError: Error?
+            do { try manager.createDirectory(at: folder, withIntermediateDirectories: true) } catch { copyError = error }
             let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
             let staging = manager.temporaryDirectory.standardizedFileURL.resolvingSymlinksInPath().path + "/"
             let inbox = documents.appendingPathComponent("Inbox").standardizedFileURL.resolvingSymlinksInPath().path + "/"
-            if resolved.hasPrefix(staging) || resolved.hasPrefix(inbox) {
+            if copyError == nil && (resolved.hasPrefix(staging) || resolved.hasPrefix(inbox)) {
                 // These are UIKit's app-owned import copies, never a provider
                 // original or an already opened Folio source. A rename avoids
                 // keeping two extra gigabytes on the device during import.
                 do { try manager.moveItem(at: url, to: destination) } catch { copyError = error }
-            } else {
+            } else if copyError == nil {
                 NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readable in
                     do { try manager.copyItem(at: readable, to: destination) } catch { copyError = error }
                 }
@@ -159,11 +163,12 @@ final class FolioPlugin: Plugin {
             if let error = coordinatorError ?? (copyError as NSError?) {
                 try? manager.removeItem(at: folder)
                 NSLog("Folio import copy failed [%@:%ld]: %@", error.domain, error.code, error.localizedDescription)
-                throw NSError(domain: "Folio.Import", code: error.code, userInfo: [NSLocalizedDescriptionKey: "No se pudo importar «\(url.lastPathComponent)». Vuelve a intentarlo."])
+                errors.append("No se pudo importar «\(url.lastPathComponent)». Vuelve a intentarlo.")
+                continue
             }
             copies.append(destination.path)
         }
-        return copies
+        return (copies, errors)
     }
 
     private func localFile(_ path: String) throws -> URL {
@@ -178,7 +183,7 @@ final class FolioPlugin: Plugin {
     @objc public func importPaths(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PathsArgs.self)
         DispatchQueue.global(qos: .userInitiated).async {
-            do { invoke.resolve(["paths": try self.importURLs(args.paths.map { URL(fileURLWithPath: $0) })]) }
+            do { let imported = try self.importURLs(args.paths.map { URL(fileURLWithPath: $0) }); invoke.resolve(["paths": imported.paths, "errors": imported.errors]) }
             catch { self.fail(invoke, error) }
         }
     }
@@ -198,9 +203,9 @@ final class FolioPlugin: Plugin {
             self.pickerDelegate = PickerDelegate(picked: { urls in
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
-                        let paths = try self.importURLs(urls)
-                        NSLog("Folio file picker imported %ld documents", paths.count)
-                        DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": paths]) }
+                        let imported = try self.importURLs(urls)
+                        NSLog("Folio file picker imported %ld documents", imported.paths.count)
+                        DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": imported.paths, "errors": imported.errors]) }
                     }
                     catch {
                         DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; self.fail(invoke, error) }

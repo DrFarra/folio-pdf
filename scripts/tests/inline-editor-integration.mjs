@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -19,7 +20,7 @@ for (const letter of ['A', 'B']) {
   fs.writeFileSync(file, await pdf.save()); sources.push({ file, name: path.basename(file), letter });
 }
 const [a, b] = sources;
-const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(fs.existsSync);
+const executablePath = findChrome();
 assert(executablePath, 'An installed Chrome or Edge is required.');
 const port = process.env.FOLIO_INLINE_EDITOR_PORT || '4260', origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, windowsHide: true, stdio: 'pipe' });

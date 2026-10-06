@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results', 'reader-ergonomics');
 fs.mkdirSync(output, { recursive: true });
@@ -12,7 +13,7 @@ const results = [], errors = []; let browser;
 const agent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 try {
   for (let attempt = 0; attempt < 120; attempt++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 100)); }
-  const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find(fs.existsSync);
+  const executablePath = findChrome();
   browser = process.env.FOLIO_TEST_BROWSER === 'webkit' ? await webkit.launch() : await chromium.launch({ executablePath, headless: true });
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
     const context = await browser.newContext({ viewport, screen: viewport, isMobile: true, hasTouch: true, userAgent: agent });

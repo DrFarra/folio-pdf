@@ -74,7 +74,9 @@ Los dibujos usan anotaciones PDF Ink estándar y permanecen al guardar una copia
 
 ## Archivos
 
-Importar usa el selector de documentos de Android y conserva una copia privada.
+«Abrir PDF» usa el selector de documentos de Android y conserva una copia privada.
+Si uno de los PDF elegidos o recibidos no se puede copiar, se avisa de ese archivo
+y los demás se abren.
 «Abrir con Folio» y «Compartir con Folio» reciben los PDF de otras aplicaciones,
 tanto al arrancar como con la app abierta. Solo se aceptan URI `content://`, leídas
 con el permiso concedido por Android y copiadas antes de incorporarlas a la
@@ -149,11 +151,13 @@ npm run test:android
 npm run test:file-picker
 ```
 
-Las pruebas de interfaz usan el Chrome de `CHROME_PATH` (por defecto, la ruta de
-Chrome en Windows). Comprueban tablet vertical/horizontal, teléfono
+Las pruebas de interfaz usan el Chrome de `CHROME_PATH` (si no, el Chrome, Edge o
+Chromium instalado). Comprueban tablet vertical/horizontal, teléfono
 vertical/horizontal, ventana dividida, escritorio, lápiz emulado y deshacer/rehacer.
 La prueba de motor verifica Ink, apariencia, coordenadas al girar, borrado y datos
-inválidos. La compilación Kotlin/Rust y la firma APK se comprueban por separado.
+inválidos. `android-lifecycle` simula el puente con un PDF de Drive de 14 MB:
+lectura por bloques, subida por partes, Atrás, segundo plano y el envío a Drive al
+cerrar el documento. La compilación Kotlin/Rust y la firma APK se comprueban por separado.
 Los casos nativos se prueban con Robolectric en el módulo Android:
 `:tauri-plugin-folio-android:testDebugUnitTest`. Comprueban inicio en frío, apertura
 posterior, compartir uno o varios PDF, URI duplicadas o `file://`, reaperturas desde

@@ -135,3 +135,8 @@ html:not([data-phone]) .app-shell .workspace-editor .workbench-back{margin-left:
   html:not([data-phone]) .workspace-editor .edit-pdf-history{flex-wrap:nowrap;gap:6px}
 }
 @media(max-width:700px){html:not([data-phone]) .workspace-editor .edit-back-label{display:none}}
+.area-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;min-width:0;margin:0 0 12px;padding:0;border:0}
+.area-fields legend{grid-column:1/-1;margin-bottom:6px;padding:0;font-size:11px;color:var(--muted)}
+.area-fields label{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:12px}
+.area-fields input{width:100%;min-width:0}
+@media(max-width:480px){.area-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}

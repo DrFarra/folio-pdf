@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { preview } from 'vite';
 import { chromium } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument } from 'pdf-lib';
 
 const output = 'test-results/file-picker';
@@ -55,7 +56,7 @@ async function storedPdf(page, name) {
 try {
   server = await preview({ logLevel: 'error', preview: { host: '127.0.0.1', port: 0 } });
   const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  browser = await chromium.launch({ executablePath: findChrome(), headless: true });
   for (const [id, width, height, sw, sh] of [
     ['tablet-landscape', 1280, 800, 800, 1280], ['tablet-portrait', 800, 1280, 800, 1280],
     ['tablet-small', 600, 960, 600, 960], ['phone', 390, 844, 390, 844],

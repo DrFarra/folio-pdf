@@ -5,10 +5,12 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import { chromium, webkit } from 'playwright-core';
+import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
+import { storedSession } from './session-helpers.mjs';
 
 // WebKit's mobile browser context provides genuine DOM text selection, PDF.js
 // rendering and browser downloads. It does not automate UIKit selection handles,
@@ -163,7 +165,7 @@ async function closeDialog(page) {
 }
 async function save(page, name) {
   await actions(page); const pending = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Guardar una copia del PDF', exact: true }).tap();
+  await page.getByRole('button', { name: 'Descargar PDF', exact: true }).tap();
   const downloaded = await pending, file = path.join(output, name); await downloaded.saveAs(file);
   await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a la biblioteca"]')?.disabled);
   // Offscreen pages deliberately release their rendered content on iOS. Wait
@@ -199,7 +201,7 @@ async function focusAppearance(page, expected = null) {
       const value = getComputedStyle(element, pseudo);
       return { style: value.outlineStyle, width: parseFloat(value.outlineWidth), color: value.outlineColor };
     };
-    return { label: element.getAttribute('aria-label') || element.textContent.trim().slice(0, 80), tag: element.tagName,
+    return { label: element.getAttribute('aria-label') || element.textContent.trim().slice(0, 80), tag: element.tagName, type: element.getAttribute('type'),
       className: element.className, focused: element === document.activeElement, focusVisible: element.matches(':focus-visible'),
       visible: box.width > 0 && box.height > 0 && style.visibility !== 'hidden', outline: outline(null),
       before: outline('::before'), after: outline('::after'), boxShadow: style.boxShadow,
@@ -207,9 +209,12 @@ async function focusAppearance(page, expected = null) {
   }));
   for (const sample of samples) {
     if (sample.selectedAnnotation) continue;
-    for (const [part, outline] of [['element', sample.outline], ['before', sample.before], ['after', sample.after]]) {
-      assert(outline.style === 'none' || outline.width === 0,
-        `Focus must not paint an outline (${part}, including hidden focus-visible elements): ${JSON.stringify(sample)}`);
+    const parts = [['element', sample.outline], ['before', sample.before], ['after', sample.after]], painted = ([, outline]) => outline.style !== 'none' && outline.width > 0;
+    // A tap never draws a focus ring and touch text fields rely on the caret; keyboard focus (:focus-visible) must stay visible.
+    const textField = sample.tag === 'TEXTAREA' || sample.tag === 'INPUT' && !['checkbox', 'radio', 'range', 'color', 'file'].includes(sample.type);
+    if (sample.focusVisible && sample.focused && !textField) assert(parts.some(painted) || sample.boxShadow !== 'none', `Keyboard focus must show an indicator: ${JSON.stringify(sample)}`);
+    else for (const [part, outline] of parts) {
+      assert(!painted([part, outline]), `Touch focus must not paint an outline (${part}): ${JSON.stringify(sample)}`);
     }
     if (String(sample.className).split(' ').includes('sheet-handle')) assert.equal(sample.boxShadow, 'none', 'The sheet handle must not paint a focus shadow.');
   }
@@ -321,7 +326,7 @@ try {
   }
   assert(ready, log || 'Vite did not start.');
   if (process.env.FOLIO_TEST_BROWSER === 'chromium') {
-    const executablePath = process.env.CHROME_PATH || ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/chromium'].find(fs.existsSync);
+    const executablePath = findChrome();
     assert(executablePath, 'Set CHROME_PATH to the installed Chromium executable.'); browser = await chromium.launch({ executablePath, headless: true });
   } else browser = await webkit.launch({ headless: true });
 
@@ -336,8 +341,12 @@ try {
       await dialog.evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
       assert.equal(await dialog.getByRole('button', { name: /^Cambiar a / }).count(), 2);
       assert.equal(await dialog.locator('.document-switcher-row.selected').count(), 1);
+      // Opened from the keyboard, focus starts on the current document; the arrows move through the list.
+      const current = dialog.locator('.document-switcher-row.selected').getByRole('button', { name: /^Cambiar a / });
+      await focusAppearance(page, current);
       await page.keyboard.press('ArrowDown');
-      await focusAppearance(page, dialog.getByRole('button', { name: /^Cambiar a / }).first());
+      assert.equal(await current.evaluate(element => element !== document.activeElement && !!document.activeElement?.closest('.document-switcher')), true, 'Arrow keys move focus within the document list.');
+      await focusAppearance(page);
       assertScreen(await geometry(page));
       await page.screenshot({ path: path.join(output, `iphone-focus-documents-${theme}.png`), animations: 'disabled' });
       await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
@@ -356,7 +365,8 @@ try {
       const opener = page.getByRole('button', { name: 'Páginas', exact: true });
       await opener.focus(); await opener.tap();
       const explorer = page.getByRole('dialog', { name: 'Explorar documento', exact: true }); await explorer.waitFor();
-      const handle = explorer.getByRole('button', { name: 'Cerrar explorador', exact: true });
+      // The sheet handle is a gesture aid hidden from assistive technology; the close button takes focus.
+      const handle = explorer.getByRole('button', { name: 'Cerrar panel', exact: true });
       await focusAppearance(page, handle);
       const snapshots = [];
       for (const tab of ['Páginas', 'Índice', 'Marcadores']) {
@@ -366,10 +376,10 @@ try {
       }
       await explorer.getByRole('tab', { name: 'Anotaciones', exact: true }).tap();
       const annotations = page.getByRole('dialog', { name: 'Anotaciones', exact: true }); await annotations.waitFor();
-      await focusAppearance(page, annotations.getByRole('button', { name: 'Cerrar explorador', exact: true }));
+      await focusAppearance(page, annotations.getByRole('button', { name: 'Cerrar panel', exact: true }));
       assertScreen(await geometry(page));
       await page.screenshot({ path: path.join(output, `iphone-focus-explorer-${theme}.png`), animations: 'disabled' });
-      await annotations.getByRole('button', { name: 'Cerrar explorador', exact: true }).tap(); await annotations.waitFor({ state: 'detached' });
+      await annotations.getByRole('button', { name: 'Cerrar panel', exact: true }).tap(); await annotations.waitFor({ state: 'detached' });
       await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Páginas');
       await focusAppearance(page, opener);
       await panel(page, 'Páginas');
@@ -405,7 +415,8 @@ try {
       await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).tap();
       await settings(page);
       const settingsDialog = page.getByRole('dialog', { name: 'Ajustes', exact: true });
-      await focusAppearance(page, settingsDialog.getByRole('button', { name: 'Cerrar hoja', exact: true }));
+      // The sheet handle is only a gesture aid; focus starts on the close button.
+      await focusAppearance(page, settingsDialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }));
       const themeButton = settingsDialog.getByRole('button', { name: theme === 'light' ? 'Claro' : 'Oscuro', exact: true });
       await touchFocusControl(page, themeButton); assert.equal(await themeButton.getAttribute('aria-pressed'), 'true');
       const zoom = settingsDialog.getByLabel('Zoom inicial', { exact: true });
@@ -416,7 +427,7 @@ try {
       await focusAppearance(page); await continueReading(page); await focusAppearance(page);
       return { theme, pageJumpInputInitiallyFocused: initialNumberFocus, inputKeepsEditableFocusAfterTouch: true, pageJumpByTouch: 2, searchInputEditable: true,
         searchResultNavigationByTouch: 3, settingsThemeSelectionPreserved: true, nativeSelectValueUpdated: true,
-        focusRestoredAfterPageForm: true, noOutlineIncludingHiddenFocusVisible: true };
+        focusRestoredAfterPageForm: true, noTouchOutlineAndVisibleKeyboardFocus: true };
     }, { theme });
   }
 
@@ -610,8 +621,7 @@ try {
     await selection(page, automaticPhrase, automaticPhrase); await highlights(page).waitFor();
     assert.equal(await selectionMenu(page).count(), 0);
     await page.getByRole('button',{name:'Deshacer',exact:true}).tap(); await highlights(page).waitFor({state:'detached'});
-    await page.getByRole('button',{name:'Más opciones',exact:true}).tap();
-    await page.getByRole('dialog',{name:'Opciones de anotación',exact:true}).getByRole('button',{name:'Rehacer',exact:true}).tap(); await highlights(page).waitFor();
+    await page.getByRole('button',{name:'Rehacer',exact:true}).tap(); await highlights(page).waitFor();
     const saved = await save(page, 'iphone-automatic-export.pdf'); const highlight = saved.inspection.annotations.find(item => item.kind === 'highlight');
     assert.equal(highlight.text, automaticPhrase); assert.equal(highlight.color.toLowerCase(), '#1177dd');
     await annotateMode(page); await page.getByRole('button', {name:'Resaltador',exact:true}).tap();
@@ -661,8 +671,8 @@ try {
     await settings(page); assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-settings.png'), animations: 'disabled' });
     await page.getByLabel('Zoom inicial', { exact: true }).selectOption('width');
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('single');
-    await page.getByText('Opciones avanzadas', {exact:true}).tap();
-    await page.getByLabel('Al abrir un documento', { exact: true }).selectOption('bookmarks');
+    // Phones always open with the panel closed, so they offer no panel options.
+    assert.equal(await page.getByLabel('Al abrir un documento', { exact: true }).count(), 0);
     await page.getByLabel('Reabrir en la última página', { exact: true }).uncheck();
     await page.getByRole('button', { name: 'Sistema', exact: true }).tap(); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
     await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
@@ -678,8 +688,7 @@ try {
     await panel(page,'Marcadores'); await page.locator('.bookmark-tree').waitFor({ state: 'attached' });
     assertScreen(await geometry(page)); await closePanel(page); await settings(page);
     assert.equal(await page.getByLabel('Zoom inicial', { exact: true }).inputValue(), 'width'); assert.equal(await page.getByLabel('Modo de desplazamiento', { exact: true }).inputValue(), 'single');
-    await page.getByText('Opciones avanzadas',{exact:true}).tap();
-    assert.equal(await page.getByLabel('Al abrir un documento', { exact: true }).inputValue(), 'bookmarks'); assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
+    assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('continuous'); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
     await continueReading(page); assert.equal(await page.locator('.pdf-page-wrap').count(),1,'Updating the next-document default preserves the current single-page view.');
     await viewSettings(page); await page.getByLabel('Modo de desplazamiento',{exact:true}).selectOption('continuous'); await page.getByRole('button',{name:'Listo',exact:true}).tap();
@@ -691,7 +700,7 @@ try {
     const row = title => page.locator('.bookmark-entry').filter({ has: page.locator('.bookmark-label', { hasText: new RegExp(`^${title}$`) }) }).first();
     const rename = async title => { const input = page.getByLabel('Nombre del marcador', { exact: true }); await input.fill(title); await input.press('Enter'); await row(title).waitFor(); };
     const option = async (title, action) => { await page.getByRole('button', { name: `Opciones de ${title}`, exact: true }).tap(); await page.getByRole('menuitem', { name: action, exact: true }).tap(); };
-    const stored = async () => page.evaluate(identity => JSON.parse(localStorage.getItem(`folio.session.${identity}`) || 'null'), originals.get(source));
+    const stored = async () => storedSession(page, originals.get(source));
     const waitTree = async predicate => {
       for (let i = 0; i < 80; i++) { const state = await stored(); if (state && predicate(state.bookmarks)) return state.bookmarks; await page.waitForTimeout(50); }
       throw new Error('The bookmark tree was not persisted in the expected state.');
@@ -1024,17 +1033,18 @@ try {
   await check('webkit-recent-file-and-real-pdf-draft-survive-reload', async page => {
     const identity = originals.get(source);
     const storageSnapshot = () => page.evaluate(async identity => {
-      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
       const get = store => new Promise((resolve, reject) => { const request = db.transaction(store, 'readonly').objectStore(store).get(identity); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
       try {
-        const [draft, recent] = await Promise.all([get('drafts'), get('documents')]);
+        // Library rows hold metadata; their PDF bytes live in 'files' and sessions in 'sessions'.
+        const [draft, recent, file, session] = await Promise.all([get('drafts'), get('documents'), get('files'), get('sessions')]);
         const asBytes = async value => value ? [...new Uint8Array(value instanceof Blob ? await value.arrayBuffer() : value)] : [];
-        return { draft: await asBytes(draft), recent: await asBytes(recent?.data), recentName: recent?.name, recentId: recent?.id, session: JSON.parse(localStorage.getItem(`folio.session.${identity}`) || 'null') };
+        return { draft: await asBytes(draft), recent: await asBytes(file), recentName: recent?.name, recentId: recent?.id, session: session || null };
       } finally { db.close(); }
     }, identity);
     await page.waitForFunction(async identity => {
-      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-      try { return await new Promise(resolve => { const request = db.transaction('documents', 'readonly').objectStore('documents').get(identity); request.onsuccess = () => resolve(!!request.result?.data); }); }
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      try { return await new Promise(resolve => { const request = db.transaction('files', 'readonly').objectStore('files').get(identity); request.onsuccess = () => resolve(!!request.result); }); }
       finally { db.close(); }
     }, identity);
     await actions(page); await page.getByRole('button', { name: 'Herramientas', exact: true }).tap(); await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
@@ -1043,7 +1053,7 @@ try {
     await page.getByRole('button', { name: 'Eliminar páginas seleccionadas', exact: true }).tap();
     await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).tap(); await page.locator('.workbench').waitFor({ state: 'detached' });
     await page.waitForFunction(async identity => {
-      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
       try { return await new Promise(resolve => { const request = db.transaction('drafts', 'readonly').objectStore('drafts').get(identity); request.onsuccess = () => resolve(!!request.result?.byteLength); }); }
       finally { db.close(); }
     }, identity);

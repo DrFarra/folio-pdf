@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, Crop, EyeOff, FileArchive, FilePenLine, FileText, Files, FormInput, GripVertical, ImageMinus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, ShieldCheck, TextCursorInput, Trash2, FileOutput, Signature, GitCompareArrows, Undo2, Redo2, Save } from 'lucide-react';
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, PageViewport, RenderTask } from 'pdfjs-dist';
 import Modal from './Modal';
 import FilePicker from './FilePicker';
 import { Thumbnail } from './PDFPage';
@@ -22,7 +22,7 @@ import ConversionOptions from './ConversionOptions';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onSave?: () => void; canSave?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; onAreaChange?: (area: Area) => void; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onSave?: () => void; canSave?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
 type PlannedPage = PageEntry & { key: string; label: string };
 type EditSelection = { kind: ContentEditorKind; area: Area; item?: PageContentItem; reset?: number };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
@@ -68,6 +68,27 @@ function AreaPreview({ pdf, area, around, measure }: { pdf: PDFDocumentProxy; ar
     <canvas ref={canvas} aria-hidden="true" style={around ? { display: 'block', maxWidth: '100%', maxHeight: '100%' } : { display: 'block', maxWidth: '100%', height: 'auto', margin: '0 auto 8px', background: '#fff', border: '1px solid var(--line)', borderRadius: 4 }} />
     {size && <p className="area-label">Tamaño resultante: {mm(size[0])} × {mm(size[1])} mm</p>}
   </>;
+}
+
+/** The area's position and size in points from the page's top-left corner, so it can also be set from the keyboard. */
+function AreaFields({ pdf, area, disabled, onChange }: { pdf: PDFDocumentProxy; area: Area; disabled: boolean; onChange: (area: Area) => void }) {
+  const [viewport, setViewport] = useState<PageViewport | null>(null);
+  useEffect(() => {
+    let alive = true; void pdf.getPage(area.page).then(page => { if (alive) setViewport(page.getViewport({ scale: 1 })); }).catch(() => {});
+    return () => { alive = false; };
+  }, [pdf, area.page]);
+  if (!viewport) return null;
+  const [x0, y0] = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), [x1, y1] = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);
+  const box = { x: Math.min(x0, x1), y: Math.min(y0, y1), width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
+  const update = (key: keyof typeof box, value: number) => {
+    if (!Number.isFinite(value)) return;
+    const next = { ...box, [key]: value }, width = Math.max(1, Math.min(viewport.width, next.width)), height = Math.max(1, Math.min(viewport.height, next.height));
+    const x = Math.max(0, Math.min(viewport.width - width, next.x)), y = Math.max(0, Math.min(viewport.height - height, next.y));
+    const a = viewport.convertToPdfPoint(x, y), b = viewport.convertToPdfPoint(x + width, y + height);
+    onChange({ page: area.page, rect: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])] });
+  };
+  const field = (label: string, name: string, key: keyof typeof box, min: number) => <label>{label}<input aria-label={name} type="number" min={min} step={.5} disabled={disabled} value={Math.round(box[key] * 100) / 100} onChange={event => update(key, Number(event.target.value))} /></label>;
+  return <fieldset className="area-fields"><legend>Posición y tamaño, en puntos desde la esquina superior izquierda</legend>{field('X (pt)', 'Posición X', 'x', 0)}{field('Y (pt)', 'Posición Y', 'y', 0)}{field('Ancho (pt)', 'Ancho', 'width', 1)}{field('Alto (pt)', 'Alto', 'height', 1)}</fieldset>;
 }
 
 export default function Workbench(props: Props) {
@@ -373,7 +394,7 @@ export default function Workbench(props: Props) {
         {editSelection ? <ContentEditor key={(editSelection.item?.id || editSelection.kind + editSelection.area.rect.join(',')) + ':' + (editSelection.reset || 0)} doc={doc} area={editSelection.area} initialItem={editSelection.item} kind={editSelection.kind} active={section === 'edit-pdf'} busy={busy} getBytes={props.getBytes} onApply={apply} onCancel={() => selectEdit(null)} onReset={() => { setEditDirty(false); setEditSelection(previous => previous ? { ...previous, reset: (previous.reset || 0) + 1 } : null); }} onDirtyChange={setEditDirty} cancelLabel="Descartar edición" /> : <PdfContentPicker doc={doc} page={editPage} getBytes={props.getBytes} busy={busy} onPageChange={next => { setEditPage(next); props.onEditPageChange?.(next); }} onSelect={item => { if (item.editable) selectEdit({ kind: item.kind === 'text' ? 'replace-text' : 'replace-image', area: { page: editPage, rect: item.rect }, item }); }} onAdd={(kind, area) => selectEdit({ kind, area })} />}
       </div>
     </>}
-    {['remove-image', 'crop'].includes(section) && props.area && <><AreaPreview pdf={doc.pdf} area={props.area} measure={section === 'crop'} /><p className="modal-description">{section === 'crop' ? 'El recorte cambia el área visible de esta página. El contenido exterior permanece en el PDF.' : 'La parte de la imagen dentro del área quedará en blanco; el texto se conserva.'}</p><div className="operation-actions"><button className="secondary-button" disabled={busy} onClick={() => tool(section as Tool)}>Cambiar área</button><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: section as 'remove-image' | 'crop', ...props.area! })}>Aplicar</button></div></>}
+    {['remove-image', 'crop'].includes(section) && props.area && <><AreaPreview pdf={doc.pdf} area={props.area} measure={section === 'crop'} />{props.onAreaChange && <AreaFields pdf={doc.pdf} area={props.area} disabled={busy} onChange={props.onAreaChange} />}<p className="modal-description">{section === 'crop' ? 'El recorte cambia el área visible de esta página. El contenido exterior permanece en el PDF.' : 'La parte de la imagen dentro del área quedará en blanco; el texto se conserva.'}</p><div className="operation-actions"><button className="secondary-button" disabled={busy} onClick={() => tool(section as Tool)}>Cambiar área</button><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: section as 'remove-image' | 'crop', ...props.area! })}>Aplicar</button></div></>}
     {section === 'redact' && <><p className="modal-description">Se eliminarán el texto, las imágenes y los gráficos de {plural(props.redactions.length, 'área', 'áreas')}. Los formularios se convertirán a contenido fijo; se quitarán metadatos, adjuntos e índice del documento. Revisa la selección antes de aplicar.</p><div className="redaction-list">{props.redactions.map((area, index) => <span key={index}>Página {area.page} · Área {index + 1}</span>)}</div><div className="operation-actions"><button className="primary-button" disabled={busy || !props.redactions.length} onClick={() => void apply({ operation: 'redact', areas: props.redactions })}>Censurar {plural(props.redactions.length, 'área', 'áreas')}</button></div></>}
     {section === 'compress' && <><p className="modal-description">Reduce el tamaño del archivo sin perder calidad de imagen. Tamaño actual: {formatSize(doc.size)}.</p><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'compress' })}>Comprimir</button></div></>}
     {section === 'sanitize' && <><p className="modal-description">Se quitarán metadatos, archivos adjuntos y acciones automáticas. El texto y las imágenes de las páginas permanecen.</p><div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'sanitize' })}>Eliminar datos ocultos</button></div></>}
@@ -397,6 +418,7 @@ export default function Workbench(props: Props) {
       <label>Tipo<select value={fieldType} onChange={e => setFieldType(e.target.value as typeof fieldType)}><option value="text">Texto</option><option value="checkbox">Casilla</option><option value="combobox">Lista desplegable</option></select></label>
       {fieldType === 'text' && <label className="check-option"><input type="checkbox" checked={flatten} onChange={e => setFlatten(e.target.checked)} />Varias líneas</label>}
       {fieldType === 'combobox' && <label>Una opción por línea<textarea value={fieldOptions} onChange={e => setFieldOptions(e.target.value)} /></label>}
+      {props.onAreaChange && <AreaFields pdf={doc.pdf} area={props.area} disabled={busy} onChange={props.onAreaChange} />}
       <div className="operation-actions"><button className="primary-button" disabled={!fieldName.trim() || busy}>Crear campo</button></div>
     </form>}
     {section === 'convert' && <ConversionOptions doc={doc} page={props.page} busy={busy} onConvert={(format, pages, options) => { void task(async signal => {

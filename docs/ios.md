@@ -26,19 +26,19 @@ sirve para instalar en un iPhone ni se debe comprimir y renombrar como IPA.
 
 ## Archivos y privacidad
 
-Al abrir PDFs, Folio presenta el selector de Archivos de iOS. Puede importar
-varios documentos. iOS entrega una copia autorizada y Folio la conserva en
-`Documents/Imports/<uuid>`; las pestañas y la biblioteca apuntan a esa copia
-durable. No depende de que un proveedor de iCloud o de terceros mantenga una
-URL temporal. Al eliminar un documento de la biblioteca, o todos los datos
-locales, Folio borra también su copia; al iniciarse borra las que ya no están
-en la biblioteca.
+«Abrir PDF» presenta el selector de Archivos de iOS. Puede importar varios
+documentos; si uno falla, se avisa de ese archivo y los demás se abren. iOS
+entrega una copia autorizada y Folio la conserva en `Documents/Imports/<uuid>`;
+las pestañas y la biblioteca apuntan a esa copia durable. No depende de que un
+proveedor de iCloud o de terceros mantenga una URL temporal. Al eliminar un
+documento de la biblioteca, o todos los datos locales, Folio borra también su
+copia; al iniciarse borra las que ya no están en la biblioteca.
 
-Guardar crea una nueva copia con las anotaciones y presenta el selector de
-exportación de Archivos. Compartir usa la hoja nativa de iOS. Imprimir usa
-AirPrint con el PDF exportado, incluidas sus anotaciones. Cancelar cualquiera
-de estos diálogos no se presenta como guardado o impresión completados. Nunca
-se sobrescribe el PDF original al exportar una copia.
+«Guardar una copia» crea un PDF nuevo con las anotaciones y presenta el
+selector de exportación de Archivos. Compartir usa la hoja nativa de iOS.
+Imprimir usa AirPrint con el PDF exportado, incluidas sus anotaciones. Cancelar
+cualquiera de estos diálogos no se presenta como guardado o impresión
+completados. Nunca se sobrescribe el PDF original al exportar una copia.
 
 Los PDFs de más de 32 MiB usan PDFKit y permanecen en disco. El lector solicita
 solo el texto y la imagen de las páginas visibles, con imágenes de hasta cuatro

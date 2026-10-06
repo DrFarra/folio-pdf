@@ -151,7 +151,7 @@ try {
   await page.waitForFunction(() => window.__nativeBigContract.sessions['a'.repeat(64)]?.annotations.some(annotation => annotation.kind === 'highlight' && !annotation.nativeSourceRef));
   await action('Guardar una copia del PDF'); await page.waitForFunction(() => window.__nativeBigContract.outputs.length === 1);
   state = await capture(); assert.deepEqual(state.outputs[0].removedSourceRefs, ['pdfkit:1:0']); assert(state.outputs[0].annotations.some(annotation => annotation.quads?.length && !annotation.nativeSourceRef));
-  assert(!state.outputs[0].removedSourceRefs.includes('pdfkit:20:0')); assert.equal(await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).count(), 0);
+  assert(!state.outputs[0].removedSourceRefs.includes('pdfkit:20:0')); assert.equal(await page.getByRole('status').filter({ hasText: 'Copia guardada.' }).count(), 0);
   await readyDocument('Large first.pdf');
   mark('imported-delete-and-real-text-highlight-reach-native-export-cancel-preserves-session-and-unseen-original');
 
@@ -185,7 +185,8 @@ try {
   assert(exported.annotations.some(annotation => annotation.nativeSourceRef === 'pdfkit:20:0'));
   assert.equal(await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').count(), 0);
   assert.equal(await page.locator('.pdf-page-wrap[data-page-number="1"] .highlight-annotation').count(), 1);
-  await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).waitFor();
+  // iOS always saves a copy and then edits it.
+  await page.getByRole('status').filter({ hasText: 'Copia guardada. Ahora editas «Large first — copia.pdf».' }).first().waitFor();
   mark('native-save-uses-removal-refs-preserves-other-originals-and-reopens-file-backed-copy');
 
   const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Abrir PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
