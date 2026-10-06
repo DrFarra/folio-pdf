@@ -617,6 +617,7 @@ export default function App() {
     preferencesRef.current = { rememberRecent, defaultZoom };
     try { localStorage.setItem('folio.remember', String(rememberRecent)); localStorage.setItem('folio.defaultZoom', defaultZoom); } catch { /* Settings are still usable for this session. */ }
   }, [rememberRecent, defaultZoom]);
+  const systemChromeVisible = !readerChromeHidden || !doc || library || !!workbench || !!noteDraft || mobileActions || mobileTabs || pageJump || settings || help || info;
   useLayoutEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -625,12 +626,13 @@ export default function App() {
       document.querySelector('meta[name="theme-color"]')?.setAttribute('content', getComputedStyle(root).getPropertyValue('--bg').trim());
       // 'system' keeps the next cold start following the system. Android paints the
       // status bar with the colour at the top of the current screen; iOS ignores it.
-      if (isNative && isMobile) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_mobile_theme', { theme: theme === 'system' ? 'system' : resolved, background: getComputedStyle(root).getPropertyValue(library ? '--bg' : '--surface').trim() })).catch(() => {});
+      // With the reader chrome hidden that is the reading area, so the kept strip blends in.
+      if (isNative && isMobile) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_mobile_theme', { theme: theme === 'system' ? 'system' : resolved, background: getComputedStyle(root).getPropertyValue(library ? '--bg' : systemChromeVisible ? '--surface' : '--canvas').trim() })).catch(() => {});
     };
     apply();
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
-  }, [theme, library]);
+  }, [theme, library, systemChromeVisible]);
   useEffect(() => {
     try { localStorage.setItem('folio.readingPreferences', JSON.stringify(readingPreferences)); } catch { /* Preferences remain active for this session. */ }
   }, [readingPreferences]);
@@ -864,7 +866,6 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
-  const systemChromeVisible = !readerChromeHidden || !doc || library || !!workbench || !!noteDraft || mobileActions || mobileTabs || pageJump || settings || help || info;
   useEffect(() => {
     if (!isNative || !isMobile) return;
     chromeUpdate.current = chromeUpdate.current.catch(() => {}).then(() => setReaderChrome(systemChromeVisible)).then(() => { window.dispatchEvent(new Event('folio:system-bars-changed')); }).catch(() => {});

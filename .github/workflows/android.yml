@@ -40,11 +40,15 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865' > /dev/null
           echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
-      - name: Create the development signing key
+      - name: Restore or create the development signing key
         # Without a release keystore the build script signs the test APK with
-        # ~/.android/debug.keystore, as Android Studio would.
+        # ~/.android/debug.keystore, as Android Studio would. Google Drive's Android
+        # client is registered for that key's SHA-1, so CI restores the same key.
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.FOLIO_ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
           mkdir -p ~/.android
+          if [ -n "$DEBUG_KEYSTORE" ]; then echo "$DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore; fi
           test -f ~/.android/debug.keystore || keytool -genkeypair -v -keystore ~/.android/debug.keystore \
             -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -dname 'CN=Android Debug,O=Android,C=US'
