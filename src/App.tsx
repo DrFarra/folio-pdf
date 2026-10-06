@@ -50,7 +50,7 @@ import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigat
 
 const DEFAULT_HIGHLIGHT_COLOR = '#f5d164';
 const NO_ANNOTATIONS: Annotation[] = [];
-const SAMPLE_NAME = 'El arte de observar.pdf';
+const SAMPLE_NAME = 'Guía de Folio.pdf';
 // Annotation arrays are replaced, never mutated, so one serialization per array
 // serves every render, tab badge and save check.
 const fingerprints = new WeakMap<Annotation[], string>();
@@ -1401,6 +1401,13 @@ export default function App() {
     if (tool === 'redact') { setRedactions(previous => [...previous, area]); return; }
     setEditArea(area); setWorkbench(tool);
   }
+  // Keyboard and screen-reader access to the area tools: crop keeps most of the
+  // page, the others mark a band across its centre; Cambiar área draws another.
+  async function centerArea() {
+    const current = docRef.current; if (!current) return;
+    const [x0, y0, x1, y1] = (await current.pdf.getPage(page)).view, w = x1 - x0, h = y1 - y0;
+    onArea({ page, rect: tool === 'crop' ? [x0 + w * .1, y0 + h * .1, x0 + w * .9, y0 + h * .9] : [x0 + w * .25, y0 + h * .425, x0 + w * .75, y0 + h * .575] });
+  }
   function saveNote() {
     if (!doc?.canAnnotate || !noteDraft || !noteText.trim()) return;
     const next = { ...noteDraft, id: noteDraft.id || uid(), text: noteText.trim(), created: Date.now() } as Annotation;
@@ -1806,13 +1813,14 @@ export default function App() {
     ['Seleccionar texto', 'V'], ['Resaltador', 'H'], ['Nota', 'N'], ['Lápiz', 'D'], ['Salir de una herramienta', 'Esc'],
   ];
   // Stable handlers let memoized pages skip renders that change nothing on them.
-  const pageEvents = useRef({ onAnnotate, onArea, navigatePDF, commentHighlight, openNote: (_id: string) => {} });
-  pageEvents.current = { onAnnotate, onArea, navigatePDF, commentHighlight, openNote: id => {
+  const pageEvents = useRef({ onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: (_id: string) => {} });
+  pageEvents.current = { onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: id => {
     const annotation = annotationRef.current.find(item => item.id === id);
     if (annotation && docRef.current?.canAnnotate) editNote(annotation, 'document'); else { setNotesOpen(true); setActiveNote(id); }
   } };
   const pageHandlers = useMemo(() => ({ onAnnotate: (annotation: AnnotationDraft | AnnotationDraft[]) => pageEvents.current.onAnnotate(annotation), onArea: (area: Area) => pageEvents.current.onArea(area),
     onNavigate: (destination: PDFNavigationTarget) => pageEvents.current.navigatePDF(destination), onCommentHighlight: (annotation: Annotation) => void pageEvents.current.commentHighlight(annotation), onNoteClick: (id: string) => pageEvents.current.openNote(id) }), []);
+  const thumbnailClicks = useMemo(() => pages.map(number => () => pageEvents.current.mobilePage(number)), [pages]);
   const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onColor={setInkColor} onWidth={setInkWidth} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
   // On touch, tools without options keep their slot so no button moves under the finger.
   const annotationSlot = annotationSettings || <span className="drawing-settings-trigger" aria-hidden="true" style={{ visibility: 'hidden' }} />;
@@ -1884,7 +1892,7 @@ export default function App() {
           {!touchLayout && <div className="sidebar-title"><span>{sideTab === 'pages' ? 'Páginas' : sideTab === 'outline' ? 'Índice' : 'Marcadores'}</span>{!!sideCount && <span className="page-total">{sideCount}</span>}<IconButton label="Cerrar panel" onClick={() => { setSidebar(false); focusRail(sideTab === 'pages' ? 'Páginas' : sideTab === 'outline' ? 'Índice' : 'Marcadores'); }}><X size={16} /></IconButton></div>}
 
           <div className={`sidebar-scroll ${sideTab === 'pages' ? 'thumbnails' : 'outline-list'}`} id={touchLayout ? 'explorer-panel' : undefined} role={touchLayout ? 'tabpanel' : undefined}>
-            {sideTab === 'pages' && doc && pages.map(number => <Thumbnail key={`${doc.pdf.loadingTask.docId}-${number}`} pdf={doc.pdf} number={number} rotation={rotation} pageLabel={pageName(number)} selected={page === number} onClick={() => mobilePage(number)} />)}
+            {sideTab === 'pages' && doc && pages.map(number => <Thumbnail key={`${doc.pdf.loadingTask.docId}-${number}`} pdf={doc.pdf} number={number} rotation={rotation} pageLabel={pageName(number)} selected={page === number} onClick={thumbnailClicks[number - 1]} />)}
             {sideTab === 'outline' && (outline ? <DocumentOutline outline={outline} page={page} onNavigate={mobilePage} /> : <div className="empty-panel"><LoaderCircle size={26} className="spin" /><p>Cargando índice…</p></div>)}
             {sideTab === 'bookmarks' && <BookmarkTree key={activeTabKey} bookmarks={bookmarks} onChange={commitBookmarks} onFold={next => { readingState.current.bookmarks = next; setBookmarks(next); }} page={page} onGoToPage={mobilePage} disabled={!!busy || loading} startEditingId={bookmarkEditingId} onEditingComplete={() => setBookmarkEditingId(null)} />}
           </div>
@@ -1944,6 +1952,7 @@ export default function App() {
 
         {tool !== 'select' && tool !== 'highlight' && tool !== 'draw' && tool !== 'eraser' && doc && (touchLayout || !mobileAnnotating) && <div className="annotation-tool-hint">
           <span>{tool === 'note' ? touchLayout ? 'Toca la página para añadir una nota' : 'Haz clic en la página para añadir una nota' : tool === 'redact' ? 'Marca las áreas que quieres censurar' : tool === 'crop' ? 'Arrastra sobre la página para elegir el área visible' : 'Arrastra para seleccionar el área'}</span>
+          {!phone && tool !== 'note' && (tool !== 'redact' || !redactions.length) && <button className="secondary-button" disabled={!doc.canEdit || !!busy} onClick={() => void centerArea()}>Usar un área centrada</button>}
           {tool === 'redact' && redactions.length > 0 && <><button className="secondary-button" onClick={() => setRedactions(previous => previous.slice(0, -1))}>Quitar última área</button><button className="primary-button" onClick={() => setWorkbench('redact')}>Revisar {plural(redactions.length, 'área', 'áreas')}</button></>}
           {!(touchLayout && mobileAnnotating && tool === 'note') && <IconButton label="Terminar herramienta" onClick={() => { setTool('select'); setRedactions([]); }}><X size={15} /></IconButton>}
         </div>}
@@ -1958,7 +1967,8 @@ export default function App() {
     {touchLayout && mobileActions && <Modal title="Acciones del documento" onClose={() => setMobileActions(false)} className="mobile-actions-modal">
       {storageFailed ? <p className="mobile-storage-error" role="alert">{sessionStatus}</p> : <p className="mobile-save-status"><Check size={17} />{sessionStatus}</p>}
       <div className="mobile-file-actions"><button className="primary-button" aria-label={doc?.drive ? saveLabel : savesInPlace ? 'Guardar PDF' : isNative ? 'Guardar una copia del PDF' : 'Descargar PDF'} onClick={() => mobileAction(() => void download())} disabled={!doc || !!busy || loading}><ArrowDownToLine size={20} /><span>{saveLabel}</span></button></div>
-      {savesInPlace && !doc?.drive && <p className="modal-description">Guardar actualiza el PDF original.</p>}
+      {/* PDFs created in Folio, recovered changes and the sample are saved as new files. */}
+      {savesInPlace && doc?.nativeSource && !doc.drive && !doc.draftSource && !doc.sample && <p className="modal-description">Guardar actualiza el PDF original.</p>}
       {doc && (!doc.canAnnotate || isNativePdfDocument(doc.pdf)) && <p className="mobile-capability-summary">{capabilitySummary}</p>}
       <div className="mobile-action-grid">
         {doc?.drive && <button onClick={() => mobileAction(() => { setDriveLibrary(true); setLibrary(true); })}><Cloud size={20} /><span>Ver Drive</span></button>}

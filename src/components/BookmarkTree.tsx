@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderPlus, GripVertical, MoreHorizontal, Move, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { BookmarkNode } from '../types';
@@ -40,7 +40,8 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number; opened: number } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; left: number; top: number; bottom: number; opened: number } | null>(null);
+  const [menuPlace, setMenuPlace] = useState<{ menu: typeof menu; left: number; top: number } | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [destination, setDestination] = useState('');
   const [beforeId, setBeforeId] = useState('');
@@ -88,6 +89,14 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     if (save && title) onChange(bookmarks.map(node => node.id === id ? { ...node, title } : node));
     setEditingId(null); onEditingComplete?.(); if (restoreFocus) focusRow(id);
   };
+  // Place the menu once its real size is known: below the anchor, above it when
+  // there is no room, and always inside the visible viewport.
+  useLayoutEffect(() => {
+    const element = menuElement.current; if (!menu || !element) return;
+    const box = element.getBoundingClientRect(), bounds = visibleBounds(), below = menu.bottom + 4, above = menu.top - 4 - box.height;
+    const top = below + box.height <= bounds.bottom - 8 || above < bounds.top + 8 ? below : above;
+    setMenuPlace({ menu, left: Math.max(bounds.left + 8, Math.min(menu.left, bounds.right - box.width - 8)), top: Math.max(bounds.top + 8, Math.min(top, bounds.bottom - box.height - 8)) });
+  }, [menu]);
   useEffect(() => {
     if (!menu) return;
     menuElement.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
@@ -104,10 +113,8 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     const next = createBookmark(bookmarks, asGroup ? null : page, parentId);
     onChange(next.bookmarks); setMenu(null); setName(next.bookmarks.find(node => node.id === next.id)!.title); setEditingId(next.id); setFocusedId(next.id);
   };
-  const showMenu = (id: string, rectangle: { left: number; bottom: number }) => {
-    if (disabled) return;
-    const bounds = visibleBounds(), phone = document.documentElement.dataset.phone === 'true';
-    setMenu({ id, opened: Date.now(), x: Math.max(bounds.left + 8, Math.min(rectangle.left, bounds.right - (phone ? 308 : 244))), y: Math.max(bounds.top + 8, Math.min(rectangle.bottom + 4, bounds.bottom - (phone ? 500 : 390))) });
+  const showMenu = (id: string, anchor: { left: number; top: number; bottom: number }) => {
+    if (!disabled) setMenu({ id, opened: Date.now(), left: anchor.left, top: anchor.top, bottom: anchor.bottom });
   };
   const remove = (node: BookmarkNode) => {
     const next = deleteBookmark(bookmarks, node.id); onChange(next); setMenu(null);
@@ -229,7 +236,7 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     <div className="bookmark-tree" role="tree" aria-label="Árbol de marcadores" ref={tree}>
       {rows.map((row, index) => {
         const { node, depth } = row, hasChildren = bookmarks.some(item => item.parentId === node.id);
-        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-label={node.page === null ? node.title : `${node.title}, página ${node.page}`} aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
+        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-label={node.page === null ? node.title : `${node.title}, página ${node.page}`} aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, top: event.clientY, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
           {hasChildren ? <button className="bookmark-fold" tabIndex={-1} aria-label={`${node.collapsed && !expandedWhileDragging.has(node.id) ? 'Expandir' : 'Contraer'} ${node.title}`} onClick={() => toggle(node)} disabled={disabled}>{node.collapsed && !expandedWhileDragging.has(node.id) ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button> : <span className="bookmark-fold-space" />}
           {node.page === null ? <Folder size={14} className="bookmark-symbol" /> : <Bookmark size={13} className="bookmark-symbol" fill="currentColor" />}
           {editingId === node.id ? <input ref={input} className="bookmark-name-input" aria-label="Nombre del marcador" value={name} maxLength={200} onChange={event => setName(event.target.value)} onBlur={() => finishEdit(true, false)} onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishEdit(event.key === 'Enter'); } }} disabled={disabled} /> : <button className="bookmark-label" tabIndex={-1} title={node.page === null ? node.title : `${node.title} · Página ${node.page}`} onDoubleClick={() => beginEdit(node.id)} onClick={() => { setFocusedId(node.id); if (node.page !== null) onGoToPage(node.page); else if (hasChildren) toggle(node); }} disabled={disabled}>{node.title}</button>}
@@ -242,7 +249,7 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     </div>
     {draggingId && <div className="bookmark-drop-hint" role="status" aria-live="polite">{dropHint}</div>}
     {draggingNode && createPortal(<div className="bookmark-drag-preview" style={{ left: Math.min(dragLocation.x + 14, window.innerWidth - 190), top: Math.min(dragLocation.y + 14, window.innerHeight - 45), '--bookmark-color': draggingNode.color } as React.CSSProperties}>{draggingNode.page === null ? <Folder size={14} /> : <Bookmark size={13} fill="currentColor" />}<span>{draggingNode.title}</span></div>, document.body)}
-    {menu && menuNode && createPortal(<div className="bookmark-menu" ref={menuElement} role="menu" aria-label={`Opciones de ${menuNode.title}`} style={{ left: menu.x, top: menu.y }} onKeyDown={event => {
+    {menu && menuNode && createPortal(<div className="bookmark-menu" ref={menuElement} role="menu" aria-label={`Opciones de ${menuNode.title}`} style={menuPlace?.menu === menu ? { left: menuPlace.left, top: menuPlace.top } : { left: menu.left, top: menu.bottom + 4 }} onKeyDown={event => {
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
       event.preventDefault(); const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
       const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length; buttons[target]?.focus();

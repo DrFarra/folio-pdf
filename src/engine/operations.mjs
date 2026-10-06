@@ -917,9 +917,10 @@ export function operateDocument(bytes, options, password = '') {
       if (!Number.isInteger(permissions) || permissions < 0 || permissions > 4095) fail('Permisos inválidos.');
       return save(doc, `garbage=4,compress=yes,encrypt=aes-256,user-password=${user},owner-password=${owner},permissions=${permissions}`);
     } else if (operation === 'unprotect') {
+      // An owner password is required even when user permissions are permissive,
+      // also in PDFs that open without a password.
+      if (!doc.getTrailer().get('Encrypt').isNull() && !(doc.authenticatePassword(password) & 4)) fail('Necesitas la contraseña de propietario para quitar la protección.');
       allowed(doc, 'edit');
-      // An owner password is required even when user permissions are permissive.
-      if (doc.needsPassword() && !(doc.authenticatePassword(password) & 4)) fail('Necesitas la contraseña de propietario para quitar la protección.');
       return save(doc, 'garbage=4,compress=yes,encrypt=no');
     } else fail('Operación desconocida.');
     const output = ['add-text', 'add-image', 'ocr'].includes(operation) ? saveDrawnDocument(doc, password) : save(doc);

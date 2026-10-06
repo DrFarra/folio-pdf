@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import type { LoadedDocument } from '../types';
-import { getDocument } from '../pdf';
+import { getDocument, plural } from '../pdf';
 import { errorMessage } from '../errors';
 import { extractText } from '../engine/client';
 import { compareText, visualDifference } from '../comparison';
@@ -77,7 +77,7 @@ export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc:
     {error && <p className="operation-error" role="alert">{error}</p>}
     {pair && <><div className="compare-controls"><label>Página<select aria-label="Página de comparación" value={page} onChange={e => setPage(Number(e.target.value))}>{Array.from({ length: Math.max(pair.before.numPages, pair.after.numPages) }, (_, i) => <option key={i} value={i + 1}>{i + 1}</option>)}</select></label><label>Comparación<select aria-label="Comparación" value={mode} onChange={e => setMode(e.target.value as typeof mode)}><option value="visual">Visual</option><option value="text">Texto</option></select></label></div>
       {mode === 'text' ? <div className="text-differences">{differences.some(change => change.kind !== 'same') ? differences.map((change, index) => <p className={change.kind} key={index}><span>{change.kind === 'added' ? '+' : change.kind === 'removed' ? '−' : ''}</span>{change.text}</p>) : <p>Sin diferencias en el texto de esta página.</p>}</div> :
-        images.length ? <><p className="area-label">{pixels === 0 ? 'Sin diferencias visuales en esta página.' : `${pixels?.toLocaleString('es')} píxeles diferentes en la vista comparada.`}</p><div className="visual-comparison">{[doc.name, pair.name, 'Diferencias'].map((name, index) => <figure key={index}><figcaption title={name}>{name}</figcaption><img src={images[index]} alt={`Página ${page}: ${name}`} /></figure>)}</div></> : <p className="operation-loading"><LoaderCircle size={16} className="spin" />Comparando página…</p>}
+        images.length ? <><p className="area-label">{pixels === 0 ? 'Sin diferencias visuales en esta página.' : `${plural(pixels || 0, 'píxel diferente', 'píxeles diferentes')} en la vista comparada.`}</p><div className="visual-comparison">{[doc.name, pair.name, 'Diferencias'].map((name, index) => <figure key={index}><figcaption title={name}>{name}</figcaption><img src={images[index]} alt={`Página ${page}: ${name}`} /></figure>)}</div></> : <p className="operation-loading"><LoaderCircle size={16} className="spin" />Comparando página…</p>}
     </>}
   </div>;
 }

@@ -3,7 +3,7 @@
 const VERSION = '0.8.11';
 const CACHE = `folio-${VERSION}`;
 const SHELL = ['/', '/theme.js', '/folio.svg', '/manifest.webmanifest', '/apple-touch-icon.png', '/folio-192.png', '/folio-512.png',
-  '/sample.pdf', '/fonts/dm-sans-regular.ttf', '/fonts/dm-sans-semibold.ttf'];
+  '/sample.pdf', '/licenses/LICENSE.txt', '/fonts/dm-sans-regular.ttf', '/fonts/dm-sans-semibold.ttf'];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
