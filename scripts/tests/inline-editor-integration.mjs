@@ -102,14 +102,14 @@ try {
     }
     await disabledPointerClick(page, tab(page, b)); await assertDraft(page, draft);
     await disabledPointerClick(page, page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true })); await assertDraft(page, draft);
-    for (const name of ['Abrir PDF', 'Crear PDF', 'Listo']) {
+    for (const name of ['Abrir PDF', 'Listo']) {
       await disabledPointerClick(page, page.getByRole('button', { name, exact: true })); await assertDraft(page, draft);
     }
     // A supplied file reaches openFiles directly, bypassing the disabled +
     // button; the callback guard must still keep the active source and draft.
     await page.locator('.app-header input[type="file"]').setInputFiles(b.file); await settle(page); await assertDraft(page, draft);
     await page.screenshot({ path: path.join(output, 'inline-editor-draft-guards.png'), animations: 'disabled' });
-    await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
+    await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page);
     assert.equal(await tab(page, b).isDisabled(), false);
     assert.equal(await page.getByRole('button', { name: 'Listo', exact: true }).isDisabled(), false);
     await closeEditor(page);
@@ -144,16 +144,18 @@ try {
     assert.equal(await pageNumber(page).inputValue(), '2', 'Opening another tool from the inline editor must restore the selected reading page.');
     await edit(page, 2);
     await page.getByRole('button', { name: 'Volver a Herramientas', exact: true }).click();
-    await page.getByRole('button', { name: 'Añadir texto', exact: true }).click();
+    // Adding text lives in Editar PDF; an area tool of the catalog draws on the reader.
+    await page.getByRole('button', { name: 'Censurar', exact: true }).click();
     await page.locator('.workspace-editor').waitFor({ state: 'detached' }); await settle(page); await page.waitForTimeout(200);
     assert.equal(await pageNumber(page).inputValue(), '2');
     const area = await page.locator('.pdf-page-wrap[data-page-number="2"] .page-content').boundingBox(); assert(area);
     await page.mouse.move(area.x + area.width * .3, area.y + area.height * .4); await page.mouse.down();
     await page.mouse.move(area.x + area.width * .65, area.y + area.height * .6, { steps: 8 }); await page.mouse.up();
-    await page.locator('.content-editor[data-kind="add-text"]').waitFor();
-    assert.equal(await page.locator('.content-editor canvas[aria-label="Vista previa de la página 2"]').count(), 1, 'Area selection must operate on the restored visible page.');
-    await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
-    await page.locator('.workbench').waitFor({ state: 'detached' }); await page.keyboard.press('Escape'); await settle(page);
+    await page.getByRole('button', { name: 'Revisar 1 área', exact: true }).click();
+    const review = page.getByRole('dialog', { name: 'Censurar', exact: true }); await review.waitFor();
+    assert.equal(await review.getByText('Página 2 · Área 1', { exact: true }).count(), 1, 'Area selection must operate on the restored visible page.');
+    await review.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click(); await review.waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Terminar herramienta', exact: true }).click(); await settle(page);
     assert.equal(await pageNumber(page).inputValue(), '2');
     await pageNumber(page).fill('1'); await pageNumber(page).press('Enter');
     await page.waitForFunction(() => document.querySelector('input[aria-label="Número de página"]')?.value === '1');

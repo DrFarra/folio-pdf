@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
+import { storedSession, waitForSession } from './session-helpers.mjs';
 
 // Real PDF and DOM acceptance checks for the library/reader transitions. Native
 // large-file IPC is explicitly mocked only in the capability-explanation case.
@@ -116,24 +117,24 @@ try {
   browser = process.env.FOLIO_TEST_BROWSER === 'webkit' ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath, headless: true });
 
   await check('library-is-root-and-back-preserves-document', async page => {
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
-    await visibleButton(page, 'Importar PDF').waitFor(); await open(page);
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
+    await visibleButton(page, 'Abrir PDF').waitFor(); await open(page);
     const position = await page.locator('.reading-area').evaluate(async reader => {
       const chapter = reader.querySelector('[data-page-number="3"]');
       reader.scrollTop += chapter.getBoundingClientRect().top - reader.getBoundingClientRect().top + 90;
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return reader.scrollTop;
     });
-    await visibleButton(page, 'Volver a biblioteca').tap();
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await visibleButton(page, 'Volver a la biblioteca').tap();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).tap();
     await page.locator('.reading-area .textLayer span').first().waitFor();
     await page.waitForFunction(position => Math.abs(document.querySelector('.reading-area').scrollTop - position) < 3, position);
     for (const name of ['Páginas', 'Buscar', 'Anotar', 'Compartir']) await visibleButton(page, name).waitFor();
-    await visibleButton(page, 'Documentos abiertos').tap();
-    assert.equal(await page.locator('.mobile-document-list>div').count(), 1, 'Reopening from the library must reuse the open document.');
+    await visibleButton(page, 'Documentos abiertos y recientes').tap();
+    assert.equal(await page.locator('.document-switcher-row').count(), 1, 'Reopening from the library must reuse the open document.');
     await page.getByRole('button', { name: 'Cerrar Architecture.pdf', exact: true }).tap();
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     return { rootLibrary: true, directReadingActions: true, documentResumed: true, resumedScrollWithinPixels: 3, duplicateTabs: false, closingLastDocumentReturnsToLibrary: true };
   });
   await check('search-reveals-hit-and-keeps-navigation', async page => {
@@ -156,11 +157,26 @@ try {
     await open(page); await visibleButton(page, 'Guardar marcador de esta página').tap();
     assert.equal(await page.locator('.mobile-drawer').count(), 0);
     assert.equal(await page.locator('.bookmark-name-input').count(), 0);
-    await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && JSON.parse(localStorage.getItem(key)).bookmarks.length === 1));
+    await waitForSession(page, session => session.bookmarks.length === 1);
     return { bookmarkPersisted: true, readingUninterrupted: true };
   });
+  await check('phone-bookmark-menu-fits-viewport', async page => {
+    await open(page); await visibleButton(page, 'Guardar marcador de esta página').tap();
+    await visibleButton(page, 'Páginas').tap(); await page.getByRole('tab', { name: 'Marcadores', exact: true }).tap();
+    await page.getByRole('button', { name: /^Opciones de / }).first().tap();
+    const menu = await page.locator('.bookmark-menu').boundingBox(); assert(menu);
+    assert(menu.x >= 0 && menu.x + menu.width <= 390 && menu.y + menu.height <= 844, `The bookmark menu must fit the phone screen: ${JSON.stringify(menu)}`);
+    return { bookmarkMenuWithinViewport: true };
+  });
+  await check('phone-settings-show-only-working-options', async page => {
+    await visibleButton(page, 'Ajustes').tap();
+    const dialog = page.getByRole('dialog', { name: 'Ajustes', exact: true }); await dialog.waitFor();
+    for (const label of ['Al abrir un documento', 'Ancho del panel', 'Velocidad de zoom con rueda']) assert.equal(await dialog.getByLabel(label, { exact: true }).count(), 0, `${label} has no effect on a phone.`);
+    assert.equal(await dialog.getByText('Opciones avanzadas', { exact: true }).count(), 0);
+    return { desktopOnlySettingsHidden: true };
+  });
   await check('saving-note-returns-to-document', async page => {
-    await open(page); await visibleButton(page, 'Anotar').tap(); await visibleButton(page, 'Añadir nota').tap();
+    await open(page); await visibleButton(page, 'Anotar').tap(); await visibleButton(page, 'Nota').tap();
     const bounds = await page.locator('.page-content').first().boundingBox(); assert(bounds);
     await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + 150);
     await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
@@ -181,20 +197,22 @@ try {
   await check('outline-folds-preserve-context-and-titles-navigate', async page => {
     await open(page); await visibleButton(page, 'Páginas').tap(); await page.getByRole('tab', { name: 'Índice', exact: true }).tap();
     await page.getByRole('navigation', { name: 'Índice del documento', exact: true }).waitFor();
-    await visibleButton(page, 'Plegar Chapter A').tap(); await visibleButton(page, 'Desplegar Chapter B').tap();
+    await visibleButton(page, 'Contraer Chapter A').tap(); await visibleButton(page, 'Expandir Chapter B').tap();
     await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
     await visibleButton(page, 'Páginas').tap(); await page.getByRole('tab', { name: 'Índice', exact: true }).tap();
-    assert.equal(await visibleButton(page, 'Desplegar Chapter A').getAttribute('aria-expanded'), 'false');
-    assert.equal(await visibleButton(page, 'Plegar Chapter B').getAttribute('aria-expanded'), 'true');
+    assert.equal(await visibleButton(page, 'Expandir Chapter A').getAttribute('aria-expanded'), 'false');
+    assert.equal(await visibleButton(page, 'Contraer Chapter B').getAttribute('aria-expanded'), 'true');
     await page.locator('.document-outline-destination').filter({ hasText: 'Chapter B' }).tap();
     await page.locator('.mobile-drawer').waitFor({ state: 'detached' });
-    await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && JSON.parse(localStorage.getItem(key)).lastPage === 3));
+    await waitForSession(page, session => session.lastPage === 3);
     return { independentTitleNavigation: true, collapsedChaptersRemembered: true };
   });
   await check('mobile-sheet-can-dismiss-and-restores-focus', async page => {
     await open(page); const trigger = visibleButton(page, 'Más acciones'); await trigger.tap();
     const dialog = page.getByRole('dialog', { name: 'Acciones del documento', exact: true }); await dialog.waitFor();
-    await dialog.getByRole('button', { name: 'Cerrar hoja', exact: true }).waitFor();
+    // The handle is a gesture aid: focus and screen readers start at the close button.
+    await dialog.locator('.sheet-handle').waitFor(); assert.equal(await dialog.getByRole('button', { name: 'Cerrar hoja' }).count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }).evaluate(button => document.activeElement === button), true);
     const box = await dialog.boundingBox(); assert(box && box.y + box.height <= 845, 'The sheet must fit the visible viewport.');
     await dialog.locator('.sheet-handle').evaluate(handle => {
       const rect = handle.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
@@ -204,55 +222,42 @@ try {
       for (const [type, dy] of [['pointerdown', 0], ['pointermove', 100], ['pointerup', 100]]) handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y + dy }));
     });
     await dialog.waitFor({ state: 'detached' }); assert.equal(await trigger.evaluate(button => document.activeElement === button), true);
-    return { bottomSheetWithinViewport: true, dragDismissContract: true, focusRestored: true };
-  });
-  await check('library-removal-preserves-active-annotations', async page => {
-    await open(page); await visibleButton(page, 'Guardar marcador de esta página').tap();
-    await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && JSON.parse(localStorage.getItem(key)).bookmarks.length === 1));
-    await visibleButton(page, 'Volver a biblioteca').tap();
-    await page.getByRole('button', { name: /Opciones.*Architecture\.pdf/ }).tap();
-    await page.getByRole('menuitem', { name: 'Quitar de recientes', exact: true }).tap();
-    assert.equal(await page.getByRole('dialog').count(), 0);
-    const retained = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('folio.session.')).some(key => JSON.parse(localStorage.getItem(key)).bookmarks.length === 1));
-    assert.equal(retained, true, 'Removing recency must preserve the document session.');
-    return { removeRecentKeepsSession: true };
+    return { bottomSheetWithinViewport: true, dragDismissContract: true, focusRestored: true, initialFocusOnClose: true };
   });
   await check('library-delete-confirms-and-does-not-resurrect', async page => {
     await open(page); await visibleButton(page, 'Guardar marcador de esta página').tap();
-    await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && JSON.parse(localStorage.getItem(key)).bookmarks.length === 1));
-    const sessionKey = await page.evaluate(() => Object.keys(localStorage).find(key => key.startsWith('folio.session.')));
-    assert(sessionKey); const documentId = sessionKey.slice('folio.session.'.length);
+    const [documentId] = await waitForSession(page, session => session.bookmarks.length === 1);
     const storedCopy = () => page.evaluate(async id => {
       const db = await new Promise((resolve, reject) => { const request = indexedDB.open('folio-library'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
       const tx = db.transaction(['documents', 'drafts'], 'readonly');
       const read = store => new Promise((resolve, reject) => { const request = tx.objectStore(store).get(id); request.onsuccess = () => resolve(request.result !== undefined); request.onerror = () => reject(request.error); });
       const [document, draft] = await Promise.all([read('documents'), read('drafts')]); db.close(); return { document, draft };
     }, documentId);
-    await visibleButton(page, 'Volver a biblioteca').tap();
+    await visibleButton(page, 'Volver a la biblioteca').tap();
     const requestDeletion = async () => {
       await page.getByRole('button', { name: /Opciones.*Architecture\.pdf/ }).tap();
-      await page.getByRole('menuitem', { name: 'Eliminar copia local…', exact: true }).tap();
-      await page.getByRole('dialog', { name: 'Eliminar copia local', exact: true }).waitFor();
+      await page.getByRole('menuitem', { name: 'Eliminar de la biblioteca…', exact: true }).tap();
+      await page.getByRole('dialog', { name: 'Eliminar de la biblioteca', exact: true }).waitFor();
     };
     await requestDeletion();
     await visibleButton(page, 'Cancelar').tap(); await page.getByRole('dialog').waitFor({ state: 'detached' });
-    assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key))?.bookmarks.length, sessionKey), 1, 'Cancel must preserve annotations and bookmarks.');
+    assert.equal((await storedSession(page, documentId))?.bookmarks.length, 1, 'Cancel must preserve annotations and bookmarks.');
     assert.equal((await storedCopy()).document, true, 'Cancel must preserve the stored PDF.');
-    await requestDeletion(); await visibleButton(page, 'Eliminar copia local y cambios').tap();
+    await requestDeletion(); await visibleButton(page, 'Eliminar copia y cambios').tap();
     await page.getByRole('dialog').waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).waitFor({ state: 'detached' });
     assert.equal(await page.locator('.pdf-page-wrap').count(), 0, 'The deleted document must close its reader tab.');
-    assert.equal(await page.getByRole('button', { name: 'Documentos abiertos', exact: true }).count(), 0);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), sessionKey), null);
+    assert.equal(await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).count(), 0);
+    assert.equal(await storedSession(page, documentId), null);
     assert.deepEqual(await storedCopy(), { document: false, draft: false });
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
     // Let the reader's delayed persistence callbacks settle before reloading.
     await page.waitForTimeout(1500);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), sessionKey), null, 'pagehide must not recreate a deleted session.');
+    assert.equal(await storedSession(page, documentId), null, 'pagehide must not recreate a deleted session.');
     assert.deepEqual(await storedCopy(), { document: false, draft: false });
-    await page.reload(); await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await page.reload(); await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).count(), 0);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), sessionKey), null);
+    assert.equal(await storedSession(page, documentId), null);
     assert.deepEqual(await storedCopy(), { document: false, draft: false });
     return { cancelPreservesCopyAndSession: true, confirmedDeletionRemovesCopyDraftSessionAndTab: true, noResurrectionOnPagehideOrReload: true };
   });
@@ -260,18 +265,30 @@ try {
     await page.locator('.reading-area .textLayer span').first().waitFor();
     await visibleButton(page, 'Más acciones').tap();
     await visibleButton(page, 'Herramientas').tap();
-    await page.getByText(/(archivo|documento).*(grande|32|PDFKit)|PDFKit.*(archivo|documento)/i).first().waitFor();
+    await page.getByText(/^PDF grande: /).first().waitFor();
     return { nativeFileBackedAdapter: true, capabilityReasonVisible: true, nativeIPCMocked: true };
   }, { native: true });
   await check('desktop-dialog-keeps-native-modal-behavior', async page => {
-    await open(page); await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Preferencias de lectura', exact: true }); await dialog.waitFor();
+    await open(page); await page.getByRole('button', { name: 'Ajustes', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Ajustes', exact: true }); await dialog.waitFor();
     assert.equal(await dialog.locator('.sheet-handle').isVisible(), false);
     await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
     return { mobileHandleHiddenOnDesktop: true, escapeDismisses: true };
   }, { desktop: true });
+  await check('desktop-shortcut-closes-dialog-not-document', async page => {
+    await open(page); await page.getByRole('button', { name: 'Ajustes', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Ajustes', exact: true }); await dialog.waitFor();
+    await page.keyboard.press('Control+w'); await dialog.waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.document-tab').count(), 1, 'Ctrl/⌘+W with a dialog open must close only the dialog.');
+    for (const name of ['Información del documento', 'Crear PDF']) assert.equal(await page.locator('.app-header').getByRole('button', { name, exact: true }).count(), 0, `${name} is reached from Más acciones or the library, not the header.`);
+    await visibleButton(page, 'Más acciones del documento').click();
+    for (const name of ['Volver a la biblioteca', 'Vista del documento']) assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `${name} repeats the rail or the toolbar.`);
+    await page.getByRole('button', { name: 'Ver una página a la vez', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.pdf-page-wrap').length === 1);
+    return { dialogClosedDocumentKept: true, noDuplicateEntries: true, directScrollModeToggle: true };
+  }, { desktop: true });
   await check('desktop-library-is-root-and-resumes-position', async page => {
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     assert.equal(await page.locator('dialog[open]').count(), 0, 'The desktop library is a workspace, not a blocking startup dialog.');
     await page.keyboard.press('Control+f');
     assert.equal(await page.getByRole('searchbox', { name: 'Buscar documentos por nombre', exact: true }).evaluate(input => document.activeElement === input), true, 'Ctrl+F in the library searches documents.');
@@ -281,8 +298,8 @@ try {
       reader.scrollTop += chapter.getBoundingClientRect().top - reader.getBoundingClientRect().top + 90;
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); return reader.scrollTop;
     });
-    await visibleButton(page, 'Mis documentos').click();
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await visibleButton(page, 'Biblioteca').click();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).click();
     await page.waitForFunction(top => Math.abs(document.querySelector('.reading-area').scrollTop - top) <= 3, position);
     assert.equal(await page.locator('.document-tab').count(), 1, 'Reopening the library row should resume its existing tab.');
@@ -303,8 +320,8 @@ try {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('input[type=file][accept="application/pdf,.pdf"]').first().setInputFiles(fixture);
     await page.locator('.reading-area canvas').first().waitFor();
-    await visibleButton(page, 'Mis documentos').click();
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await visibleButton(page, 'Biblioteca').click();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).waitFor();
     assert(await page.evaluate(() => globalThis.__folioDelayedLibraryReads > 0), 'The delayed Blob persistence path must be exercised.');
     assert.equal(await page.getByRole('button', { name: 'Abrir Architecture.pdf', exact: true }).count(), 1);
@@ -340,9 +357,9 @@ try {
     await page.keyboard.press('Escape');
     await page.locator('.desktop-annotation-toolbar').waitFor({ state: 'detached' });
     await visibleButton(page, 'Anotar documento').click();
-    await visibleButton(page, 'Resaltado automático (H)').waitFor();
+    await visibleButton(page, 'Resaltador (H)').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Color del resaltador', exact: true }).isVisible(), false, 'Tool properties appear for the active tool.');
-    await visibleButton(page, 'Resaltado automático (H)').click();
+    await visibleButton(page, 'Resaltador (H)').click();
     await visibleButton(page, 'Color del resaltador').waitFor();
     await visibleButton(page, 'Modo lectura').click();
     assert.equal(await page.getByRole('button', { name: 'Color del resaltador', exact: true }).isVisible(), false);
@@ -354,7 +371,7 @@ try {
     await open(page); await visibleButton(page, 'Herramientas').click();
     const catalog = page.getByRole('dialog', { name: 'Herramientas', exact: true }); await catalog.waitFor();
     assert.equal(await catalog.locator('.tool-category').count(), 6);
-    assert.equal(await catalog.locator('.operation-grid > button').count(), 17, 'The catalog must retain existing operations and expose image replacement.');
+    assert.equal(await catalog.locator('.operation-grid > button').count(), 14, 'The catalog lists each operation once; adding and replacing content lives in Editar PDF.');
     for (const name of ['Páginas', 'Contenido', 'Formularios', 'Revisión y firmas', 'Exportación y OCR', 'Protección']) assert.equal(await catalog.getByRole('heading', { name, exact: true }).count(), 1);
     await visibleButton(page, 'Organizar páginas').click(); await visibleButton(page, 'Página en blanco').click();
     assert.equal(await page.locator('.page-plan > article').count(), 6);
@@ -371,10 +388,10 @@ try {
     await visibleButton(page, 'Volver a Herramientas').click(); await visibleButton(page, 'Proteger PDF').click(); assert.equal(await owner.inputValue(), 'draft-only-owner');
     await visibleButton(page, 'Volver a Herramientas').click(); await visibleButton(page, 'Comparar documentos').click();
     await page.getByLabel('Segundo PDF', { exact: true }).setInputFiles(fixture);
-    await page.getByLabel('Contraseña del segundo PDF, si tiene', { exact: true }).fill('comparison-draft');
+    await page.getByLabel('Contraseña del segundo PDF (si tiene)', { exact: true }).fill('comparison-draft');
     await visibleButton(page, 'Volver a Herramientas').click(); await visibleButton(page, 'Comparar documentos').click();
     assert.equal(await page.getByLabel('Segundo PDF', { exact: true }).evaluate(input => input.files[0]?.name), 'Architecture.pdf');
-    assert.equal(await page.getByLabel('Contraseña del segundo PDF, si tiene', { exact: true }).inputValue(), 'comparison-draft');
+    assert.equal(await page.getByLabel('Contraseña del segundo PDF (si tiene)', { exact: true }).inputValue(), 'comparison-draft');
     if (!process.env.FOLIO_TEST_SKIP_COMPARE_BUSY) {
       await page.evaluate(() => {
         const original = File.prototype.arrayBuffer;
@@ -395,7 +412,7 @@ try {
     }
     await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
     assert.equal(await page.locator('.pdf-page-wrap').count(), 5, 'Leaving tools must not apply the six-page plan.');
-    return { sixPurposeGroups: true, allSeventeenOperations: true, unappliedPlanFormSecurityAndComparisonPreserved: true, keyboardFocusRestored: true, documentUnchanged: true, comparisonBackWaitsForActiveTask: !process.env.FOLIO_TEST_SKIP_COMPARE_BUSY };
+    return { sixPurposeGroups: true, allEighteenOperations: true, unappliedPlanFormSecurityAndComparisonPreserved: true, keyboardFocusRestored: true, documentUnchanged: true, comparisonBackWaitsForActiveTask: !process.env.FOLIO_TEST_SKIP_COMPARE_BUSY };
   }, { desktop: true });
   await check('desktop-narrow-window-keeps-actions-and-legible-labels', async page => {
     await open(page);

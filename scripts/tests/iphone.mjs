@@ -95,7 +95,7 @@ const reader = page => page.locator('.reading-area');
 const heading = (page, file) => page.getByRole('heading', { name: path.basename(file), exact: true, includeHidden: true });
 
 async function open(page, files = source) {
-  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a biblioteca"]')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a la biblioteca"]')?.disabled);
   await page.locator('.app-header input[type=file]').setInputFiles(files);
   await heading(page, Array.isArray(files) ? files.at(-1) : files).waitFor({ state: 'attached' });
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
@@ -104,7 +104,7 @@ async function open(page, files = source) {
 }
 async function goToPage(page, number) {
   await page.getByRole('button', { name: 'Ir a página', exact: true }).tap();
-  const input = page.getByLabel('Número de página', { exact: true }); await input.fill(String(number)); await input.press('Enter');
+  const input = page.getByLabel(/^Página \(1–/); await input.fill(String(number)); await input.press('Enter');
   await waitForReadingPage(page, number);
   assert.equal(await readingPage(page), number);
 }
@@ -132,16 +132,16 @@ async function waitForReadingPage(page, requested = null) {
   }, requested, { polling: 'raf' });
 }
 async function actions(page) {
-  if (await page.getByRole('button', { name: 'Terminar anotación', exact: true }).isVisible()) await page.getByRole('button', { name: 'Terminar anotación', exact: true }).tap();
+  if (await page.getByRole('button', { name: 'Listo', exact: true }).isVisible()) await page.getByRole('button', { name: 'Listo', exact: true }).tap();
   await page.getByRole('button', { name: /^Más acciones(?: del documento)?$/ }).tap();
   return page.getByRole('dialog', { name: 'Acciones del documento', exact: true });
 }
 async function settings(page) {
-  await library(page); await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).tap();
-  await page.getByRole('dialog', { name: 'Ajustes de Folio', exact: true }).waitFor();
+  await library(page); await page.getByRole('button', { name: 'Ajustes', exact: true }).tap();
+  await page.getByRole('dialog', { name: 'Ajustes', exact: true }).waitFor();
 }
 async function library(page) {
-  if (!await page.locator('.library-screen').isVisible()) await page.getByRole('button', { name: 'Volver a biblioteca', exact: true }).tap();
+  if (!await page.locator('.library-screen').isVisible()) await page.getByRole('button', { name: 'Volver a la biblioteca', exact: true }).tap();
   await page.locator('.library-screen').waitFor();
 }
 async function continueReading(page) { await page.locator('.document-library-continue').tap(); await page.locator('.library-screen').waitFor({state:'detached'}); }
@@ -151,10 +151,10 @@ async function viewSettings(page) {
 }
 async function annotateMode(page) {
   await page.getByRole('button', { name: 'Anotar', exact: true }).tap();
-  await page.getByRole('button', { name: 'Resaltado automático', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Resaltador', exact: true }).waitFor();
 }
 async function noteMode(page) {
-  await annotateMode(page); await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
+  await annotateMode(page); await page.getByRole('button', { name: 'Nota', exact: true }).tap();
 }
 async function closeDialog(page) {
   if (await page.locator('.document-switcher').isVisible()) { await page.keyboard.press('Escape'); await page.locator('.document-switcher').waitFor({state:'detached'}); return; }
@@ -165,7 +165,7 @@ async function save(page, name) {
   await actions(page); const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Guardar una copia del PDF', exact: true }).tap();
   const downloaded = await pending, file = path.join(output, name); await downloaded.saveAs(file);
-  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a biblioteca"]')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.app-header button[aria-label="Volver a la biblioteca"]')?.disabled);
   // Offscreen pages deliberately release their rendered content on iOS. Wait
   // for the current reading page to publish its bitmap instead of loading an
   // unrelated first page that may be outside the lazy-rendering margin.
@@ -179,7 +179,7 @@ async function tabs(page) {
   await page.locator('.document-switcher').evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
 }
 async function switchTo(page, file) {
-  await tabs(page); await page.getByRole('button', { name: `Abrir pestaña ${path.basename(file)}`, exact: true }).tap();
+  await tabs(page); await page.getByRole('button', { name: `Cambiar a ${path.basename(file)}`, exact: true }).tap();
   await heading(page, file).waitFor({ state: 'attached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
 }
 async function panel(page, tab = 'Marcadores') {
@@ -334,17 +334,17 @@ try {
       await opener.press('Enter');
       const dialog = page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }); await dialog.waitFor();
       await dialog.evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
-      assert.equal(await dialog.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
+      assert.equal(await dialog.getByRole('button', { name: /^Cambiar a / }).count(), 2);
       assert.equal(await dialog.locator('.document-switcher-row.selected').count(), 1);
       await page.keyboard.press('ArrowDown');
-      await focusAppearance(page, dialog.getByRole('button', { name: /^Abrir pestaña / }).first());
+      await focusAppearance(page, dialog.getByRole('button', { name: /^Cambiar a / }).first());
       assertScreen(await geometry(page));
       await page.screenshot({ path: path.join(output, `iphone-focus-documents-${theme}.png`), animations: 'disabled' });
       await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
       const restored = await focusAppearance(page, opener);
       await opener.tap(); await dialog.waitFor(); await opener.tap(); await dialog.waitFor({state:'detached'});
       await opener.tap(); await dialog.waitFor();
-      await dialog.getByRole('button', { name: `Abrir pestaña ${path.basename(source)}`, exact: true }).tap();
+      await dialog.getByRole('button', { name: `Cambiar a ${path.basename(source)}`, exact: true }).tap();
       await heading(page, source).waitFor({ state: 'attached' }); await waitForReadingPage(page, 1);
       await focusAppearance(page);
       return { theme, realTouchTaps: true, anchoredDocumentPicker: true, keyboardNavigation: true,
@@ -385,7 +385,7 @@ try {
       const jumpOpener = page.getByRole('button', { name: 'Ir a página', exact: true });
       await jumpOpener.focus(); await jumpOpener.press('Enter');
       const jump = page.getByRole('dialog', { name: 'Ir a página', exact: true }); await jump.waitFor();
-      const number = jump.getByLabel('Número de página', { exact: true });
+      const number = jump.getByLabel(/^Página \(1–/);
       const initialNumberFocus = await number.evaluate(element => element === document.activeElement);
       assert.equal(initialNumberFocus, true, 'Opening the page form must honor its explicitly requested autofocus input.');
       await focusAppearance(page); await number.tap(); await number.fill('2');
@@ -404,7 +404,7 @@ try {
       await focusAppearance(page);
       await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).tap();
       await settings(page);
-      const settingsDialog = page.getByRole('dialog', { name: 'Ajustes de Folio', exact: true });
+      const settingsDialog = page.getByRole('dialog', { name: 'Ajustes', exact: true });
       await focusAppearance(page, settingsDialog.getByRole('button', { name: 'Cerrar hoja', exact: true }));
       const themeButton = settingsDialog.getByRole('button', { name: theme === 'light' ? 'Claro' : 'Oscuro', exact: true });
       await touchFocusControl(page, themeButton); assert.equal(await themeButton.getAttribute('aria-pressed'), 'true');
@@ -489,7 +489,7 @@ try {
       const lefts = await items.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().left));
       await items.nth(lefts.indexOf(Math.max(...lefts))).tap(); await ready();
     };
-    await selectCopy(); await intent('delete'); await reachableTap(page.getByRole('button', { name: 'Descartar borrador', exact: true })); await picker();
+    await selectCopy(); await intent('delete'); await reachableTap(page.getByRole('button', { name: 'Descartar edición', exact: true })); await picker();
     assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 2, 'Cancelling deletion must retain both images.');
     await selectCopy(); await intent('delete'); await commit('delete');
     assert.equal(await page.locator('.pdf-content-item[data-kind="image"]').count(), 1);
@@ -542,13 +542,13 @@ try {
     await goToPage(page, 2);
     assert.equal(await readingPage(page),2);
     await open(page, another); assert.equal(await highlights(page).count(), 0);
-    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
+    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Cambiar a / }).count(), 2);
     assertScreen(await geometry(page)); await page.screenshot({ path: path.join(output, 'iphone-documents.png'), animations: 'disabled' }); await closeDialog(page);
-    await open(page, another); await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2); await closeDialog(page);
+    await open(page, another); await tabs(page); assert.equal(await page.getByRole('button', { name: /^Cambiar a / }).count(), 2); await closeDialog(page);
     await switchTo(page, source); assert.equal(await readingPage(page),2);
     await waitForReadingPage(page, 2);
     await page.getByRole('button', {name:'Ir a página',exact:true}).tap();
-    const pageInput = page.getByLabel('Número de página', { exact: true });
+    const pageInput = page.getByLabel(/^Página \(1–/);
     await pageInput.fill('1'); await pageInput.press('Enter');
     // A user can open actions while the smooth scroll is still running. Do
     // not wait between Enter and this tap: leaving the field must not submit
@@ -563,10 +563,10 @@ try {
     const second = await save(page, 'iphone-second-export.pdf'); assert.equal(second.inspection.annotations.length, 0);
     assert.equal(await readingPage(page),2);
     assert(operateDocument(second.bytes, { operation: 'text' })[0].includes('ORIGINAL SECOND'));
-    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 2);
+    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Cambiar a / }).count(), 2);
     await page.getByRole('button', { name: `Cerrar ${path.basename(source)}`, exact: true }).tap();
     await page.locator('dialog[open]').waitFor({ state: 'detached' }); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Abrir pestaña / }).count(), 1); await closeDialog(page); await heading(page, another).waitFor({ state: 'attached' });
+    await tabs(page); assert.equal(await page.getByRole('button', { name: /^Cambiar a / }).count(), 1); await closeDialog(page); await heading(page, another).waitFor({ state: 'attached' });
     return { openedDocuments: 2, duplicateFocusesExistingDocument: true, pageRestored: 2, rapidActionTapPreservesRequestedPage: true, firstPageNavigation, secondExportFromPage: 2, exportedAnnotationIsolation: true, inactiveCloseKeepsCurrentDocument: true };
   });
 
@@ -598,7 +598,7 @@ try {
 
   await check('automatic-highlight-custom-color-and-reopen-persistence', async page => {
     await annotateMode(page);
-    await page.getByRole('button', { name: 'Resaltado automático', exact: true }).tap();
+    await page.getByRole('button', { name: 'Resaltador', exact: true }).tap();
     assertScreen(await geometry(page));
     await page.screenshot({ path: path.join(output, 'iphone-annotation-tools.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
@@ -606,17 +606,17 @@ try {
     assert.equal(await palette.locator('.highlight-color-presets button').count(), 12); assertScreen(await geometry(page));
     await page.getByLabel('Color personalizado del resaltador', { exact: true }).fill('#1177dd');
     await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
-    assert.equal(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.getByRole('button', { name: 'Resaltador', exact: true }).getAttribute('aria-pressed'), 'true');
     await selection(page, automaticPhrase, automaticPhrase); await highlights(page).waitFor();
     assert.equal(await selectionMenu(page).count(), 0);
     await page.getByRole('button',{name:'Deshacer',exact:true}).tap(); await highlights(page).waitFor({state:'detached'});
-    await page.getByRole('button',{name:'Más herramientas de anotación',exact:true}).tap();
+    await page.getByRole('button',{name:'Más opciones',exact:true}).tap();
     await page.getByRole('dialog',{name:'Opciones de anotación',exact:true}).getByRole('button',{name:'Rehacer',exact:true}).tap(); await highlights(page).waitFor();
     const saved = await save(page, 'iphone-automatic-export.pdf'); const highlight = saved.inspection.annotations.find(item => item.kind === 'highlight');
     assert.equal(highlight.text, automaticPhrase); assert.equal(highlight.color.toLowerCase(), '#1177dd');
-    await annotateMode(page); await page.getByRole('button', {name:'Resaltado automático',exact:true}).tap();
+    await annotateMode(page); await page.getByRole('button', {name:'Resaltador',exact:true}).tap();
     await removeHighlight(page); await highlights(page).waitFor({ state: 'detached' });
-    assert.equal(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.getByRole('button', { name: 'Resaltador', exact: true }).getAttribute('aria-pressed'), 'true');
     await page.reload(); await open(page, saved.file); assert.equal(await highlights(page).count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('folio.highlightColor')), '#1177dd');
     const final = await save(page, 'iphone-automatic-deleted.pdf'); assert.equal(final.inspection.annotations.length, 0);
@@ -653,7 +653,7 @@ try {
   await check('copy-protection-does-not-expose-text-actions', async page => {
     await annotateMode(page);
     await selection(page); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await selectionMenu(page).count(), 0); assert(await page.getByRole('button', { name: 'Resaltado automático', exact: true }).isDisabled());
+    assert.equal(await selectionMenu(page).count(), 0); assert(await page.getByRole('button', { name: 'Resaltador', exact: true }).isDisabled());
     return { copyPermissionEnforced: true, forbiddenTextActionsAbsent: true };
   }, { file: noCopy });
 
@@ -662,7 +662,7 @@ try {
     await page.getByLabel('Zoom inicial', { exact: true }).selectOption('width');
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('single');
     await page.getByText('Opciones avanzadas', {exact:true}).tap();
-    await page.getByLabel('Panel inicial', { exact: true }).selectOption('bookmarks');
+    await page.getByLabel('Al abrir un documento', { exact: true }).selectOption('bookmarks');
     await page.getByLabel('Reabrir en la última página', { exact: true }).uncheck();
     await page.getByRole('button', { name: 'Sistema', exact: true }).tap(); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
     await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
@@ -679,7 +679,7 @@ try {
     assertScreen(await geometry(page)); await closePanel(page); await settings(page);
     assert.equal(await page.getByLabel('Zoom inicial', { exact: true }).inputValue(), 'width'); assert.equal(await page.getByLabel('Modo de desplazamiento', { exact: true }).inputValue(), 'single');
     await page.getByText('Opciones avanzadas',{exact:true}).tap();
-    assert.equal(await page.getByLabel('Panel inicial', { exact: true }).inputValue(), 'bookmarks'); assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
+    assert.equal(await page.getByLabel('Al abrir un documento', { exact: true }).inputValue(), 'bookmarks'); assert.equal(await page.getByLabel('Reabrir en la última página', { exact: true }).isChecked(), false);
     await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('continuous'); await page.getByRole('button', { name: 'Listo', exact: true }).tap();
     await continueReading(page); assert.equal(await page.locator('.pdf-page-wrap').count(),1,'Updating the next-document default preserves the current single-page view.');
     await viewSettings(page); await page.getByLabel('Modo de desplazamiento',{exact:true}).selectOption('continuous'); await page.getByRole('button',{name:'Listo',exact:true}).tap();
@@ -858,11 +858,11 @@ try {
     await page.waitForFunction(expected => Number(document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas')?.dataset.renderScale) === expected, expected);
     await visibleChrome('A two finger zoom must cancel the pending reader tap.');
 
-    await annotateMode(page); await page.getByRole('button', { name: 'Resaltado automático', exact: true }).tap();
+    await annotateMode(page); await page.getByRole('button', { name: 'Resaltador', exact: true }).tap();
     await page.locator('.page-content.tool-highlight').first().waitFor();
     const highlighting = await blankPoint(); await page.touchscreen.tap(highlighting.x, highlighting.y);
     await visibleChrome('The active highlight tool must preserve its visible controls.');
-    await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
+    await page.getByRole('button', { name: 'Nota', exact: true }).tap();
     await page.locator('.page-content.tool-note').first().waitFor();
     await page.evaluate(() => {
       window.__iphoneChromeNoteEvents = [];
@@ -981,7 +981,7 @@ try {
     await library(page); await page.getByRole('button', { name: 'Crear PDF', exact: true }).tap();
     await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor(); await page.getByLabel('Nombre', { exact: true }).fill('iPhone created.pdf');
     await page.getByLabel('Imágenes (opcional)', { exact: true }).setInputFiles(imageSource); assertScreen(await geometry(page));
-    await page.getByRole('button', { name: 'Crear documento', exact: true }).tap(); await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor({ state: 'detached' });
+    await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).getByRole('button', { name: 'Crear PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor({ state: 'detached' });
     await page.getByRole('heading', { name: 'iPhone created.pdf', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
     const created = await save(page, 'iphone-created-image-export.pdf'), document = new mupdf.PDFDocument(created.bytes);
     let images = 0;
@@ -1014,7 +1014,7 @@ try {
     await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
     await page.getByLabel('Texto de la nota', { exact: true }).fill('Created by one short touch tap.');
     await page.getByRole('button', { name: 'Guardar nota', exact: true }).tap();
-    assert.equal(await page.getByRole('dialog',{name:'Anotaciones',exact:true}).count(),0); await page.getByRole('button',{name:'Terminar anotación',exact:true}).tap();
+    assert.equal(await page.getByRole('dialog',{name:'Anotaciones',exact:true}).count(),0); await page.getByRole('button',{name:'Listo',exact:true}).tap();
     assert.equal(await page.locator('.note-marker').count(), 1); assertScreen(await geometry(page));
     const saved = await save(page, 'iphone-short-touch-note.pdf'); assert.equal(saved.inspection.annotations.length, 1);
     assert.equal(saved.inspection.annotations[0].kind, 'note'); assert.equal(saved.inspection.annotations[0].text, 'Created by one short touch tap.');

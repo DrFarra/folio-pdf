@@ -104,7 +104,7 @@ async function layout(page, specification) {
     return { label: element.getAttribute('aria-label'), height: element.getBoundingClientRect().height, fontSize: number('fontSize'), contentHeight: element.getBoundingClientRect().height - number('paddingTop') - number('paddingBottom') - number('borderTopWidth') - number('borderBottomWidth') };
   }));
   for (const field of fields) assert(field.contentHeight >= field.fontSize * 1.2, 'Toolbar field must have enough inner height to display its text: ' + JSON.stringify(field));
-  for (const name of ['Seleccionar', 'Añadir texto', 'Añadir imagen', '100%', 'Página siguiente del editor', 'Listo']) {
+  for (const name of ['Seleccionar', 'Añadir texto', 'Añadir imagen', '100 %', 'Página siguiente del editor', 'Listo']) {
     const button = page.getByRole('button', { name, exact: true });
     assert(await button.evaluate(element => { const bounds = element.getBoundingClientRect(); return document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button') === element; }), name + ' must be reachable.');
   }
@@ -123,7 +123,7 @@ try {
     await page.getByRole('combobox', { name: 'Seleccionar texto por', exact: true }).selectOption('line');
     assert.equal(await page.locator('.pdf-content-item[data-kind="text"]').count(), lines.length);
     assert.equal(await page.locator('.pdf-content-item[data-level="paragraph"]').count(), 0);
-    await page.getByRole('button', { name: '100%', exact: true }).click(); await picker(page);
+    await page.getByRole('button', { name: '100 %', exact: true }).click(); await picker(page);
     const nativeWidth = (await page.locator('.pdf-content-picker canvas').boundingBox()).width; assert(Math.abs(nativeWidth - 500) < 1);
     await page.getByRole('button', { name: 'Acercar página del editor', exact: true }).click(); await picker(page);
     assert(Math.abs((await page.locator('.pdf-content-picker canvas').boundingBox()).width - 625) < 1);
@@ -152,7 +152,13 @@ try {
       const bounds = canvas.getBoundingClientRect(); return { count, edges: [left / canvas.width * bounds.width, top / canvas.height * bounds.height, right / canvas.width * bounds.width, bottom / canvas.height * bounds.height] };
     });
     assert(ink.count > 20); assert(ink.edges[0] >= edges[0] - 3 && ink.edges[1] >= edges[1] - 3 && ink.edges[2] <= edges[2] + 3 && ink.edges[3] <= edges[3] + 3, 'Painted glyphs must lie inside the clickable overlay.');
-    await page.screenshot({ path: path.join(output, 'pdf-content-picker-crop-90.png') }); return { crop, rotation: 90, paintedGlyphPixels: ink.count, transformAligned: true, editable: item.editable };
+    await page.screenshot({ path: path.join(output, 'pdf-content-picker-crop-90.png') });
+    // Rotated text cannot be edited as text; its region can still be replaced.
+    assert(!item.editable && item.areaReplaceable); await page.mouse.click(actual.x + actual.width / 2, actual.y + actual.height / 2);
+    await page.getByRole('button', { name: 'Reemplazar esta zona', exact: true }).click(); const editor = page.locator('.content-editor'); await editor.waitFor();
+    assert.equal(await editor.getAttribute('data-kind'), 'replace-text'); assert.equal(await editor.getAttribute('data-selected'), 'false');
+    (await editor.getAttribute('data-source-rect')).split(',').map(Number).forEach((value, index) => assert(Math.abs(value - item.rect[index]) < .01));
+    return { crop, rotation: 90, paintedGlyphPixels: ink.count, transformAligned: true, editable: item.editable, areaReplacementOpened: true };
   });
   await check('drawing-text-and-image-uses-crop-pdf-coordinates', async page => {
     await navigate(page, 2);
@@ -165,9 +171,12 @@ try {
       const rect = (await page.locator('.content-editor').getAttribute('data-source-rect')).split(',').map(Number);
       for (let index = 0; index < 4; index++) assert(Math.abs(rect[index] - expected[index]) < 2, 'Drawn area must use original rotated/cropped PDF coordinates.');
       assert.equal(await page.locator('.content-preview canvas').getAttribute('aria-label'), 'Vista previa de la página 2');
-      await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page, 2);
+      await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page, 2);
     }
-    return { addText: true, addImage: true, originalPdfCoordinates: true, page: 2 };
+    // From the keyboard, adding opens the editor on a centred area instead of waiting for a drag.
+    await page.getByRole('button', { name: 'Añadir texto', exact: true }).press('Enter'); await page.locator('.content-editor[data-kind="add-text"]').waitFor();
+    await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page, 2);
+    return { addText: true, addImage: true, originalPdfCoordinates: true, keyboardAddsCentredArea: true, page: 2 };
   });
   await check('image-selection-keeps-original-source-region', async page => {
     await navigate(page, 3); const item = oracle[2].items.find(item => item.kind === 'image' && item.editable); assert(item);
@@ -175,7 +184,7 @@ try {
     const rect = (await page.locator('.content-editor').getAttribute('data-source-rect')).split(',').map(Number);
     for (let index = 0; index < 4; index++) assert(Math.abs(rect[index] - item.rect[index]) < .01);
     assert.equal(await page.locator('.content-preview canvas').getAttribute('aria-label'), 'Vista previa de la página 3');
-    await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page, 3); return { imageSelected: true, sourceRegionExact: true, page: 3 };
+    await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page, 3); return { imageSelected: true, sourceRegionExact: true, page: 3 };
   });
   await check('invisible-ocr-explains-unavailability-without-opening-editor', async page => {
     await navigate(page, 4); const item = oracle[3].items.find(item => item.level === 'paragraph' && item.text?.includes('INVISIBLE OCR SAMPLE')); assert(item && !item.editable && item.reason);
@@ -185,10 +194,11 @@ try {
     await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     assert.equal(await page.locator('.content-editor').count(), 0); assert((await page.locator('.pdf-picker-footer').innerText()).includes(item.reason));
     assert.equal(await page.locator('.pdf-picker-unavailable[role="alert"]').count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Reemplazar esta zona', exact: true }).count(), 0, 'Invisible OCR text offers no area replacement.');
     if (oracle[3].warnings.length) { await page.locator('.pdf-picker-warnings>summary').click(); for (const warning of oracle[3].warnings) assert((await page.locator('.pdf-picker-warnings').innerText()).includes(warning)); }
     await page.screenshot({ path: path.join(output, 'pdf-content-picker-invisible-ocr.png') }); return { unavailableReason: item.reason, noEditAction: true, warningCount: oracle[3].warnings.length };
   });
-  for (const specification of [{ width: 800, height: 600 }, { width: 900, height: 600 }, { width: 1024, height: 600 }, { width: 390, height: 844, phone: true }, { width: 600, height: 800, phone: true }, { width: 844, height: 390, phone: true }]) {
+  for (const specification of [{ width: 800, height: 600 }, { width: 900, height: 600 }, { width: 1024, height: 600 }, { width: 390, height: 844, phone: true }, { width: 430, height: 932, phone: true }, { width: 844, height: 390, phone: true }]) {
     const id = (specification.phone ? 'phone-' : 'desktop-') + specification.width + 'x' + specification.height;
     await check(id, async page => {
       const geometry = await layout(page, specification);

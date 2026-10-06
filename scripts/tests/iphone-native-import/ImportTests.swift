@@ -31,9 +31,9 @@ final class ImportTests: XCTestCase {
     private func openPicker() {
         // Import belongs to the library. Returning there preserves the open
         // documents; choosing a second provider PDF must keep the first tab.
-        let library = folio.buttons["Volver a biblioteca"].firstMatch
+        let library = folio.buttons["Volver a la biblioteca"].firstMatch
         if library.exists && library.isHittable { library.tap() }
-        let importPDF = folio.buttons["Importar PDF"].firstMatch
+        let importPDF = folio.buttons["Abrir PDF"].firstMatch
         XCTAssertTrue(importPDF.waitForExistence(timeout: 15)); XCTAssertTrue(importPDF.isEnabled)
         importPDF.tap()
         XCTAssertTrue(folio.buttons["Cancel"].firstMatch.waitForExistence(timeout: 15), "UIDocumentPicker did not appear")
@@ -94,7 +94,7 @@ final class ImportTests: XCTestCase {
         folio.launch()
         XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "This test must start without argv/seeded startup PDF")
         openPicker(); folio.buttons["Cancel"].firstMatch.tap()
-        XCTAssertTrue(folio.buttons["Importar PDF"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(folio.buttons["Abrir PDF"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "Cancel created a reading document")
         attach("picker-canceled", app: folio)
         openPicker(); select("Folio selección uno.PDF")
@@ -106,7 +106,7 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(documents.waitForExistence(timeout: 10)); documents.tap()
         attach("picker-two-tabs-before-assert", app: folio)
         func tabExists(_ filename: String) -> Bool {
-            let expected = ("Abrir pestaña " + filename).precomposedStringWithCanonicalMapping
+            let expected = ("Cambiar a " + filename).precomposedStringWithCanonicalMapping
             let deadline = Date().addingTimeInterval(10)
             repeat {
                 // The real AX label mixes a composed web prefix with an APFS
@@ -127,7 +127,7 @@ final class ImportTests: XCTestCase {
         // The document switcher is now a modeless anchored popup. Exercise
         // its actual UIKit trigger and outside taps rather than the removed
         // bottom-sheet handle; both imported documents must survive each exit.
-        let firstTab = folio.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Abrir pestaña '")).firstMatch
+        let firstTab = folio.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Cambiar a '")).firstMatch
         documents.tap()
         XCTAssertTrue(firstTab.waitForNonExistence(timeout: 10))
         reading("FOLIO PICKER DOS", screenshot: "iphone-documents-trigger-dismiss-return")
@@ -143,7 +143,7 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(tabExists("Folio selección uno.PDF"), "Dismissing the popup lost the first PDF")
         XCTAssertTrue(tabExists("Folio selección dos.pdf"), "Dismissing the popup lost the second PDF")
         func switchDocument(_ filename: String, text: String, screenshot: String) {
-            let expected = ("Abrir pestaña " + filename).precomposedStringWithCanonicalMapping
+            let expected = ("Cambiar a " + filename).precomposedStringWithCanonicalMapping
             guard let tab = folio.buttons.allElementsBoundByIndex.first(where: {
                 $0.label.precomposedStringWithCanonicalMapping == expected && $0.exists
             }) else { XCTFail("No exact canonical document button: " + filename); return }

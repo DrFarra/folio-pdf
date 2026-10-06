@@ -96,4 +96,12 @@ check('notes-and-highlights-roundtrip-across-crop-and-four-rotations',()=>{
   fs.writeFileSync(path.join(output,'geometry-standard.pdf'),result);
   return {rotations:[0,90,180,270],cropPreserved:true,comments:8};
 });
+check('recolored-existing-highlight-and-note-persist-after-reopen',()=>{
+  const saved=writeAnnotations(bytes('tracemonkey.pdf'),annotations),reopened=inspectDocument(saved).annotations;
+  const changed=reopened.map(a=>({...a,color:a.kind==='highlight'?'#4caf50':'#e53935',opacity:a.kind==='highlight'?.6:a.opacity}));
+  const result=inspectDocument(writeAnnotations(saved,changed)).annotations;
+  assert.equal(result.find(a=>a.kind==='highlight').color,'#4caf50');assert(Math.abs(result.find(a=>a.kind==='highlight').opacity-.6)<.01);
+  assert.equal(result.find(a=>a.kind==='note').color,'#e53935');assert.equal(result.find(a=>a.kind==='note').text,annotations[1].text);
+  return {highlightColorAndOpacityPersisted:true,noteColorPersisted:true};
+});
 fs.writeFileSync(path.join(output,'engine-results.json'),JSON.stringify({platform:'Node + actual MuPDF WASM engine',results},null,2));

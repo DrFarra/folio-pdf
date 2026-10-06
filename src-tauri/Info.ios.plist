@@ -4,6 +4,7 @@
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLSchemes</key><array><string>com.googleusercontent.apps.743680809956-ttrgvo90qjhd297aauk3p4uvohv6djhi</string></array>
   </dict></array>
+  <key>NSCameraUsageDescription</key><string>Folio usa la cámara solo cuando eliges «Hacer foto» para añadir una imagen a un PDF.</string>
   <key>UIFileSharingEnabled</key><true/>
   <key>LSSupportsOpeningDocumentsInPlace</key><false/>
   <key>UISupportsDocumentBrowser</key><false/>

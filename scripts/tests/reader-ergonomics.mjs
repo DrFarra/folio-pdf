@@ -20,7 +20,7 @@ try {
     const page = await context.newPage(); await page.emulateMedia({ reducedMotion: 'reduce' }); page.setDefaultTimeout(25000); page.on('pageerror', error => errors.push(error.message));
     try {
       await page.goto(origin);
-      await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
       if (viewport.width === 390) await page.screenshot({ path: path.join(output, 'library.png') });
       await page.locator('input[type=file][accept="application/pdf,.pdf"]').setInputFiles(path.join(root, 'public', 'sample.pdf'));
       await page.locator('.reading-area .textLayer span').first().waitFor();
@@ -30,6 +30,7 @@ try {
       for (const control of controls) { assert(control.width >= 44 && control.height >= 44, `44pt control: ${control.label}`); assert(control.left >= -.5 && control.right <= viewport.width + .5, `Within horizontal viewport: ${control.label}`); }
       const frame = () => page.locator('.reading-area').evaluate(element => { const paper = element.querySelector('.pdf-page').getBoundingClientRect(), box = element.getBoundingClientRect(); return { height: element.clientHeight, width: element.clientWidth, scrollTop: element.scrollTop, scrollLeft: element.scrollLeft, x: paper.x, y: paper.y, paperWidth: paper.width, paperHeight: paper.height, viewerY: box.y }; });
       const before = await frame();
+      if (viewport.width > viewport.height) assert(before.paperWidth >= before.width * .9, `A sideways phone fits the page width: ${before.paperWidth}px of ${before.width}px.`);
       const paper = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(paper.x + Math.min(15, paper.width / 4), Math.min(viewport.height - 140, paper.y + paper.height / 2));
       await page.waitForFunction(() => document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'));
@@ -43,15 +44,25 @@ try {
       if (viewport.width === 390) await page.screenshot({ path: path.join(output, 'explorer.png') });
       await page.getByRole('button', { name: 'Cerrar panel', exact: true }).tap();
       await page.getByRole('button', { name: 'Anotar', exact: true }).tap();
-      await page.getByRole('button', { name: 'Añadir nota', exact: true }).tap();
+      await page.getByRole('button', { name: 'Nota', exact: true }).tap();
       if (viewport.width === 390) await page.screenshot({ path: path.join(output, 'annotate.png') });
-      await page.getByRole('button', { name: 'Terminar anotación', exact: true }).tap();
+      await page.getByRole('button', { name: 'Listo', exact: true }).tap();
       await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
       await page.getByRole('button', { name: 'Vista del documento', exact: true }).tap();
       const dialog = await page.getByRole('dialog', { name: 'Vista del documento' }).boundingBox();
       assert(dialog.y >= -.5 && dialog.y + dialog.height <= viewport.height + .5, 'View settings fits viewport.');
       await page.getByRole('button', { name: 'Listo', exact: true }).tap();
-      results.push({ viewport, status: 'passed', stableImmersiveViewport: true, controls44pt: true, visibleSheets: true });
+      if (viewport.width === 390) {
+        // Turning the phone, and turning it back, keeps the page being read.
+        const reading = () => page.locator('.mobile-page-jump').getAttribute('title');
+        await page.getByRole('button', { name: 'Ir a página', exact: true }).tap();
+        const jump = page.getByRole('dialog', { name: 'Ir a página' });
+        await jump.getByLabel(/^Página \(1–/).fill('4');
+        await jump.getByRole('button', { name: 'Ir a página', exact: true }).tap();
+        await page.waitForFunction(() => document.querySelector('.mobile-page-jump')?.title.startsWith('Página 4 de')); await page.waitForTimeout(300);
+        for (const size of [{ width: 844, height: 390 }, viewport]) { await page.setViewportSize(size); await page.waitForTimeout(500); assert.match(await reading(), /^Página 4 de/, `Rotation to ${size.width}x${size.height} keeps the reading page.`); }
+      }
+      results.push({ viewport, status: 'passed', stableImmersiveViewport: true, controls44pt: true, visibleSheets: true, ...viewport.width === 390 ? { rotationKeepsPage: true } : {} });
     } catch (error) { results.push({ viewport, status: 'failed', error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, `failure-${viewport.width}.png`) }).catch(() => {}); }
     finally { console.log(JSON.stringify(results.at(-1))); await context.close(); }
   }

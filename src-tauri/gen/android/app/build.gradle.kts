@@ -14,6 +14,17 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing comes from the environment (see docs/android.md) or from an
+// ignored keystore.properties. Without a keystore, release builds stay unsigned.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+fun signingValue(variable: String, property: String): String? =
+    System.getenv(variable)?.takeIf { it.isNotEmpty() } ?: keystoreProperties.getProperty(property)
+
 android {
     compileSdk = 36
     namespace = "org.folio.pdf"
@@ -22,8 +33,19 @@ android {
         applicationId = "org.folio.pdf"
         minSdk = 26
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+        // Tauri derives it from the version (0.8.11 → 8011); a store upload may override it.
+        versionCode = (System.getenv("FOLIO_ANDROID_VERSION_CODE") ?: tauriProperties.getProperty("tauri.android.versionCode", "1")).toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        signingValue("FOLIO_ANDROID_KEYSTORE", "storeFile")?.let { keystore ->
+            create("release") {
+                storeFile = rootProject.file(keystore)
+                storePassword = signingValue("FOLIO_ANDROID_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("FOLIO_ANDROID_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("FOLIO_ANDROID_KEY_PASSWORD", "keyPassword") ?: storePassword
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,6 +61,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
             optimization {
                enable = true
             }

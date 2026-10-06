@@ -23,7 +23,7 @@ async function fits(page, id) {
   assert.equal(dimensions.overflow, false, id + ' must not overflow horizontally');
   assert.equal(dimensions.nativeFileControls, 0, id + ' must use the shared file control');
   if (await page.locator('.create-pdf-actions').count()) {
-    assert(await page.getByRole('button', { name: 'Crear documento', exact: true }).evaluate(button => {
+    assert(await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).getByRole('button', { name: 'Crear PDF', exact: true }).evaluate(button => {
       const box = button.getBoundingClientRect();
       return box.y >= 0 && box.bottom <= innerHeight && document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button;
     }), 'The creation action must stay visible without scrolling');
@@ -40,9 +40,11 @@ async function storedPdf(page, name) {
     const result = await page.evaluate(async name => {
     const request = indexedDB.open('folio-library');
     const db = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-    const records = await new Promise(resolve => { const req = db.transaction('documents').objectStore('documents').getAll(); req.onsuccess = () => resolve(req.result); });
-    db.close(); const record = records.find(record => record.name === name && record.data);
-    return record ? [...new Uint8Array(record.data)] : null;
+    // The catalog keeps metadata; the PDF bytes live in the 'files' store under the same id.
+    const read = (store, query) => new Promise(resolve => { const req = db.transaction(store).objectStore(store)[query === undefined ? 'getAll' : 'get'](query); req.onsuccess = () => resolve(req.result); req.onerror = () => resolve(undefined); });
+    const record = (await read('documents')).find(record => record.name === name), data = record && await read('files', record.id);
+    db.close();
+    return data ? [...new Uint8Array(data instanceof Blob ? await data.arrayBuffer() : data)] : null;
     }, name);
     if (result?.length) return result;
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -77,7 +79,7 @@ try {
         await page.evaluate(() => document.documentElement.style.removeProperty('--visible-height'));
       }
       await page.getByLabel('Nombre', { exact: true }).fill('  ');
-      assert(await page.getByRole('button', { name: 'Crear documento', exact: true }).isDisabled());
+      assert(await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).getByRole('button', { name: 'Crear PDF', exact: true }).isDisabled());
       await page.getByLabel('Nombre', { exact: true }).fill('Imágenes.pdf');
       const choose = page.getByRole('button', { name: 'Añadir imágenes', exact: true });
       // Real button activation must still open the native file chooser.
@@ -93,7 +95,7 @@ try {
       assert.equal(await page.locator('.create-pdf-files>li').count(), 2);
       assert.equal(await page.locator('.create-pdf-filename').last().textContent(), 'Segunda.png');
       await fits(page, `${id}-images`);
-      await page.getByRole('button', { name: 'Crear documento', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).getByRole('button', { name: 'Crear PDF', exact: true }).click();
       await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).waitFor({ state: 'detached' });
       const created = await PDFDocument.load(new Uint8Array(await storedPdf(page, 'Imágenes.pdf')));
       assert.equal(created.getPageCount(), 2);
@@ -118,11 +120,11 @@ try {
         await fits(page, `${id}-compared`);
       }
       await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
-      // Blank creation remains available without opening a file chooser.
-      if (mobile) await page.getByRole('button', { name: 'Volver a biblioteca', exact: true }).click();
+      // Blank creation remains available from the library without opening a file chooser.
+      await page.getByRole('button', { name: mobile ? 'Volver a la biblioteca' : 'Biblioteca', exact: true }).click();
       await page.getByRole('button', { name: 'Crear PDF', exact: true }).first().click();
       await page.getByLabel('Nombre', { exact: true }).fill('En blanco.pdf');
-      await page.getByRole('button', { name: 'Crear documento', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Crear PDF', exact: true }).getByRole('button', { name: 'Crear PDF', exact: true }).click();
       const blank = await PDFDocument.load(new Uint8Array(await storedPdf(page, 'En blanco.pdf')));
       assert.equal(blank.getPageCount(), 1);
       assert.deepEqual(errors, []);

@@ -30,7 +30,9 @@ original = writeAnnotations(original, [{ id: 'actions-note', kind: 'note', page:
 const source = path.join(output, 'content-actions-source.pdf'); fs.writeFileSync(source, original);
 const sourceHash = createHash('sha256').update(original).digest('hex');
 const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit', browserName = useWebKit ? 'WebKit' : 'Chromium';
-const saveShortcut = (useWebKit ? 'Meta' : 'Control') + '+s';
+const saveShortcut = (useWebKit ? 'Meta' : 'Control') + '+s', saveCopyShortcut = (useWebKit ? 'Meta' : 'Control') + '+Shift+s';
+// The editor's save button: Descargar on the web, Guardar in the desktop app.
+const saveButton = page => page.locator('.edit-pdf-save');
 const chrome = process.env.CHROME_PATH || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
 if (!useWebKit) assert(chrome, 'Chrome or Edge is required, or set CHROME_PATH.');
 const port = process.env.FOLIO_CONTENT_ACTIONS_PORT || '4261', origin = 'http://127.0.0.1:' + port;
@@ -79,12 +81,12 @@ async function commit(page, kind = 'edit', number = 1) {
   await page.getByRole('button', { name: label, exact: true }).click(); await picker(page, number);
 }
 async function savedIdle(page, number = 1) {
-  await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click({ trial: true, timeout: 60000 });
+  await saveButton(page).click({ trial: true, timeout: 60000 });
   await picker(page, number); await workspace(page);
 }
 async function save(page, name, keyboard = false, number = 1) {
   const event = page.waitForEvent('download'); void event.catch(() => {});
-  if (keyboard) await page.keyboard.press(saveShortcut); else await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click();
+  if (keyboard) await page.keyboard.press(saveShortcut); else await page.getByRole('button', { name: 'Descargar', exact: true }).click();
   const target = path.join(output, name); await (await event).saveAs(target); await savedIdle(page, number);
   return new Uint8Array(fs.readFileSync(target));
 }
@@ -180,18 +182,20 @@ try {
     let downloads = 0; page.on('download', () => downloads++);
     await selectText(page); const frame = await page.locator('.content-editor').getAttribute('data-destination-rect');
     await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('DRAFT 1');
+    // Only a changed element is a draft; saving waits until the editor reports it.
+    await page.locator('.edit-pdf-save:disabled').waitFor();
     await page.keyboard.press(saveShortcut);
-    await page.getByText('Aplica o descarta el borrador antes de guardar el PDF.', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Guardar una copia', exact: true }).isDisabled(), true); assert.equal(downloads, 0);
+    await page.locator('.toast').getByText('Aplica o descarta la edición antes de guardar el PDF.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Descargar', exact: true }).isDisabled(), true); assert.equal(downloads, 0);
     await intent(page, 'duplicate'); await page.getByLabel('Posición X', { exact: true }).fill('220');
     await page.getByRole('button', { name: 'Restablecer', exact: true }).click(); await ready(page);
     assert.equal(await page.getByRole('textbox', { name: 'Texto', exact: true }).inputValue(), 'ORIGINAL 1');
     assert.equal(await page.locator('.content-editor').getAttribute('data-destination-rect'), frame);
-    await intent(page, 'delete'); await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
+    await intent(page, 'delete'); await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page);
     await selectImage(page); await intent(page, 'duplicate'); await page.getByLabel('Opacidad', { exact: true }).fill('50');
     await page.getByRole('button', { name: 'Restablecer', exact: true }).click(); await ready(page);
     assert.equal(await page.getByLabel('Opacidad', { exact: true }).inputValue(), '100');
-    await intent(page, 'delete'); await page.getByRole('button', { name: 'Descartar borrador', exact: true }).click(); await picker(page);
+    await intent(page, 'delete'); await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page);
     assert.equal(await page.getByRole('button', { name: 'Deshacer', exact: true }).isDisabled(), true);
     const bytes = await save(page, 'content-actions-cancel.pdf');
     assert.deepEqual(operateDocument(bytes, { operation: 'text' }), operateDocument(original, { operation: 'text' }));
@@ -204,7 +208,7 @@ try {
     await selectText(page, 2); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('SAVED 2'); await commit(page, 'edit', 2);
     const saved = await save(page, 'content-actions-inline-save.pdf', false, 2); assert.equal(textCount(saved, 'SAVED 2', 2), 1); preserved(saved);
     assert.equal(await page.locator('.document-tab.selected').getAttribute('data-tab-key'), tabKey); assert.equal(await page.locator('.document-tab').count(), 1);
-    await page.waitForFunction(() => new Promise(resolve => { const request = indexedDB.open('folio-library', 2); request.onsuccess = () => { const db = request.result, tx = db.transaction('documents', 'readonly'), rows = tx.objectStore('documents').getAll(); rows.onsuccess = () => resolve(rows.result.length >= 2); tx.oncomplete = () => db.close(); }; request.onerror = () => resolve(false); }));
+    await page.waitForFunction(() => new Promise(resolve => { const request = indexedDB.open('folio-library'); request.onsuccess = () => { const db = request.result, tx = db.transaction('documents', 'readonly'), rows = tx.objectStore('documents').getAll(); rows.onsuccess = () => resolve(rows.result.length >= 2); tx.oncomplete = () => db.close(); }; request.onerror = () => resolve(false); }));
     await history(page, 'Deshacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: ORIGINAL 2', exact: true }).count(), 1);
     const undone = await save(page, 'content-actions-inline-undo.pdf', true, 2); assert.equal(textCount(undone, 'SAVED 2', 2), 0); preserved(undone);
     await history(page, 'Rehacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: SAVED 2', exact: true }).count(), 1);
@@ -216,9 +220,10 @@ try {
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
     await selectText(page, 2); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('NATIVE 2'); await commit(page, 'edit', 2);
     const key = await page.locator('.document-tab.selected').getAttribute('data-tab-key');
-    await page.getByRole('button', { name: 'Guardar una copia', exact: true }).click(); await savedIdle(page, 2);
+    // Guardar replaces the opened file; Guardar una copia asks where to write.
+    await page.keyboard.press(saveCopyShortcut); await savedIdle(page, 2);
     assert.equal(await page.evaluate(() => globalThis.__contentActionsNative.writes.length), 0, 'Cancelling output selection writes no PDF.');
-    await page.keyboard.press(saveShortcut);
+    await page.keyboard.press(saveCopyShortcut);
     await page.waitForFunction(() => globalThis.__contentActionsNative.writes.length === 1); await savedIdle(page, 2);
     const state = await page.evaluate(() => globalThis.__contentActionsNative);
     assert.equal(state.chosen.length, 2); assert.equal(state.chosen[0].source, 'source-token');

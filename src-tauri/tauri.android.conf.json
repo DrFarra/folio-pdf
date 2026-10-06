@@ -32,6 +32,7 @@
     "android": {
       "minSdkVersion": 26
     },
+    "fileAssociations": [],
     "resources": {
       "../LICENSE": "LICENSE.txt",
       "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt",

@@ -95,7 +95,11 @@ def validate_pdfkit_rasters(result):
             def point(x, y):
                 return {0: (x-view[0], view[3]-y), 90: (y-view[1], x-view[0]),
                         180: (view[2]-x, y-view[1]), 270: (view[3]-y, view[2]-x)}[rotation]
-            corners = [point(x,y) for box in boxes for x in [box[0],box[2]] for y in [box[1],box[3]]]
+            # The page must fill the bitmap at any requested size, like the text layer.
+            turned = rotation % 180 == 90
+            sx = width / ((view[3]-view[1]) if turned else (view[2]-view[0]))
+            sy = height / ((view[2]-view[0]) if turned else (view[3]-view[1]))
+            corners = [(px*sx, py*sy) for px, py in (point(x,y) for box in boxes for x in [box[0],box[2]] for y in [box[1],box[3]])]
             expected = [min(p[0] for p in corners), min(p[1] for p in corners), max(p[0] for p in corners), max(p[1] for p in corners)]
             dark = [(index % width, index // width) for index in range(width*height)
                     if max(rgba[index*4:index*4+3]) < 140]
@@ -108,7 +112,7 @@ def validate_pdfkit_rasters(result):
                 assert blue > 10 and cyan < 10, 'El renderizado no conserva la anotación no editable o no suprime el resaltado editable.'
             assert len(dark) > 300, 'PDFKit generó una página vacía.'
             actual = [min(p[0] for p in dark), min(p[1] for p in dark), max(p[0] for p in dark), max(p[1] for p in dark)]
-            assert all(abs(a-b) < 25 for a,b in zip(actual,expected)), f'Bitmap y texto no coinciden con crop/rotación {rotation}: {actual} versus {expected}'
+            assert all(abs(a-b) < 25*max(sx,sy) for a,b in zip(actual,expected)), f'Bitmap y texto no coinciden con crop/rotación {rotation} a {width}x{height}: {actual} versus {expected}'
             raster.update({'inspectionFile':destination.name,'textPixelBounds':actual,'expectedTextBounds':expected,'geometryVerified':True,
                            'editableSourceAnnotationsSuppressed':True,'coloredPixels':colored})
             if page == 2: raster.update({'intrinsicRotationVerified':90,'nonOverlayAnnotationVisible':True})
@@ -252,11 +256,13 @@ try:
         # Exercise the production frontend adapter with the large source too.
         # The dedicated UIKit tests cover picker/Open In, so this reader check
         # explicitly uses a launch argument and never claims user selection.
+        # It opens the fixture itself: the probe's import copies are not in the
+        # library, so Folio deletes them when it starts again.
         run('xcrun', 'simctl', 'terminate', device, 'org.folio.pdf')
         large = next(d for d in report['nativeFileProbe']['documents'] if d['document']['size'] > 2*1024**3)
         large_started = int(time.time() * 1000)
         rss_samples = []
-        launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', large['sourcePath'])
+        launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(fixtures / 'Folio native 2GiB.pdf'))
         process_id = int(re.search(r':\s*(\d+)\s*$', launch).group(1))
         large_session = wait_file(data, large['document']['id'] + '.json', lambda s:
             s.get('version') == 3 and s.get('documentRevision') == large['document']['revision'], timeout=150)

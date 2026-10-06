@@ -17,6 +17,8 @@ const fixture = await PDFDocument.create(), font = await fixture.embedFont(Stand
 for (let i = 1; i <= 3; i++) { const page = fixture.addPage([400, 500]); page.drawText(`PAGE ${i}`, { x: 40, y: 430, size: 18, font }); page.drawText('SECRET 123456', { x: 40, y: 350, size: 18, font }); page.drawText('PRESERVE THIS TEXT', { x: 40, y: 260, size: 14, font }); }
 const form = fixture.getForm(), textField = form.createTextField('name'); textField.addToPage(fixture.getPage(0), { x: 40, y: 190, width: 200, height: 30 }); textField.setText('Original');
 const box = form.createCheckBox('agree'); box.addToPage(fixture.getPage(0), { x: 40, y: 150, width: 20, height: 20 });
+const city = form.createDropdown('city'); city.addOptions(['Madrid', 'Lima']); city.addToPage(fixture.getPage(0), { x: 40, y: 100, width: 150, height: 24 });
+form.createTextField('f1_01[0]').addToPage(fixture.getPage(1), { x: 40, y: 190, width: 200, height: 30 });
 fs.writeFileSync(source, await fixture.save());
 const rasterSource = await PDFDocument.create(), rasterPage = rasterSource.addPage([600, 300]);
 rasterPage.drawText('FOLIO OCR TEST', { x: 50, y: 210, size: 32 }); rasterPage.drawText('Hola Paraguay 2026', { x: 50, y: 135, size: 27 });
@@ -155,13 +157,32 @@ try {
     await page.screenshot({ path: path.join(output, 'page-selection-shift-range.png'), animations: 'disabled' });
     return { thumbnailAndCheckboxRanges: true, reverseAndRepeatedRanges: true, controlAndMetaAdditive: true, keyedAnchorAfterReorderDuplicateDelete: true, canceledDragPreservesAnchor: true, onlyPdfChangesEnableApply: true };
   });
+  await check('page-insert-after-selection-and-help', async page => {
+    await tools(page, 'Organizar páginas');
+    const organizer = page.locator('dialog.workbench');
+    assert.match(await organizer.locator('.page-plan-drag-help').innerText(), /^Haz clic para seleccionar páginas y Mayús\+clic para un rango\./);
+    assert.equal(await organizer.getByRole('button', { name: /^Ir a página/ }).count(), 0, 'Thumbnails mirror the checkboxes and stay out of the accessibility tree.');
+    assert.equal(await page.getByLabel('Mover páginas seleccionadas a la posición', { exact: true }).count(), 0, 'Dragging moves pages with a mouse.');
+    await page.locator('.page-plan-actions input[type=file]').dispatchEvent('cancel', { bubbles: true }); assert.equal(await organizer.count(), 1, 'Dismissing the file chooser keeps the organizer open.');
+    await page.getByLabel('Seleccionar posición 1', { exact: true }).check();
+    await page.getByRole('button', { name: 'Página en blanco', exact: true }).click(); await page.waitForFunction(() => document.querySelectorAll('.page-plan>article').length === 4);
+    assert.deepEqual(await plannedOrder(page), ['Página 1', 'Página en blanco', 'Página 2', 'Página 3']);
+    assert.equal(await page.locator('.page-plan-footer>span').innerText(), '4 páginas · 1 seleccionada · Cambios pendientes');
+    await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    const bytes = await save(page, 'ui-inserted-after-selection.pdf'), pdf = await PDFDocument.load(bytes);
+    assert.deepEqual(pdf.getPages().map(item => [item.getWidth(), item.getHeight()]), [[400, 500], [400, 500], [400, 500], [400, 500]], 'A blank page takes the size of the page it follows.');
+    assert.deepEqual(operateDocument(bytes, { operation: 'text' }).map(text => text.match(/PAGE (\d)/)?.[1] || ''), ['1', '', '2', '3']);
+    return { blankAfterSelectionWithMatchingSize: true, decorativeThumbnails: true, singularCounts: true, chooserCancelKeepsDialog: true };
+  });
   await check('extract-selected-rotated-and-inserted-pages-without-changing-source', async page => {
     await tools(page, 'Organizar páginas');
     await page.getByLabel('Seleccionar posición 1', { exact: true }).check(); await page.getByLabel('Seleccionar posición 3', { exact: true }).click({ modifiers: ['Control'] });
     await page.getByRole('button', { name: 'Girar páginas seleccionadas', exact: true }).click();
     await page.getByRole('button', { name: 'Página en blanco', exact: true }).click();
     await page.locator('.page-plan-actions input[type=file]').setInputFiles(source); await page.waitForFunction(() => document.querySelectorAll('.page-plan>article').length === 7);
-    await page.getByLabel('Seleccionar posición 7', { exact: true }).click({ modifiers: ['Control'] });
+    assert.deepEqual(await plannedOrder(page), ['Página 1', 'Página 2', 'Página 3', 'workbench-source.pdf · 1', 'workbench-source.pdf · 2', 'workbench-source.pdf · 3', 'Página en blanco'], 'Inserted pages follow the last selected page.');
+    await page.locator('.page-plan>article').nth(5).locator('.thumbnail-item canvas').waitFor();
+    await page.getByLabel('Seleccionar posición 6', { exact: true }).click({ modifiers: ['Control'] });
     await page.getByRole('button', { name: 'Extraer selección', exact: true }).click();
     const extractedName = 'workbench-source — páginas extraídas.pdf'; await page.getByRole('heading', { name: extractedName, exact: true }).waitFor(); await page.locator('.workbench').waitFor({ state: 'detached' });
     const bytes = await save(page, 'ui-selected-extracted.pdf'), extracted = await PDFDocument.load(bytes);
@@ -174,17 +195,27 @@ try {
     return { selectedPagesOnly: true, insertedPdfAndRotationPreserved: true, unselectedBlankExcluded: true, sourcePdfUnchanged: true };
   });
   await check('forms-fill-and-export', async page => {
-    await tools(page, 'Rellenar formulario'); await page.locator('.form-fields label').filter({ hasText: 'name' }).locator('input').fill('Emilio González'); await page.locator('.form-fields label').filter({ hasText: 'agree' }).locator('input').check();
-    await page.getByRole('button', { name: 'Aplicar valores', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
-    const bytes = await save(page, 'ui-filled.pdf'), fields = operateDocument(bytes, { operation: 'fields' }); assert.equal(fields.find(f => f.name === 'name').value, 'Emilio González'); assert(fields.find(f => f.name === 'agree').checked); return { actualFieldsSaved: true };
+    await tools(page, 'Rellenar formulario'); const apply = page.getByRole('button', { name: 'Aplicar valores', exact: true }); await apply.waitFor(); assert(await apply.isDisabled(), 'Nothing to apply before a change.');
+    const dropdown = page.locator('.form-fields label').filter({ hasText: 'city' }).locator('select'); assert.equal(await dropdown.inputValue(), ''); assert.equal(await dropdown.locator('option:checked').innerText(), 'Sin seleccionar');
+    const internal = page.locator('.form-fields label').filter({ hasText: 'Campo de texto 2' }); assert.equal(await internal.locator('small').innerText(), 'Página 2'); assert.equal(await page.locator('.form-fields label').filter({ hasText: 'f1_01' }).count(), 0);
+    await page.locator('.form-fields label').filter({ hasText: 'name' }).locator('input').fill('Emilio González'); await page.locator('.form-fields label').filter({ hasText: 'agree' }).locator('input').check();
+    assert.equal(await page.locator('.form-field-location canvas').count(), 1, 'The focused field is shown on its page.');
+    await apply.click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    const bytes = await save(page, 'ui-filled.pdf'), fields = operateDocument(bytes, { operation: 'fields' }); assert.equal(fields.find(f => f.name === 'name').value, 'Emilio González'); assert(fields.find(f => f.name === 'agree').checked); assert.equal(fields.find(f => f.name === 'city').value, '');
+    return { actualFieldsSaved: true, unselectedDropdownKept: true, readableInternalLabels: true, focusedFieldPreview: true };
   });
   await check('text-replacement-and-content-history', async page => {
-    await tools(page, 'Reemplazar texto'); await drawArea(page, [35, 344, 210, 372]); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('UI REPLACED'); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await tools(page, 'Editar PDF'); await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
+    await page.getByRole('button', { name: /^(Párrafo|Texto): SECRET 123456/ }).first().click(); await page.locator('.content-editor').waitFor();
+    const done = page.locator('.workspace-editor').getByRole('button', { name: 'Listo', exact: true }); assert(await done.isEnabled(), 'Selecting an element alone is not a draft.');
+    await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('UI REPLACED'); await page.waitForFunction(() => document.querySelector('.workspace-editor .edit-pdf-done')?.disabled);
+    await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
+    await done.click(); await page.locator('.workspace-editor').waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     const bytes = await save(page, 'ui-edited.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('UI REPLACED')); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE THIS TEXT')); return { originalTextRemoved: true, undoRedoContent: true };
   });
   await check('redaction-removes-content', async page => {
-    await tools(page, 'Censurar contenido'); await drawArea(page, [30, 340, 250, 380]); await page.getByRole('button', { name: 'Revisar 1 áreas', exact: true }).click(); await page.getByRole('button', { name: 'Eliminar contenido seleccionado', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await tools(page, 'Censurar'); await drawArea(page, [30, 340, 250, 380]); await page.getByRole('button', { name: 'Revisar 1 área', exact: true }).click(); await page.getByRole('button', { name: 'Censurar 1 área', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
     const bytes = await save(page, 'ui-redacted.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE')); return { dataRemoved: true };
   });
   await check('ocr-local-searchable-pdf', async page => {
@@ -193,13 +224,19 @@ try {
     const bytes = await save(page, 'ui-ocr.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('FOLIO OCR TEST'), text[0]); assert.equal(externalRequests.length, 0, externalRequests.join('\n')); return { realOcr: true, networkRequestsOutsideApp: 0 };
   });
   await check('word-and-image-conversion', async page => {
-    await tools(page, 'Convertir PDF'); await page.getByLabel('Páginas a exportar', { exact: true }).selectOption('range'); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('0'); assert(await page.getByRole('button', { name: 'Exportar Word', exact: true }).isDisabled()); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('1-2'); const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Exportar Word', exact: true }).click(); const file = await download; await file.saveAs(path.join(output, 'ui-converted.docx')); await page.locator('.workbench').waitFor({ state: 'detached' });
+    await tools(page, 'Convertir PDF'); await page.getByLabel('Páginas a exportar', { exact: true }).selectOption('range'); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('0'); assert(await page.getByRole('button', { name: 'Convertir a Word', exact: true }).isDisabled()); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('1-2'); const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Convertir a Word', exact: true }).click(); const file = await download; await file.saveAs(path.join(output, 'ui-converted.docx')); await page.locator('.workbench').waitFor({ state: 'detached' });
     const files = unzipSync(fs.readFileSync(path.join(output, 'ui-converted.docx'))); assert(strFromU8(files['word/document.xml']).includes('PRESERVE THIS TEXT'));
-    await tools(page, 'Convertir PDF'); await page.getByLabel('Formato de exportación', { exact: true }).selectOption('png'); await page.getByLabel('Resolución PNG', { exact: true }).selectOption('300'); await page.getByLabel('Fondo PNG', { exact: true }).selectOption('transparent'); const images = page.waitForEvent('download'); await page.getByRole('button', { name: 'Exportar PNG', exact: true }).click(); const zip = await images; await zip.saveAs(path.join(output, 'ui-pages.zip')); const pngFiles = unzipSync(fs.readFileSync(path.join(output, 'ui-pages.zip'))); assert.equal(Object.keys(pngFiles).length, 1); const image = Object.values(pngFiles)[0], view = new DataView(image.buffer, image.byteOffset, image.byteLength); assert.equal(view.getUint32(16), 1667); assert.equal(view.getUint32(20), 2084); return { editableWordText: true, actualPngExport: true, dpi300: true, invalidRangeBlocked: true };
+    await tools(page, 'Convertir PDF'); await page.getByLabel('Formato de exportación', { exact: true }).selectOption('png'); await page.getByLabel('Resolución PNG', { exact: true }).selectOption('300'); await page.getByLabel('Fondo PNG', { exact: true }).selectOption('transparent'); const images = page.waitForEvent('download'); await page.getByRole('button', { name: 'Convertir a PNG', exact: true }).click(); const zip = await images; await zip.saveAs(path.join(output, 'ui-pages.zip')); const pngFiles = unzipSync(fs.readFileSync(path.join(output, 'ui-pages.zip'))); assert.equal(Object.keys(pngFiles).length, 1); const image = Object.values(pngFiles)[0], view = new DataView(image.buffer, image.byteOffset, image.byteLength); assert.equal(view.getUint32(16), 1667); assert.equal(view.getUint32(20), 2084); return { editableWordText: true, actualPngExport: true, dpi300: true, invalidRangeBlocked: true };
   });
   await check('visual-and-text-comparison', async page => {
     await tools(page, 'Comparar documentos'); await page.locator('.compare-documents input[type=file]').setInputFiles(path.join(output, 'comparison-after.pdf')); await page.getByRole('button', { name: 'Comparar', exact: true }).click(); await page.locator('.visual-comparison img').first().waitFor(); assert.equal(await page.locator('.visual-comparison img').count(), 3);
-    await page.getByLabel('Comparación', { exact: true }).selectOption('text'); await page.locator('.text-differences .added').filter({ hasText: 'PUBLIC TEXT' }).waitFor(); assert(await page.locator('.text-differences .removed').innerText() !== ''); await page.screenshot({ path: path.join(output, 'comparison-ui.png') }); return { actualVisualDiff: true, textualDifference: true };
+    await page.getByLabel('Comparación', { exact: true }).selectOption('text'); await page.locator('.text-differences .added').filter({ hasText: 'PUBLIC TEXT' }).waitFor(); assert(await page.locator('.text-differences .removed').innerText() !== ''); await page.screenshot({ path: path.join(output, 'comparison-ui.png') });
+    fs.writeFileSync(path.join(output, 'comparison-locked.pdf'), operateDocument(fs.readFileSync(source), { operation: 'protect', userPassword: 'second', ownerPassword: 'owner' })); fs.writeFileSync(path.join(output, 'comparison-not-pdf.pdf'), 'This is not a PDF');
+    for (const [file, password, message] of [['comparison-locked.pdf', '', 'El segundo PDF está protegido. Escribe su contraseña.'], ['comparison-locked.pdf', 'wrong', 'La contraseña del segundo PDF no es correcta.'], ['comparison-not-pdf.pdf', '', 'El archivo elegido no es un PDF válido.']]) {
+      await page.locator('.compare-documents input[type=file]').setInputFiles(path.join(output, file)); await page.getByLabel('Contraseña del segundo PDF (si tiene)', { exact: true }).fill(password);
+      await page.getByRole('button', { name: 'Comparar', exact: true }).click(); assert.equal(await page.locator('.compare-documents .operation-error').innerText(), message);
+    }
+    return { actualVisualDiff: true, textualDifference: true, spanishOpenErrors: true };
   });
   await check('real-digital-signing-and-verification', async page => {
     await tools(page, 'Firmas digitales'); await page.locator('.signing-form input[type=file]').setInputFiles(path.join(output, 'qa-identity.p12')); await page.getByLabel('Contraseña del certificado', { exact: true }).fill('qa-only'); await page.getByRole('button', { name: 'Firmar documento', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached', timeout: 60000 });
@@ -208,14 +245,14 @@ try {
   });
   await check('draft-survives-reload', async page => {
     await tools(page, 'Organizar páginas'); await dragPlannedPage(page, 'Página 2', 'Página 1', 'before'); await page.getByLabel('Seleccionar posición 3', { exact: true }).check(); await page.getByRole('button', { name: 'Eliminar páginas seleccionadas', exact: true }).click(); await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
-    await page.waitForFunction(async () => { const db = await new Promise(resolve => { const req = indexedDB.open('folio-library', 2); req.onsuccess = () => resolve(req.result); }); const count = await new Promise(resolve => { const tx = db.transaction('drafts'); const req = tx.objectStore('drafts').count(); req.onsuccess = () => resolve(req.result); tx.oncomplete = () => db.close(); }); return count > 0; });
+    await page.waitForFunction(async () => { const db = await new Promise(resolve => { const req = indexedDB.open('folio-library'); req.onsuccess = () => resolve(req.result); }); const count = await new Promise(resolve => { const tx = db.transaction('drafts'); const req = tx.objectStore('drafts').count(); req.onsuccess = () => resolve(req.result); tx.oncomplete = () => db.close(); }); return count > 0; });
     await page.reload(); await open(page, source); assert.equal(await page.locator('.pdf-page-wrap').count(), 2); const bytes = await save(page, 'ui-restored-draft.pdf'); assert(operateDocument(bytes, { operation: 'text' })[0].includes('PAGE 2')); return { realBytesRecovered: true };
   });
   await check('horizontal-text-highlight-and-direct-ctrl-save', async page => {
     await enterAnnotationMode(page);
     await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
     await page.locator('.textLayer span').filter({ hasText: 'PRESERVE THIS TEXT' }).first().waitFor();
-    await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
+    await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click();
     const span=await page.locator('.textLayer span').filter({ hasText: 'PRESERVE THIS TEXT' }).first().boundingBox();
     await page.mouse.move(span.x+1,span.y+span.height/2); await page.mouse.down(); await page.mouse.move(span.x+span.width-1,span.y+span.height/2,{steps:8}); await page.mouse.up();
     await page.locator('.highlight-annotation').first().waitFor();
@@ -233,12 +270,21 @@ try {
     const locked=operateDocument(fs.readFileSync(source),{operation:'protect',userPassword:'reader',ownerPassword:'owner',permissions:4});
     fs.writeFileSync(path.join(output,'ui-restricted-source.pdf'),locked);
     await page.locator('.app-header input[type=file]').setInputFiles(path.join(output,'ui-restricted-source.pdf'));
-    await page.getByLabel('Contraseña del documento',{exact:true}).fill('wrong'); await page.locator('.password-modal').getByRole('button',{name:'Abrir PDF',exact:true}).click();
-    await page.locator('.password-error').waitFor(); await page.getByLabel('Contraseña del documento',{exact:true}).fill('reader'); await page.locator('.password-modal').getByRole('button',{name:'Abrir PDF',exact:true}).click();
+    await page.getByLabel('Contraseña',{exact:true}).fill('wrong'); await page.locator('.password-modal').getByRole('button',{name:'Abrir PDF',exact:true}).click();
+    await page.locator('.password-error').waitFor(); await page.getByLabel('Contraseña',{exact:true}).fill('reader'); await page.locator('.password-modal').getByRole('button',{name:'Abrir PDF',exact:true}).click();
     await page.locator('.loading-overlay').waitFor({state:'detached'}); await page.getByRole('button',{name:'Herramientas',exact:true}).click();
-    assert(await page.getByRole('button',{name:'Reemplazar texto',exact:true}).isDisabled()); assert(await page.getByRole('button',{name:'Rellenar formulario',exact:true}).isDisabled());
+    assert(await page.getByRole('button',{name:'Editar PDF',exact:true}).isDisabled()); assert(await page.getByRole('button',{name:'Rellenar formulario',exact:true}).isDisabled());
     assert.equal(await page.locator('.textLayer').first().evaluate(el=>getComputedStyle(el).userSelect),'none');
-    return { realW9Fields:true, wrongPasswordRetry:true, editAndFormPermissionsEnforced:true };
+    await page.getByRole('button',{name:'Proteger PDF',exact:true}).click(); assert.equal(await page.getByLabel('Contraseña de propietario',{exact:true}).count(),0,'Protecting needs edit permission.');
+    const unlock=page.getByLabel('Contraseña de propietario actual',{exact:true}); await unlock.fill('reader'); await page.getByRole('button',{name:'Quitar protección',exact:true}).click();
+    assert.equal(await page.locator('.operation-error').innerText(),'La contraseña de propietario no es correcta.');
+    await unlock.fill('owner'); await page.getByRole('button',{name:'Quitar protección',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Herramientas',exact:true}).click(); assert(await page.getByRole('button',{name:'Rellenar formulario',exact:true}).isEnabled());
+    await page.getByRole('button',{name:'Proteger PDF',exact:true}).click(); await page.getByLabel('Contraseña de propietario',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Contraseña de propietario actual',{exact:true}).count(),0,'An unencrypted PDF offers no removal.');
+    await page.locator('dialog[open]').getByRole('button',{name:'Cerrar diálogo',exact:true}).click();
+    const unlocked=new mupdf.PDFDocument(await save(page,'ui-unprotected.pdf')); assert(unlocked.getTrailer().get('Encrypt').isNull()); unlocked.destroy();
+    return { realW9Fields:true, wrongPasswordRetry:true, editAndFormPermissionsEnforced:true, ownerPasswordRemovesProtection:true };
   });
   await check('large-public-manual-and-invalid-file-recovery', async page => {
     await open(page,path.join(root,'.fixtures','emacs-manual.pdf')); const doc=new mupdf.PDFDocument(fs.readFileSync(path.join(root,'.fixtures','emacs-manual.pdf'))); const count=doc.countPages(); doc.destroy();
@@ -262,8 +308,8 @@ try {
     const bytes=await save(page,'ui-created-field.pdf'); assert.equal(operateDocument(bytes,{operation:'fields'}).find(f=>f.name==='created_by_user').value,'Nuevo valor'); return { realWidgetCreated:true, valueAndAppearanceSaved:true };
   });
   await check('image-to-pdf-creation', async page => {
-    await page.getByRole('button',{name:'Crear PDF',exact:true}).click(); await page.getByLabel('Nombre',{exact:true}).fill('Desde imagen.pdf');
-    await page.getByLabel('Imágenes (opcional)',{exact:true}).setInputFiles(path.join(output,'scan.png')); await page.getByRole('button',{name:'Crear documento',exact:true}).click(); await page.getByRole('dialog',{name:'Crear PDF',exact:true}).waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Biblioteca',exact:true}).click(); await page.getByRole('button',{name:'Crear PDF',exact:true}).first().click(); await page.getByLabel('Nombre',{exact:true}).fill('Desde imagen.pdf');
+    await page.getByLabel('Imágenes (opcional)',{exact:true}).setInputFiles(path.join(output,'scan.png')); await page.getByRole('dialog',{name:'Crear PDF',exact:true}).getByRole('button',{name:'Crear PDF',exact:true}).click(); await page.getByRole('dialog',{name:'Crear PDF',exact:true}).waitFor({state:'detached'});
     const bytes=await save(page,'ui-created-from-image.pdf'), pdf=await PDFDocument.load(bytes); assert.equal(pdf.getPageCount(),1);
     const doc=new mupdf.PDFDocument(bytes); let images=0;
     doc.findPage(0).get('Resources','XObject').forEach(value=>{if(value.get('Subtype').asName()==='Image')images++;});

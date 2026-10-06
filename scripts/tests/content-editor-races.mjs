@@ -77,7 +77,8 @@ async function check(id, run) {
       stopped = false;
       constructor(...args) {
         super(...args);
-        this.addEventListener('message', () => { if (this.imageRead) window.__imageReads.completed++; });
+        // Engine workers are reused, so count the response to the image request only.
+        this.addEventListener('message', () => { if (this.imageRead) { this.imageRead = false; window.__imageReads.completed++; } });
       }
       postMessage(message, transfer) {
         if (message?.operation === 'operate' && message.options?.operation === 'page-image') {

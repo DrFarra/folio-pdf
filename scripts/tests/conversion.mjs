@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import { unzipSync } from 'fflate';
+import * as mupdf from 'mupdf';
 import { writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -167,6 +168,36 @@ try {
     assert(!recovered.error, recovered.error); assert(unzipSync(new Uint8Array(recovered.bytes))['pagina-0001.png']);
     assert.equal(digest(source), originalHash);
     return { canceledStages: ['before', 'preflight', 'encoding', 'packing'], noPartialExport: true, originalAndReaderRemainUsable: true };
+  });
+  await check('docx-reflows-text-blocks-and-image-pdf-uses-signature-and-exif', async () => {
+    const prose = await PDFDocument.create(), proseFont = await prose.embedFont(StandardFonts.Helvetica);
+    prose.addPage([300, 300]).drawText('Una frase larga que se corta y conti-\nnúa en la línea siguiente.', { x: 20, y: 250, size: 10, font: proseFont, lineHeight: 12 });
+    prose.addPage([300, 300]).drawText('Segunda página.', { x: 20, y: 250, size: 10, font: proseFont });
+    // An 80x40 camera photo stored sideways: EXIF orientation 6 shows it rotated clockwise.
+    const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 80, 40], false), samples = pixmap.getPixels();
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 80; x++) samples.set([x < 40 ? 230 : 20, y < 20 ? 20 : 200, x < 40 ? 20 : 230], y * pixmap.getStride() + x * 3);
+    const jpeg = new Uint8Array(pixmap.asJPEG(95, false)), exif = [0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]; pixmap.destroy();
+    const photo = [0xff, 0xd8, 0xff, 0xe1, 0, exif.length + 2, ...exif, ...jpeg.subarray(2)];
+    const result = await page.evaluate(async ({ prose, photo }) => {
+      const { conversion } = window.conversionTest, pdf = await import('/src/pdf.ts'), assets = await import('/src/assets.ts');
+      const document = await pdf.getDocument({ data: new Uint8Array(prose), ...assets.pdfAssetSettings() }).promise;
+      try {
+        const docx = await conversion.convertPdf(new Uint8Array(prose), document, undefined, 'docx', [1, 2], () => {}, new AbortController().signal);
+        const image = await conversion.createImagePdf([new File([new Uint8Array(photo)], 'foto', { type: '' })]);
+        let rejected = ''; try { await conversion.createImagePdf([new File([new Uint8Array([1, 2, 3])], 'nota.png', { type: 'image/png' })]); } catch (error) { rejected = error.message; }
+        return { docx: [...docx], image: [...image], rejected };
+      } finally { await document.loadingTask.destroy(); }
+    }, { prose: [...await prose.save()], photo });
+    const xml = new TextDecoder().decode(unzipSync(new Uint8Array(result.docx))['word/document.xml']);
+    assert.equal((xml.match(/<w:p[ >]/g) || []).length, 2); assert(xml.includes('Una frase larga que se corta y continúa en la línea siguiente.')); assert(xml.includes('<w:pageBreakBefore'));
+    assert.equal(result.rejected, 'Solo se admiten imágenes PNG o JPEG.');
+    const doc = mupdf.Document.openDocument(new Uint8Array(result.image), 'application/pdf'), imagePage = doc.loadPage(0), [,, width, height] = imagePage.getBounds();
+    const rendered = imagePage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false), pixels = rendered.getPixels();
+    const at = (x, y) => [...pixels.subarray(Math.round(y) * rendered.getStride() + Math.round(x) * 3, Math.round(y) * rendered.getStride() + Math.round(x) * 3 + 3)], near = (a, b) => a.every((n, i) => Math.abs(n - b[i]) < 40);
+    assert(height > width, 'The upright photo is portrait.');
+    assert(near(at(width / 2 + 60, height / 2 - 60), [230, 20, 20])); assert(near(at(width / 2 - 60, height / 2 - 60), [230, 200, 20]));
+    rendered.destroy(); imagePage.destroy(); doc.destroy();
+    return { oneParagraphPerBlock: true, hyphenatedLineJoined: true, pageBreakBetweenPages: true, emptyMimeJpegAccepted: true, invalidImageRejectedInSpanish: true, exifOrientationApplied: true };
   });
   await page.evaluate(async () => { await window.conversionTest.document.loadingTask.destroy(); });
   await context.close();

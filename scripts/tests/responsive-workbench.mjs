@@ -91,7 +91,7 @@ try {
     await check(page, `conversion-${width}x600`, async () => {
       await tools(page, 'Convertir PDF'); await page.getByLabel('Formato de exportación').selectOption('png'); await page.getByLabel('Páginas a exportar').selectOption('range');
       await page.getByLabel('Intervalo de páginas').fill('1-3, 6'); await page.getByLabel('Resolución PNG').selectOption('300'); await page.getByLabel('Fondo PNG').selectOption('transparent');
-      const button = page.getByRole('button', { name: 'Exportar PNG', exact: true }); await button.waitFor(); const before = await frame(page); bounded(before); const buttonBefore = await reachable(button);
+      const button = page.getByRole('button', { name: 'Convertir a PNG', exact: true }); await button.waitFor(); const before = await frame(page); bounded(before); const buttonBefore = await reachable(button);
       const format = await page.getByLabel('Formato de exportación').boundingBox(), scope = await page.getByLabel('Páginas a exportar').boundingBox();
       assert(Math.abs(format.y - scope.y) < 1 && scope.x > format.x, 'Format and scope should share one desktop row.');
       for (const label of ['Formato de exportación', 'Páginas a exportar', 'Intervalo de páginas', 'Resolución PNG', 'Fondo PNG']) { const input = page.getByLabel(label); await input.scrollIntoViewIfNeeded(); await reachable(input); }
@@ -134,7 +134,7 @@ try {
         for (const size of sequence) {
           await page.setViewportSize(size); await page.evaluate(() => { const grid = document.querySelector('.page-plan'); if (grid) grid.scrollTop = 0; });
           const value = await frame(page); bounded(value); if (section === 'Organizar páginas') { completeCard(value); await reachable(page.getByRole('button', { name: 'Mover posición 1 después', exact: true })); }
-          await reachable(page.getByRole('button', { name: section === 'Convertir PDF' ? 'Exportar PNG' : section === 'Rellenar formulario' ? 'Aplicar valores' : 'Extraer selección', exact: true }));
+          await reachable(page.getByRole('button', { name: section === 'Convertir PDF' ? 'Convertir a PNG' : section === 'Rellenar formulario' ? 'Aplicar valores' : 'Extraer selección', exact: true }));
           frames.push({ section, ...size, firstCardHeight: value.firstCard?.height, bodyHeight: value.conversionBody?.height || value.fields?.height || value.grid?.height });
         }
         await page.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();

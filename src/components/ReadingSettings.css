@@ -1,7 +1,4 @@
 .settings-modal{max-width:560px}
-.settings-modal h3{margin:18px 0 9px}
-.settings-theme{gap:7px}
-.settings-theme button{padding:11px 9px;gap:6px}
 .reading-setting{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:44px;font-size:12px}
 .reading-setting select{width:180px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font:inherit}
 .reading-range{display:flex;align-items:center;gap:10px;width:180px}
@@ -9,6 +6,11 @@
 .reading-range output{font-size:10px;min-width:39px;text-align:right;color:var(--muted)}
 .settings-modal .settings-toggle{padding:7px 0;font-size:12px}
 .settings-modal .modal-actions{margin-top:15px}
+.settings-advanced{margin-top:16px;border-top:1px solid var(--line);padding-top:8px}
+.settings-advanced>summary{min-height:44px;display:flex;align-items:center;gap:12px;list-style:none;cursor:pointer;font-size:14px;font-weight:600}
+.settings-advanced>summary::-webkit-details-marker{display:none}
+.settings-advanced>summary::after{content:'';width:7px;height:7px;margin:0 4px 4px auto;border:solid var(--muted);border-width:0 2px 2px 0;transform:rotate(45deg);flex-shrink:0}
+.settings-advanced[open]>summary::after{margin-bottom:0;margin-top:4px;transform:rotate(-135deg)}
 @media(max-width:480px){.reading-setting{gap:10px;font-size:11px}.reading-setting select,.reading-range{width:140px}.settings-theme button{font-size:10px}}
 
 html:not([data-phone]) .app-shell .settings-modal{width:min(560px,calc(100vw - 28px));font-size:13px}
@@ -21,7 +23,7 @@ html:not([data-phone]) .app-shell .reading-range{width:190px}
 html:not([data-phone]) .app-shell .reading-range output{font-size:12px;min-width:44px}
 html:not([data-phone]) .app-shell .settings-modal .settings-toggle{font-size:13px;min-height:42px;padding:9px 0;gap:18px}
 html:not([data-phone]) .app-shell .settings-advanced{margin-top:12px;padding:12px 0;border-top:1px solid var(--line)}
-html:not([data-phone]) .app-shell .settings-advanced>summary{cursor:pointer;font-size:13px;font-weight:550;min-height:30px;color:var(--text)}
+html:not([data-phone]) .app-shell .settings-advanced>summary{font-size:13px;font-weight:550;min-height:36px;color:var(--text)}
 html:not([data-phone]) .app-shell .settings-advanced .modal-description{margin-top:8px;margin-bottom:12px;font-size:12px;line-height:1.6}
 html:not([data-phone]) .app-shell .settings-modal .clear-library{font-size:13px;line-height:1.5;min-height:42px;border-top:0;padding:9px 0}
 html:not([data-phone]) .app-shell .settings-modal .modal-actions{margin-top:18px}

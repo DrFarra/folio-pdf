@@ -32,7 +32,7 @@ try {
   await page.evaluate(() => { document.body.innerHTML = ''; });
   await page.addStyleTag({ path: 'src/styles.css' }); await page.addStyleTag({ path: 'src/components/PDFPage.css' });
   const result = await page.evaluate(async fixtureBytes => {
-    const { openNativePdf, nativePdfMetadata, isNativePdfDocument, subscribeNativePdfAnnotations, nativePdfPageAnnotations, isNativePdfPasswordError } = await import('/src/nativePdf.ts');
+    const { openNativePdf, nativePdfMetadata, isNativePdfDocument, subscribeNativePdfAnnotations, nativePdfPageAnnotations, isNativePdfPasswordError, sizeNativeTextLayer } = await import('/src/nativePdf.ts');
     const { migrateLegacyNativePage } = await import('/src/native-session.ts');
     const { getDocument, TextLayer, readOutline } = await import('/src/pdf.ts');
     const actual = await getDocument({ data: new Uint8Array(fixtureBytes) }).promise, originalPage = await actual.getPage(1);
@@ -110,6 +110,21 @@ try {
     const span = layer.querySelector('span'), rect = span.getBoundingClientRect();
     check(span.textContent === 'Native selected words', 'native text is missing');
     check(rect.width > 200 && rect.height > 10 && rect.left >= 0 && rect.top >= 0, 'native text layer geometry');
+    const rotatedText = [];
+    for (const rotation of [90, 270]) {
+      // PDF.js lays text out on the unrotated page and turns the layer with CSS.
+      const turned = nativePage.getViewport({ scale: 1.25, rotation }), box = document.createElement('div'), turnedLayer = document.createElement('div');
+      box.style.cssText = `position:fixed;left:0;top:0;width:${turned.width}px;height:${turned.height}px;`;
+      turnedLayer.className = 'textLayer'; turnedLayer.style.setProperty('--total-scale-factor', '1.25'); turnedLayer.style.setProperty('--scale-factor', '1.25');
+      box.append(turnedLayer); document.body.append(box);
+      const turnedText = new TextLayer({ textContentSource: await nativePage.getTextContent(), container: turnedLayer, viewport: turned });
+      sizeNativeTextLayer(turnedLayer, turned); await turnedText.render();
+      const word = turnedLayer.querySelector('span').getBoundingClientRect(), corners = [[30, 455], [280, 473]].map(([x, y]) => turned.convertToViewportPoint(x, y));
+      const offset = [word.left + word.width / 2 - (corners[0][0] + corners[1][0]) / 2, word.top + word.height / 2 - (corners[0][1] + corners[1][1]) / 2];
+      check(Math.hypot(...offset) < 6, `native text layer must follow the words at ${rotation}°: ${offset.map(Math.round)}`);
+      rotatedText.push({ rotation, offset: offset.map(value => Math.round(value * 10) / 10) });
+      box.remove();
+    }
     const range = document.createRange(); range.setStart(span.firstChild, 7); range.setEnd(span.firstChild, 15);
     const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); check(selection.toString() === 'selected', 'selection must contain real DOM text');
     check((await nativePdfPageAnnotations(pdf, 1))[0].nativeSourceRef === '1:0' && annotated[0].annotations.length === 1, 'annotations source identity');
@@ -130,7 +145,7 @@ try {
     try { await openNativePdf({ token: 'locked', name: 'locked.pdf', size: 1 }, undefined, undefined, { bridge: async command => command === 'native_pdf_open' ? { ...metadata, locked: true } : (lockedClosed = true) }); throw new Error('locked PDF opened'); }
     catch (error) { check(isNativePdfPasswordError(error) && !error.retry && lockedClosed, 'password contract/cache cleanup'); }
     await actual.loadingTask.destroy();
-    return { passed: true, bridgeMocked: true, PDFKitExecuted: false, geometry, pixel, rasterBounds, legacySessionMigration: { numericRefs: true, namedRefs: true, userEditsPreserved: true, deletedOriginalNotAppended: true, customAnnotationNotMatched: true, noteBoundsCorner: true, ambiguousMatchRejected: true, idempotent: true }, selectableText: selection.toString(), originalPdfBytesFetched: false, simulatedDocumentBytes: metadata.size, commands: [...new Set(calls.map(call => call.command))], lazyPages: [...new Set(calls.filter(call => call.command === 'native_pdf_page_info').map(call => call.args.page))], closeCount: 1 };
+    return { passed: true, bridgeMocked: true, PDFKitExecuted: false, geometry, rotatedText, pixel, rasterBounds, legacySessionMigration: { numericRefs: true, namedRefs: true, userEditsPreserved: true, deletedOriginalNotAppended: true, customAnnotationNotMatched: true, noteBoundsCorner: true, ambiguousMatchRejected: true, idempotent: true }, selectableText: selection.toString(), originalPdfBytesFetched: false, simulatedDocumentBytes: metadata.size, commands: [...new Set(calls.map(call => call.command))], lazyPages: [...new Set(calls.filter(call => call.command === 'native_pdf_page_info').map(call => call.args.page))], closeCount: 1 };
   }, bytes);
   assert(result.passed);
   report = { version, capturedAt: new Date().toISOString(), ...result, scope: 'Native PDF adapter with explicitly mocked IPC; real WebKit text layer, image decoding and PDF.js viewport reference.', limitations: ['PDFKit was not executed by this test.', 'The 2 GiB value is metadata; real large-file opening and native memory use require the iOS simulator/device tests.'] };

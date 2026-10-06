@@ -1,11 +1,11 @@
-.sheet-handle{display:none;outline:none}
+.sheet-handle{display:none}
 /* Shared form boundaries: long labels and filenames must not widen a dialog. */
 dialog.modal :is(form,fieldset,label){min-width:0}
 dialog.modal :is(input,select,textarea){max-width:100%}
 dialog.modal :is(label,.operation-error){overflow-wrap:anywhere}
 dialog.modal .operation-actions{flex-wrap:wrap}
 /* Desktop density rules also match tablets; keep touch fields and actions usable. */
-html[data-tablet] dialog.modal{--modal-visible-height:var(--visible-height,100dvh);--modal-visible-top:var(--visible-top,0px)}
+html[data-tablet] dialog.modal{--modal-visible-height:calc(var(--visible-height,100dvh) - var(--native-safe-bottom, env(safe-area-inset-bottom,0px)));--modal-visible-top:var(--visible-top,0px)}
 html[data-tablet] .app-shell dialog.modal .modal-heading .icon-button{width:48px;height:48px;min-width:48px;margin-right:-8px;color:var(--muted)}
 html[data-tablet] .app-shell dialog.modal :is(input:not([type=checkbox]):not([type=color]):not([type=file]):not([type=range]),textarea,select){font-size:16px;min-height:48px;border-radius:8px}
 html[data-tablet] .app-shell dialog.modal .operation-actions :is(.primary-button,.secondary-button),html[data-tablet] .app-shell dialog.modal .workbench-back{min-height:48px;font-size:14px}

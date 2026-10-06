@@ -1,7 +1,6 @@
 # Drive en Folio — implementación y validación
 
-5 de octubre de 2026. Android 0.8.9 incorpora la integración de Drive y conserva
-la ruta de guardado en el archivo original de Android de la otra tarea.
+Android incorporó Drive en 0.8.9, junto al guardado en el archivo original de Android.
 
 ## Uso
 
@@ -68,7 +67,7 @@ Drive en un iPhone/iPad físico.
 
 - Escritorio: navegador del sistema, loopback aleatorio, state y PKCE S256.
   Refresh token en el almacén seguro de Windows/macOS. Las credenciales instaladas
-  se leen al compilar desde FOLIO_GOOGLE_DESKTOP_CREDENTIALS o, en esta estación,
+  se leen al compilar desde FOLIO_GOOGLE_DESKTOP_CREDENTIALS o, si no está definida,
   `%LOCALAPPDATA%/Folio/developer-credentials/folio-desktop-oauth.json`. No están en Git.
 - Android: Google Identity Services AuthorizationClient; requiere Google Play
   Services y certificado de firma que coincida con el cliente OAuth configurado.
@@ -95,6 +94,5 @@ Drive en un iPhone/iPad físico.
   del mismo ID, rechazo de ETag antiguo, reescritura externa, carrera simultánea,
   copia de conflicto en la misma carpeta y conservación del original.
 
-No se ha probado el consentimiento OAuth en una tablet Android física: no hay
-un dispositivo conectado a esta estación. Tampoco se ha compilado ni probado el
-cambio iOS desde Windows. Las pruebas con mocks no sustituyen esas verificaciones.
+Faltan por probar el consentimiento OAuth en una tablet Android física y el flujo
+completo en iOS. Las pruebas con mocks no sustituyen esas verificaciones.

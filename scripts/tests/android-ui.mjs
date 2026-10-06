@@ -4,14 +4,14 @@ const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','
 let browser;const results=[];
 try{
 for(let i=0;i<60;i++){try{if((await fetch('http://127.0.0.1:4277')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
-browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 for(const [name,width,height,sw,sh]of [['tablet-portrait',800,1280,800,1280],['tablet-landscape',1280,800,800,1280],['tablet-small',600,960,600,960],['phone',390,844,390,844],['phone-landscape',844,390,390,844],['tablet-split',480,800,800,1280],['desktop',1360,900,1360,900]]){
 if(process.env.FOLIO_UI_CASE&&process.env.FOLIO_UI_CASE!==name)continue;
 const mobile=name!=='desktop',phone=width<600||Math.min(sw,sh)<600;
 const ctx=await browser.newContext({viewport:{width,height},screen:{width:sw,height:sh},isMobile:mobile,hasTouch:mobile,userAgent:mobile?'Mozilla/5.0 (Linux; Android 15; '+(phone?'Pixel 9':'Tablet')+') AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 '+(phone?'Mobile ':'')+'Safari/537.36':undefined});
 const page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(20000);
 try{
-await page.goto('http://127.0.0.1:4277',{waitUntil:'domcontentloaded',timeout:60000});await page.getByRole('heading',{name:'Documentos',exact:true}).waitFor();assert.equal(await page.locator('html').getAttribute('data-layout'),!mobile?'desktop':phone?'phone':'tablet');
+await page.goto('http://127.0.0.1:4277',{waitUntil:'domcontentloaded',timeout:60000});await page.getByRole('heading',{name:'Biblioteca',exact:true}).waitFor();assert.equal(await page.locator('html').getAttribute('data-layout'),!mobile?'desktop':phone?'phone':'tablet');
 await page.locator('input[type=file][accept="application/pdf,.pdf"]').setInputFiles('public/sample.pdf');await page.locator('.reading-area .textLayer span').first().waitFor();await page.locator('.loading-overlay').waitFor({state:'detached'});
 if(!phone&&mobile){
   const reading=await page.locator('.reading-area').boundingBox();
@@ -41,7 +41,8 @@ if(mobile){
   await page.keyboard.press('ArrowDown');assert.ok(await menu.evaluate(el=>el.contains(document.activeElement)));
   await page.keyboard.press('Escape');await menu.waitFor({state:'detached'});
   assert.equal(await trigger.getAttribute('aria-expanded'),'false');
-  const tapPaper=async()=>{const paper=await page.locator('.page-content').first().boundingBox();await page.touchscreen.tap(paper.x+paper.width*.94,Math.min(paper.y+paper.height*.3,height-120));};
+  // The left margin of the page: the page indicator floats at the right.
+  const tapPaper=async()=>{const paper=await page.locator('.page-content').first().boundingBox();await page.touchscreen.tap(paper.x+paper.width*.06,Math.min(paper.y+paper.height*.3,height-120));};
   await tapPaper();await page.waitForFunction(()=>document.querySelector('.app-shell')?.classList.contains('reader-chrome-hidden'));
   await page.locator('.app-header').waitFor({state:'hidden'});
   if(!phone){const area=await page.locator('.reading-area').boundingBox();assert.equal(area.y,0);assert.equal(area.height,height);}
@@ -49,7 +50,7 @@ if(mobile){
   await tapPaper();await page.waitForFunction(()=>!document.querySelector('.app-shell')?.classList.contains('reader-chrome-hidden'));
   await trigger.waitFor({state:'visible'});
 }
-await page.getByRole('button',{name:phone?'Anotar':'Anotar documento',exact:true}).click();await page.getByRole('button',{name:'Dibujar',exact:true}).click();
+await page.getByRole('button',{name:phone?'Anotar':'Anotar documento',exact:true}).click();await page.getByRole('button',{name:name==='desktop'?'Lápiz (D)':'Lápiz',exact:true}).click();
 if(!phone&&mobile){
   const dock=await page.locator('.tablet-annotation-dock').boundingBox();assert.ok(dock.height<=60&&dock.x>=0&&dock.x+dock.width<=width);
   await page.getByRole('button',{name:'Opciones del lápiz',exact:true}).click();
@@ -63,9 +64,9 @@ await page.waitForFunction(()=>document.querySelectorAll('[data-ink-id]').length
 await page.keyboard.press('Control+z');await page.waitForFunction(()=>document.querySelectorAll('[data-ink-id]').length===0);await page.keyboard.press('Control+y');await page.waitForFunction(()=>document.querySelectorAll('[data-ink-id]').length===1);
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(errors,[]);
 if(name==='tablet-landscape'){
-  await page.getByRole('button',{name:'Terminar anotación',exact:true}).click();
+  await page.getByRole('button',{name:'Listo',exact:true}).click();
   await page.getByRole('button',{name:'Ir a página',exact:true}).click();
-  await page.getByRole('textbox',{name:'Número de página'}).fill('2');
+  await page.getByRole('textbox',{name:/^Página \(1–/}).fill('2');
   await page.getByRole('dialog',{name:'Ir a página'}).getByRole('button',{name:'Ir a página',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.tablet-page-jump')?.textContent?.includes('2 /'));
   await page.getByRole('button',{name:'Más acciones del documento',exact:true}).click();
@@ -83,7 +84,7 @@ if(name==='tablet-landscape'){
   await page.getByRole('button',{name:'Resultado siguiente',exact:true}).click();
   await page.getByRole('button',{name:'Cerrar búsqueda',exact:true}).click();
   await page.getByRole('button',{name:'Documentos abiertos y recientes',exact:true}).click();
-  await page.getByRole('dialog',{name:'Documentos abiertos y recientes'}).getByRole('button',{name:'Abrir pestaña sample.pdf'}).click();
+  await page.getByRole('dialog',{name:'Documentos abiertos y recientes'}).getByRole('button',{name:'Cambiar a sample.pdf'}).click();
   assert.equal(await page.locator('[data-ink-id]').count(),1);
   await page.getByRole('button',{name:'Más acciones del documento',exact:true}).click();
   await page.getByRole('button',{name:'Vista del documento',exact:true}).click();

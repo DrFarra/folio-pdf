@@ -10,7 +10,10 @@ import './BookmarkTree.css';
 
 type Props = {
   bookmarks: BookmarkNode[];
-  onChange: (bookmarks: BookmarkNode[]) => void;
+  /** Changes sharing a gesture form a single undo step. */
+  onChange: (bookmarks: BookmarkNode[], gesture?: string) => void;
+  /** Folding is view state and stays out of the undo history. */
+  onFold: (bookmarks: BookmarkNode[]) => void;
   page: number;
   onGoToPage: (page: number) => void;
   disabled?: boolean;
@@ -33,11 +36,11 @@ function flatten(nodes: BookmarkNode[], includeCollapsed = false, expanded = new
   return rows;
 }
 
-export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, disabled = false, startEditingId, onEditingComplete }: Props) {
+export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoToPage, disabled = false, startEditingId, onEditingComplete }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; opened: number } | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [destination, setDestination] = useState('');
   const [beforeId, setBeforeId] = useState('');
@@ -96,7 +99,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
   useEffect(() => { if (disabled) { setMenu(null); setMovingId(null); cancelDrag(); } }, [disabled]);
   useEffect(() => () => { gesture.current?.cleanup(); if (hoverTimer.current) clearTimeout(hoverTimer.current); document.body.classList.remove('bookmark-drag-active'); }, []);
 
-  const toggle = (node: BookmarkNode) => onChange(bookmarks.map(item => item.id === node.id ? { ...item, collapsed: !item.collapsed } : item));
+  const toggle = (node: BookmarkNode) => onFold(bookmarks.map(item => item.id === node.id ? { ...item, collapsed: !item.collapsed } : item));
   const add = (parentId: string | null, asGroup: boolean) => {
     const next = createBookmark(bookmarks, asGroup ? null : page, parentId);
     onChange(next.bookmarks); setMenu(null); setName(next.bookmarks.find(node => node.id === next.id)!.title); setEditingId(next.id); setFocusedId(next.id);
@@ -104,7 +107,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
   const showMenu = (id: string, rectangle: { left: number; bottom: number }) => {
     if (disabled) return;
     const bounds = visibleBounds(), phone = document.documentElement.dataset.phone === 'true';
-    setMenu({ id, x: Math.max(bounds.left + 8, Math.min(rectangle.left, bounds.right - (phone ? 308 : 244))), y: Math.max(bounds.top + 8, Math.min(rectangle.bottom + 4, bounds.bottom - (phone ? 500 : 390))) });
+    setMenu({ id, opened: Date.now(), x: Math.max(bounds.left + 8, Math.min(rectangle.left, bounds.right - (phone ? 308 : 244))), y: Math.max(bounds.top + 8, Math.min(rectangle.bottom + 4, bounds.bottom - (phone ? 500 : 390))) });
   };
   const remove = (node: BookmarkNode) => {
     const next = deleteBookmark(bookmarks, node.id); onChange(next); setMenu(null);
@@ -140,7 +143,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
       target = { id: element.dataset.bookmarkId!, position: fraction < .23 ? 'before' : fraction > .77 ? 'after' : 'inside' };
     } else if (hit && tree.current.contains(hit)) target = { id: null, position: 'inside' };
     const valid = target && bookmarkDropDestination(bookmarksRef.current, active.id, target);
-    setBlockedId(target && !valid ? target.id : null);
+    setBlockedId(target && !valid && target.id !== active.id ? target.id : null);
     if (!valid) target = null;
     if (dropRef.current?.id !== target?.id || dropRef.current?.position !== target?.position) {
       dropRef.current = target; setDrop(target);
@@ -218,15 +221,15 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
   };
   const draggingNode = bookmarks.find(node => node.id === draggingId);
   const targetNode = bookmarks.find(node => node.id === drop?.id);
-  const dropHint = blockedId ? 'No puedes mover un grupo dentro de sí mismo ni de sus hijos.' : drop?.id === null ? 'Al final del nivel principal' : targetNode ? `${drop?.position === 'inside' ? 'Dentro de' : drop?.position === 'before' ? 'Antes de' : 'Después de'} ${targetNode.title}` : 'Arrastra a un grupo o entre marcadores';
+  const dropHint = blockedId ? 'No se puede mover un grupo dentro de sí mismo.' : drop?.id === null ? 'Al final del nivel principal' : targetNode ? `${drop?.position === 'inside' ? 'Dentro de' : drop?.position === 'before' ? 'Antes de' : 'Después de'} ${targetNode.title}` : 'Arrastra a un grupo o entre marcadores';
 
   return <div className={`bookmark-panel${draggingId ? ' is-dragging' : ''}`} onClickCapture={event => { if (suppressClick.current) { event.preventDefault(); event.stopPropagation(); } }} onDragStart={event => event.preventDefault()} onDragEnter={event => { if (!event.dataTransfer.types.includes('Files')) event.stopPropagation(); }} onDragLeave={event => { if (!event.dataTransfer.types.includes('Files')) event.stopPropagation(); }}>
     <div className="bookmark-panel-actions"><button className="bookmark-new-group" aria-label="Crear grupo de marcadores" onClick={() => add(null, true)} disabled={disabled}><FolderPlus size={15} /><span>Nuevo grupo</span></button></div>
-    {!bookmarks.length && <div className="empty-panel"><Bookmark size={26} /><p>Sin marcadores.</p><span>Guarda la página actual con el marcador de la barra de herramientas.</span></div>}
+    {!bookmarks.length && <div className="empty-panel"><Bookmark size={26} /><p>Sin marcadores.</p><span>{document.documentElement.dataset.layout === 'phone' ? 'Toca el marcador junto al número de página para guardar esta página.' : document.documentElement.dataset.layout === 'tablet' ? 'Usa Guardar marcador en Más acciones para guardar esta página.' : 'Guarda la página actual con el marcador de la barra de herramientas.'}</span></div>}
     <div className="bookmark-tree" role="tree" aria-label="Árbol de marcadores" ref={tree}>
       {rows.map((row, index) => {
         const { node, depth } = row, hasChildren = bookmarks.some(item => item.parentId === node.id);
-        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
+        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-label={node.page === null ? node.title : `${node.title}, página ${node.page}`} aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
           {hasChildren ? <button className="bookmark-fold" tabIndex={-1} aria-label={`${node.collapsed && !expandedWhileDragging.has(node.id) ? 'Expandir' : 'Contraer'} ${node.title}`} onClick={() => toggle(node)} disabled={disabled}>{node.collapsed && !expandedWhileDragging.has(node.id) ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button> : <span className="bookmark-fold-space" />}
           {node.page === null ? <Folder size={14} className="bookmark-symbol" /> : <Bookmark size={13} className="bookmark-symbol" fill="currentColor" />}
           {editingId === node.id ? <input ref={input} className="bookmark-name-input" aria-label="Nombre del marcador" value={name} maxLength={200} onChange={event => setName(event.target.value)} onBlur={() => finishEdit(true, false)} onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishEdit(event.key === 'Enter'); } }} disabled={disabled} /> : <button className="bookmark-label" tabIndex={-1} title={node.page === null ? node.title : `${node.title} · Página ${node.page}`} onDoubleClick={() => beginEdit(node.id)} onClick={() => { setFocusedId(node.id); if (node.page !== null) onGoToPage(node.page); else if (hasChildren) toggle(node); }} disabled={disabled}>{node.title}</button>}
@@ -238,7 +241,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
       {draggingId && <div className={`bookmark-root-drop${drop?.id === null ? ' active' : ''}`} aria-label="Soltar en nivel principal">Nivel principal</div>}
     </div>
     {draggingId && <div className="bookmark-drop-hint" role="status" aria-live="polite">{dropHint}</div>}
-    {draggingNode && createPortal(<div className="bookmark-drag-preview" style={{ left: Math.min(dragLocation.x + 14, window.innerWidth - 190), top: Math.min(dragLocation.y + 14, window.innerHeight - 45), '--bookmark-color': draggingNode.color } as React.CSSProperties}><Folder size={14} /><span>{draggingNode.title}</span></div>, document.body)}
+    {draggingNode && createPortal(<div className="bookmark-drag-preview" style={{ left: Math.min(dragLocation.x + 14, window.innerWidth - 190), top: Math.min(dragLocation.y + 14, window.innerHeight - 45), '--bookmark-color': draggingNode.color } as React.CSSProperties}>{draggingNode.page === null ? <Folder size={14} /> : <Bookmark size={13} fill="currentColor" />}<span>{draggingNode.title}</span></div>, document.body)}
     {menu && menuNode && createPortal(<div className="bookmark-menu" ref={menuElement} role="menu" aria-label={`Opciones de ${menuNode.title}`} style={{ left: menu.x, top: menu.y }} onKeyDown={event => {
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
       event.preventDefault(); const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -252,7 +255,7 @@ export default function BookmarkTree({ bookmarks, onChange, page, onGoToPage, di
       <button role="menuitem" disabled={bookmarkChildren(bookmarks, menuNode.parentId)[0]?.id === menuNode.id} onClick={() => { onChange(reorderBookmark(bookmarks, menuNode.id, -1)); setMenu(null); focusRow(menuNode.id); }}><ArrowUp size={14} />Subir</button>
       <button role="menuitem" disabled={bookmarkChildren(bookmarks, menuNode.parentId).at(-1)?.id === menuNode.id} onClick={() => { onChange(reorderBookmark(bookmarks, menuNode.id, 1)); setMenu(null); focusRow(menuNode.id); }}><ArrowDown size={14} />Bajar</button>
       <div className="bookmark-menu-divider" />
-      <div className="bookmark-color-options" role="group" aria-label="Color del marcador">{COLORS.map(([label, color]) => <button key={label} role="menuitem" aria-label={`Color ${label}`} title={label} style={{ background: color }} onClick={() => onChange(bookmarks.map(node => node.id === menuNode.id ? { ...node, color } : node))}>{menuNode.color.toLowerCase() === color && <Check size={13} />}</button>)}<input type="color" aria-label="Color personalizado del marcador" title="Color personalizado" value={menuNode.color} onChange={event => onChange(bookmarks.map(node => node.id === menuNode.id ? { ...node, color: event.target.value } : node))} /></div>
+      <div className="bookmark-color-options" role="group" aria-label="Color del marcador">{COLORS.map(([label, color]) => <button key={label} role="menuitem" aria-label={`Color ${label}`} title={label} style={{ background: color }} onClick={() => onChange(bookmarks.map(node => node.id === menuNode.id ? { ...node, color } : node))}>{menuNode.color.toLowerCase() === color && <Check size={13} />}</button>)}<input type="color" aria-label="Color personalizado del marcador" title="Color personalizado" value={menuNode.color} onChange={event => onChange(bookmarks.map(node => node.id === menuNode.id ? { ...node, color: event.target.value } : node), `color:${menu.id}:${menu.opened}`)} /></div>
       <div className="bookmark-menu-divider" />
       <button role="menuitem" className="bookmark-delete" onClick={() => remove(menuNode)}><Trash2 size={14} />{bookmarks.some(node => node.parentId === menuNode.id) ? 'Eliminar y conservar hijos' : 'Eliminar'}</button>
     </div>, document.body)}

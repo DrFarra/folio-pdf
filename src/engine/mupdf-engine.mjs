@@ -13,7 +13,10 @@ const colorRgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 2
 export function open(bytes, password = '') {
   const doc = new mupdf.PDFDocument(bytes);
   try {
-    if (doc.needsPassword() && !doc.authenticatePassword(password)) throw new Error('Se necesita la contraseña correcta para guardar este PDF.');
+    if (doc.needsPassword()) { if (!doc.authenticatePassword(password)) throw new Error('Este PDF está protegido. Escribe su contraseña.'); }
+    // A PDF with only an owner password opens without one; that password still grants its owner permissions.
+    // A failed attempt clears the stored keys, so the empty user password is authenticated again.
+    else if (password && !doc.authenticatePassword(password)) doc.authenticatePassword('');
     doc.disableJS();
     return doc;
   } catch (e) { doc.destroy(); throw e; }
@@ -144,12 +147,13 @@ export function writeAnnotations(bytes, annotations, password = '', incremental 
           const id = identity(existing, index + 1), value = pending.get(id);
           if (!value) { page.deleteAnnotation(existing); continue; }
           pending.delete(id);
-          // Existing geometry, appearance, author and other dictionary keys survive.
-          if (existing.getContents() !== value.text) {
-            existing.setContents(value.text);
-            existing.setModificationDate(new Date());
-            existing.update();
-          }
+          // Existing geometry, author and other dictionary keys survive; the
+          // appearance is regenerated only when the text, color or opacity changed.
+          let changed = false;
+          if (existing.getContents() !== value.text) { existing.setContents(value.text); changed = true; }
+          if (colorHex(existing.getColor()) !== value.color.toLowerCase()) { existing.setColor(colorRgb(value.color)); changed = true; }
+          if (value.opacity !== undefined && Math.abs(existing.getOpacity() - value.opacity) > .001) { existing.setOpacity(value.opacity); changed = true; }
+          if (changed) { existing.setModificationDate(new Date()); existing.update(); }
         }
         const transform = page.getTransform();
         for (const value of pending.values()) {

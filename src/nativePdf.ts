@@ -46,6 +46,7 @@ export class NativePdfPasswordError extends Error {
 }
 export const isNativePdfPasswordError = (error: unknown): error is NativePdfPasswordError => error instanceof NativePdfPasswordError;
 
+const UNAVAILABLE = 'No se pudo mostrar la página. Vuelve a abrir el PDF.';
 const documents = new WeakMap<PDFDocumentProxy, {
   metadata: NativePdfMetadata;
   subscribe: (listener: AnnotationListener) => () => void;
@@ -55,18 +56,18 @@ export const isNativePdfDocument = (pdf: PDFDocumentProxy) => documents.has(pdf)
 export const nativePdfMetadata = (pdf: PDFDocumentProxy) => documents.get(pdf)?.metadata;
 export function subscribeNativePdfAnnotations(pdf: PDFDocumentProxy, listener: AnnotationListener): () => void {
   const native = documents.get(pdf);
-  if (!native) throw new Error('El documento no usa el lector nativo.');
+  if (!native) throw new Error(UNAVAILABLE);
   return native.subscribe(listener);
 }
 export function nativePdfPageAnnotations(pdf: PDFDocumentProxy, page: number): Promise<Annotation[]> {
   const native = documents.get(pdf);
-  if (!native) return Promise.reject(new Error('El documento no usa el lector nativo.'));
+  if (!native) return Promise.reject(new Error(UNAVAILABLE));
   return native.annotations(page);
 }
 
 function abortError() { return new DOMException('La operación se canceló.', 'AbortError'); }
 function renderCancelled() { const error = new Error('El renderizado se canceló.'); error.name = 'RenderingCancelledException'; return error; }
-function nativeError(error: unknown): Error { return error instanceof Error ? error : new Error(typeof error === 'string' ? error : 'El lector nativo no pudo completar la operación.'); }
+function nativeError(error: unknown): Error { return error instanceof Error ? error : new Error(typeof error === 'string' ? error : 'No se pudo leer el PDF. Vuelve a abrirlo.'); }
 function rotationDegrees(value: number) {
   const rotation = ((value % 360) + 360) % 360;
   if (![0, 90, 180, 270].includes(rotation)) throw new Error('La rotación de la página no es válida.');
@@ -118,6 +119,16 @@ class NativeViewport {
   }
 }
 
+/** PDF.js gives the unrotated text-layer box only to its own PageViewport and
+ * rotates that box with CSS. Without it, a quarter-turned page lays out its
+ * text against swapped axes, so selection and highlights miss the words.
+ */
+export function sizeNativeTextLayer(container: HTMLElement, viewport: { rawDims: unknown }) {
+  const { pageWidth, pageHeight } = viewport.rawDims as NativeViewport['rawDims'];
+  container.style.width = `round(down, var(--total-scale-factor) * ${pageWidth}px, var(--scale-round-x))`;
+  container.style.height = `round(down, var(--total-scale-factor) * ${pageHeight}px, var(--scale-round-y))`;
+}
+
 function textContent(text: NativePdfText): TextContent {
   const items: TextContent['items'] = [];
   for (const line of text.lines) {
@@ -155,7 +166,7 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
   }
   if (!Number.isInteger(metadata.numPages) || metadata.numPages < 1 || !metadata.firstPage) {
     await bridge('native_pdf_close', { token: source.token }).catch(() => {});
-    throw new Error('El lector nativo no encontró páginas en el PDF.');
+    throw new Error('El PDF no tiene páginas.');
   }
   new NativeViewport(metadata.firstPage.view, { scale: 1, rotation: metadata.firstPage.rotation });
 
@@ -207,17 +218,17 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
         try {
           checkPage(page); if (controller.signal.aborted) throw renderCancelled();
           const canvas = parameters.canvas || parameters.canvasContext?.canvas;
-          if (!canvas) throw new Error('No hay una superficie para dibujar la página.');
+          if (!canvas) throw new Error(UNAVAILABLE);
           const context = parameters.canvasContext || canvas.getContext('2d');
-          if (!context) throw new Error('No se pudo preparar la página del PDF.');
+          if (!context) throw new Error(UNAVAILABLE);
           const desiredWidth = canvas.width, desiredHeight = canvas.height;
-          if (!desiredWidth || !desiredHeight) throw new Error('La superficie de la página está vacía.');
+          if (!desiredWidth || !desiredHeight) throw new Error(UNAVAILABLE);
           const ratio = Math.min(1, 4096 / desiredWidth, 4096 / desiredHeight, Math.sqrt(4_000_000 / (desiredWidth * desiredHeight)));
           const width = Math.max(1, Math.floor(desiredWidth * ratio)), height = Math.max(1, Math.floor(desiredHeight * ratio));
           const response = await bridge<ArrayBuffer | number[] | Uint8Array>('native_pdf_render', { token: source.token, page, width, height, rotation: rotationDegrees(parameters.viewport.rotation) });
           if (controller.signal.aborted || destroyed) throw renderCancelled();
           const bytes = response instanceof Uint8Array ? response : new Uint8Array(response);
-          if (!bytes.byteLength || bytes.byteLength > 32 * 1024 * 1024) throw new Error('El lector nativo devolvió una imagen de página inválida.');
+          if (!bytes.byteLength || bytes.byteLength > 32 * 1024 * 1024) throw new Error(UNAVAILABLE);
           decoded = await pngImage(bytes, controller.signal);
           if (controller.signal.aborted || destroyed) throw renderCancelled();
           context.save(); context.setTransform(1, 0, 0, 1, 0, 0); context.fillStyle = '#fff'; context.fillRect(0, 0, desiredWidth, desiredHeight);
@@ -294,7 +305,7 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
       if (permissions.canFill) flags.push(256); if (permissions.canAssemble) flags.push(1024);
       return flags;
     },
-    getData: async () => { throw new Error('Este PDF se lee directamente desde el archivo. Usa la exportación nativa para guardar una copia.'); },
+    getData: async () => { throw new Error('Usa Guardar una copia para guardar este PDF.'); },
     cleanup: async () => { textCache.clear(); },
   } as unknown as PDFDocumentProxy;
   Object.defineProperty(pdf, 'loadingTask', { value: { docId: `native:${source.token}:${metadata.revision}`, promise: Promise.resolve(pdf), destroy } });

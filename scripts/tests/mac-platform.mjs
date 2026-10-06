@@ -104,19 +104,19 @@ async function nativeTitlebar(page, mac) {
   return { nativeTrafficLightsSpace: mac, customWindowsControls: !mac, listenersReadyBeforeStartup: true };
 }
 async function desktopActions(page, label) {
-  await open(page); await enterAnnotationMode(page); assert.equal(await page.getByRole('button', { name: 'Deshacer (⌘+Z)', exact: true }).count(), 1);
+  await open(page); await enterAnnotationMode(page); assert.equal(await page.getByRole('button', { name: 'Deshacer (⌘Z)', exact: true }).count(), 1);
   await page.keyboard.press('Meta+f'); await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).fill('Mac'); await page.locator('.search-result').first().waitFor();
   await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).click();
   await page.locator('.pdf-page').first().hover(); await page.keyboard.down('Meta'); await page.mouse.wheel(0, -180); await page.keyboard.up('Meta');
   await page.waitForFunction(() => Number(document.querySelector('select[aria-label="Nivel de zoom"]').value) > 100);
   await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100'); await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
   await enterAnnotationMode(page);
-  await page.getByRole('button', { name: 'Añadir nota (N)', exact: true }).click();
+  await page.getByRole('button', { name: 'Nota (N)', exact: true }).click();
   const bounds = await page.locator('.pdf-page').first().boundingBox(); await page.mouse.click(bounds.x + 250, bounds.y + 190);
   await page.getByRole('textbox', { name: 'Texto de la nota', exact: true }).fill('Mac note'); await page.getByRole('button', { name: 'Guardar nota', exact: true }).click();
   await page.locator('.reading-area').focus(); await page.keyboard.press('Meta+z'); await page.locator('.note-marker').waitFor({ state: 'detached' });
   await page.keyboard.press('Meta+Shift+z'); await page.locator('.note-marker').waitFor();
-  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
+  await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click();
   const span = page.locator('.textLayer span').filter({ hasText: selectedText }).first(); const box = await span.boundingBox();
   await page.mouse.move(box.x + 1, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 10 }); await page.mouse.up();
   await page.locator('.highlight-annotation').first().waitFor();

@@ -20,20 +20,17 @@ pdf-file.ico. Microsoft WebView2 must be available on the computer. The
 installer downloads Microsoft's bootstrapper when that runtime is absent.
 This release is unsigned; no Windows signing certificate is included.
 
-This workstation's optional portable build environment is configured by
-scripts/windows-env.ps1. It changes only the current PowerShell process.
-The local .tools directory is excluded from the application source archive.
-The production build uses the same locked project and dependency versions
-as the standard build command above. See docs/build-environment.txt for the
-actual local compiler, SDK and bundler versions.
+scripts/windows-env.ps1 optionally configures a portable toolchain for the
+current PowerShell process only; docs/build-environment.txt lists the compiler,
+SDK and bundler versions it uses. The production build uses the same locked
+project and dependency versions as the standard build command above.
 
 Build macOS on a Mac: npm ci; node scripts/build-macos.mjs.
 Build iPhone/iPad on a Mac with full Xcode: npm ci; node scripts/build-ios.mjs.
 Build Android arm64 with the Android SDK, NDK and JDK configured:
   node scripts/build-android.mjs
-See docs/android.md, docs/macos.md and docs/ios.md for target requirements. Apple
-packages include their own platform notices and actual build/test evidence.
-Windows compilation does not establish acceptance on an Apple platform.
+See README.md, docs/android.md and docs/ios.md for target requirements. Apple
+packages include their own platform notices.
 
 MuPDF.js 1.28.1 is used without modification from its published npm package.
 Complete official C/TypeScript/WASM build source, including thirdparty sources:
@@ -66,8 +63,3 @@ dependency-licenses.json. Regenerate Windows dependency notices with:
 The wrapped commands above should be entered as single lines in the shell.
 Keep corresponding source, build instructions and notices available when
 redistributing binaries under their licenses.
-
-Read the delivery manifest and verification reports for the actual acceptance
-scope of this version. Historical installation reports establish only their
-own recorded version. This source archive alone does not establish fresh installer execution,
-Windows SmartScreen approval, or physical iPhone installation test.

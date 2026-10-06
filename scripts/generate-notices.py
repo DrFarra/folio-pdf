@@ -179,7 +179,7 @@ Exact npm registry URLs and Cargo crate source-download URLs are recorded in
 dependency-licenses.json. Keep the corresponding source, build instructions and
 license notices available with redistributed binaries under their licenses.
 
-Existing desktop build instructions remain in README.md and docs/acceptance-windows.md.
+Desktop build instructions are in README.md.
 Desktop acceptance does not establish iOS runtime acceptance, and vice versa.
 """, encoding='utf-8')
 (root/'THIRD-PARTY-NOTICES.txt').write_text('\n'.join(parts), encoding='utf-8')

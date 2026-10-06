@@ -87,11 +87,32 @@ await check('delete-paragraph-uses-lines-and-retains-background-and-another-colu
 
 await check('unsafe-tight-lines-and-foreign-glyphs-are-rejected-with-source-intact', async () => {
   const source = await wordsFixture(8), before = hash(source), line = content(source).items.find(item => item.level === 'line' && item.text === 'FIRST LINE'); assert(line?.editable);
-  assert.throws(() => remove(source, line), /vecinos|otros caracteres/); assert.equal(hash(source), before);
+  assert.throws(() => remove(source, line), /demasiado cerca|otros caracteres/); assert.equal(hash(source), before);
   const pdf = await PDFDocument.load(await wordsFixture()); pdf.getPage(0).drawText('OVERLAP', { x: 50, y: 302, size: 12 });
   const overlap = await pdf.save(), candidate = content(overlap).items.find(item => item.level === 'line' && item.text.includes('FIRST'));
-  assert(candidate); assert.throws(() => remove(overlap, candidate), /superpuesto|vecinos|otros caracteres/);
+  assert(candidate); assert.throws(() => remove(overlap, candidate), /superpuesto|demasiado cerca|otros caracteres/);
   return { tightlySpacedUnselectedLineProtected: true, foreignOverlappingGlyphsProtected: true, failuresDoNotMutateSource: true };
+});
+
+await check('ordinary-leading-line-delete-and-replace-keep-adjacent-lines', async () => {
+  for (const name of [StandardFonts.Helvetica, StandardFonts.TimesRoman]) for (const lineHeight of [12, 14.4]) {
+    const pdf = await PDFDocument.create(), font = await pdf.embedFont(name); pdf.addPage([400, 400]).drawText('Linea uno gjpqy\nLinea DOS Áé\nLinea tres gjpqy', { x: 30, y: 300, size: 12, lineHeight, font });
+    const source = await pdf.save(), line = content(source).items.find(item => item.level === 'line' && item.text.includes('DOS')); assert(line?.editable, `${name} ${lineHeight}`);
+    const removed = text(remove(source, line))[0]; assert(!removed.includes('DOS')); assert(removed.includes('Linea uno gjpqy') && removed.includes('Linea tres gjpqy'), `${name} ${lineHeight}: ${removed}`);
+    const replaced = text(operateDocument(source, { operation: 'replace-text', page: 1, rect: line.rect, sourceRect: line.rect, sourceId: line.id, text: 'Nueva', size: 12, color: '#000000', fontName: 'Helvetica', wrap: true, baselineOffset: line.baselineOffset }))[0];
+    assert(!replaced.includes('DOS')); assert(replaced.includes('Nueva')); assert(replaced.includes('Linea uno gjpqy') && replaced.includes('Linea tres gjpqy'), `${name} ${lineHeight}: ${replaced}`);
+  }
+  return { solidAndNormalLeading: true, neighbourLinesRetainedOnDelete: true, neighbourLinesRetainedOnReplace: true };
+});
+
+await check('area-replacement-removes-only-glyphs-centred-in-the-area', async () => {
+  const pdf = await PDFDocument.create(), font = await pdf.embedFont(StandardFonts.Helvetica), page = pdf.addPage([400, 400]);
+  page.drawText('Precio total: 1.250 euros', { x: 30, y: 300, size: 14, font }); page.drawText('Linea siguiente cercana', { x: 30, y: 284, size: 14, font });
+  const source = await pdf.save(), area = [107, 296, 147, 314];
+  assert.equal(operateDocument(source, { operation: 'area-info', page: 1, rect: area }).text.trim(), '1.250');
+  const output = text(operateDocument(source, { operation: 'replace-text', page: 1, rect: area, text: '990', size: 14, color: '#000000', fontName: 'Helvetica', wrap: true }))[0];
+  assert(!output.includes('1.250')); assert(output.includes('990')); assert(output.includes('Precio total:')); assert(output.includes('euros')); assert(output.includes('Linea siguiente cercana'));
+  return { suggestionMatchesRemoval: true, touchedNeighbourLettersKept: true };
 });
 
 await check('ordinary-deletion-keeps-notes-highlights-links-widgets-pending-redactions-and-metadata', async () => {
@@ -200,9 +221,12 @@ await check('client-remove-preview-cancels-with-source-owned-by-caller', async (
   globalThis.Worker = ControlledWorker;
   try {
     const client = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64')), prior = new AbortController(); prior.abort(); await assert.rejects(client.processPdf(bytes, operation, undefined, prior.signal), error => error.name === 'AbortError'); assert.equal(workers.length, 0);
-    const controller = new AbortController(), pending = client.processPdf(bytes, operation, undefined, controller.signal); controller.abort(); await assert.rejects(pending, error => error.name === 'AbortError'); assert(workers.at(-1).terminated);
-    const ready = client.processPdf(bytes, operation), worker = workers.at(-1); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); assert(!text(await ready)[0].includes('FIRST LINE')); assert(worker.terminated); assert.equal(hash(bytes), before);
-    return { preAbortNoWorker: true, activePreviewTerminated: true, originalBufferNotTransferred: true, realBackendResultReturned: true };
+    const controller = new AbortController(), pending = client.processPdf(bytes, operation, undefined, controller.signal), active = workers.at(-1); controller.abort(); await assert.rejects(pending, error => error.name === 'AbortError');
+    assert(active.terminated); assert.equal(workers.length, 2); assert(!workers[1].terminated, 'A warm replacement waits for the next preview.');
+    const ready = client.processPdf(bytes, operation), worker = workers.at(-1); assert.equal(workers.length, 2); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); assert(!text(await ready)[0].includes('FIRST LINE')); assert(!worker.terminated); assert.equal(hash(bytes), before);
+    const failed = client.processPdf(bytes, operation); assert.equal(workers.length, 2, 'A finished worker is reused.'); worker.onmessage({ data: { error: 'Error del motor.' } }); await assert.rejects(failed, /Error del motor/); assert(!worker.terminated);
+    const trapped = client.processPdf(bytes, operation); worker.onmessage({ data: { error: 'Aborted()', fatal: true } }); await assert.rejects(trapped, /Aborted/); assert(worker.terminated, 'A worker whose engine trapped is discarded.');
+    return { preAbortNoWorker: true, activePreviewTerminated: true, warmWorkerReused: true, trappedWorkerDiscarded: true, originalBufferNotTransferred: true, realBackendResultReturned: true };
   } finally { globalThis.Worker = previousWorker; }
 });
 

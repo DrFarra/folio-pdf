@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { isMobile, isNative, isAndroid } from './platform';
+import { isDesktop, isMobile, isNative, isAndroid } from './platform';
 import { invoke } from '@tauri-apps/api/core';
 
 // A phone keeps its touch controls when rotated; a narrow mouse-driven desktop
-// window keeps keyboard and zoom controls directly available.
+// window keeps keyboard and zoom controls directly available. The Windows and
+// macOS app always keeps the desktop layout: a 2-in-1 in tablet mode still needs
+// its tabs and the frameless window's controls.
 const PHONE_QUERY = '(max-width: 1024px) and (pointer: coarse)';
 
 export type DeviceLayout = 'phone' | 'tablet' | 'desktop';
@@ -14,7 +16,7 @@ export function deviceLayout(): DeviceLayout {
     const shortest = Math.min(screen.width, screen.height);
     return shortest >= 600 && innerWidth >= 600 ? 'tablet' : 'phone';
   }
-  return matchMedia(PHONE_QUERY).matches ? 'phone' : 'desktop';
+  return !isDesktop && matchMedia(PHONE_QUERY).matches ? 'phone' : 'desktop';
 }
 
 export function useDeviceLayout() {
@@ -28,9 +30,10 @@ export function useDeviceLayout() {
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.layout = layout;
-    root.toggleAttribute('data-tablet', layout === 'tablet');
-    root.toggleAttribute('data-phone', layout === 'phone');
-    root.toggleAttribute('data-touch', layout !== 'desktop');
+    // Present flags read "true" for code that compares dataset values.
+    for (const [name, on] of [['tablet', layout === 'tablet'], ['phone', layout === 'phone'], ['touch', layout !== 'desktop']] as const) {
+      if (on) root.dataset[name] = 'true'; else delete root.dataset[name];
+    }
     const viewport = window.visualViewport;
     const update = () => {
       root.style.setProperty('--visible-height', `${viewport?.height ?? innerHeight}px`);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { LoaderCircle, MessageSquare } from 'lucide-react';
 import type { Annotation, Tool, SearchResult, PDFNavigationTarget } from '../types';
@@ -9,21 +9,44 @@ import { highlightSelection, selectedTextRects, textCaretAtPoint } from '../text
 import type { AnnotationDraft, HighlightSelectionRequest, TextSelectionRequest } from '../text-selection';
 import HighlightAnnotationMenu from './HighlightAnnotationMenu';
 import { isMobile } from '../platform';
-import { isNativePdfDocument } from '../nativePdf';
+import { isNativePdfDocument, sizeNativeTextLayer } from '../nativePdf';
 import './PDFPage.css';
 import InkLayer from './InkLayer';
 
-function useNearby(ref: React.RefObject<HTMLDivElement | null>, first = false) {
+type Watcher = { observer: IntersectionObserver; listeners: Map<Element, (inside: boolean) => void> };
+const watchers = new WeakMap<Element | Document, Map<string, Watcher>>();
+// Pages share one observer per scroll container and margin. The margin only
+// works when the observer's root is that container, not the document viewport.
+function watch(node: Element, root: Element | null, rootMargin: string, listener: (inside: boolean) => void) {
+  const byMargin = watchers.get(root || document) || new Map<string, Watcher>();
+  watchers.set(root || document, byMargin);
+  let watcher = byMargin.get(rootMargin);
+  if (!watcher) {
+    const listeners = new Map<Element, (inside: boolean) => void>();
+    watcher = { listeners, observer: new IntersectionObserver(entries => { for (const entry of entries) listeners.get(entry.target)?.(entry.isIntersecting); }, { root, rootMargin }) };
+    byMargin.set(rootMargin, watcher);
+  }
+  const { observer, listeners } = watcher;
+  listeners.set(node, listener); observer.observe(node);
+  return () => { listeners.delete(node); observer.unobserve(node); };
+}
+// Mount within one screen of the visible area and release beyond two, so a
+// page is ready before it scrolls in and short scrolls back do not repaint it.
+function useNearby(ref: React.RefObject<HTMLDivElement | null>, scroller: string, first = false) {
   const [nearby, setNearby] = useState(first);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const observer = new IntersectionObserver(([entry]) => setNearby(entry.isIntersecting), { rootMargin: isMobile ? '350px 100px' : '800px 200px' });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [ref]);
+    const root = node.closest(scroller);
+    const near = watch(node, root, '100% 50%', inside => { if (inside) setNearby(true); });
+    const far = watch(node, root, '200% 100%', inside => { if (!inside) setNearby(false); });
+    return () => { near(); far(); };
+  }, [ref, scroller]);
   return nearby;
 }
+const pixelBudget = isMobile ? 4_000_000 : 16_000_000;
+const density = () => Math.min(window.devicePixelRatio || 1, 3);
+const outputRatio = (view: { width: number; height: number }) => Math.min(density(), Math.sqrt(pixelBudget / (view.width * view.height)));
 
 type Props = {
   pdf: PDFDocumentProxy;
@@ -52,9 +75,9 @@ type Props = {
   redactions: Area[];
 };
 
-export default function PDFPage(props: Props) {
+export default memo(function PDFPage(props: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const nearby = useNearby(ref, props.number === 1);
+  const nearby = useNearby(ref, '.reading-area', props.number === 1);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -69,15 +92,17 @@ export default function PDFPage(props: Props) {
   const height = viewport?.height ?? (rotated ? props.dimensions.width : props.dimensions.height) * props.scale;
   return <div className="pdf-page-wrap" ref={ref} data-page-number={props.number} style={{ width }}>
     <div className="pdf-page" style={{ width, height }}>
-      {nearby && page ? <PageContent {...props} page={page} /> : <div className="page-loading">{error || <LoaderCircle size={22} className="spin" />}</div>}
+      {nearby && page ? <PageContent {...props} page={page} /> : <div className="page-loading">{error || nearby && <LoaderCircle size={22} className="spin" />}</div>}
     </div>
     <div className="page-caption">Página {props.pageLabel || (page as PDFPageProxy & { label?: string } | null)?.label || props.number} <span>de {props.pdf.numPages}</span></div>
   </div>;
-}
+});
 
 function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const detailRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const textRotation = useRef<number | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -127,56 +152,102 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const canvas = canvasRef.current;
     const container = textRef.current;
     if (!canvas || !container) return;
+    // The text layer follows --total-scale-factor, so zoom keeps it (and any
+    // selection) and repaints the stretched bitmap once the zoom settles.
+    const keepText = textRotation.current === rotation;
     setFailed(false);
-    rendering.current = true;
+    if (!keepText) rendering.current = true;
     canvas.dataset.rendering = 'true';
-    const view = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
-    const pixelBudget = isMobile ? 4_000_000 : 16_000_000;
-    const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(pixelBudget / (view.width * view.height)));
-    // The visible bitmap survives zoom and canceled renders. Prepare pixels and
-    // text separately, then publish both in one task before the next paint.
-    const surface = document.createElement('canvas');
-    surface.width = Math.ceil(view.width * ratio);
-    surface.height = Math.ceil(view.height * ratio);
-    const nextText = container.cloneNode(false) as HTMLDivElement;
-    renderTask = page.render({ canvas: surface, viewport: view, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined });
-    const textReady = page.getTextContent().then(async source => {
-      if (!alive) return false;
-      textLayer = new TextLayer({ textContentSource: source, container: nextText, viewport: view });
-      await textLayer.render();
-      const model = pageTextModel(source);
-      nextText.dataset.searchText = model.text;
-      textLayer.textDivs.forEach((span, index) => {
-        const segment = model.segments[index];
-        if (segment) { span.dataset.original = segment.text; span.dataset.searchStart = String(segment.start); span.dataset.searchEnd = String(segment.end); }
-      });
-      return true;
-    }).catch(error => { if (alive && error?.name !== 'AbortException') console.error('No se pudo preparar la selección de texto.', error); return false; });
-    void Promise.all([renderTask.promise, textReady]).then(([, textAvailable]) => {
-      if (!alive) return;
-      canvas.width = surface.width; canvas.height = surface.height;
-      canvas.getContext('2d')?.drawImage(surface, 0, 0);
-      if (textAvailable) {
-        container.style.cssText = nextText.style.cssText;
-        container.setAttribute('data-main-rotation', nextText.getAttribute('data-main-rotation') || '0');
-        container.dataset.searchText = nextText.dataset.searchText;
-        container.replaceChildren(...nextText.childNodes);
-        markSearch(container, queryRef.current, activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined);
-        revealActiveSearch();
-      } else container.replaceChildren();
-      canvas.dataset.renderScale = String(scale);
-      canvas.dataset.renderRotation = String(rotation);
-      canvas.dataset.rendering = 'false'; rendering.current = false;
-      setRendered(true);
-    }).catch(err => {
-      if (alive && err?.name !== 'RenderingCancelledException') {
-        setFailed(true); rendering.current = false; canvas.dataset.rendering = 'false';
-      }
-    }).finally(() => { surface.width = 0; surface.height = 0; });
-    return () => { alive = false; renderTask?.cancel(); textLayer?.cancel(); };
+    const start = () => {
+      const view = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
+      const ratio = outputRatio(view);
+      // The visible bitmap survives zoom and canceled renders. Prepare pixels and
+      // text separately, then publish both in one task before the next paint.
+      const surface = document.createElement('canvas');
+      surface.width = Math.ceil(view.width * ratio);
+      surface.height = Math.ceil(view.height * ratio);
+      const nextText = container.cloneNode(false) as HTMLDivElement;
+      renderTask = page.render({ canvas: surface, viewport: view, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined });
+      const textReady = keepText ? Promise.resolve(true) : page.getTextContent().then(async source => {
+        if (!alive) return false;
+        textLayer = new TextLayer({ textContentSource: source, container: nextText, viewport: view });
+        if (isNativePdfDocument(pdf)) sizeNativeTextLayer(nextText, view);
+        await textLayer.render();
+        const model = pageTextModel(source);
+        nextText.dataset.searchText = model.text;
+        textLayer.textDivs.forEach((span, index) => {
+          const segment = model.segments[index];
+          if (segment) { span.dataset.original = segment.text; span.dataset.searchStart = String(segment.start); span.dataset.searchEnd = String(segment.end); }
+        });
+        return true;
+      }).catch(error => { if (alive && error?.name !== 'AbortException') console.error('No se pudo preparar la selección de texto.', error); return false; });
+      void Promise.all([renderTask.promise, textReady]).then(([, textAvailable]) => {
+        if (!alive) return;
+        canvas.width = surface.width; canvas.height = surface.height;
+        canvas.getContext('2d')?.drawImage(surface, 0, 0);
+        if (!textAvailable) container.replaceChildren();
+        else if (!keepText) {
+          container.style.cssText = nextText.style.cssText;
+          container.setAttribute('data-main-rotation', nextText.getAttribute('data-main-rotation') || '0');
+          container.dataset.searchText = nextText.dataset.searchText;
+          container.replaceChildren(...nextText.childNodes);
+          textRotation.current = rotation;
+          markSearch(container, queryRef.current, activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined);
+          revealActiveSearch();
+        }
+        canvas.dataset.renderScale = String(scale);
+        canvas.dataset.renderRotation = String(rotation);
+        canvas.dataset.rendering = 'false'; rendering.current = false;
+        setRendered(true);
+      }).catch(err => {
+        if (alive && err?.name !== 'RenderingCancelledException') {
+          setFailed(true); rendering.current = false; canvas.dataset.rendering = 'false';
+        }
+      }).finally(() => { surface.width = 0; surface.height = 0; });
+    };
+    const timer = keepText && canvas.width ? setTimeout(start, 120) : undefined;
+    if (!timer) start();
+    return () => { alive = false; clearTimeout(timer); renderTask?.cancel(); textLayer?.cancel(); };
     // Search is updated separately to avoid rerendering the PDF canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, scale, rotation]);
+  useEffect(() => {
+    // PDF.js keeps operator lists and decoded images until cleanup(); WebKit
+    // frees a canvas backing store only when it is resized or collected.
+    const canvas = canvasRef.current;
+    return () => { if (canvas) canvas.width = canvas.height = 0; page.cleanup(); };
+  }, [page]);
+  useEffect(() => {
+    // The full-page bitmap is capped by the pixel budget. When zoom drops it
+    // below the screen density, repaint only the visible part at full density.
+    const detail = detailRef.current, frame = frameRef.current, reader = frame?.closest('.reading-area');
+    if (!detail || !frame || !reader) return;
+    let task: RenderTask | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+    const hide = () => { task?.cancel(); task = null; detail.width = detail.height = 0; detail.removeAttribute('style'); };
+    const paint = () => {
+      if (reader.classList.contains('pinching')) { schedule(); return; }
+      const box = frame.getBoundingClientRect(), bounds = reader.getBoundingClientRect();
+      const left = Math.max(0, bounds.left - box.left), top = Math.max(0, bounds.top - box.top);
+      const width = Math.min(box.width, bounds.right - box.left) - left, height = Math.min(box.height, bounds.bottom - box.top) - top;
+      if (width < 1 || height < 1) { hide(); return; }
+      const ratio = Math.min(density(), Math.sqrt(pixelBudget / (width * height)));
+      const surface = document.createElement('canvas');
+      surface.width = Math.ceil(width * ratio); surface.height = Math.ceil(height * ratio);
+      task?.cancel();
+      const current = task = page.render({ canvas: surface, viewport, transform: [ratio, 0, 0, ratio, -left * ratio, -top * ratio] });
+      current.promise.then(() => {
+        if (task !== current) return;
+        task = null;
+        detail.width = surface.width; detail.height = surface.height;
+        detail.getContext('2d')?.drawImage(surface, 0, 0);
+        detail.style.cssText = `left:${left}px;top:${top}px;width:${width}px;height:${height}px`;
+      }).catch(() => {}).finally(() => { surface.width = surface.height = 0; });
+    };
+    const schedule = () => { clearTimeout(timer); timer = setTimeout(paint, 150); };
+    schedule();
+    reader.addEventListener('scroll', schedule, { passive: true }); window.addEventListener('resize', schedule);
+    return () => { clearTimeout(timer); reader.removeEventListener('scroll', schedule); window.removeEventListener('resize', schedule); hide(); };
+  }, [page, viewport]);
 
   useEffect(() => {
     if (textRef.current) markSearch(textRef.current, query, activeSearch?.page === number ? activeSearch.offset : undefined);
@@ -221,9 +292,11 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       if (request.applied || !canCopy || rendering.current || !textRef.current?.contains(request.range.startContainer) || !frameRef.current) return;
       const selection = selectedTextRects(textRef.current, request.range);
       if (!selection) return;
+      // Like a highlight's comment, the marker sits in the right margin, level with the selection.
       const rect = selection.rects[0], frame = frameRef.current.getBoundingClientRect();
-      const point = viewport.convertToPdfPoint(rect.left - frame.left, rect.top - frame.top);
-      onAnnotate({ page: number, kind: 'note', rect: [point[0], point[1], point[0], point[1]], color, text: '' });
+      const [, top] = viewport.convertToPdfPoint(rect.left - frame.left, rect.top - frame.top), [, bottom] = viewport.convertToPdfPoint(rect.right - frame.left, rect.bottom - frame.top);
+      const x = viewport.viewBox[2] - 24, y = Math.max(top, bottom);
+      onAnnotate({ page: number, kind: 'note', rect: [x, y, x, y], color, text: '' });
       request.applied = true;
     };
     window.addEventListener('folio:highlight-selection', applySelection);
@@ -322,6 +395,8 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       window.addEventListener('blur', cleanup);
       return;
     }
+    // Ink tools draw on InkLayer; a press that reaches the page never starts an area.
+    if (tool === 'draw' || tool === 'eraser') return;
     const p = localPoint(event);
     if (tool === 'note') {
       // A second finger can turn the first touch into a pinch. Add a mobile
@@ -394,7 +469,11 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const point = viewport.convertToPdfPoint(x - frame.left, y - frame.top);
     return links.find(link => point[0] >= Math.min(link.rect[0], link.rect[2]) && point[0] <= Math.max(link.rect[0], link.rect[2]) && point[1] >= Math.min(link.rect[1], link.rect[3]) && point[1] <= Math.max(link.rect[1], link.rect[3]));
   }
-  const closeHighlight = () => setHighlightMenu(null);
+  // Escape returns focus to the highlight that opened the menu; a deletion, to the reader.
+  const closeHighlight = (restoreFocus?: unknown) => {
+    const id = highlightMenu?.id; setHighlightMenu(null);
+    if (restoreFocus === true && id) requestAnimationFrame(() => frameRef.current?.querySelector<HTMLElement>(`.highlight-annotation[data-annotation-id="${CSS.escape(id)}"][tabindex="0"]`)?.focus({ preventScroll: true }));
+  };
   function highlightAccess(annotation: Annotation, first = true) {
     return { 'data-annotation-id': annotation.id, 'data-selected': highlightMenu?.id === annotation.id,
       role: first && canAnnotate ? 'button' : undefined, tabIndex: first && canAnnotate ? 0 : undefined,
@@ -412,6 +491,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     if (target?.dataset.annotationId) { event.preventDefault(); openHighlight(target.dataset.annotationId, event.clientX, event.clientY); }
   }} onPointerCancel={() => { dragRef.current = null; setDrag(null); pointerOrigin.current = null; }}>
     <canvas ref={canvasRef} aria-label={`Página ${number} del documento`} style={{ width: viewport.width, height: viewport.height }} />
+    {!isNativePdfDocument(pdf) && outputRatio(viewport) < density() && <canvas ref={detailRef} className="page-detail" aria-hidden="true" />}
     <div ref={textRef} className="textLayer" data-copy-allowed={canCopy} style={{ '--scale-factor': scale, '--total-scale-factor': scale, ...(canCopy ? {} : { userSelect: 'none', WebkitUserSelect: 'none' }) } as React.CSSProperties} />
     {tool === 'select' && onNavigate && <div className="pdf-link-layer">{links.map((link, index) => {
       const first = viewport.convertToViewportPoint(link.rect[0], link.rect[1]), second = viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
@@ -437,7 +517,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
       })}
     </div>
-    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate && rendered && !failed} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
+    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
         const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);
@@ -449,9 +529,9 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       })}
       {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}
     </div>
-    {!rendered && <div className="page-loading">{failed ? 'No se pudo renderizar la página.' : <LoaderCircle size={22} className="spin" />}</div>}
+    {!rendered && <div className="page-loading">{failed ? 'No se pudo mostrar la página.' : <LoaderCircle size={22} className="spin" />}</div>}
     {rendered && failed && <div className="page-render-error" role="alert">No se pudo actualizar esta página.</div>}
-    {highlightMenu && canAnnotate && <HighlightAnnotationMenu x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); }} />}
+    {highlightMenu && canAnnotate && <HighlightAnnotationMenu x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); requestAnimationFrame(() => document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true })); }} />}
   </div>;
 }
 
@@ -482,11 +562,11 @@ export function markSearch(container: HTMLElement, query: string, activeOffset?:
   }
 }
 
-export function Thumbnail({ pdf, number, selected, onClick, pageLabel }: { pdf: PDFDocumentProxy; number: number; selected: boolean; onClick: () => void; pageLabel?: string }) {
+export const Thumbnail = memo(function Thumbnail({ pdf, number, rotation = 0, selected, onClick, pageLabel }: { pdf: PDFDocumentProxy; number: number; rotation?: number; selected: boolean; onClick: () => void; pageLabel?: string }) {
   const button = useRef<HTMLButtonElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const nearby = useNearby(frame, number < 5);
+  const nearby = useNearby(frame, '.sidebar-scroll', number < 5);
   const [ratio, setRatio] = useState(1.414);
   const [nativeLabel, setNativeLabel] = useState<string>();
   useEffect(() => {
@@ -502,21 +582,23 @@ export function Thumbnail({ pdf, number, selected, onClick, pageLabel }: { pdf: 
   useEffect(() => {
     if (!nearby) return;
     let alive = true;
-    let renderTask: RenderTask | null = null;
-    pdf.getPage(number).then(page => {
+    let renderTask: RenderTask | null = null, page: PDFPageProxy | null = null, canvas: HTMLCanvasElement | null = null;
+    pdf.getPage(number).then(loaded => {
       if (!alive || !canvasRef.current) return;
+      page = loaded; canvas = canvasRef.current;
       setNativeLabel((page as PDFPageProxy & { label?: string }).label);
-      const unscaled = page.getViewport({ scale: 1 });
-      const view = page.getViewport({ scale: 145 / unscaled.width });
+      // Match the reader's view rotation and the frame's real width on this screen.
+      const unscaled = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
+      const view = page.getViewport({ scale: (canvas.clientWidth || 145) / unscaled.width, rotation: unscaled.rotation });
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       setRatio(view.height / view.width);
-      const canvas = canvasRef.current;
-      canvas.width = Math.round(view.width * 1.5);
-      canvas.height = Math.round(view.height * 1.5);
-      renderTask = page.render({ canvas, viewport: view, transform: [1.5, 0, 0, 1.5, 0, 0] });
+      canvas.width = Math.round(view.width * dpr);
+      canvas.height = Math.round(view.height * dpr);
+      renderTask = page.render({ canvas, viewport: view, transform: [dpr, 0, 0, dpr, 0, 0] });
       renderTask.promise.catch(() => {});
     }).catch(() => {});
-    return () => { alive = false; renderTask?.cancel(); };
-  }, [pdf, number, nearby]);
+    return () => { alive = false; renderTask?.cancel(); if (canvas) canvas.width = canvas.height = 0; page?.cleanup(); };
+  }, [pdf, number, nearby, rotation]);
   const label = pageLabel || nativeLabel || String(number);
   return <button ref={button} className={`thumbnail-item ${selected ? 'selected' : ''}`} onClick={onClick} aria-label={`Ir a página ${label}`} aria-current={selected ? 'page' : undefined}>
     <div className="thumbnail-frame" ref={frame} style={{ aspectRatio: `1 / ${ratio}` }}>
@@ -525,4 +607,4 @@ export function Thumbnail({ pdf, number, selected, onClick, pageLabel }: { pdf: 
     </div>
     <span className="thumbnail-label">{label}</span>
   </button>;
-}
+});

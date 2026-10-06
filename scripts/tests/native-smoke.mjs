@@ -89,7 +89,7 @@ try {
   await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('125');
   await page.locator('.reading-area').evaluate(element => {element.scrollTop = 0});
   await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({state:'detached'});
-  await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).click();
+  await page.getByRole('button', { name: 'Ajustes', exact: true }).click();
   await page.getByRole('button', { name: 'Oscuro', exact: true }).click();
   await page.getByRole('button', { name: 'Listo', exact: true }).click();
   await page.screenshot({path:path.join(output, 'folio-windows.png'), animations:'disabled'});
@@ -112,11 +112,11 @@ try {
   await selectedSpan.waitFor(); await selectedSpan.scrollIntoViewIfNeeded();
   const annotationsBeforeSelection = (await invoke('load_session', { id: original }))?.annotations?.length || 0;
   await enterAnnotationMode(page);
-  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
+  await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click();
   await page.getByRole('button', { name: 'Color del resaltador', exact: true }).click();
   assert.equal(await page.locator('.highlight-color-presets button').count(), 12);
   await page.getByRole('button', { name: 'Color Azul', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).getAttribute('aria-pressed'), 'true');
   const spanBounds = await selectedSpan.boundingBox();
   await page.mouse.move(spanBounds.x + 1, spanBounds.y + spanBounds.height / 2); await page.mouse.down();
   await page.mouse.move(spanBounds.x + spanBounds.width - 1, spanBounds.y + spanBounds.height / 2, { steps: 8 });
@@ -129,8 +129,8 @@ try {
   await page.mouse.move(spanBounds.x + 1, spanBounds.y + spanBounds.height / 2); await page.mouse.down();
   await page.mouse.move(spanBounds.x + spanBounds.width - 1, spanBounds.y + spanBounds.height / 2, { steps: 8 }); await page.mouse.up();
   await page.waitForFunction(async ({ id, count }) => (await window.__TAURI_INTERNALS__.invoke('load_session', { id }))?.annotations.length === count + 2, { id: original, count: annotationsBeforeSelection });
-  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).getAttribute('aria-pressed'), 'false');
+  await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).getAttribute('aria-pressed'), 'false');
   nativeModules.automaticHighlightToggleAndTwelveColors = true;
   nativeModules.textSelectionHighlightAndRustSession = true;
   await page.getByRole('tab', { name: 'sample.pdf', exact: true }).click();
@@ -215,9 +215,9 @@ try {
   await page.getByRole('button',{name:'Reconocer texto',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached',timeout:90000});
   const recognized=await draft(scanId,bytes=>operateDocument(bytes,{operation:'text'})[0].includes('FOLIO OCR TEST'));
   await writeFile(path.join(output,'native-ocr.pdf'),recognized); nativeModules.localOCR = true;
-  const recent=await invoke('recent_documents'); assert(recent.some(r=>r.id===scanId && r.draft)); nativeModules.unsavedDraftInLibrary = true;
+  const recent=await invoke('list_library'); assert(recent.some(r=>r.id===scanId && r.draft)); nativeModules.unsavedDraftInLibrary = true;
   await page.reload(); await page.locator('.loading-overlay').waitFor({state:'detached'});
-  await page.getByRole('button',{name:'Mis documentos',exact:true}).click(); await page.locator('.document-library-row').filter({hasText:'scan.pdf'}).getByRole('button', { name: 'Abrir scan.pdf', exact: true }).click();
+  await page.getByRole('button',{name:'Biblioteca',exact:true}).click(); await page.locator('.document-library-row').filter({hasText:'scan.pdf'}).getByRole('button', { name: 'Abrir scan.pdf', exact: true }).click();
   await page.getByRole('heading',{name:'scan.pdf',exact:true}).waitFor(); await page.locator('.loading-overlay').waitFor({state:'detached'});
   await page.waitForFunction(() => document.querySelector('.textLayer')?.textContent?.includes('FOLIO OCR TEST'));
   nativeModules.draftReopenedAfterReload = true;

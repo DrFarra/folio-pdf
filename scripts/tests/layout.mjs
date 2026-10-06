@@ -74,7 +74,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1360, height: 690 } });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin);
-  await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
   await page.locator('input[type=file]').setInputFiles(path.join(root, 'public/sample.pdf'));
   await page.locator('.textLayer').first().waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
@@ -270,7 +270,7 @@ try {
   });
   await page.getByRole('button', { name: 'Páginas', exact: true }).click();
   await page.screenshot({ path: path.join(output, 'interfaz-compacta.png'), animations: 'disabled' });
-  await page.getByRole('button', { name: 'Preferencias de lectura', exact: true }).click();
+  await page.getByRole('button', { name: 'Ajustes', exact: true }).click();
   await page.getByRole('button', { name: 'Oscuro', exact: true }).click();
   await page.getByRole('button', { name: 'Listo', exact: true }).click();
   await page.screenshot({ path: path.join(output, 'interfaz-compacta-oscura.png'), animations: 'disabled' });

@@ -1,6 +1,7 @@
 //! iOS file access is mediated by UIKit. External provider URLs are copied while
 //! security-scoped access is active; recent documents never retain provider paths.
 use super::*;
+use tauri::plugin::mobile::PluginInvokeError;
 use tauri_plugin_folio_ios::FolioIosExt;
 
 #[cfg(feature = "native-qa")]
@@ -32,11 +33,12 @@ pub async fn ios_native_file_probe(app: tauri::AppHandle, desktop: State<'_, Des
         if first["annotations"].as_array().map(|a| a.len()) != Some(2) { return Err(format!("No se reconocieron el resaltado y la nota originales de PDFKit. metadata={metadata}; pageInfo={first}")); }
         if !first["annotations"].as_array().into_iter().flatten().all(|a| a["opacity"].as_f64().is_some_and(|v| (v - 0.35).abs() < 0.01)) { return Err(format!("PDFKit no conservó la opacidad original de las anotaciones: {first}")); }
         let mut rasters = Vec::new();
-        for rotation in [0, 90, 180, 270] {
-            let (width, height) = if rotation % 180 == 0 { (572, 732) } else { (732, 572) };
+        // The 2x render checks that the page fills a bitmap larger than its crop box.
+        for (rotation, scale) in [(0, 1), (90, 1), (180, 1), (270, 1), (0, 2)] {
+            let (width, height) = if rotation % 180 == 0 { (572 * scale, 732 * scale) } else { (732 * scale, 572 * scale) };
             let response = mobile_call(app.clone(), "pdfRender", serde_json::json!({"token":info.token,"page":1,"width":width,"height":height,"rotation":rotation})).await?;
             let raster = PathBuf::from(response["path"].as_str().ok_or("PDFKit no generó el fixture PNG.")?);
-            let evidence = desktop.data.join(format!("native-pdf-{}-{rotation}.png", if info.size > 2 * 1024 * 1024 * 1024 { "2gib" } else { "small" }));
+            let evidence = desktop.data.join(format!("native-pdf-{}-{rotation}{}.png", if info.size > 2 * 1024 * 1024 * 1024 { "2gib" } else { "small" }, if scale > 1 { "-2x" } else { "" }));
             fs::rename(&raster, &evidence).map_err(|e| format!("No se pudo conservar la evidencia PNG: {e}"))?;
             rasters.push(serde_json::json!({"page":1,"rotation":rotation,"width":width,"height":height,"path":evidence}));
         }
@@ -107,6 +109,11 @@ pub async fn set_mobile_theme(theme: String, app: tauri::AppHandle) -> Result<()
 }
 
 #[tauri::command]
+pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(), String> {
+    mobile_call(app, "setReaderChrome", serde_json::json!({"visible":visible})).await.map(|_| ())
+}
+
+#[tauri::command]
 pub async fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String> {
     if text.len() > 1024 * 1024 { return Err("El texto seleccionado es demasiado grande para copiarlo.".into()); }
     mobile_call(app, "copyText", serde_json::json!({"text":text})).await.map(|_| ())
@@ -121,13 +128,16 @@ pub async fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(),
 }
 
 async fn mobile_call(app: tauri::AppHandle, command: &'static str, args: Value) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || app.folio_ios().call(command, args))
-        .await.map_err(|_| "No se pudo completar la operación de iOS.".to_string())?
-        .map_err(|e| format!("iOS: {e}"))
+    const FAILED: &str = "No se pudo completar la operación.";
+    // Swift rejects with text written for the user; bridge errors are technical English.
+    tauri::async_runtime::spawn_blocking(move || app.folio_ios().call(command, args).map_err(|error| match error {
+        PluginInvokeError::InvokeRejected(response) => response.message.unwrap_or_else(|| FAILED.into()),
+        _ => FAILED.into(),
+    })).await.map_err(|_| FAILED.to_string())?
 }
 
 fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
-    let paths = response["paths"].as_array().ok_or("iOS no devolvió los archivos elegidos.")?;
+    let paths = response["paths"].as_array().ok_or("No se recibieron los archivos elegidos.")?;
     paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
 }
 
@@ -186,16 +196,40 @@ fn remove_export(desktop: &Desktop, path: &Path) {
     }
 }
 
-pub fn cleanup_unreferenced_exports(desktop: &Desktop) {
-    let retained = read_recents(desktop).into_iter().map(|r| r.path).collect::<Vec<_>>();
-    if let Ok(entries) = fs::read_dir(desktop.data.join("exports")) {
-        for entry in entries.flatten() {
-            let folder = entry.path();
-            if entry.file_type().is_ok_and(|t| t.is_dir()) && !retained.iter().any(|p| p.parent() == Some(folder.as_path())) {
-                let _ = fs::remove_dir_all(folder);
-            }
+/// Swift copies each imported PDF to Documents/Imports/<uuid>/ and saved copies
+/// go to exports/<uuid>/; each folder holds one private copy. Deletes those that
+/// neither the library, a pending output nor `open` uses. Folders changed in
+/// the last minute may still be on their way to a tab.
+fn remove_unused_copies(desktop: &Desktop, mut open: Vec<PathBuf>) {
+    open.extend(read_recents(desktop).into_iter().map(|r| r.path));
+    if let Ok(files) = desktop.files.lock() { open.extend(files.outputs.values().map(|o| o.path.clone())); }
+    // Compare resolved paths: Swift and HOME may spell the sandbox differently.
+    let kept = open.iter().filter_map(|p| fs::canonicalize(p.parent()?).ok()).collect::<Vec<_>>();
+    let imports = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents").join("Imports"));
+    for root in [Some(desktop.data.join("exports")), imports].into_iter().flatten() {
+        for entry in fs::read_dir(root).into_iter().flatten().flatten() {
+            let fresh = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() < 60));
+            if fresh || !entry.file_type().is_ok_and(|t| t.is_dir()) || uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()).is_err() { continue; }
+            if fs::canonicalize(entry.path()).is_ok_and(|folder| !kept.contains(&folder)) { let _ = fs::remove_dir_all(entry.path()); }
         }
     }
+}
+
+/// Setup runs before any tab is open.
+pub fn cleanup_unreferenced_exports(desktop: &Desktop) { remove_unused_copies(desktop, Vec::new()) }
+
+/// Deletes the imported and saved copies that neither the library nor an open
+/// tab uses. The frontend calls it after forget_document, clear_saved_state
+/// and replacing a saved document, passing the source tokens of its open tabs.
+#[tauri::command]
+pub fn prune_private_copies(keep: Vec<String>, desktop: State<'_, Desktop>) -> Result<(), String> {
+    let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+    let open = {
+        let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+        keep.iter().filter_map(|token| files.sources.get(token).map(|s| s.path.clone())).collect()
+    };
+    remove_unused_copies(&desktop, open);
+    Ok(())
 }
 
 #[tauri::command]
@@ -217,18 +251,27 @@ pub async fn write_export(request: tauri::ipc::Request<'_>, app: tauri::AppHandl
     response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
+/// iPad shows Share and Print as popovers from the control that opened them:
+/// `x,y,width,height` in CSS pixels of the webview.
+fn anchor(request: &tauri::ipc::Request<'_>) -> Option<Vec<f64>> {
+    let values = request.headers().get("x-folio-anchor")?.to_str().ok()?.split(',').map(|v| v.trim().parse::<f64>().ok()).collect::<Option<Vec<_>>>()?;
+    (values.len() == 4 && values.iter().all(|v| v.is_finite())).then_some(values)
+}
+
 #[tauri::command]
 pub async fn share_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
+    let anchor = anchor(&request);
     let path = write_reserved(request, &desktop, true)?;
-    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path})).await;
+    let response = mobile_call(app, "shareFile", serde_json::json!({"path":path,"anchor":anchor})).await;
     remove_export(&desktop, &path);
     response.map(|r| r["completed"].as_bool() == Some(true))
 }
 
 #[tauri::command]
 pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<bool, String> {
+    let anchor = anchor(&request);
     let path = write_reserved(request, &desktop, true)?;
-    let response = mobile_call(app, "printFile", serde_json::json!({"path":path})).await;
+    let response = mobile_call(app, "printFile", serde_json::json!({"path":path,"anchor":anchor})).await;
     remove_export(&desktop, &path);
     response.map(|r| r["completed"].as_bool() == Some(true))
 }
@@ -278,7 +321,7 @@ pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32
     pdf_source(&desktop, &token)?;
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 4_000_000 { return Err("La página debe renderizarse en un máximo de 4 megapíxeles.".into()); }
     let response = mobile_call(app.clone(), "pdfRender", serde_json::json!({"token":token,"page":page,"width":width,"height":height,"rotation":rotation})).await?;
-    let path = PathBuf::from(response["path"].as_str().ok_or("PDFKit no devolvió la imagen de la página.")?);
+    let path = PathBuf::from(response["path"].as_str().ok_or("No se pudo mostrar esta página.")?);
     let resolved = fs::canonicalize(&path).map_err(|_| "No se pudo leer la imagen de la página.")?;
     let temporary = app.path().temp_dir().map_err(|_| "No se pudo comprobar la carpeta temporal.")?.join("FolioPageRasters");
     let root = fs::canonicalize(&temporary).map_err(|_| "No se pudo comprobar la carpeta de imágenes.")?;
@@ -286,7 +329,7 @@ pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32
     let result = (|| {
         if fs::metadata(&resolved).map_err(|_| "No se pudo comprobar la imagen.")?.len() > 20 * 1024 * 1024 { return Err("La imagen generada excede el tamaño de una página.".into()); }
         let bytes = fs::read(&resolved).map_err(|_| "No se pudo leer la imagen.")?;
-        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Err("PDFKit no devolvió una imagen PNG válida.".into()); }
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Err("No se pudo mostrar esta página.".into()); }
         Ok(tauri::ipc::Response::new(bytes))
     })();
     let _ = fs::remove_file(resolved);
@@ -294,7 +337,7 @@ pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32
 }
 
 #[tauri::command]
-pub async fn native_pdf_present(token: String, name: String, action: String, annotations: Value, removed_source_refs: Vec<String>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Value, String> {
+pub async fn native_pdf_present(token: String, name: String, action: String, annotations: Value, removed_source_refs: Vec<String>, anchor: Option<Vec<f64>>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Value, String> {
     if !["save", "share", "print"].contains(&action.as_str()) { return Err("Acción de PDF no admitida.".into()); }
     if !annotations.is_array() || annotations.to_string().len() > 4 * 1024 * 1024 { return Err("Las anotaciones de la copia son inválidas o demasiado numerosas.".into()); }
     let (source, _) = pdf_source(&desktop, &token)?;
@@ -308,7 +351,7 @@ pub async fn native_pdf_present(token: String, name: String, action: String, ann
     let export = mobile_call(app.clone(), "pdfExport", serde_json::json!({"token":token,"path":output.path,"annotations":annotations,"removedSourceRefs":removed_source_refs})).await;
     if let Err(error) = export { remove_export(&desktop, &output.path); return Err(error); }
     let command = match action.as_str() { "save" => "exportFile", "share" => "shareFile", _ => "printFile" };
-    let response = mobile_call(app, command, serde_json::json!({"path":output.path})).await;
+    let response = mobile_call(app, command, serde_json::json!({"path":output.path,"anchor":anchor})).await;
     let completed = response.as_ref().ok().and_then(|r| r["completed"].as_bool()) == Some(true);
     if action == "save" && completed { return register(&desktop, output.path).and_then(|d| serde_json::to_value(d).map_err(|_| "No se pudo registrar la copia.".into())); }
     remove_export(&desktop, &output.path);

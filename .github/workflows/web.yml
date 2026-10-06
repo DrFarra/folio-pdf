@@ -1,0 +1,44 @@
+name: Folio web
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check versions, type-check and build the web app
+        run: npm run build
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: .fixtures
+          key: test-corpus-${{ hashFiles('scripts/fetch-test-corpus.mjs') }}
+      - name: Test the PDF engine
+        run: |
+          npm run test:fixtures
+          npm run test:engine
+          npm run test:operations
+          npm run test:page-content:engine
+          npm run test:content-actions:engine
+          npm run test:content-editor:engine
+          npm run test:signatures
+          npm run test:ink
+      - name: Test the native file core
+        run: npm run test:native

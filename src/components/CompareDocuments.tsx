@@ -4,6 +4,7 @@ import { LoaderCircle } from 'lucide-react';
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import type { LoadedDocument } from '../types';
 import { getDocument } from '../pdf';
+import { errorMessage } from '../errors';
 import { extractText } from '../engine/client';
 import { compareText, visualDifference } from '../comparison';
 import FilePicker from './FilePicker';
@@ -32,9 +33,15 @@ export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc:
       const beforeBytes = await getBytes(), afterBytes = new Uint8Array(await file.arrayBuffer());
       const settings = { ...pdfAssetSettings() };
       tasks.current = [getDocument({ ...settings, data: new Uint8Array(beforeBytes), password: doc.password }), getDocument({ ...settings, data: new Uint8Array(afterBytes), password })];
-      const [before, after, beforeText, afterText] = await Promise.all([tasks.current[0].promise, tasks.current[1].promise, extractText(beforeBytes, doc.password, signal), extractText(afterBytes, password, signal)]);
+      // PDF.js identifies a wrong password or a damaged file; report that before any text error.
+      const text = Promise.all([extractText(beforeBytes, doc.password, signal), extractText(afterBytes, password, signal)]); text.catch(() => {});
+      const [before, after] = await Promise.all(tasks.current.map(task => task.promise)), [beforeText, afterText] = await text;
       signal.throwIfAborted(); setPage(1); setPair({ before, after, beforeText, afterText, name: file.name });
-    } catch (err) { if (!signal.aborted) setError((err as Error).message); }
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      if (!signal.aborted) setError(name === 'PasswordException' ? password ? 'La contraseña del segundo PDF no es correcta.' : 'El segundo PDF está protegido. Escribe su contraseña.'
+        : name === 'InvalidPDFException' ? 'El archivo elegido no es un PDF válido.' : errorMessage(err, 'No se pudieron comparar los documentos.'));
+    }
     finally { setBusy(false); }
   }
   useEffect(() => {
@@ -59,13 +66,13 @@ export default function CompareDocuments({ doc, getBytes, onBusyChange }: { doc:
       const diff = document.createElement('canvas'); diff.width = canvases[0].width; diff.height = canvases[0].height; diff.getContext('2d')!.putImageData(difference.image, 0, 0);
       if (alive) { setPixels(difference.changedPixels); setImages([...canvases, diff].map(canvas => canvas.toDataURL('image/png'))); }
       [...canvases, diff].forEach(canvas => { canvas.width = 0; canvas.height = 0; });
-    })().catch(err => { if (alive && err.name !== 'RenderingCancelledException') setError(err.message); });
+    })().catch(err => { if (alive && err.name !== 'RenderingCancelledException') setError(errorMessage(err, 'No se pudo comparar esta página.')); });
     return () => { alive = false; renders.forEach(render => render.cancel()); };
   }, [pair, page, mode]);
   const differences = pair ? compareText(pair.beforeText[page - 1] || '', pair.afterText[page - 1] || '') : [];
   return <div className="compare-documents">
     <FilePicker label="Segundo PDF" buttonText="Elegir PDF" accept=".pdf,application/pdf" selectedName={file?.name} disabled={busy} onSelect={files => setFile(files[0])} />
-    <label className="compare-password">Contraseña del segundo PDF, si tiene<input type="password" autoComplete="off" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} /></label>
+    <label className="compare-password">Contraseña del segundo PDF (si tiene)<input type="password" autoComplete="off" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} /></label>
     <button className="primary-button" disabled={!file || busy} onClick={() => void compare()}>{busy && <LoaderCircle size={16} className="spin" />}Comparar</button>
     {error && <p className="operation-error" role="alert">{error}</p>}
     {pair && <><div className="compare-controls"><label>Página<select aria-label="Página de comparación" value={page} onChange={e => setPage(Number(e.target.value))}>{Array.from({ length: Math.max(pair.before.numPages, pair.after.numPages) }, (_, i) => <option key={i} value={i + 1}>{i + 1}</option>)}</select></label><label>Comparación<select aria-label="Comparación" value={mode} onChange={e => setMode(e.target.value as typeof mode)}><option value="visual">Visual</option><option value="text">Texto</option></select></label></div>

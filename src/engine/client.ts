@@ -2,16 +2,34 @@ import type { Annotation } from '../types';
 import type { Inspection } from './mupdf-engine.mjs';
 import type { Operation, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo } from './operations.mjs';
 
+// Starting a worker loads ~10 MB of WASM, so idle workers are reused. A worker
+// runs one request at a time; cancelling or timing out a request terminates its
+// worker, and an aborted preview gets a warm replacement for the next request.
+const idle: Worker[] = [];
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+const spawn = () => new Worker(new URL('./pdf.worker.ts', import.meta.url), { type: 'module' });
+function release(worker: Worker) {
+  if (idle.length >= 2) { worker.terminate(); return; }
+  // A worker that fails while idle, e.g. while loading, is dropped instead of reused.
+  worker.onerror = () => { idle.splice(idle.indexOf(worker), 1); worker.terminate(); };
+  idle.push(worker); clearTimeout(idleTimer);
+  // The WASM heap only grows; give its memory back after a quiet period.
+  idleTimer = setTimeout(() => { for (const worker of idle.splice(0)) worker.terminate(); }, 30_000);
+}
 function run<T>(operation: 'inspect' | 'annotate' | 'operate', bytes: Uint8Array, password?: string, annotations?: Annotation[], signal?: AbortSignal, options?: Operation, incremental?: boolean): Promise<T> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException('Operación cancelada', 'AbortError')); return; }
-    const worker = new Worker(new URL('./pdf.worker.ts', import.meta.url), { type: 'module' });
-    const stop = () => { clearTimeout(timeout); signal?.removeEventListener('abort', abort); worker.terminate(); };
-    const abort = () => { stop(); reject(new DOMException('Operación cancelada', 'AbortError')); };
-    const timeout = setTimeout(() => { stop(); reject(new Error('El motor PDF excedió el tiempo permitido. El original está intacto.')); }, 90_000);
+    const worker = idle.pop() ?? spawn();
+    const stop = (reuse: boolean) => {
+      clearTimeout(timeout); signal?.removeEventListener('abort', abort); worker.onmessage = worker.onerror = null;
+      if (reuse) release(worker); else worker.terminate();
+    };
+    const abort = () => { stop(false); if (!idle.length) release(spawn()); reject(new DOMException('Operación cancelada', 'AbortError')); };
+    const timeout = setTimeout(() => { stop(false); reject(new Error('La operación tardó demasiado y se canceló. El documento no cambió.')); }, 90_000);
     signal?.addEventListener('abort', abort, { once: true });
-    worker.onmessage = event => { stop(); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.result); };
-    worker.onerror = () => { stop(); reject(new Error('No se pudo iniciar el motor PDF. El original está intacto.')); };
+    // A large document leaves a large heap behind; that worker is not kept.
+    worker.onmessage = event => { stop(!event.data.fatal && bytes.length < 32 * 1024 * 1024); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.result); };
+    worker.onerror = () => { stop(false); reject(new Error('No se pudo completar la operación. El documento no cambió.')); };
     const copy = new Uint8Array(bytes);
     worker.postMessage({ operation, bytes: copy, password, annotations, options, incremental }, [copy.buffer]);
   });

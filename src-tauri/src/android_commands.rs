@@ -1,6 +1,7 @@
 use super::*;
 use tauri_plugin_folio_android::FolioAndroidExt;
 use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::plugin::mobile::PluginInvokeError;
 
 fn incoming_error(app: &tauri::AppHandle, error: String) {
     let desktop = app.state::<Desktop>();
@@ -31,9 +32,17 @@ pub fn watch_system_documents(app: tauri::AppHandle) {
     });
 }
 
-async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Result<Value, String> { let command = command.to_owned(); tauri::async_runtime::spawn_blocking(move || app.folio_android().call(&command, args).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())? }
+async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Result<Value, String> {
+    const FAILED: &str = "No se pudo completar la operación.";
+    let command = command.to_owned();
+    // Kotlin rejects with text written for the user; bridge errors are technical English.
+    tauri::async_runtime::spawn_blocking(move || app.folio_android().call(&command, args).map_err(|error| match error {
+        PluginInvokeError::InvokeRejected(response) => response.message.unwrap_or_else(|| FAILED.into()),
+        _ => FAILED.into(),
+    })).await.map_err(|_| FAILED.to_string())?
+}
 fn register_imports(desktop: &Desktop, response: Value) -> Result<Vec<DocumentInfo>, String> {
-    let paths = response["paths"].as_array().ok_or("Android no devolvió los archivos elegidos.")?;
+    let paths = response["paths"].as_array().ok_or("No se recibieron los archivos elegidos.")?;
     paths.iter().map(|p| p.as_str().ok_or_else(|| "Ruta de importación inválida.".to_string()).and_then(|p| register(desktop, PathBuf::from(p)))).collect()
 }
 
@@ -92,16 +101,23 @@ fn remove_export(desktop: &Desktop, path: &Path) {
     }
 }
 
-pub fn cleanup_unreferenced_exports(desktop: &Desktop) {
-    let retained = read_recents(desktop).into_iter().map(|r| r.path).collect::<Vec<_>>();
-    if let Ok(entries) = fs::read_dir(desktop.data.join("exports")) {
-        for entry in entries.flatten() {
-            let folder = entry.path();
-            if entry.file_type().is_ok_and(|t| t.is_dir()) && !retained.iter().any(|p| p.parent() == Some(folder.as_path())) {
-                let _ = fs::remove_dir_all(folder);
-            }
-        }
-    }
+/// Deletes the private PDF copies (FolioImports/ and exports/) that neither the
+/// library nor an open tab uses, with the document access kept for them. The
+/// frontend calls it after forget_document, clear_saved_state and replacing a
+/// saved document, passing the source tokens of its open tabs; setup runs it
+/// with none. Copies being written or opened right now are kept.
+#[tauri::command]
+pub async fn prune_private_copies(keep: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
+    let paths = {
+        let desktop = app.state::<Desktop>();
+        let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+        let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+        read_recents(&desktop).into_iter().map(|r| r.path)
+            .chain(keep.iter().filter_map(|token| files.sources.get(token).map(|s| s.path.clone())))
+            .chain(files.outputs.values().map(|o| o.path.clone()))
+            .map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>()
+    };
+    mobile_call(app, "prunePrivateCopies", serde_json::json!({"keep":paths})).await.map(|_| ())
 }
 
 #[tauri::command]
@@ -154,8 +170,10 @@ pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHan
 }
 
 
+/// `background` is the CSS colour at the top of the current screen, continued
+/// under the status bar.
 #[tauri::command]
-pub async fn set_mobile_theme(theme: String, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setTheme", serde_json::json!({"theme":theme})).await.map(|_| ()) }
+pub async fn set_mobile_theme(theme: String, background: Option<String>, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setTheme", serde_json::json!({"theme":theme,"background":background})).await.map(|_| ()) }
 #[tauri::command]
 pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setReaderChrome", serde_json::json!({"visible":visible})).await.map(|_| ()) }
 #[tauri::command]

@@ -12,6 +12,7 @@ const versions = {
   rust: read('src-tauri/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m)?.[1],
   rustLock: read('src-tauri/Cargo.lock').match(/name = "folio-pdf"\r?\nversion = "([^"]+)"/)?.[1],
   windows: json('src-tauri/tauri.conf.json').version,
+  serviceWorker: read('public/sw.js').match(/^const VERSION = '([^']+)'/m)?.[1],
 };
 for (const platform of ['android', 'ios', 'macos']) {
   const config = json(`src-tauri/tauri.${platform}.conf.json`);
@@ -20,4 +21,7 @@ for (const platform of ['android', 'ios', 'macos']) {
 for (const [name, value] of Object.entries(versions)) {
   assert.equal(value, version, `${name}: version differs from package.json in ${fileURLToPath(root)}`);
 }
-console.log(`Folio ${version}: Windows, macOS, iOS and Android versions match.`);
+for (const name of ['README.md', 'docs/android.md', 'docs/ios.md']) {
+  for (const [, cited] of read(name).matchAll(/Folio[ _](\d+\.\d+\.\d+)/g)) assert.equal(cited, version, `${name} names Folio ${cited} instead of ${version}.`);
+}
+console.log(`Folio ${version}: Windows, macOS, iOS, Android and web versions match.`);

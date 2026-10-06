@@ -161,7 +161,7 @@ try {
   await page.getByRole('dialog', { name: 'Acciones del documento', exact: true }).getByRole('button', { name: 'Cerrar diálogo', exact: true }).tap();
   await readyDocument('Large second.pdf');
   await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap();
-  await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Abrir pestaña Large first.pdf', exact: true }).tap();
+  await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Cambiar a Large first.pdf', exact: true }).tap();
   await readyDocument('Large first.pdf'); assert.equal(await page.locator('.highlight-annotation[data-annotation-id="imported-a-page1"]').count(), 0);
   await page.waitForFunction(() => { const session = window.__nativeBigContract.sessions['a'.repeat(64)]; return session?.nativeKnownPages?.includes(1) && session?.nativeOriginalRefs?.includes('pdfkit:1:0') && !session.annotations.some(annotation => annotation.id === 'imported-a-page1'); });
   mark('system-open-event-waits-for-modal-and-deleted-original-does-not-return-on-tab-switch');
@@ -188,13 +188,13 @@ try {
   await page.getByRole('status').filter({ hasText: 'PDF guardado.' }).waitFor();
   mark('native-save-uses-removal-refs-preserves-other-originals-and-reopens-file-backed-copy');
 
-  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Importar PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
+  const chooseLocked = async () => { await page.evaluate(() => { window.__nativeBigContract.pickNext.push('locked'); }); await page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true }).tap(); await page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true }).getByRole('button', { name: 'Abrir PDF', exact: true }).tap(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).waitFor(); };
   await chooseLocked(); await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).getByRole('button', { name: 'Cancelar', exact: true }).tap();
   await readyDocument('Large first — copia.pdf'); assert.equal(await page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true }).count(), 0);
   await chooseLocked(); let password = page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true });
-  await password.getByLabel('Contraseña del documento').fill('wrong'); await password.getByRole('button', { name: 'Abrir PDF', exact: true }).tap();
+  await password.getByLabel('Contraseña').fill('wrong'); await password.getByRole('button', { name: 'Abrir PDF', exact: true }).tap();
   await page.locator('.password-error').waitFor(); password = page.getByRole('dialog', { name: 'Este PDF tiene contraseña', exact: true });
-  await password.getByLabel('Contraseña del documento').fill('correct-pass'); await password.getByRole('button', { name: 'Abrir PDF', exact: true }).tap(); await readyDocument('Large locked.pdf');
+  await password.getByLabel('Contraseña').fill('correct-pass'); await password.getByRole('button', { name: 'Abrir PDF', exact: true }).tap(); await readyDocument('Large locked.pdf');
   state = await capture(); assert(state.calls.filter(call => call.command === 'native_pdf_close' && call.args.token === 'locked').length >= 3);
   mark('native-locked-pdf-cancel-keeps-document-and-wrong-password-retry-unlocks');
 

@@ -29,16 +29,18 @@ async function appearance(locator) {
       outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) };
   });
 }
+const ring = state => state.outlineStyle !== 'none' && state.outlineWidth > 0;
+// Pointer focus draws the ring only when the browser itself reports keyboard focus.
 async function pointerFocus(locator) {
   const state = await appearance(locator);
   assert.equal(state.focused, true, 'Quitar el anillo no debe quitar el foco del control.');
-  assert(state.outlineStyle === 'none' || state.outlineWidth === 0, 'Ctrl/Meta + clic no debe dibujar el anillo de teclado.');
+  assert.equal(ring(state), state.nativeVisible, 'El anillo de foco sigue a :focus-visible: el clic no lo dibuja.');
   return state;
 }
 async function keyboardFocus(locator) {
   const state = await appearance(locator);
   assert.equal(state.focused, true);
-  assert(state.outlineStyle === 'none' || state.outlineWidth === 0, 'La navegación de teclado conserva el foco sin dibujar contornos.');
+  assert(state.nativeVisible && ring(state), 'La navegación con teclado muestra el anillo de foco.');
   return state;
 }
 try {
@@ -59,7 +61,7 @@ try {
   const close = page.getByRole('button', { name: 'Cerrar diálogo', exact: true });
   await close.waitFor();
   await pointerFocus(close);
-  // Modifier keys, Tab and Shift+Tab keep real focus without adding outlines.
+  // Modifier clicks keep focus without a ring; Tab and Shift+Tab draw it.
   await page.keyboard.down('Control');
   await pointerFocus(close);
   await page.keyboard.up('Control');
@@ -87,7 +89,7 @@ try {
   await page.keyboard.press('Escape');
   await page.locator('.workbench').waitFor({ state: 'detached' });
   await keyboardFocus(tools);
-  results.push({ id: 'keyboard-tab-organizer-escape-return-without-outline', passed: true });
+  results.push({ id: 'keyboard-tab-organizer-escape-return-with-ring', passed: true });
 
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
   await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
@@ -128,6 +130,16 @@ try {
   await page.keyboard.press('ArrowRight');
   await keyboardFocus(pageNumber);
   results.push({ id: 'text-input-pointer-then-keyboard-editing', passed: true });
+
+  // Abrir PDF opens the hidden file input; the input itself never takes a Tab stop.
+  assert.equal(await page.locator('.app-header input[type=file]').getAttribute('tabindex'), '-1');
+  const pagesRail = page.getByRole('button', { name: 'Páginas', exact: true });
+  await pagesRail.click();
+  assert.equal((await pointerFocus(pagesRail)).nativeVisible, false, 'Un clic con el ratón no dibuja el anillo de foco.');
+  await page.getByRole('button', { name: 'Cerrar panel', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Páginas' && !document.querySelector('.sidebar'));
+  results.push({ id: 'closing-panel-returns-focus-to-rail', passed: true });
   assert.deepEqual(errors, []);
   await writeFile(path.join(output, 'focus-modality-results.json'), JSON.stringify({ results, uncaughtErrors: errors }, null, 2));
   console.log(JSON.stringify({ passed: results.length, results, errors }));

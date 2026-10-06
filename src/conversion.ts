@@ -1,6 +1,7 @@
 import { pdfAssetSettings } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { extractText } from './engine/client';
+import { jpegOrientation, orientationMatrix } from './engine/jpeg-orientation.mjs';
 import { getDocument } from './pdf';
 
 export type ConversionFormat = 'txt' | 'docx' | 'png';
@@ -133,7 +134,16 @@ export async function convertPdf(bytes: Uint8Array, pdf: PDFDocumentProxy, passw
     if (format === 'txt') return new TextEncoder().encode(selected.join('\n\n\f\n\n'));
     const { Document, Paragraph, TextRun, Packer } = await import('docx'); signal.throwIfAborted();
     progress('Preparando Word…'); signal.throwIfAborted();
-    const document = new Document({ sections: selected.map(text => ({ children: text.split('\n').map(line => new Paragraph({ children: [new TextRun(line)] })) })) });
+    // MuPDF separates text blocks with a blank line. Each block becomes one
+    // reflowable paragraph; a line-end hyphen before a lowercase letter is a break.
+    const paragraphs = selected.flatMap((text, page) => {
+      const blocks = text.split(/\n[ \t]*\n/).map(block => block.trim()).filter(Boolean);
+      return (blocks.length ? blocks : ['']).map((block, index) => new Paragraph({
+        pageBreakBefore: page > 0 && index === 0,
+        children: [new TextRun(block.replace(/(\p{L})-\n(?=\p{Ll})/gu, '$1').replace(/\s*\n\s*/g, ' '))],
+      }));
+    });
+    const document = new Document({ sections: [{ children: paragraphs }] });
     const output = new Uint8Array(await (await Packer.toBlob(document)).arrayBuffer());
     signal.throwIfAborted(); return output;
   }
@@ -161,7 +171,7 @@ export async function convertPdf(bytes: Uint8Array, pdf: PDFDocumentProxy, passw
       if (error) { archiveError = error; return; }
       archiveBytes += chunk.length;
       if (archiveBytes > PNG_EXPORT_LIMITS.archiveBytes) {
-        archiveError = new Error('El ZIP supera 110 MiB. Elige menos páginas o una resolución menor.');
+        archiveError = new Error('El ZIP supera 110 MB. Elige menos páginas o una resolución menor.');
         archive?.terminate(); return;
       }
       chunks.push(chunk);
@@ -199,18 +209,29 @@ export async function convertPdf(bytes: Uint8Array, pdf: PDFDocumentProxy, passw
 }
 
 export async function createImagePdf(files: File[]): Promise<Uint8Array> {
-  const { PDFDocument } = await import('pdf-lib'), doc = await PDFDocument.create();
+  const { PDFDocument, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject } = await import('pdf-lib'), doc = await PDFDocument.create();
   if (!files.length) { doc.addPage([595, 842]); return doc.save(); }
   let total = 0;
   for (const file of files) {
-    total += file.size; if (total > 80 * 1024 * 1024) throw new Error('Las imágenes exceden 80 MiB.');
+    total += file.size; if (total > 80 * 1024 * 1024) throw new Error('Las imágenes superan 80 MB.');
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const image = file.type === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
-    const landscape = image.width > image.height;
-    const page = doc.addPage(landscape ? [842, 595] : [595, 842]);
-    const scale = Math.min((page.getWidth() - 48) / image.width, (page.getHeight() - 48) / image.height);
-    const width = image.width * scale, height = image.height * scale;
-    page.drawImage(image, { x: (page.getWidth() - width) / 2, y: (page.getHeight() - height) / 2, width, height });
+    // System pickers may report an empty or generic type; the signature decides.
+    const png = [0x89, 0x50, 0x4e, 0x47].every((value, index) => bytes[index] === value), jpeg = [0xff, 0xd8, 0xff].every((value, index) => bytes[index] === value);
+    if (!png && !jpeg) throw new Error('Solo se admiten imágenes PNG o JPEG.');
+    let image;
+    try { image = png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes); }
+    catch { throw new Error(`No se pudo leer la imagen «${file.name}».`); }
+    // Camera photos keep the orientation the gallery shows; PDF viewers ignore EXIF.
+    const orientation = jpeg ? jpegOrientation(bytes) : 1, turned = orientation >= 5;
+    const imageWidth = turned ? image.height : image.width, imageHeight = turned ? image.width : image.height;
+    const page = doc.addPage(imageWidth > imageHeight ? [842, 595] : [595, 842]);
+    const scale = Math.min((page.getWidth() - 48) / imageWidth, (page.getHeight() - 48) / imageHeight);
+    const width = imageWidth * scale, height = imageHeight * scale, x = (page.getWidth() - width) / 2, y = (page.getHeight() - height) / 2;
+    if (orientation === 1) { page.drawImage(image, { x, y, width, height }); continue; }
+    // orientationMatrix uses y-down image space; conjugating it with a vertical
+    // flip gives the same mapping in PDF's y-up image space.
+    const [a, b, c, d, e, f] = orientationMatrix(orientation);
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(width, 0, 0, height, x, y), concatTransformationMatrix(a, -b, -c, d, c + e, 1 - d - f), drawObject(page.node.newXObject('Image', image.ref)), popGraphicsState());
   }
   return doc.save();
 }

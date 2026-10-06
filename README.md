@@ -1,300 +1,121 @@
-# Folio 0.8.10
+# Folio
 
-Descargas y versiones verificadas de cada plataforma: [publicaciones](docs/releases.md).
+Lee, anota, edita y firma PDF en Windows, macOS, Android, iPhone, iPad y el
+navegador. Los documentos se procesan en el dispositivo; Folio no los envía a
+ningún servidor.
 
-Aplicación PDF para Windows 10/11 x64, macOS 14 o posterior, Android e iPhone/iPad con iOS 17 o posterior, con React, PDF.js, MuPDF y Tauri.
-Cada instalador se compila en su plataforma. Las pruebas históricas de Windows
-constan en docs/acceptance-windows.md; la entrega actual acredita sus comprobaciones
-y hashes en windows-manifest.json. La entrega original 0.2.0 se conserva aparte.
+**Descargas:** [publicaciones de cada plataforma](docs/releases.md).
 
-## Interfaz
+## Plataformas
 
-La versión 0.8.10 comparte Drive y las herramientas de anotación en todas las plataformas.
-Drive se indica junto al nombre del documento y desaparece con los controles de lectura.
-Lápiz, resaltador y goma tienen desplegables independientes. En móviles se puede activar
-«Usar el dedo»; en escritorio esta opción aparece después de detectar un lápiz.
-El resaltador termina al levantar el lápiz. La goma borra todos los trazos cruzados
-durante una pasada continua, que se puede deshacer de una sola vez.
-`npm run test:drawing` verifica estos gestos con entrada de lápiz y dedo de Chromium;
-no sustituye una prueba con el lápiz físico del dispositivo.
+| Plataforma | Requisitos | Paquete |
+| --- | --- | --- |
+| Windows | Windows 10 u 11 x64 | Instalador por usuario. Descarga WebView2 si falta. |
+| macOS | macOS 14 o posterior, Intel o Apple Silicon | DMG universal |
+| Android | Android 8 o posterior, teléfono o tablet arm64 | APK; AAB para Google Play |
+| iPhone e iPad | iOS 17 o posterior | IPA |
+| Web | Navegador actual | Se puede instalar como aplicación y abre sin conexión. |
 
-La biblioteca es la pantalla inicial en iPhone y PC: importar, continuar leyendo,
-buscar por nombre y consultar Todas o Recientes. Volver a la biblioteca conserva
-los documentos abiertos y su posición; cerrar es una acción independiente.
-El catálogo conserva los archivos aunque salgan de los 20 recientes visibles.
-Quitar de Recientes conserva los cambios; eliminar la copia local requiere
-confirmación y descarta sus pestañas para no recrear una sesión eliminada.
-La biblioteca nativa consulta metadatos y abre sólo el PDF elegido.
+## Funciones
 
-La barra de lectura ofrece Páginas, Buscar, Anotar y Compartir. Páginas reúne
-miniaturas, índice plegable, marcadores y anotaciones. La búsqueda recorre cada
-coincidencia, muestra el texto en el PDF y permite regresar al punto anterior.
-El contador abre el salto de página; marcar una página no abre el teclado.
-Anotar activa su barra contextual y Listo vuelve a lectura. Guardar una nota
-conserva el contexto y permite añadir otra sin salir de la herramienta.
-Los documentos abiertos se eligen desde la cabecera; Más acciones contiene
-Vista del documento, guardar una copia, imprimir y herramientas avanzadas.
-La vista actual se separa de los ajustes predeterminados de la biblioteca.
-En escritorio, las pestañas se pueden arrastrar para cambiar su posición.
-Organizar páginas permite seleccionar rangos con Shift y reordenar miniaturas;
-Aplicar cambios confirma la organización. Extraer selección crea otra pestaña
-y conserva el original. Los botones permanecen visibles mientras se desplazan
-las miniaturas.
-En escritorio, Editar PDF permite elegir párrafos, líneas e imágenes en la página,
-navegar entre páginas y mantener abierto el editor después de cada cambio.
-Añadir o reemplazar contenido abre un inspector con una caja movible y
-redimensionable y una vista previa del PDF real.
-El texto ofrece fuentes disponibles, tamaño, color, alineación, interlineado y
-ajuste de líneas. Las imágenes ofrecen proporción, encajar/cubrir/estirar,
-opacidad y giro. El reemplazo actúa sobre la región original; el destino puede
-moverse de forma independiente. Aplicar confirma un paso de deshacer; cancelar
-conserva el documento. Guardar una copia conserva el historial de deshacer y rehacer.
-Detecta el formato disponible y permite mover la imagen original sin cargar otro
-archivo. Esta edición por región no reconstruye párrafos complejos ni garantiza
-reutilizar fuentes embebidas o editar aisladamente objetos solapados.
-La revisión de todos los apartados y las mejoras pendientes está en
-[docs/product-review.html](docs/product-review.html).
-Un toque breve oculta o muestra los controles sin cambiar escala ni posición.
-La página única admite flechas directas y swipe horizontal cuando cabe en ancho.
-Los controles táctiles tienen al menos 44 px;
-los paneles y diálogos respetan las zonas de la cámara, el indicador de inicio y
-el teclado. El zoom con dos dedos conserva el PDF visible durante el gesto.
-La selección usa las herramientas y los tiradores de selección de iOS. Archivos
-importa los PDF al almacenamiento de la aplicación; guardar y compartir incluyen
-las anotaciones y cambios actuales.
-
-En PC, las pestañas conservan un espacio de trabajo por documento. Lectura
-ofrece navegación de páginas, zoom, marcadores, deshacer y guardar; Anotar abre
-una fila contextual con selección, resaltador y notas. El color aparece junto
-al resaltador activo. Más acciones reúne vista, giro, impresión, pantalla
-completa, información y cierre. Las acciones siguen accesibles en ventanas
-estrechas y los paneles independientes aprovechan el espacio del escritorio.
-Herramientas agrupa las operaciones por tarea y permite volver al catálogo
-conservando lo preparado antes de aplicar. Biblioteca, barras y paneles
-comparten tipografía legible, espaciado, iconos y estados de foco en claro y oscuro.
-La ventana permanece fija; PDF, miniaturas y anotaciones se desplazan por separado.
-En Windows, los diálogos se ajustan al área útil del monitor. Ctrl+S guarda,
-Ctrl+P prepara la impresión y Ctrl+rueda conserva el punto bajo el cursor.
-
-La reorganización toma como referencia las interfaces y documentación actuales
-de [Acrobat](https://helpx.adobe.com/acrobat/desktop/get-started/learn-the-basics/workspace.html),
-[Xodo](https://feedback.xodo.com/support/solutions/articles/35000315528-the-new-xodo-pdf-reader-desktop-experience-new-toolbar),
-[UPDF](https://updf.com/updf-windows-user-guide/toolbar-navigation/),
-[Edge](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-pdf) y
-[PDF Expert para Mac](https://support.readdle.com/pdfexpert/en_US/tips-and-tricks/getting-started-with-tools-tab-on-mac).
-Se mantienen los paneles y pestañas de escritorio, y se separan los controles
-de lectura de las herramientas contextuales sin incorporar una cinta de opciones.
-
-## Funciones implementadas
-
-| Función | Comportamiento |
+| Función | Qué hace |
 | --- | --- |
-| Lectura | Miniaturas, índice, búsqueda, marcadores, zoom, giro de vista y pantalla completa. Renderiza las páginas próximas a la vista. |
-| Pestañas | Varios PDF abiertos en la misma ventana. Cada pestaña conserva cambios, anotaciones, historial, página, zoom y búsqueda. Abrir varios archivos a la vez; cambiar con Ctrl+Tab y cerrar con Ctrl+W. |
-| Marcadores | Árbol de páginas y grupos, con nombres, colores, orden y ramas plegables. Arrastrar ramas para cambiar el orden o el padre; deshacer y rehacer conserva sus hijos. Renombrar, crear hijos y eliminar desde el menú. En iPhone, guardar marca directamente; la organización se realiza en Marcadores. En escritorio abre el panel para escribir el nombre. Se conservan en la sesión local y al guardar una copia desde Folio. |
-| Anotaciones | Notas Text y resaltados Highlight estándar, Unicode y apariencias PDF. El modo automático (H) resalta cada selección y se puede apagar. Doce colores y color personalizado; la elección se recuerda. Al seleccionar texto aparece un menú para copiar, resaltar o comentar. Clic o clic derecho sobre un resaltado permite eliminarlo, incluidos los importados; deshacer lo restaura. Resaltado continuo entre palabras de una línea, sin unir columnas ni saltos de línea; composición Multiply que conserva el negro del texto, con la misma opacidad en vista y exportación. Conserva la opacidad de los resaltados importados y las coordenadas al girar la vista. Los escaneos necesitan OCR para seleccionar palabras. Importar, editar notas y eliminar comentarios. |
-| Ajustes de lectura | Zoom inicial, desplazamiento continuo o página individual, separación entre páginas, velocidad de rueda y desplazamiento suave. Tema claro, oscuro o del sistema; panel inicial y su ancho. Opción de recordar la última página. Las preferencias se conservan al reiniciar. |
-| Edición | Añadir texto o reemplazar texto dentro de un área conservando el contenido vecino. Añadir PNG/JPEG y eliminar píxeles de imágenes de un área. |
-| Páginas | Reordenar, duplicar, extraer, eliminar, girar permanentemente, insertar PDF o páginas en blanco y recortar. En PC, arrastrar miniaturas con el mouse para elegir su posición; las páginas seleccionadas se mueven juntas. El organizador indica el destino, se desplaza al llegar a un borde y permite cancelar con Esc antes de aplicar el orden. Conserva campos, comentarios y enlaces entre páginas importadas. |
-| OCR | Español, inglés o ambos, local con Tesseract. Añade texto invisible seleccionable conservando el escaneo. Modelos incluidos para trabajar sin conexión. |
-| Formularios | Completar AcroForm: texto, casillas, radios y listas; generar apariencias y aplanar. Crear campos de texto, casillas y listas. |
-| Firmas | CMS/PDF RSA/SHA-256 con certificado P12/PFX. Verifica integridad, cobertura ByteRange, vigencia y cadena contra una raíz elegida. Distingue integridad y confianza; bloquea editar archivos firmados. |
-| Conversión | PDF a texto, DOCX con texto editable o PNG por página dentro de ZIP. Crear PDF vacío o desde imágenes. |
-| Compresión | Optimiza objetos y streams sin reducir la calidad de imágenes. Conserva el archivo si la optimización no disminuye el tamaño. |
-| Comparación | Texto por líneas y vistas de ambas páginas con mapa de diferencias visuales. |
-| Protección | AES-256, contraseñas de apertura/propietario, permisos de copia e impresión. Quitar cifrado requiere contraseña de propietario. |
-| Censura | Elimina texto, píxeles y gráficos del área; aplana formularios y quita comentarios intersectados, metadatos, adjuntos, acciones e índice. Elimina objetos sin referencias al guardar. |
-| Guardado | Copia con cambios y comentarios; rechaza original y alias, comprueba destino y escribe atómicamente. Borrador binario y sesión recuperables; nuevos documentos en recientes. Deshacer/rehacer incluye contenido. |
+| Lectura | Pestañas, miniaturas, índice, marcadores, búsqueda, zoom y giro. Desplazamiento continuo o por página. Tema claro u oscuro; por defecto sigue al sistema. |
+| Anotaciones | Resaltados, notas y dibujo con lápiz o con el dedo, guardados como anotaciones PDF estándar. |
+| Edición | Añade o reemplaza texto e imágenes en una zona de la página, con vista previa. Deshacer y rehacer. |
+| Páginas | Reordena, duplica, extrae, elimina, gira, inserta y recorta páginas. |
+| Formularios | Rellena formularios AcroForm, crea campos y los aplana. |
+| OCR | Reconoce texto en español e inglés sin conexión (Tesseract) y lo añade como capa seleccionable. |
+| Firmas | Firma con un certificado P12/PFX y comprueba la integridad y la cadena de las firmas. |
+| Conversión | Exporta a texto, DOCX o PNG. Crea PDF vacíos o a partir de imágenes. |
+| Otras herramientas | Comprime, compara, protege con contraseña (AES-256) y censura contenido. |
+| Google Drive | En las apps de escritorio y móviles, abre PDF de Drive, permite editarlos sin conexión y los guarda en el mismo archivo. |
+
+## Guardar
+
+Las anotaciones y los cambios se conservan en el dispositivo mientras trabajas.
+Para escribirlos en un PDF:
+
+- **Windows y macOS:** **Guardar** (Ctrl+S, ⌘S) actualiza el PDF abierto. Si otro
+  programa lo modificó después de abrirlo, Folio no lo sobrescribe y te lo indica.
+  **Guardar una copia…** (Ctrl+Mayús+S, ⇧⌘S) crea otro archivo.
+- **Android:** **Guardar** actualiza el PDF original y **Guardar una copia** crea otro.
+- **iPhone y iPad:** Folio trabaja con una copia importada. **Guardar una copia**
+  exporta el PDF a Archivos y **Compartir** abre la hoja de iOS.
+- **Web:** **Descargar** baja el PDF con los cambios.
 
 ## Límites
 
-- Edición por áreas, sin recomponer párrafos entre bloques o recuperar cualquier
-  fuente embebida. Ofrece fuentes estándar y DM Sans y avisa de sustituciones;
-  si el texto no cabe, se informa y no se aplica. La imagen se
-  ajusta al rectángulo elegido. Recortar conserva contenido exterior: no censura.
-- OCR requiere páginas sin texto; no incluye corrector o reconstrucción de
-  tablas. DOCX conserva texto y separación de páginas, sin imágenes ni diseño.
-- XFA dinámico y JavaScript no se ejecutan. No se crean grupos de radio nuevos.
-- Se firma una vez un archivo sin firmas y sin cifrado. No hay firmas
-  incrementales, tarjetas/tokens ni almacén Windows. No se comprueba revocación,
-  TSA ni raíces del sistema. Una comprobación criptográfica no acredita por sí
-  sola validez jurídica.
-- Los permisos dependen del lector; la contraseña de apertura sí cifra. Los
-  borradores conservan el cifrado existente; sesiones y notas locales se guardan
-  en el perfil del usuario.
-- Entrada de hasta 100 MiB, sin lectura por bloques. Hay límites para canvas,
-  exportaciones e historial. El manual de 804 páginas pesa unos 3 MB y no acredita
-  una prueba de estrés con imágenes de 100 MiB.
-- Impresión prepara las páginas con comentarios y usa WebView2; impresora física
-  pendiente. Instalación/desinstalación y asociación predeterminada en distintas
-  máquinas requieren aceptación manual. El instalador no está firmado.
-
-## Cambios de 0.8.2
-
-El elemento seleccionado ofrece **Editar, Duplicar, Eliminar y Restablecer**.
-La copia conserva el original; eliminar muestra el PDF resultante antes de
-**Aplicar eliminación**. Aplicar añade un paso que se puede deshacer. Los vecinos,
-anotaciones y formularios se conservan; las selecciones ambiguas se rechazan.
-
-**Guardar una copia** y **Ctrl+S** permiten guardar desde el editor después de
-aplicar o descartar el borrador. La copia queda registrada en la biblioteca y
-mantiene la edición, página, pestaña e historial. El panel identifica el elemento y agrupa sus propiedades.
-Los controles se mantienen en una fila incluso en 800×600.
-
-Verificación actual: 39 casos sobre la compilación de interfaz y
-56 sobre motor/módulos fuente. Las nuevas suites son
-`npm run test:content-actions:engine` y `npm run test:content-actions:ui`.
-La aceptación nativa se registra por separado en el paquete de Windows.
-
-La duplicación usa las fuentes de edición disponibles y formato uniforme. Esta
-entrega conserva los límites documentados de contenido PDF complejo; no acredita
-edición universal, reflujo entre párrafos ni validación física de Apple.
-
-## Cambios de 0.8.1
-
-En escritorio, **Editar** abre el editor dentro del lector, con la cabecera y
-las pestañas visibles. La selección y el inspector usan el espacio del documento,
-sin ventana modal ni fondo superpuesto. También se accede desde Herramientas.
-
-Aplicar vuelve al selector; Deshacer y Rehacer mantienen el modo de edición.
-Listo devuelve a lectura en la página elegida y conserva el zoom y la posición
-cuando se vuelve a la misma página. Cambiar de pestaña desde el selector también
-conserva la vista de lectura.
-
-Mientras hay un borrador seleccionado, aplica los cambios o usa **Descartar
-borrador** antes de cambiar, cerrar o abrir un documento, guardar, imprimir o
-salir. Los botones y atajos que podrían perderlo quedan protegidos. Volver a
-Herramientas conserva ese borrador para retomarlo.
-
-La suite `npm run test:inline-editor` comprueba estas rutas con dos documentos
-sintéticos, incluida la conservación del historial y de la página sin aplicar.
-La edición conserva los límites de selección y reemplazo por región descritos
-en 0.8.0. La aceptación nativa y la instalación de Windows se registran por
-separado en `windows-manifest.json` de cada paquete.
-
-## Cambios de 0.8.0
-
-Esta evolución se centra en el flujo de escritorio de Windows. La auditoría
-conserva la referencia de 0.7.1 y separa la evidencia de esta entrega:
-
-- **Editar PDF continuo:** selección visual de líneas, párrafos e imágenes,
-  navegación y zoom; aplicar una edición vuelve al selector, con Deshacer y
-  Rehacer dentro del mismo modo. El inspector ofrece 12 variantes estándar de
-  Helvetica, Times y Courier, además de DM Sans regular y seminegrita. Avisa
-  cuando sustituye una fuente original que no está disponible. La caja de
-  destino es independiente de la región original y la imagen seleccionada
-  conserva su marco al cargarse. Volver a Herramientas conserva el borrador.
-- **Ventanas medianas:** editor, selector, Formularios, Convertir y Organizar
-  páginas ajustan su espacio a 800, 900 y 1024 × 600. Los botones de aplicación
-  y exportación permanecen visibles; el desplazamiento se limita al contenido.
-  Las miniaturas conservan sus controles dentro de una fila completa.
-- **Selección con límites explícitos:** el texto OCR invisible, las capas
-  visibles/invisibles mezcladas, el texto girado o recortado y los elementos
-  superpuestos pueden impedir la selección automática. Los estilos mixtos se
-  detectan, pero la sustitución usa un formato uniforme. Las imágenes con
-  máscaras, efectos, recorte, inclinación o reflexión pueden necesitar una
-  selección manual. Se sigue reemplazando una región; no se garantiza reflujo
-  entre bloques, recuperación de fuentes embebidas ni edición universal de
-  objetos o del texto visible de un escaneo.
-- **Exportación con control:** TXT, DOCX y PNG permiten página actual, todas o
-  intervalos validados. PNG ofrece 72, 144, 200 o 300 ppp, fondo blanco o
-  transparente, dimensiones exactas y densidad física en sus metadatos; cada
-  página se entrega como imagen dentro de un ZIP. Se comprueban todas las
-  páginas antes de renderizar. Los límites son 16 millones de píxeles por página,
-  16.384 píxeles por lado, 10.000 páginas y 110 MiB de ZIP; se informa al
-  superarlos sin reducir silenciosamente la resolución. El fondo transparente
-  conserva los blancos ya dibujados en el PDF. DOCX sigue exportando texto y
-  separación de páginas, sin imágenes, tablas o maquetación original.
-
-Las pruebas verifican el motor, la vista previa, el historial, la conservación
-de contenido vecino, la conversión y el cambio de tamaño mientras se edita.
-Los resultados, la identidad del ejecutable y la comprobación de instalación
-se adjuntan en `windows-manifest.json` y `evidence/` de la entrega Windows.
-Estos resultados no acreditan nuevas pruebas de macOS ni de iPhone/iPad físicos.
-El ZIP y su salida final todavía requieren
-memoria además del documento; los límites no equivalen a capacidad ilimitada
-con archivos grandes.
-
-Los patrones de selección y formato toman como referencia la documentación de
-[Acrobat](https://helpx.adobe.com/acrobat/desktop/edit-documents/edit-text-in-pdfs/modify-text.html),
-[UPDF para Windows](https://updf.com/updf-windows-user-guide-1/edit-image/) y
-[PDF Expert](https://support.readdle.com/pdfexpert/en_US/edit-pdfs/edit-text-in-pdf-files).
-La última es una referencia del ecosistema Apple; no es una nueva verificación
-de macOS/iOS. No se realizó una prueba comparativa nueva ni se afirma
-equivalencia o superioridad. La evolución y sus evidencias están separadas de
-los 35 apartados de la auditoría original en
-[docs/product-review.html](docs/product-review.html) y
-[docs/product-review.json](docs/product-review.json).
+- La edición actúa sobre zonas: no recompone párrafos entre bloques ni reutiliza
+  cualquier fuente incrustada. Usa Helvetica, Times, Courier o DM Sans y avisa
+  cuando sustituye una fuente.
+- El OCR trabaja con páginas sin texto. DOCX conserva el texto y los saltos de
+  página, sin imágenes ni maquetación.
+- No se ejecutan formularios XFA dinámicos ni JavaScript del PDF.
+- Solo se firma un PDF sin firmas ni cifrado. No hay firmas incrementales,
+  tarjetas o tokens, almacenes de certificados del sistema, revocación ni sellos
+  de tiempo.
+- Folio carga el PDF entero en memoria, salvo en iPhone e iPad: allí los de más
+  de 32 MiB se abren en un lector que permite leer, buscar, resaltar, dibujar y
+  añadir notas, pero no editar el contenido, las páginas ni los formularios.
+  Android importa PDF de hasta 100 MiB.
+- En escritorio y en la web, imprimir envía imágenes de las páginas a 200 ppp.
+- No hay actualización automática: las versiones nuevas se publican en
+  [GitHub Releases](https://github.com/FarraPY/folio-pdf/releases).
 
 ## Compilar
 
-Node.js 22+, Rust MSVC, Visual Studio C++ Build Tools/Windows SDK y WebView2:
-https://v2.tauri.app/start/prerequisites/.
-
-```powershell
-npm ci
-npm run desktop:dev
-npm run desktop:build
-```
-
-Salida: src-tauri/target/release/bundle/nsis/Folio_0.8.10_x64-setup.exe.
-Instala por usuario y registra Folio.PDF sin escribir UserChoice. Necesita
-Internet para obtener WebView2 solo cuando falta. scripts/windows-env.ps1 usa
-las herramientas portátiles de esta estación; .tools no se distribuye.
-El entorno exacto consta en docs/build-environment.txt.
-
-En macOS: Node 22+, Rust y Xcode Command Line Tools. La fuente incluye la
-configuración Mac; conserva las carpetas src-tauri, crates y public.
+Necesitas Node.js 22 o posterior y, para las apps nativas, Rust estable y los
+[requisitos de Tauri](https://v2.tauri.app/start/prerequisites/) de cada sistema.
 
 ```sh
 npm ci
-npm run desktop:macos
+npm run dev              # interfaz web en http://localhost:5173
+npm run build            # comprueba versiones, prepara recursos, tsc y vite build → dist/
+npm run desktop:dev      # app de escritorio en modo desarrollo
+npm run desktop:windows  # instalador NSIS (en Windows)
+npm run desktop:macos    # Folio.app y DMG universal (en macOS)
+npm run android:build    # APK y, con clave de publicación, AAB (docs/android.md)
+npm run iphone:build     # IPA (en macOS con Xcode; docs/ios.md)
 ```
 
-Genera Folio.app y un DMG universal para Intel y Apple Silicon en
-src-tauri/target/universal-apple-darwin/release/bundle. Arrastra Folio a
-Aplicaciones. La firma es ad hoc; no tiene notarización Apple. Si macOS bloquea
-la primera apertura, usa Privacidad y seguridad > Abrir igualmente para esta
-aplicación, sin desactivar Gatekeeper. Actualiza Safari/WebKit junto con macOS.
-En Mac los atajos usan ⌘ y los controles de ventana son nativos.
+El instalador de Windows no está firmado. En macOS, la compilación predeterminada
+tiene firma ad hoc: la primera vez que se abre Folio descargado, macOS puede pedir
+**Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente**. Si se compila
+con `APPLE_SIGNING_IDENTITY` y las credenciales `APPLE_API_*`, la aplicación se
+firma con Developer ID y se notariza; entonces no hace falta ese paso.
+Para conectar Google Drive en una compilación propia, consulta
+[docs/google-drive-oauth.md](docs/google-drive-oauth.md).
 
-### iPhone y iPad
-
-La compilación iOS requiere un Mac con Xcode y los SDK de Apple. El workflow
-`.github/workflows/ios.yml` permite compilar en GitHub Actions desde la rama elegida.
+## Probar
 
 ```sh
-npm ci
-npm run iphone:build
+npm run test:engine   # motor PDF, sin navegador
+npm test              # compila y ejecuta las suites de motor e interfaz
+npm run test:native   # pruebas Rust del núcleo de archivos
 ```
 
-La entrega para Feather contiene un IPA de dispositivo arm64. Feather debe
-firmarlo con el certificado y perfil válidos configurados por el usuario antes
-de instalarlo. Una aplicación de simulador se entrega por separado y no puede
-instalarse en un iPhone. Las instrucciones y los resultados de aceptación de
-iOS constan en `docs/ios.md` y en los informes de la entrega.
+Las pruebas de interfaz usan Chrome o Chromium: indica su ruta con `CHROME_PATH`
+(en Windows se busca Chrome o Edge). `test:interop` necesita Python 3 con
+pymupdf, pypdf y cryptography, y OpenSSL (`OPENSSL_PATH`). Los resultados quedan
+en `test-results/`. Hay suites por plataforma: `test:android`, `test:drive`,
+`test:iphone`, `test:macos` y `test:windows-native`. `test:iphone` y `test:macos`
+usan además WebKit de Playwright, que otras suites usan con
+`FOLIO_TEST_BROWSER=webkit`. `test:windows-native` necesita la compilación QA de
+Windows (`FOLIO_NATIVE_EXE`, `FOLIO_LAYOUT_PDF` y `FOLIO_QA_EXE`).
 
-## Verificar
+## Documentación
 
-```powershell
-npm test
-npm run test:native
-```
+- [docs/releases.md](docs/releases.md): descargas, cambios y cómo publicar.
+- [docs/android.md](docs/android.md) y [docs/ios.md](docs/ios.md): detalles y compilación móvil.
+- [docs/google-drive-oauth.md](docs/google-drive-oauth.md) y
+  [docs/drive-sync-implementation.md](docs/drive-sync-implementation.md): Google Drive.
+- [docs/security.md](docs/security.md): dependencias, certificados y privacidad.
 
-Interfaz: Chrome/Edge o CHROME_PATH. Lectores independientes: Python con
-pymupdf/pypdf/cryptography y OpenSSL (OPENSSL_PATH). npm test obtiene el corpus
-público con hashes y prueba motores, firmas, interfaz y exportaciones. Los
-modelos incluidos se verifican por SHA-256. Informes en test-results.
-test:ui:legacy y test:interop:legacy conservan harness de 0.2.0; no certifican
-la interfaz actual. La compilación QA tiene identificador y perfil separados;
-su puerto de depuración no forma parte del ejecutable distribuido. Los
-certificados sintéticos de pruebas se excluyen de la entrega.
+## Licencia
 
-## Fuente y licencias
-
-AGPL-3.0-or-later. Fuente, lockfiles, instrucciones y avisos acompañan la entrega.
-MuPDF.js 1.28.1 usa el paquete npm sin modificar y se entrega su fuente oficial
-completa. tessdata_fast está fijado a un commit con licencia Apache-2.0 y hashes
-en public/ocr/models.json. Consulta LICENSE, THIRD-PARTY-NOTICES.txt y
-SOURCE-BUILD.txt. El uso acotado de node-forge y la auditoría están en
-docs/security.md. No se configura actualización automática.
+Folio es software libre bajo la licencia AGPL-3.0 o posterior ([LICENSE](LICENSE)).
+Incluye MuPDF (AGPL), PDF.js, Tesseract y otras dependencias cuyos avisos están en
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt). [SOURCE-BUILD.txt](SOURCE-BUILD.txt)
+explica cómo reconstruir los binarios publicados; cada publicación incluye su
+código fuente.

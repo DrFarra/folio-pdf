@@ -22,7 +22,6 @@
     "targets": ["app", "dmg"],
     "icon": ["icons/icon.icns"],
     "resources": {
-      "../assets/pdf-file-icons/icon.icns": "pdf-file.icns",
       "../LICENSE": "LICENSE.txt",
       "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt",
       "../SOURCE-BUILD.txt": "SOURCE-BUILD.txt"

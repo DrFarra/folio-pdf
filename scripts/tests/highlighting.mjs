@@ -155,7 +155,7 @@ async function dragText(page, first, from, last, to, reverse = false, options) {
   await drag(page, reverse ? b : a, reverse ? a : b, options);
 }
 
-async function highlight(page) { await enterAnnotationMode(page); await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click(); }
+async function highlight(page) { await enterAnnotationMode(page); await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click(); }
 
 async function save(page, id, { original = originalText } = {}) {
   await page.locator('.highlight-annotation').first().waitFor();
@@ -315,7 +315,7 @@ try {
   });
 
   for (const angle of [90, 180, 270]) await check(`rotated-${angle}-view-and-zoom-keep-text-quad-coordinates`, async page => {
-    for (let i = 0; i < angle / 90; i++) await desktopDocumentAction(page, 'Rotar vista 90 grados');
+    for (let i = 0; i < angle / 90; i++) await desktopDocumentAction(page, 'Girar vista 90°');
     await page.getByRole('combobox', { name: 'Nivel de zoom', exact: true }).selectOption('150');
     await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
     await page.waitForFunction(angle => {

@@ -12,7 +12,7 @@
 .content-zoom-presets{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--line);border-radius:7px;background:var(--canvas)}
 .content-zoom-toolbar button{display:flex;align-items:center;justify-content:center;min-height:30px;padding:5px 6px;font-size:11px;white-space:nowrap;border-radius:4px}
 .content-zoom-presets button[aria-pressed=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 3px #00000012}
-.content-zoom-toolbar button:hover:not(:disabled){background:var(--hover);color:var(--text)}
+@media(hover:hover){.content-zoom-toolbar button:hover:not(:disabled){background:var(--hover);color:var(--text)}}
 .content-zoom-controls{display:flex;align-items:center;gap:3px}
 .content-zoom-controls button{width:30px;padding:5px}
 .content-zoom-controls>span{min-width:36px;text-align:center;font-variant-numeric:tabular-nums}
@@ -30,10 +30,10 @@
 .content-inspector-heading h3{margin:0;font-size:17px;line-height:1.25;font-weight:600;color:var(--text)}
 .content-inspector-heading>p{grid-column:1/-1;margin:0;font-size:12px;line-height:1.4;color:var(--muted)}
 .content-reset{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:5px;color:var(--muted)}
-.content-reset:hover:not(:disabled){background:var(--hover);color:var(--text)}
+@media(hover:hover){.content-reset:hover:not(:disabled){background:var(--hover);color:var(--text)}}
 .content-editor-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;margin:12px 0 0;padding:3px;border:1px solid var(--line);border-radius:7px;background:var(--canvas)}
 .content-editor-actions button{display:flex;align-items:center;justify-content:center;min-width:0;min-height:32px;padding:5px 6px;font-size:12px;line-height:1.25;white-space:nowrap;border:0;border-radius:4px;background:transparent;color:var(--muted);box-shadow:none}
-.content-editor-actions button:hover:not(:disabled){background:var(--hover);color:var(--text)}
+@media(hover:hover){.content-editor-actions button:hover:not(:disabled){background:var(--hover);color:var(--text)}}
 .content-editor-actions button[aria-pressed=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 3px #00000012;font-weight:600}
 .content-editor[data-intent=delete] .content-editor-actions button[aria-pressed=true]{background:#ae403612;box-shadow:inset 0 -2px #ae4036}
 .content-editor-actions button:disabled{opacity:.5;cursor:default}
@@ -71,8 +71,8 @@ html:not([data-phone]) .app-shell .workbench .content-inspector-scroll label{fon
 .content-box{position:absolute;border:1.5px solid #3978b8;cursor:move;touch-action:none;box-sizing:border-box;background:#3978b808}
 .content-box.is-dragging{background:#3978b818}
 .content-source-box{position:absolute;border:1px dashed #777;box-sizing:border-box;pointer-events:none}
-.content-box-handle{position:absolute;width:10px;height:10px;border:1px solid #3978b8;background:#fff;border-radius:2px;padding:0;touch-action:none;z-index:1}
-.content-box-handle[data-handle=nw]{left:-5px;top:-5px;cursor:nwse-resize}.content-box-handle[data-handle=n]{left:calc(50% - 5px);top:-5px;cursor:ns-resize}.content-box-handle[data-handle=ne]{right:-5px;top:-5px;cursor:nesw-resize}.content-box-handle[data-handle=e]{right:-5px;top:calc(50% - 5px);cursor:ew-resize}.content-box-handle[data-handle=se]{right:-5px;bottom:-5px;cursor:nwse-resize}.content-box-handle[data-handle=s]{left:calc(50% - 5px);bottom:-5px;cursor:ns-resize}.content-box-handle[data-handle=sw]{left:-5px;bottom:-5px;cursor:nesw-resize}.content-box-handle[data-handle=w]{left:-5px;top:calc(50% - 5px);cursor:ew-resize}
+.content-box-handle{--handle:10px;position:absolute;width:var(--handle);height:var(--handle);border:1px solid #3978b8;background:#fff;border-radius:2px;padding:0;touch-action:none;z-index:1}
+.content-box-handle[data-handle=nw]{left:calc(var(--handle) / -2);top:calc(var(--handle) / -2);cursor:nwse-resize}.content-box-handle[data-handle=n]{left:calc(50% - var(--handle) / 2);top:calc(var(--handle) / -2);cursor:ns-resize}.content-box-handle[data-handle=ne]{right:calc(var(--handle) / -2);top:calc(var(--handle) / -2);cursor:nesw-resize}.content-box-handle[data-handle=e]{right:calc(var(--handle) / -2);top:calc(50% - var(--handle) / 2);cursor:ew-resize}.content-box-handle[data-handle=se]{right:calc(var(--handle) / -2);bottom:calc(var(--handle) / -2);cursor:nwse-resize}.content-box-handle[data-handle=s]{left:calc(50% - var(--handle) / 2);bottom:calc(var(--handle) / -2);cursor:ns-resize}.content-box-handle[data-handle=sw]{left:calc(var(--handle) / -2);bottom:calc(var(--handle) / -2);cursor:nesw-resize}.content-box-handle[data-handle=w]{left:calc(var(--handle) / -2);top:calc(50% - var(--handle) / 2);cursor:ew-resize}
 
 /* Applying the draft is the only dominant action while a draft is open. */
 .content-editor-footer{display:flex;align-items:center;gap:12px;flex-shrink:0;border-top:1px solid var(--line);padding-top:12px;margin-top:12px;min-width:0}
@@ -84,13 +84,16 @@ html:not([data-phone]) .app-shell .workbench .content-inspector-scroll label{fon
 
 .workspace-editor .content-editor{flex:1;min-height:0;min-width:0}
 .workspace-editor .content-editor-body{min-width:0;min-height:0}
-/* Keep touch controls usable in portrait and landscape, independently of the
-   compact desktop preview controls. */
-html[data-phone] .content-zoom-toolbar button{min-width:44px;min-height:44px;font-size:13px;padding:6px 8px}
-html[data-phone] .content-zoom-controls button{width:44px}
-html[data-phone] .content-reset{width:44px;height:44px}
-html[data-phone] .content-editor-actions button,html[data-phone] .content-editor-footer button,html[data-phone] .content-suggestion .secondary-button{min-height:44px}
-html[data-phone] .content-editor-source-info>summary{min-height:44px;padding-top:10px;padding-bottom:10px}
+/* Keep touch controls usable on phones and tablets, in portrait and landscape,
+   independently of the compact desktop preview controls. */
+html[data-touch] .content-zoom-toolbar button{min-width:44px;min-height:44px;font-size:13px;padding:6px 8px}
+html[data-touch] .content-zoom-controls button{width:44px}
+html[data-touch] .content-reset{width:44px;height:44px}
+html[data-touch] .content-editor-actions button,html[data-touch] .content-editor-footer button,html[data-touch] .content-suggestion .secondary-button{min-height:44px}
+html[data-touch] .content-editor-source-info>summary{min-height:44px;padding-top:10px;padding-bottom:10px}
+html[data-touch] .content-box-handle{--handle:14px}
+html[data-touch] .content-box-handle::after{content:'';position:absolute;inset:-15px}
+html[data-tablet] .app-shell .workbench.workspace-editor :is(input:not([type=checkbox]):not([type=color]):not([type=file]),select,textarea){font-size:16px;min-height:44px}
 @media(min-width:751px) and (max-width:1100px){.content-editor-body,.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr) 280px;gap:12px}}
 @media(max-width:750px){
   .content-editor-body,.workspace-editor .content-editor-body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(170px,1fr) minmax(0,1fr);gap:10px}
@@ -102,11 +105,7 @@ html[data-phone] .content-editor-source-info>summary{min-height:44px;padding-top
   .content-reset{width:44px;height:44px}
   .content-editor-actions button{min-height:44px}
   .content-editor-source-info>summary{min-height:40px;padding-top:9px;padding-bottom:9px}
-  .content-box-handle{width:14px;height:14px}
-  .content-box-handle[data-handle=nw],.content-box-handle[data-handle=w],.content-box-handle[data-handle=sw]{left:-7px}
-  .content-box-handle[data-handle=ne],.content-box-handle[data-handle=e],.content-box-handle[data-handle=se]{right:-7px}
-  .content-box-handle[data-handle=nw],.content-box-handle[data-handle=n],.content-box-handle[data-handle=ne]{top:-7px}
-  .content-box-handle[data-handle=sw],.content-box-handle[data-handle=s],.content-box-handle[data-handle=se]{bottom:-7px}
+  .content-box-handle{--handle:14px}
 }
 @media(max-height:500px){
   .content-editor-footer{padding-top:7px;margin-top:7px}

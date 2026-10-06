@@ -24,6 +24,8 @@ class OriginalDocumentTest {
     class Documents : ContentProvider() {
         lateinit var file: File
         var readOnly = false
+        var missing = false
+        var failRestore = false
         var corruptNextSave = false
         var written = false
         var restores = 0
@@ -32,7 +34,9 @@ class OriginalDocumentTest {
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?) =
             MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME)).apply { addRow(arrayOf(file.name)) }
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+            if (missing) throw java.io.FileNotFoundException("Missing file")
             if (mode.contains('w') && readOnly) throw SecurityException("Solo lectura")
+            if (mode == "wt" && failRestore) throw java.io.IOException("Provider offline")
             if (mode == "r" && written && corruptNextSave && file.readText().contains("EDITADO")) {
                 corruptNextSave = false; file.writeText("%PDF-1.7\nError del proveedor\n%%EOF")
             }
@@ -107,6 +111,21 @@ class OriginalDocumentTest {
         assertArrayEquals(after, output.readBytes())
         assertEquals(1, provider.restores)
         assertTrue(File(context.filesDir, "FolioRecovery").listFiles()!!.isEmpty())
+    }
+    @Test fun failedRestoreOpensThePreviousVersionAsADocument() {
+        provider.corruptNextSave = true; provider.failRestore = true
+        val failure = runCatching { overwriteOriginal(context, source, edited()) }.exceptionOrNull()
+        assertTrue(failure is OriginalRecovered)
+        val recovered = (failure as OriginalRecovered).file
+        assertEquals("Apuntes (versión anterior).pdf", recovered.name)
+        assertArrayEquals(before, recovered.readBytes())
+        assertEquals(File(context.filesDir, "FolioImports").canonicalPath, recovered.parentFile!!.parentFile!!.canonicalPath)
+        assertTrue(File(context.filesDir, "FolioRecovery").listFiles()!!.isEmpty())
+    }
+    @Test fun movedOrDeletedOriginalIsReportedInsteadOfAskingForIt() {
+        provider.missing = true
+        val failure = runCatching { overwriteOriginal(context, source, edited()) }.exceptionOrNull()
+        assertTrue(failure !is OriginalAccessRequired && failure!!.message!!.contains("No se encontró"))
     }
     @Test fun separatelySavedPdfRemainsLinkedForSubsequentSave() {
         val copy = edited()

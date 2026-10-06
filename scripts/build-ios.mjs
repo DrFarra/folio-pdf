@@ -80,6 +80,19 @@ export function syncIosIcons(workspaceRoot = root, project = path.join(workspace
   fs.writeFileSync(path.join(workspaceRoot, 'test-results/ios/icon-catalog-sync.json'), JSON.stringify(report, null, 2));
   return report;
 }
+// App Store Connect requires PrivacyInfo.xcprivacy at the root of the app bundle.
+// XcodeGen bundles every file in the <app>_iOS folder, so a new manifest only
+// needs the project regenerated from the project.yml that ios init wrote.
+function syncPrivacyManifest(project, env) {
+  const folder = fs.readdirSync(project).find(name => name.endsWith('_iOS') && fs.existsSync(path.join(project, name, 'Info.plist')));
+  if (!folder) fail('No se encontró la carpeta de la aplicación en el proyecto Xcode.');
+  const manifest = fs.readFileSync(path.join(root, 'src-tauri/plugins/folio-ios/ios/PrivacyInfo.xcprivacy'));
+  const destination = path.join(project, folder, 'PrivacyInfo.xcprivacy');
+  const known = fs.existsSync(destination);
+  if (known && fs.readFileSync(destination).equals(manifest)) return;
+  fs.writeFileSync(destination, manifest);
+  if (!known) run('xcodegen', ['generate', '--spec', path.join(project, 'project.yml')], true, env);
+}
 if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try {
   if (process.platform !== 'darwin') fail('La versión iPhone requiere macOS y Xcode completo. Este script no genera una IPA desde Windows. Usa el workflow privado ios.yml o un Mac.');
   if (Number(process.versions.node.split('.')[0]) < 22) fail('Se necesita Node.js 22 o posterior.');
@@ -92,9 +105,14 @@ if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try 
   run('xcodebuild', ['-version']);
   for (const sdk of ['iphoneos', 'iphonesimulator']) run('xcrun', ['--sdk', sdk, '--show-sdk-path'], false);
   const env = { ...process.env, IPHONEOS_DEPLOYMENT_TARGET: '17.0', CI: 'true' };
-  // Feather signs the final IPA on the user's device. No developer identity,
-  // provision, private key or paid distribution account is used in this build.
-  for (const name of ['APPLE_DEVELOPMENT_TEAM', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH', 'APPLE_PROVISIONING_PROFILE']) delete env[name];
+  // By default Feather signs the final IPA on the user's device and no developer
+  // identity is used. APPLE_DEVELOPMENT_TEAM signs the device IPA instead, with
+  // IOS_CERTIFICATE, IOS_CERTIFICATE_PASSWORD and IOS_MOBILE_PROVISION or
+  // APPLE_API_*, for FOLIO_IOS_EXPORT_METHOD (app-store-connect by default).
+  const signed = !!env.APPLE_DEVELOPMENT_TEAM?.trim() && !args.has('--qa');
+  for (const name of ['APPLE_DEVELOPMENT_TEAM', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_PROVISIONING_PROFILE', 'IOS_CERTIFICATE', 'IOS_CERTIFICATE_PASSWORD', 'IOS_MOBILE_PROVISION', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH']) if (!signed || !env[name]?.trim()) delete env[name];
+  const exportMethod = env.FOLIO_IOS_EXPORT_METHOD || 'app-store-connect';
+  if (signed && !['app-store-connect', 'release-testing', 'debugging'].includes(exportMethod)) fail('FOLIO_IOS_EXPORT_METHOD debe ser app-store-connect, release-testing o debugging.');
   run(process.execPath, [path.join(root, 'scripts/build-mupdf-ios.mjs')], true, env);
   run('rustup', ['target', 'add', 'aarch64-apple-ios', 'aarch64-apple-ios-sim'], true, env);
   // Tauri builds its Swift API as an independent package before our plugin.
@@ -118,6 +136,7 @@ if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try 
     fail('El scaffold iOS pertenece a otra versión. Usa una copia limpia de la fuente; no se borra un proyecto Xcode existente.');
   }
   syncIosIcons(root, project);
+  syncPrivacyManifest(project, env);
   if (args.has('--init-only')) process.exit(0);
   const qa = args.has('--qa');
   if (qa && args.has('--device')) fail('La IPA para Feather se compila sin native-qa. Usa --simulator --qa para diagnósticos.');
@@ -126,7 +145,8 @@ if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try 
   fs.mkdirSync(builds, { recursive: true });
   for (const target of targets) {
     syncIosIcons(root, project);
-    run('npm', ['run', 'tauri', '--', 'ios', 'build', '--target', target, '--no-sign', '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
+    const signing = signed && target === 'aarch64' ? ['--export-method', exportMethod] : ['--no-sign'];
+    run('npm', ['run', 'tauri', '--', 'ios', 'build', '--target', target, ...signing, '--ci', '--verbose', ...(qa ? ['--features', 'native-qa'] : []), '--', '--locked'], true, env);
     verifySwiftLocks(tauriRoot);
     const build = path.join(project, 'build');
     if (target === 'aarch64-sim') {
@@ -139,9 +159,9 @@ if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) try 
     } else {
       const ipas = find(path.join(build, 'arm64'), '.ipa');
       if (ipas.length !== 1) fail('No se encontró exactamente una IPA de dispositivo arm64.');
-      const destination = path.join(builds, `Folio_${pkg.version}_iphone_arm64_unsigned.ipa`);
+      const destination = path.join(builds, `Folio_${pkg.version}_iphone_arm64${signed ? '' : '_unsigned'}.ipa`);
       fs.copyFileSync(ipas[0], destination);
-      console.log(`IPA para firmar con Feather: ${destination}`);
+      console.log(`${signed ? `IPA firmada (${exportMethod})` : 'IPA para firmar con Feather'}: ${destination}`);
     }
   }
 } catch (error) { console.error(`Folio iOS: ${error.message}`); process.exitCode = 1; }

@@ -157,6 +157,42 @@ def browser_and_engine_validation(identity):
     }
 
 
+def iphone_readme(version, ipa):
+    return f'''# Folio {version} para iPhone y iPad
+
+Requiere iOS 17 o posterior.
+
+## Instalar con Feather
+
+1. Importa `{ipa}` en Feather.
+2. Elige tu certificado y tu perfil de aprovisionamiento, firma la aplicación
+   e instálala.
+
+El archivo no incluye certificado ni perfil de Apple: Feather necesita los tuyos.
+No compartas tu clave privada, tu certificado ni sus contraseñas.
+
+Si Feather cambia el identificador de la aplicación al firmarla, usa el mismo
+en las siguientes actualizaciones para conservar tus documentos. Si el
+certificado caduca o se revoca, vuelve a firmar la aplicación con uno válido.
+
+## Primeros pasos
+
+Pulsa **Importar PDF** para elegir PDFs en Archivos, o abre un PDF desde otra
+aplicación y elige Folio. Folio trabaja con una copia guardada en el
+dispositivo; el archivo original no cambia. **Guardar una copia** crea un PDF
+nuevo con tus anotaciones.
+
+## Tus datos
+
+Los documentos se procesan en el dispositivo. Folio solo usa la cámara si
+eliges «Hacer foto» al añadir una imagen. En la biblioteca, **Eliminar copia
+local…** borra la copia de un PDF y sus cambios.
+
+`Folio-{version}-ios-simulator-arm64.app.zip` es solo para el simulador de
+Xcode y no se puede instalar en un iPhone.
+'''
+
+
 def verify_bundle(app, simulator=False):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     require(info.get('CFBundleIdentifier') == 'org.folio.pdf', 'Identificador de aplicación inesperado.')
@@ -172,7 +208,13 @@ def verify_bundle(app, simulator=False):
         require(primary.get('CFBundleIconName') == 'AppIcon' and
                 expected_files.issubset(set(primary.get('CFBundleIconFiles', []))),
                 'El bundle no declara los iconos principales de Folio para iPhone e iPad.')
-    require(not any(k.endswith('UsageDescription') for k in info), 'La aplicación solicita permisos de privacidad innecesarios.')
+    require([k for k in info if k.endswith('UsageDescription')] == ['NSCameraUsageDescription'],
+            'La aplicación debe declarar solo el uso de la cámara para «Hacer foto».')
+    require(info.get('CFBundleDevelopmentRegion') == 'es' and info.get('CFBundleLocalizations') == ['es'],
+            'El bundle no declara el español como idioma de la aplicación.')
+    privacy = app / 'PrivacyInfo.xcprivacy'
+    require(privacy.is_file() and plistlib.loads(privacy.read_bytes()).get('NSPrivacyTracking') is False,
+            'Falta el manifiesto de privacidad en la raíz del bundle.')
     exe = app / info['CFBundleExecutable']
     require(exe.is_file() and exe.stat().st_mode & 0o111, 'Falta el ejecutable de iOS.')
     require(b'FOLIO_NATIVE_QA_BUILD' not in exe.read_bytes(), 'El bundle final incluye native-qa.')
@@ -356,14 +398,13 @@ for name in ['LICENSE', 'THIRD-PARTY-NOTICES.txt', 'SOURCE-BUILD.txt', 'dependen
     shutil.copy2(ROOT / name, out / name)
 require((ROOT / 'SOURCE-BUILD.txt').read_text().startswith(f'Folio {version} — iOS source'), 'Las instrucciones de fuente no corresponden a esta entrega iOS.')
 require(f'folio-{version}-fuente.zip' in (ROOT / 'SOURCE-BUILD.txt').read_text(), 'Las instrucciones nombran una fuente de otra versión.')
-require(f'Folio {version}' in (ROOT / 'docs/ios.md').read_text(), 'La guía iPhone pertenece a otra versión.')
 swift_dependencies = json.loads((ROOT / 'scripts/ios-swift-dependencies.json').read_text())
 swift_locks = json.loads((ROOT / 'test-results/ios/swift-package-locks.json').read_text())
 require(swift_locks.get('verified'), 'No se verificó la revisión SwiftRs compilada.')
 for item in swift_dependencies['SwiftRs']['licenses'].values():
     require(sha(ROOT / item['path']) == item['sha256'], 'La licencia SwiftRs no coincide.')
     shutil.copy2(ROOT / item['path'], out / ('SwiftRs-' + Path(item['path']).name))
-shutil.copy2(ROOT / 'docs/ios.md', out / 'README_iPhone.md')
+(out / 'README_iPhone.md').write_text(iphone_readme(version, source_ipa.name), encoding='utf-8')
 shutil.copy2(args.mupdf_source, out / args.mupdf_source.name)
 source = out / f'folio-{version}-fuente.zip'
 tracked = run('git', 'ls-files', '-z').split('\x00')

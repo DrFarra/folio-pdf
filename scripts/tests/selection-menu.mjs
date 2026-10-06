@@ -109,7 +109,8 @@ try {
     await page.locator('.note-marker').waitFor(); await toolbar(page).waitFor({ state: 'detached' });
     const document = await save(page, 'ui-selection-menu-comment.pdf');
     assert.equal(document.annotations.length, 1); assert.equal(document.annotations[0].kind, 'note'); assert.equal(document.annotations[0].text, 'Comentario desde el texto seleccionado.');
-    assert.equal(document.annotations[0].page, 1); assert(document.annotations[0].rect[0] > 60 && document.annotations[0].rect[0] < 145);
+    // Like a highlight's comment, the note sits in the right margin (page width 600 − 24), level with the selection.
+    assert.equal(document.annotations[0].page, 1); assert(document.annotations[0].rect[0] > 570 && document.annotations[0].rect[0] < 582);
     return { contextualCommentSaved: true, originalTextPreserved: true };
   });
   await check('contextual-copy-falls-back-when-clipboard-api-rejects', async page => {
@@ -132,6 +133,7 @@ try {
   await check('contextual-menu-dismisses-on-scroll-escape-and-tab-change', async page => {
     await select(page); await page.mouse.move(1200, 400); await page.mouse.wheel(0, 70); await toolbar(page).waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.reading-area').scrollTop > 0);
+    await toolbar(page).waitFor(); // It returns beside the still visible selection once scrolling settles.
     await page.locator('.reading-area').evaluate(el => { el.scrollTop = 0; });
     await page.waitForFunction(() => document.querySelector('.reading-area').scrollTop === 0);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -140,9 +142,13 @@ try {
     await page.mouse.click(900, 300);
     await select(page);
     await page.keyboard.press('Escape'); await toolbar(page).waitFor({ state: 'detached' });
+    await page.mouse.wheel(0, 40); await page.waitForTimeout(400);
+    assert.equal(await toolbar(page).count(), 0, 'Escape keeps the menu closed after scrolling.');
+    await page.locator('.reading-area').evaluate(el => { el.scrollTop = 0; });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.mouse.click(900, 300);
     await select(page); await open(page, readOnly); await toolbar(page).waitFor({ state: 'detached' });
-    return { scrollingDismisses: true, escapeDismisses: true, documentSwitchDismisses: true };
+    return { scrollingDismisses: true, returnsAfterScroll: true, escapeDismisses: true, escapeSurvivesScroll: true, documentSwitchDismisses: true };
   });
   await check('contextual-menu-keyboard-arrows-stay-in-toolbar', async page => {
     await select(page); await toolbar(page).getByRole('button', { name: 'Copiar', exact: true }).focus();
@@ -160,7 +166,7 @@ try {
   await check('copy-protected-document-has-no-selection-menu', async page => {
     const a = await point(page, first, 6), b = await point(page, first, first.length - 1, true);
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
-    assert.equal(await toolbar(page).count(), 0); await enterAnnotationMode(page); assert(await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).isDisabled());
+    assert.equal(await toolbar(page).count(), 0); await enterAnnotationMode(page); assert(await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).isDisabled());
     return { forbiddenCopyActionAbsent: true };
   }, noCopy);
   await check('contextual-menu-fits-narrow-viewport-near-page-bottom', async page => {

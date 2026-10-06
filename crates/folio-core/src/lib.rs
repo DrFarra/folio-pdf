@@ -1,8 +1,12 @@
 use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Read, Write, Seek, SeekFrom}, path::Path, time::SystemTime};
 
-pub const MAX_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024 * 1024;
 pub const MAX_RANGE_BYTES: usize = 4 * 1024 * 1024;
+/// atomic_write refuses a destination that changed since `expected` with this message.
+pub const DESTINATION_CHANGED: &str = "El archivo de destino cambió. Vuelve a elegir dónde guardar.";
+// System errors are English on macOS and carry codes on Windows: they never reach the user.
+const UNREADABLE: &str = "No se puede abrir este archivo. Comprueba que tienes permiso para leerlo.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileSnapshot { pub size: u64, pub modified: Option<SystemTime> }
@@ -10,7 +14,7 @@ pub struct FileSnapshot { pub size: u64, pub modified: Option<SystemTime> }
 pub struct PdfFileInfo { pub snapshot: FileSnapshot, pub digest: String }
 
 pub fn file_snapshot(path: &Path) -> Result<FileSnapshot, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("No se puede acceder al archivo: {e}"))?;
+    let meta = fs::metadata(path).map_err(|e| if e.kind() == io::ErrorKind::NotFound { "No se encontró el archivo. Puede que se haya movido o eliminado." } else { UNREADABLE })?;
     if !meta.is_file() { return Err("Elige un archivo PDF.".into()); }
     Ok(FileSnapshot { size: meta.len(), modified: meta.modified().ok() })
 }
@@ -19,13 +23,13 @@ pub fn file_snapshot(path: &Path) -> Result<FileSnapshot, String> {
 /// header here; valid provider files may contain trailing material after EOF.
 pub fn inspect_pdf_file(path: &Path) -> Result<PdfFileInfo, String> {
     let snapshot = file_snapshot(path)?;
-    let mut file = fs::File::open(path).map_err(|e| format!("No se pudo leer el PDF: {e}"))?;
+    let mut file = fs::File::open(path).map_err(|_| UNREADABLE)?;
     let mut header = [0u8; 1024];
-    let count = file.read(&mut header).map_err(|e| format!("No se pudo comprobar la cabecera: {e}"))?;
-    if !header[..count].windows(5).any(|s| s == b"%PDF-") { return Err("El archivo no tiene una cabecera PDF válida.".into()); }
+    let count = file.read(&mut header).map_err(|_| UNREADABLE)?;
+    if !header[..count].windows(5).any(|s| s == b"%PDF-") { return Err("El archivo no es un PDF válido.".into()); }
     let mut hash = Sha256::new(); hash.update(&header[..count]);
     let mut chunk = [0u8; 64 * 1024];
-    loop { let count = file.read(&mut chunk).map_err(|e| format!("No se pudo identificar el PDF: {e}"))?; if count == 0 { break; } hash.update(&chunk[..count]); }
+    loop { let count = file.read(&mut chunk).map_err(|_| UNREADABLE)?; if count == 0 { break; } hash.update(&chunk[..count]); }
     if file_snapshot(path)? != snapshot { return Err("El archivo cambió mientras se abría. Vuelve a elegirlo.".into()); }
     Ok(PdfFileInfo { snapshot, digest: format!("{:x}", hash.finalize()) })
 }
@@ -35,9 +39,9 @@ pub fn read_pdf_range(path: &Path, snapshot: &FileSnapshot, offset: u64, length:
     if offset > snapshot.size { return Err("La posición de lectura está fuera del PDF.".into()); }
     if file_snapshot(path)? != *snapshot { return Err("El archivo cambió en disco. Vuelve a abrirlo.".into()); }
     let count = (snapshot.size - offset).min(length as u64) as usize;
-    let mut file = fs::File::open(path).map_err(|e| format!("No se pudo leer el PDF: {e}"))?;
-    file.seek(SeekFrom::Start(offset)).map_err(|e| format!("No se pudo buscar el bloque: {e}"))?;
-    let mut bytes = vec![0; count]; file.read_exact(&mut bytes).map_err(|e| format!("No se pudo leer el bloque: {e}"))?;
+    let mut file = fs::File::open(path).map_err(|_| UNREADABLE)?;
+    file.seek(SeekFrom::Start(offset)).map_err(|_| UNREADABLE)?;
+    let mut bytes = vec![0; count]; file.read_exact(&mut bytes).map_err(|_| UNREADABLE)?;
     if file_snapshot(path)? != *snapshot { return Err("El archivo cambió durante la lectura.".into()); }
     Ok(bytes)
 }
@@ -49,14 +53,15 @@ pub fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     fs::File::open(path).map_err(|_| "No se pudo leer el archivo.")?
         .read_to_end(&mut bytes).map_err(|_| "No se pudo leer el archivo.")?;
-    if !bytes.iter().take(1024).copied().collect::<Vec<_>>().windows(5).any(|s| s == b"%PDF-") { return Err("El archivo no tiene una cabecera PDF válida.".into()); }
+    if !bytes.iter().take(1024).copied().collect::<Vec<_>>().windows(5).any(|s| s == b"%PDF-") { return Err("El archivo no es un PDF válido.".into()); }
     if file_snapshot(path)? != meta { return Err("El archivo cambió durante la lectura.".into()); }
     Ok(bytes)
 }
 
 pub fn validate_pdf(bytes: &[u8]) -> Result<(), String> {
-    if bytes.len() > MAX_OUTPUT_BYTES || !bytes.iter().take(1024).copied().collect::<Vec<_>>().windows(5).any(|s| s == b"%PDF-") {
-        return Err("La salida no tiene una cabecera PDF válida o excede el límite de tamaño.".into());
+    if bytes.len() > MAX_OUTPUT_BYTES { return Err("El PDF supera 1 GB y no se puede guardar.".into()); }
+    if !bytes.iter().take(1024).copied().collect::<Vec<_>>().windows(5).any(|s| s == b"%PDF-") {
+        return Err("El PDF generado no es válido. Tus cambios siguen en Folio.".into());
     }
     if !bytes.iter().rev().take(2048).copied().collect::<Vec<_>>().windows(5).any(|s| s == b"FOE%%") {
         return Err("El PDF está incompleto: no se encontró el final del archivo.".into());
@@ -64,10 +69,11 @@ pub fn validate_pdf(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// A copy never replaces the open PDF; a moved or deleted original cannot be the destination.
 pub fn protect_original(source: &Path, output: &Path) -> Result<(), String> {
-    if source == output || (output.exists() && same_file::is_same_file(source, output).unwrap_or(true)) {
-        return Err("Guarda una copia con otro nombre. Esta versión conserva siempre el original.".into());
-    }
+    let same = source == output || (output.exists() && source.exists()
+        && same_file::is_same_file(source, output).map_err(|_| "No se pudo comprobar el destino. Elige otra ubicación.")?);
+    if same { return Err("Para reemplazar este PDF, usa Guardar. Elige otro nombre para la copia.".into()); }
     Ok(())
 }
 
@@ -86,19 +92,62 @@ pub fn fingerprint(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
+fn write_temporary(path: &Path, bytes: &[u8], shared: bool) -> Result<tempfile::NamedTempFile, String> {
+    let parent = path.parent().ok_or("El destino no tiene una carpeta válida.")?;
+    // A user's file gets the usual 0o666 less umask; app data keeps tempfile's 0o600.
+    #[cfg(unix)]
+    let builder = { use std::os::unix::fs::PermissionsExt; let mut builder = tempfile::Builder::new(); if shared { builder.permissions(fs::Permissions::from_mode(0o666)); } builder };
+    #[cfg(not(unix))]
+    let builder = { let _ = shared; tempfile::Builder::new() };
+    let mut temporary = builder.tempfile_in(parent).map_err(|_| "No se puede guardar en esta carpeta. Elige otra ubicación.")?;
+    temporary.write_all(bytes).map_err(|_| "No se pudo escribir el archivo; el anterior está intacto. Comprueba el espacio disponible.")?;
+    temporary.as_file().sync_all().map_err(|_| "No se pudo confirmar la escritura en disco.")?;
+    Ok(temporary)
+}
+
+fn sync_folder(path: &Path) {
+    #[cfg(unix)]
+    if let Some(Ok(folder)) = path.parent().map(fs::File::open) { let _ = folder.sync_all(); }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// A replaced file keeps its permissions and, on macOS, its ACL, Finder tags and
+/// other extended attributes.
+#[cfg(unix)]
+fn keep_metadata(from: &Path, to: &Path) {
+    if let Ok(meta) = fs::metadata(from) { let _ = fs::set_permissions(to, meta.permissions()); }
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::{c_char, c_void, CString}, os::unix::ffi::OsStrExt};
+        extern "C" { fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> i32; }
+        const COPYFILE_ACL: u32 = 1 << 0;
+        const COPYFILE_XATTR: u32 = 1 << 2;
+        if let (Ok(from), Ok(to)) = (CString::new(from.as_os_str().as_bytes()), CString::new(to.as_os_str().as_bytes())) {
+            unsafe { copyfile(from.as_ptr(), to.as_ptr(), std::ptr::null_mut(), COPYFILE_ACL | COPYFILE_XATTR); }
+        }
+    }
+}
+
 /// Write and sync a sibling temporary file before its atomic commit. A destination
 /// changed since the save dialog is refused; a newly created destination uses
 /// persist_noclobber to prevent a race with another writer.
 pub fn atomic_write(path: &Path, bytes: &[u8], expected: Option<&str>) -> Result<(), String> {
-    let parent = path.parent().ok_or("El destino no tiene una carpeta válida.")?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| "No se pudo crear el archivo temporal en la carpeta elegida.")?;
-    temporary.write_all(bytes).map_err(|_| "No se pudo escribir la copia; el destino está intacto.")?;
-    temporary.as_file().sync_all().map_err(|_| "No se pudo confirmar la escritura en disco.")?;
-    if fingerprint(path)?.as_deref() != expected { return Err("El archivo de destino cambió. Vuelve a elegir dónde guardar.".into()); }
-    let committed = if expected.is_some() { temporary.persist(path) } else { temporary.persist_noclobber(path) };
-    committed.map_err(|_| "No se pudo confirmar la copia. El archivo anterior se conservó.")?;
+    let temporary = write_temporary(path, bytes, true)?;
     #[cfg(unix)]
-    if let Ok(folder) = fs::File::open(parent) { let _ = folder.sync_all(); }
+    if expected.is_some() { keep_metadata(path, temporary.path()); }
+    if fingerprint(path)?.as_deref() != expected { return Err(DESTINATION_CHANGED.into()); }
+    let committed = if expected.is_some() { temporary.persist(path) } else { temporary.persist_noclobber(path) };
+    committed.map_err(|_| "No se pudo reemplazar el archivo; el anterior se conservó. Ciérralo en otras aplicaciones e inténtalo de nuevo.")?;
+    sync_folder(path);
+    Ok(())
+}
+
+/// Folio's own data (drafts, sessions, the library and Drive records) has a
+/// single writer behind the caller's lock: it skips the hash precondition.
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    write_temporary(path, bytes, false)?.persist(path).map_err(|_| "No se pudo guardar en el almacenamiento de Folio.")?;
+    sync_folder(path);
     Ok(())
 }
 
@@ -160,6 +209,21 @@ mod tests {
         assert!(protect_original(&original, &original).is_err());
         assert!(protect_original(&original, &alias).is_err());
         assert!(protect_original(&original, &folder.path().join("new.pdf")).is_ok());
+        let other = folder.path().join("other.pdf"); fs::write(&other, b"other").unwrap(); fs::remove_file(&original).unwrap();
+        assert!(protect_original(&original, &other).is_ok(), "A moved original never blocks another destination");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn saved_files_keep_permissions_and_new_files_follow_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = tempfile::tempdir().unwrap(); let p = folder.path().join("shared.pdf");
+        fs::write(&p, b"previous").unwrap(); fs::set_permissions(&p, fs::Permissions::from_mode(0o664)).unwrap();
+        atomic_write(&p, b"replaced", fingerprint(&p).unwrap().as_deref()).unwrap();
+        assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o664);
+        let created = folder.path().join("new.pdf"); atomic_write(&created, b"new", None).unwrap();
+        assert_ne!(fs::metadata(&created).unwrap().permissions().mode() & 0o044, 0, "New files are readable like any other user file");
+        let private = folder.path().join("draft.pdf"); write_private(&private, b"draft").unwrap(); write_private(&private, b"draft 2").unwrap();
+        assert_eq!(fs::read(&private).unwrap(), b"draft 2"); assert_eq!(fs::metadata(&private).unwrap().permissions().mode() & 0o077, 0);
     }
     #[test]
     fn partial_and_invalid_pdf_are_rejected() {

@@ -154,8 +154,8 @@ def verify_mac(directory, version, commit, runner_commit, files):
     require((manifest.get('gitCommit') or runner_commit) == commit, 'El job de Mac es de otro commit.')
     require(set(manifest.get('architectures', [])) == {'arm64', 'x86_64'} and manifest.get('identifier') == 'org.folio.pdf',
             'La aplicación Mac no es universal de producción.')
-    require(all(manifest.get(flag) is True for flag in ['adHocSigned', 'nativeSmokePassed', 'dmgVerified', 'dmgPayloadMatchesApplication']),
-            'Faltan verificaciones nativas del paquete Mac.')
+    require(all(manifest.get(flag) is True for flag in ['nativeSmokePassed', 'dmgVerified', 'dmgPayloadMatchesApplication']) and
+            (manifest.get('adHocSigned') is True or manifest.get('notarized') is True), 'Faltan verificaciones nativas del paquete Mac.')
     dmg = one(directory, f'*{version}*universal*.dmg')
     manifest_artifact(manifest, dmg)
     with dmg.open('rb') as stream:
@@ -214,7 +214,11 @@ def verify_ios(directory, version, commit, files):
     return ipa, manifest, 'release-manifest.json'
 
 
-def instructions(version):
+def instructions(version, mac_notarized):
+    gatekeeper = '' if mac_notarized else '''
+La copia tiene firma ad hoc y no está notarizada. Si macOS impide abrirla,
+intenta abrir Folio y luego usa Ajustes del Sistema > Privacidad y seguridad >
+Abrir igualmente. Comprueba que el archivo procede de esta entrega.'''
     return f'''FOLIO {version} — INSTALACIÓN
 
 Windows (x64)
@@ -222,10 +226,7 @@ Abre Windows/Folio_{version}_x64-setup.exe y sigue el instalador.
 WebView2 se descarga de Microsoft si falta. La copia no tiene firma Authenticode.
 
 Mac (Intel y Apple Silicon; macOS 14 o posterior)
-Abre el DMG de la carpeta Mac y arrastra Folio a Aplicaciones.
-La copia tiene firma ad hoc y no está notarizada. Si macOS impide abrirla,
-intenta abrir Folio y luego usa Ajustes del Sistema > Privacidad y seguridad >
-Abrir igualmente. Comprueba que el archivo procede de esta entrega.
+Abre el DMG de la carpeta Mac y arrastra Folio a Aplicaciones.{gatekeeper}
 
 iPhone/iPad (iOS 17 o posterior)
 Importa iPhone/Folio_{version}_iphone_arm64_unsigned.ipa en Feather.
@@ -233,8 +234,7 @@ Selecciona tu certificado y perfil de aprovisionamiento válidos, firma e instal
 La IPA no incluye certificado ni perfil. Conserva el mismo identificador al
 actualizar para mantener los datos. Un bundle de simulador no sirve para iPhone.
 
-Uso: abre Folio, elige Importar PDF y selecciona tus documentos. Documentos
-conserva la biblioteca; el lector ofrece Páginas, Buscar, Anotar y Compartir.
+Uso: abre Folio y elige un PDF, o abre un PDF con Folio desde otra aplicación.
 
 Fuente y licencias
 fuentes/folio-{version}-fuente.zip contiene la fuente de esta entrega y sus locks.
@@ -248,11 +248,6 @@ SHA256SUMS.txt registra SHA-256 de todos los archivos. En PowerShell:
 En macOS:
   shasum -a 256 "ruta-del-archivo"
 Compara el resultado con la línea correspondiente de SHA256SUMS.txt.
-
-Alcance de verificación
-Los manifiestos y evidencia describen las pruebas ejecutadas por plataforma.
-Las pruebas de simulador no certifican instalación física con Feather o AirPrint.
-No se declara una prueba de instalación Windows cuando no se ejecutó.
 '''
 
 
@@ -294,7 +289,8 @@ def main():
     upstream = sources / 'mupdf-1.28.1-source.tar.gz'
     shutil.copy2(args.mupdf_source, upstream)
     shutil.copy2(ROOT / 'LICENSE', output / 'LICENSE')
-    (output / 'INSTRUCCIONES.txt').write_text(instructions(version), encoding='utf-8')
+    notarized = any(platform == 'Mac' and manifest.get('notarized') is True for platform, _, (_, manifest, _) in packages)
+    (output / 'INSTRUCCIONES.txt').write_text(instructions(version, notarized), encoding='utf-8')
     proof = output / 'evidencia'; proof.mkdir(exist_ok=True)
     receipts = []
     for platform, directory, (installer, manifest, manifest_name) in packages:

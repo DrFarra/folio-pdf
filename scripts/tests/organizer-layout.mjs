@@ -90,6 +90,13 @@ async function check(id, { viewport, mobile = false, native = false }) {
     await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
     if (native) await page.waitForFunction(() => document.querySelector('.pages-workbench').style.getPropertyValue('--modal-visible-height') === '640px');
     await page.getByRole('checkbox', { name: 'Seleccionar posición 1', exact: true }).check();
+    const moveTo = page.getByLabel('Mover páginas seleccionadas a la posición', { exact: true });
+    // Touch layouts cannot drag pages; the selection moves to a chosen position instead.
+    if (mobile) {
+      await moveTo.selectOption('2');
+      assert.deepEqual((await page.locator('.page-plan .plan-label').allTextContents()).slice(0, 3), ['Página 2', 'Página 3', 'Página 1']);
+      assert.equal(await page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true }).isChecked(), true, 'The moved page stays selected.');
+    } else assert.equal(await moveTo.count(), 0);
     await page.getByRole('button', { name: 'Girar páginas seleccionadas', exact: true }).click();
     const before = await snapshot(page), visible = { ...viewport, height: native ? 640 : viewport.height };
     assertLayout(before, visible);

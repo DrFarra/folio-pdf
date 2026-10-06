@@ -103,6 +103,30 @@ class IncomingDocumentsTest {
         assertTrue(received.single().getString("error").contains("no es un PDF"))
         assertEquals(0, File(context.filesDir, "FolioImports").walkTopDown().count { it.isFile })
     }
+    @Test fun fileUrisAndLaunchesReplayedFromRecentsAreNotImported() {
+        incoming.listen(received::add)
+        incoming.receive(view(uri(1)).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)); flush()
+        assertTrue(received.isEmpty())
+        val own = File(context.filesDir, "FolioImports/x/Privado.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
+        incoming.receive(view(Uri.fromFile(own))); flush()
+        assertTrue(received.single().has("error"))
+    }
+    @Test fun savedCopiesInTauriDataDirectoryBelongToFolio() {
+        val saved = File(context.dataDir, "exports/token/Apuntes.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
+        assertEquals(saved.canonicalFile, privateFile(context, saved.absolutePath))
+        val outside = File(context.cacheDir, "Ajeno.pdf").apply { writeBytes(pdf) }
+        assertTrue(runCatching { privateFile(context, outside.absolutePath) }.exceptionOrNull()!!.message!!.contains("no pertenece"))
+        assertTrue(runCatching { privateFile(context, File(saved.parentFile, "../../exports/../shared_prefs/x.xml").path) }.isFailure)
+    }
+    @Test fun unusedPrivateCopiesAreDeleted() {
+        fun copy(root: File, path: String) = File(root, path).apply { parentFile!!.mkdirs(); writeBytes(pdf); parentFile!!.setLastModified(0) }
+        val listed = copy(context.filesDir, "FolioImports/a/Listado.pdf"); val forgotten = copy(context.filesDir, "FolioImports/b/Olvidado.pdf")
+        val saved = copy(context.dataDir, "exports/c/Guardado.pdf"); val replaced = copy(context.dataDir, "exports/d/Anterior.pdf")
+        val arriving = File(context.filesDir, "FolioImports/e/Nuevo.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
+        deleteUnusedCopies(context, listOf(listed.absolutePath, saved.absolutePath))
+        assertTrue(listed.exists() && saved.exists() && arriving.exists())
+        assertFalse(forgotten.parentFile!!.exists() || replaced.parentFile!!.exists())
+    }
     @Test fun regularLaunchIsIgnoredAndMissingAttachmentIsExplained() {
         incoming.listen(received::add); incoming.receive(Intent(Intent.ACTION_MAIN)); flush()
         assertTrue(received.isEmpty())

@@ -66,11 +66,11 @@ try {
     },{bytes:[...original]});
     const page=await context.newPage();page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto('http://127.0.0.1:4291');await page.getByRole('button',{name:'Google Drive',exact:true}).click();
-    await page.getByRole('button',{name:'Iniciar sesión con Google'}).click();
+    await page.getByRole('button',{name:'Conectar Google Drive'}).click();
     await page.getByRole('button',{name:'Estudios Carpeta'}).click();
     await page.getByRole('navigation',{name:'Carpeta actual'}).getByRole('button',{name:'Estudios'}).waitFor();
     await page.getByRole('textbox',{name:'Buscar en esta carpeta'}).fill('inexistente');await page.getByRole('button',{name:'Buscar',exact:true}).click();
-    await page.getByText('No hay carpetas ni PDF que coincidan con esta búsqueda.').waitFor();
+    await page.getByText('Ningún PDF ni carpeta coincide con «inexistente».').waitFor();
     await page.getByRole('textbox',{name:'Buscar en esta carpeta'}).fill('');await page.getByRole('button',{name:'Buscar',exact:true}).click();
     await page.getByRole('button',{name:/Documento remoto.pdf/}).waitFor();await page.screenshot({path:`${out}/${name}-folders.png`});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal overflow');
@@ -93,7 +93,7 @@ try {
     await page.screenshot({path:`${out}/${name}-reading.png`});
     if(mobile)await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();
     await page.getByRole('button',{name:'Guardar en Drive',exact:true}).click();
-    await page.getByText(/Puedes reintentarlo en Documentos/).waitFor();
+    await page.locator('.toast').getByText(/Puedes reintentarlo en Biblioteca/).waitFor();
     const native=await page.evaluate(()=>window.__driveQA.calls.filter(c=>['write_pdf_original','write_pdf_copy'].includes(c.command)));
     assert.equal(native.length,0,'Drive must never save into the Android cache or use Android SAF overwrite');
     await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();
@@ -102,7 +102,10 @@ try {
     await page.evaluate(()=>window.__driveQA.outcome='conflict');await page.getByRole('button',{name:'Reintentar',exact:true}).click();
     await page.getByText('Otro dispositivo modificó el PDF. Tu edición está conservada.').waitFor();
     await page.screenshot({path:`${out}/${name}-conflict.png`});
-    await page.getByRole('button',{name:'Guardar como copia de conflicto',exact:true}).click();
+    // The conflict choice survives leaving Drive and coming back.
+    await page.getByRole('region',{name:'Google Drive'}).getByRole('button',{name:'Volver a la biblioteca',exact:true}).click();await page.getByRole('button',{name:'Google Drive',exact:true}).click();
+    await page.getByText('Este PDF cambió en Drive. Guarda tu versión como copia para no perder ninguna.').waitFor();
+    await page.getByRole('button',{name:'Guardar como copia',exact:true}).click();
     await page.getByText('Copia de conflicto guardada. El original sigue intacto.').waitFor();
     assert.equal(await page.getByRole('heading',{name:'Ediciones pendientes (1)'}).count(),0);
     assert.deepEqual(errors,[]);results.push({name,passed:true});await context.close();

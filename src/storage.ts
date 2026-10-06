@@ -5,15 +5,12 @@ import { isNative } from './platform';
 import type { NativeDocument } from './platform';
 import { normalizeBookmarks } from './bookmarks';
 
-const PREFIX = 'folio.session.';
+// Sessions written by earlier web versions; the database upgrade moves them.
+const LEGACY_SESSION_PREFIX = 'folio.session.';
 const EMPTY: Session = { annotations: [], bookmarks: [], lastPage: 1 };
+const STORES = ['documents', 'files', 'drafts', 'sessions'];
 
 const revisions = new Map<string, number>();
-type StoredRecent = Omit<RecentDocument, 'data'> & { data?: Blob | ArrayBuffer; hidden?: boolean };
-const RECENT_LIMIT = 20;
-function recentDocument(value: StoredRecent): RecentDocument {
-  return { ...value, data: value.data instanceof ArrayBuffer ? new Blob([value.data], { type: 'application/pdf' }) : value.data };
-}
 function nativeBaseline(value: unknown): string | undefined {
   if (typeof value !== 'string') return;
   try {
@@ -22,11 +19,11 @@ function nativeBaseline(value: unknown): string | undefined {
   } catch { /* A damaged baseline does not prevent opening the PDF. */ }
 }
 function parseSession(raw: Partial<Session> | null): Session {
-    if (!raw || !Array.isArray(raw.annotations) || !Array.isArray(raw.bookmarks)) return { ...EMPTY };
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.annotations) || !Array.isArray(raw.bookmarks)) return { ...EMPTY };
     return {
       version: raw.version,
       documentRevision: typeof raw.documentRevision === 'string' ? raw.documentRevision : undefined,
-      annotations: raw.annotations.filter(a =>
+      annotations: raw.annotations.filter(a => !!a && typeof a === 'object' &&
         typeof a.id === 'string' && Number.isInteger(a.page) && Number(a.page) > 0 &&
         (a.kind === 'note' || a.kind === 'highlight' || a.kind === 'ink' && Array.isArray(a.inkPaths) && a.inkPaths.length > 0 && a.inkPaths.every(path => Array.isArray(path) && path.length >= 4 && path.length <= 20000 && path.length % 2 === 0 && path.every(Number.isFinite)) && Number.isFinite(a.strokeWidth) && a.strokeWidth! > 0 && a.strokeWidth! <= 50) && typeof a.text === 'string' &&
         Array.isArray(a.rect) && a.rect.length === 4 && a.rect.every(Number.isFinite) &&
@@ -39,14 +36,14 @@ function parseSession(raw: Partial<Session> | null): Session {
       nativeLegacySession: raw.nativeLegacySession === true,
     };
 }
+// Rejects when the stored session cannot be read; the caller opens the PDF without it.
 export async function readSession(id: string): Promise<Session> {
   if (isNative) {
     const raw = await invoke<(Session & { revision?: number }) | null>('load_session', { id });
     revisions.set(id, raw?.revision || 0);
     return parseSession(raw);
   }
-  try { return parseSession(JSON.parse(localStorage.getItem(PREFIX + id) || 'null')); }
-  catch { return { ...EMPTY }; }
+  return parseSession(await transact<Partial<Session> | undefined>('sessions', 'readonly', tx => tx.objectStore('sessions').get(id)) ?? null);
 }
 export async function saveSession(id: string, session: Session): Promise<boolean> {
   const revision = Math.max((revisions.get(id) || 0) + 1, Date.now() * 1000);
@@ -54,7 +51,7 @@ export async function saveSession(id: string, session: Session): Promise<boolean
   const data = { ...session, bookmarks: normalizeBookmarks(session.bookmarks), version: 3, revision };
   try {
     if (isNative) await invoke('store_session', { id, session: data });
-    else localStorage.setItem(PREFIX + id, JSON.stringify(data));
+    else await transact('sessions', 'readwrite', tx => { tx.objectStore('sessions').put(data, id); });
     return true;
   } catch { return false; }
 }
@@ -65,63 +62,73 @@ export async function readDraft(id: string): Promise<Uint8Array | null> {
     const bytes = new Uint8Array(await invoke<ArrayBuffer>('load_draft', { id }));
     return bytes.length ? bytes : null;
   }
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('drafts', 'readonly'), request = tx.objectStore('drafts').get(id);
-    request.onsuccess = async () => {
-      try { resolve(request.result ? new Uint8Array(request.result instanceof Blob ? await request.result.arrayBuffer() : request.result) : null); }
-      catch (error) { reject(error); }
-    };
-    request.onerror = () => reject(request.error); tx.oncomplete = () => db.close();
-  });
+  const value = await transact<Blob | ArrayBuffer | undefined>('drafts', 'readonly', tx => tx.objectStore('drafts').get(id));
+  return value ? new Uint8Array(value instanceof Blob ? await value.arrayBuffer() : value) : null;
 }
 export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
   if (isNative) { await invokeBinary('store_draft', bytes, { headers: { 'x-folio-draft-id': id } }); return; }
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put(new Uint8Array(bytes).buffer, id);
-    tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); };
-  });
+  await transact('drafts', 'readwrite', tx => { tx.objectStore('drafts').put(new Uint8Array(bytes).buffer, id); });
 }
 export async function discardDraft(id: string): Promise<void> {
   if (isNative) { await invoke('discard_draft', { id }); return; }
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').delete(id);
-    tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); };
-  });
+  await transact('drafts', 'readwrite', tx => { tx.objectStore('drafts').delete(id); });
 }
 
+// Version 3 keeps the catalog metadata apart from the PDF bytes, so listing the
+// library never reads every PDF, and moves sessions out of localStorage's quota.
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('folio-library', 2);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains('documents')) request.result.createObjectStore('documents', { keyPath: 'id' });
-      if (!request.result.objectStoreNames.contains('drafts')) request.result.createObjectStore('drafts');
+    const request = indexedDB.open('folio-library', 3);
+    let legacyKeys: string[] = [];
+    request.onupgradeneeded = event => {
+      const db = request.result, tx = request.transaction!;
+      if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('drafts')) db.createObjectStore('drafts');
+      if (!db.objectStoreNames.contains('files')) db.createObjectStore('files');
+      if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions');
+      if (event.oldVersion >= 3) return;
+      const files = tx.objectStore('files'), sessions = tx.objectStore('sessions');
+      tx.objectStore('documents').openCursor().onsuccess = ({ target }) => {
+        const cursor = (target as IDBRequest<IDBCursorWithValue | null>).result; if (!cursor) return;
+        const { data, ...entry } = cursor.value;
+        if (data !== undefined) { files.put(data, entry.id); cursor.update(entry); }
+        cursor.continue();
+      };
+      try {
+        legacyKeys = Object.keys(localStorage).filter(key => key.startsWith(LEGACY_SESSION_PREFIX));
+        for (const key of legacyKeys) {
+          try { const session = JSON.parse(localStorage.getItem(key) || 'null'); if (session) sessions.put(session, key.slice(LEGACY_SESSION_PREFIX.length)); }
+          catch { /* A damaged legacy session is dropped. */ }
+        }
+      } catch { legacyKeys = []; }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      try { for (const key of legacyKeys) localStorage.removeItem(key); } catch { /* The copies are already in the database. */ }
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
     request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('Almacenamiento bloqueado'));
+    request.onblocked = () => reject(new Error('Cierra las otras pestañas de Folio y vuelve a intentarlo.'));
   });
 }
-
-async function storedDocuments(): Promise<StoredRecent[]> {
+// Runs one transaction and resolves with the request returned by run, once committed.
+async function transact<T = void>(stores: string | string[], mode: IDBTransactionMode, run: (tx: IDBTransaction) => IDBRequest | void): Promise<T> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('documents', 'readonly');
-    const request = tx.objectStore('documents').getAll();
-    request.onsuccess = () => resolve((request.result as StoredRecent[]).sort((a, b) => b.openedAt - a.openedAt));
-    request.onerror = () => reject(request.error);
-    tx.oncomplete = () => db.close();
-    tx.onabort = () => { db.close(); reject(tx.error); };
+    const tx = db.transaction(stores, mode), request = run(tx);
+    tx.oncomplete = () => { db.close(); resolve(request?.result); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 
-// The catalog owns document bytes. Recent history is only a filtered view of it.
-// Existing IndexedDB rows remain valid: an absent hidden flag means visible.
+// The catalog lists metadata only. A web entry's PDF is read when it is opened.
 export async function listLibrary(): Promise<RecentDocument[]> {
   if (isNative) return invoke<RecentDocument[]>('list_library');
-  return (await storedDocuments()).map(recentDocument);
+  return (await transact<RecentDocument[]>('documents', 'readonly', tx => tx.objectStore('documents').getAll())).sort((a, b) => b.openedAt - a.openedAt);
+}
+export async function readLibraryData(id: string): Promise<Blob | null> {
+  const data = await transact<Blob | ArrayBuffer | undefined>('files', 'readonly', tx => tx.objectStore('files').get(id));
+  return data === undefined ? null : data instanceof Blob ? data : new Blob([data], { type: 'application/pdf' });
 }
 
 // Native catalog listing reads metadata only. Validate and register the PDF
@@ -130,26 +137,7 @@ export async function readLibrarySource(id: string): Promise<NativeDocument> {
   return invoke<NativeDocument>('open_library_document', { id });
 }
 
-export async function listRecent(): Promise<RecentDocument[]> {
-  if (isNative) return invoke<RecentDocument[]>('recent_documents');
-  return (await storedDocuments()).filter(doc => !doc.hidden).slice(0, RECENT_LIMIT).map(recentDocument);
-}
-
-export async function hideRecent(id: string): Promise<void> {
-  if (isNative) { await invoke('hide_recent', { id }); return; }
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('documents', 'readwrite'), store = tx.objectStore('documents');
-    const request = store.get(id);
-    request.onsuccess = () => {
-      if (request.result) store.put({ ...request.result, hidden: true });
-    };
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-    tx.onabort = () => { db.close(); reject(tx.error); };
-  });
-}
-
+let persistenceRequested = false;
 export async function rememberDocument(doc: RecentDocument): Promise<void> {
   if (isNative) {
     if (doc.nativeSource) await invoke('remember_document', { id: doc.id, token: doc.nativeSource, pages: doc.pages, openedAt: doc.openedAt });
@@ -158,41 +146,32 @@ export async function rememberDocument(doc: RecentDocument): Promise<void> {
   }
   // WebKit can fail when cloning file-backed Blobs to IndexedDB. Keep the
   // original PDF as binary bytes, then expose a Blob when the library reads it.
-  const data = doc.data ? await doc.data.arrayBuffer() : undefined;
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('documents', 'readwrite');
-    const store = tx.objectStore('documents');
-    const request = store.get(doc.id);
-    request.onsuccess = () => {
-      const previous = request.result as StoredRecent | undefined;
-      store.put({ ...previous, ...doc, data: data ?? previous?.data, hidden: false } satisfies StoredRecent);
-    };
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-    tx.onabort = () => { db.close(); reject(tx.error); };
+  const { data: blob, ...entry } = doc;
+  const data = blob ? await blob.arrayBuffer() : undefined;
+  await transact(['documents', 'files'], 'readwrite', tx => {
+    const store = tx.objectStore('documents'), request = store.get(doc.id);
+    request.onsuccess = () => { store.put({ ...request.result, ...entry }); };
+    if (data) tx.objectStore('files').put(data, doc.id);
+  });
+  // Without persistent storage, browsers may evict the library after a period without use.
+  if (!persistenceRequested) { persistenceRequested = true; void navigator.storage?.persist?.().catch(() => {}); }
+}
+// Records the last use of a document that is already in the library.
+export async function touchDocument(doc: Pick<RecentDocument, 'id' | 'pages' | 'nativeSource'>, openedAt = Date.now()): Promise<void> {
+  if (isNative) { if (doc.nativeSource) await invoke('remember_document', { id: doc.id, token: doc.nativeSource, pages: doc.pages, openedAt }); return; }
+  await transact('documents', 'readwrite', tx => {
+    const store = tx.objectStore('documents'), request = store.get(doc.id);
+    request.onsuccess = () => { if (request.result) store.put({ ...request.result, openedAt }); };
   });
 }
 
 export async function forgetDocument(id: string): Promise<void> {
   if (isNative) { await invoke('forget_document', { id }); return; }
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['documents', 'drafts'], 'readwrite');
-    tx.objectStore('documents').delete(id);
-    tx.objectStore('drafts').delete(id);
-    tx.oncomplete = () => { db.close(); localStorage.removeItem(PREFIX + id); revisions.delete(id); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-    tx.onabort = () => { db.close(); reject(tx.error); };
-  });
+  await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).delete(id); });
+  revisions.delete(id);
 }
 export async function clearSavedState(): Promise<void> {
   if (isNative) { await invoke('clear_saved_state'); return; }
-  for (const document of await listLibrary()) await forgetDocument(document.id);
-  const db = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').clear();
-    tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-  Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => localStorage.removeItem(key));
+  await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).clear(); });
+  revisions.clear();
 }

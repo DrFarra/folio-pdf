@@ -79,7 +79,7 @@ try {
   await page.getByRole('toolbar', { name: 'Herramientas del texto seleccionado', exact: true }).getByRole('button', { name: 'Resaltar', exact: true }).tap();
   await page.locator('.highlight-annotation').waitFor();
   const action = async name => { await page.getByRole('button', { name: 'Más acciones', exact: true }).tap(); await page.getByRole('button', { name, exact: true }).tap(); };
-  const idle = async () => { await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Volver a biblioteca', exact: true }).waitFor(); await page.waitForFunction(() => !document.querySelector('button[aria-label="Volver a biblioteca"]')?.disabled); };
+  const idle = async () => { await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Volver a la biblioteca', exact: true }).waitFor(); await page.waitForFunction(() => !document.querySelector('button[aria-label="Volver a la biblioteca"]')?.disabled); };
   await action('Guardar una copia del PDF');
   await page.waitForFunction(() => window.__iphoneNativeContract.writes.filter(write => write.command === 'write_pdf_copy').length === 1);
   await idle();

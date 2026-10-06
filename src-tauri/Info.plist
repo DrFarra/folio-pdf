@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri merges this file on macOS and iOS. System panels, menus and the
+     webview's context menu follow the bundle's language, which is Spanish. -->
+<plist version="1.0"><dict>
+  <key>CFBundleDevelopmentRegion</key><string>es</string>
+  <key>CFBundleLocalizations</key><array><string>es</string></array>
+</dict></plist>

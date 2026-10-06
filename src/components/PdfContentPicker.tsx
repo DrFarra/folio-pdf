@@ -5,7 +5,9 @@ import { AlertCircle, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Minus,
 import { pdfAssetSettings } from '../assets';
 import { getPageContent } from '../engine/client';
 import type { Area, PageContentInfo, PageContentItem } from '../engine/operations.mjs';
-import { getDocument } from '../pdf';
+import type { ContentEditorKind } from './ContentEditor';
+import { getDocument, plural } from '../pdf';
+import { errorMessage } from '../errors';
 import type { LoadedDocument } from '../types';
 import './PdfContentPicker.css';
 
@@ -15,7 +17,7 @@ type Props = {
   getBytes: () => Promise<Uint8Array>;
   busy: boolean;
   onSelect: (item: PageContentItem) => void;
-  onAdd: (kind: 'add-text' | 'add-image', area: Area) => void;
+  onAdd: (kind: ContentEditorKind, area: Area) => void;
   onPageChange?: (page: number) => void;
 };
 type Mode = 'select' | 'add-text' | 'add-image';
@@ -69,14 +71,14 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
   }, [currentPage]);
   useEffect(() => {
     let alive = true; setSnapshot(null); setPdf(null); setInfo(null); setView(null); setInspecting(true); setRendering(true); setSelected(null); setFeedback(''); setUnavailable(false); setSourceError(''); cache.current.clear();
-    void getBytesRef.current().then(bytes => { if (alive) setSnapshot(new Uint8Array(bytes)); }).catch(error => { if (alive) setSourceError((error as Error).message); });
+    void getBytesRef.current().then(bytes => { if (alive) setSnapshot(new Uint8Array(bytes)); }).catch(error => { if (alive) setSourceError(errorMessage(error)); });
     return () => { alive = false; };
   }, [doc.id, doc.revision]);
   useEffect(() => {
     if (!snapshot) return;
     let alive = true; setPdf(null); setSourceError('');
     const loading = getDocument({ ...pdfAssetSettings(), data: new Uint8Array(snapshot), password: doc.password });
-    void loading.promise.then(value => { if (alive) setPdf(value); }).catch(error => { if (alive) setSourceError((error as Error).message); });
+    void loading.promise.then(value => { if (alive) setPdf(value); }).catch(error => { if (alive) setSourceError(errorMessage(error)); });
     return () => { alive = false; void loading.destroy(); };
   }, [snapshot, doc.password]);
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
     void getPageContent(snapshot, currentPage, doc.password, controller.signal).then(value => {
       if (controller.signal.aborted) return;
       cache.current.set(currentPage, value); setInfo({ page: currentPage, value });
-    }).catch(error => { if (!controller.signal.aborted) setInspectError((error as Error).message); }).finally(() => { if (!controller.signal.aborted) setInspecting(false); });
+    }).catch(error => { if (!controller.signal.aborted) setInspectError(errorMessage(error)); }).finally(() => { if (!controller.signal.aborted) setInspecting(false); });
     return () => controller.abort();
   }, [snapshot, currentPage, doc.password]);
   useEffect(() => {
@@ -120,7 +122,7 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
         if (cancelled || generation !== renderSequence.current || !canvas.current) return;
         canvas.current.width = surface.width; canvas.current.height = surface.height; canvas.current.getContext('2d')!.drawImage(surface, 0, 0);
         setView({ page: currentPage, viewport, scale, key: renderKey }); setRendering(false);
-      } catch (error) { if (!cancelled && generation === renderSequence.current) { setRenderError((error as Error).message); setRendering(false); } }
+      } catch (error) { if (!cancelled && generation === renderSequence.current) { setRenderError(errorMessage(error, 'No se pudo mostrar la página.')); setRendering(false); } }
       finally { surface.width = 0; surface.height = 0; target?.cleanup(); }
     })();
     return () => { cancelled = true; task?.cancel(); };
@@ -136,6 +138,7 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
   }, [allItems, level, hasParagraphs]);
   const textCount = visibleItems.filter(item => item.kind === 'text').length, imageCount = visibleItems.filter(item => item.kind === 'image').length;
   const error = sourceError || renderError || inspectError;
+  const selectedItem = unavailable && doc.canEdit ? allItems.find(item => item.id === selected && item.areaReplaceable) : undefined;
   function navigate(next: number) {
     if (busy) return;
     const bounded = pageNumber(next, doc.pdf.numPages); setPageInput(String(bounded));
@@ -173,21 +176,30 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
     const a = view.viewport.convertToPdfPoint(value.start.x, value.start.y), b = view.viewport.convertToPdfPoint(value.end.x, value.end.y);
     onAdd(mode, { page: currentPage, rect: normalized([a[0], a[1], b[0], b[1]]) });
   }
-  const hint = mode === 'select' ? 'Haz clic en un texto o una imagen para editar. El PDF aún no se ha modificado.' : 'Arrastra en la página para marcar el área del ' + (mode === 'add-text' ? 'texto nuevo.' : 'archivo de imagen.');
+  // From the keyboard or a screen reader, adding starts with a centred area that
+  // the editor's fields then adjust; a pointer draws the area instead.
+  function chooseAdd(next: 'add-text' | 'add-image', keyboard: boolean) {
+    if (!keyboard || !view) { setTool(next); return; }
+    if (busy || !doc.canEdit) return;
+    const [x0, y0, x1, y1] = view.viewport.viewBox, w = x1 - x0, h = y1 - y0;
+    onAdd(next, { page: currentPage, rect: [x0 + w * .25, y0 + h * .425, x0 + w * .75, y0 + h * .575] });
+  }
+  const touch = document.documentElement.dataset.touch === 'true';
+  const hint = mode === 'select' ? `${touch ? 'Toca' : 'Haz clic en'} un texto o una imagen para editarlo.` : `Arrastra en la página para marcar dónde irá ${mode === 'add-text' ? 'el texto' : 'la imagen'}.`;
   return <div className="pdf-content-picker" data-page={currentPage} data-mode={mode} data-picker-state={error ? 'error' : ready && !inspecting ? 'ready' : 'loading'} onKeyDown={event => {
     if (event.key === 'Escape' && (draw.current || mode !== 'select')) { event.preventDefault(); event.stopPropagation(); draw.current = null; setDrawing(null); setMode('select'); setFeedback('Selección de área cancelada.'); }
   }}>
     <div className="pdf-picker-toolbar" role="toolbar" aria-label="Editar contenido del PDF">
       <div className="pdf-picker-tools">
         <button type="button" aria-pressed={mode === 'select'} disabled={busy} onClick={() => setTool('select')}><MousePointer2 size={16} aria-hidden="true" />Seleccionar</button>
-        <button type="button" aria-label="Añadir texto" aria-pressed={mode === 'add-text'} disabled={busy || !doc.canEdit} onClick={() => setTool('add-text')}><Type size={16} aria-hidden="true" /><span className="pdf-picker-full-label">Añadir texto</span><span className="pdf-picker-short-label">Texto</span></button>
-        <button type="button" aria-label="Añadir imagen" aria-pressed={mode === 'add-image'} disabled={busy || !doc.canEdit} onClick={() => setTool('add-image')}><ImagePlus size={16} aria-hidden="true" /><span className="pdf-picker-full-label">Añadir imagen</span><span className="pdf-picker-short-label">Imagen</span></button>
+        <button type="button" aria-label="Añadir texto" aria-pressed={mode === 'add-text'} disabled={busy || !doc.canEdit} onClick={event => chooseAdd('add-text', event.detail === 0)}><Type size={16} aria-hidden="true" /><span className="pdf-picker-full-label">Añadir texto</span><span className="pdf-picker-short-label">Texto</span></button>
+        <button type="button" aria-label="Añadir imagen" aria-pressed={mode === 'add-image'} disabled={busy || !doc.canEdit} onClick={event => chooseAdd('add-image', event.detail === 0)}><ImagePlus size={16} aria-hidden="true" /><span className="pdf-picker-full-label">Añadir imagen</span><span className="pdf-picker-short-label">Imagen</span></button>
       </div>
       <div className="pdf-picker-zoom" aria-label="Zoom del selector">
         <button type="button" aria-label="Ajustar página" aria-pressed={zoom === 'fit'} disabled={busy} onClick={() => setZoom('fit')}><span className="pdf-picker-full-label">Ajustar página</span><span className="pdf-picker-short-label">Ajustar</span></button>
-        <button type="button" aria-pressed={zoom === 1} disabled={busy} onClick={() => setZoom(1)}>100%</button>
+        <button type="button" aria-pressed={zoom === 1} disabled={busy} onClick={() => setZoom(1)}>100 %</button>
         <button type="button" aria-label="Alejar página del editor" disabled={busy || (view?.scale || .05) <= .1} onClick={() => setZoom(Math.max(.1, (view?.scale || 1) / 1.25))}><Minus size={16} aria-hidden="true" /></button>
-        <span aria-label="Zoom actual">{Math.round((view?.scale || 1) * 100)}%</span>
+        <span aria-label="Zoom actual">{Math.round((view?.scale || 1) * 100)} %</span>
         <button type="button" aria-label="Acercar página del editor" disabled={busy || (view?.scale || 1) >= 4} onClick={() => setZoom(Math.min(4, (view?.scale || 1) * 1.25))}><Plus size={16} aria-hidden="true" /></button>
       </div>
       <form className="pdf-picker-pagination" onSubmit={event => { event.preventDefault(); navigate(Number(pageInput)); }}>
@@ -212,9 +224,10 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
     </div>
     <div className="pdf-picker-footer">
       <p className={unavailable || error ? 'pdf-picker-unavailable' : undefined} role={unavailable || error ? 'alert' : 'status'}>{(unavailable || error) && <AlertCircle size={16} aria-hidden="true" />}{error || feedback || hint}</p>
-      <span className="pdf-picker-count">{inspecting ? 'Detectando contenido…' : `${textCount} textos · ${imageCount} imágenes`}</span>
+      {selectedItem && <button type="button" className="secondary-button" disabled={busy} onClick={() => onAdd(selectedItem.kind === 'text' ? 'replace-text' : 'replace-image', { page: currentPage, rect: selectedItem.rect })}>Reemplazar esta zona</button>}
+      <span className="pdf-picker-count">{inspecting ? 'Detectando contenido…' : `${plural(textCount, 'texto', 'textos')} · ${plural(imageCount, 'imagen', 'imágenes')}`}</span>
       {!inspecting && pageInfo && !allItems.length && <p className="pdf-picker-note">No se detectó contenido seleccionable en esta página. Puedes añadir texto o una imagen.</p>}
-      {!!pageInfo?.warnings.length && <details className="pdf-picker-warnings"><summary>{pageInfo.warnings.length} avisos de esta página</summary><ul>{pageInfo.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
+      {!!pageInfo?.warnings.length && <details className="pdf-picker-warnings"><summary>{plural(pageInfo.warnings.length, 'aviso', 'avisos')} en esta página</summary><ul>{pageInfo.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
     </div>
   </div>;
 }

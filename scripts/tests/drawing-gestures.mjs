@@ -26,8 +26,15 @@ try {
     try {
       await page.goto(origin); await page.locator('.app-header input[type=file]').setInputFiles({ name: 'Gestos.pdf', mimeType: 'application/pdf', buffer: source });
       await page.locator('.textLayer span').first().waitFor(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+      // Area tools own a one-finger drag; the note tool and the reader keep scrolling.
+      const touchActions = await page.locator('.page-content').first().evaluate(content => {
+        const original = content.className, actions = {};
+        for (const tool of ['select', 'note', 'highlight', 'redact', 'crop', 'add-text', 'replace-image', 'create-field']) { content.className = `page-content tool-${tool}`; actions[tool] = getComputedStyle(content).touchAction; }
+        content.className = original; return actions;
+      });
+      assert.deepEqual(touchActions, { select: 'auto', note: 'pan-x pan-y', highlight: 'pan-y', redact: 'none', crop: 'none', 'add-text': 'none', 'replace-image': 'none', 'create-field': 'none' });
       await page.getByRole('button', { name: layout === 'phone' ? 'Anotar' : 'Anotar documento', exact: true }).click();
-      await page.getByRole('button', { name: 'Dibujar', exact: true }).click();
+      await page.getByRole('button', { name: mobile ? 'Lápiz' : 'Lápiz (D)', exact: true }).click();
       await page.getByRole('button', { name: 'Opciones del lápiz', exact: true }).click();
       let popup = page.getByRole('dialog', { name: 'Lápiz', exact: true });
       await popup.waitFor();
@@ -47,7 +54,7 @@ try {
       popup = page.getByRole('dialog', { name: 'Lápiz', exact: true }); await popup.getByLabel('Usar el dedo').waitFor();
       assert.equal(await popup.getByRole('button', { name: '3 puntos', exact: true }).getAttribute('aria-pressed'), 'true');
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Borrar dibujo', exact: true }).click();
+      await page.getByRole('button', { name: 'Goma', exact: true }).click();
       await page.getByRole('button', { name: 'Opciones de la goma', exact: true }).click();
       popup = page.getByRole('dialog', { name: 'Goma', exact: true });
       await popup.getByRole('button', { name: 'Media', exact: true }).click();
@@ -61,13 +68,18 @@ try {
       await page.keyboard.press('Control+z'); await inkCount(3);
       await pen('mouseMoved', xs[0], y, 0); await page.waitForTimeout(80); await inkCount(3);
       await page.keyboard.press('Control+y'); await inkCount(0);
-      await page.getByRole('button', { name: 'Dibujar', exact: true }).click();
+      await page.getByRole('button', { name: mobile ? 'Lápiz' : 'Lápiz (D)', exact: true }).click();
       await page.getByRole('button', { name: 'Opciones del lápiz', exact: true }).click();
-      await page.getByLabel('Usar el dedo', { exact: true }).check(); await page.keyboard.press('Escape');
+      await page.getByLabel('Usar el dedo', { exact: true }).check();
       await page.waitForTimeout(450); // Palm rejection expires after the pen leaves.
       const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, radiusX: 3, radiusY: 3, force: .7, id: 1 }] });
+      // A tap on the page closes the pen options without leaving a dot of ink.
+      const options = await page.getByRole('dialog', { name: 'Lápiz', exact: true }).boundingBox();
+      const tapY = [box.y + 24, box.y + box.height - 24].find(value => value < options.y - 8 || value > options.y + options.height + 8);
+      await touch('touchStart', box.x + box.width / 2, tapY); await touch('touchEnd');
+      await page.getByRole('dialog', { name: 'Lápiz', exact: true }).waitFor({ state: 'detached' }); await page.waitForTimeout(100); await inkCount(0);
       await touch('touchStart', xs[0], y); await touch('touchMove', xs[0] + 35, y + 15); await touch('touchEnd'); await inkCount(1);
-      await page.getByRole('button', { name: mobile ? 'Resaltado automático' : 'Resaltado automático (H)', exact: true }).click();
+      await page.getByRole('button', { name: mobile ? 'Resaltador' : 'Resaltador (H)', exact: true }).click();
       await page.getByRole('button', { name: 'Color del resaltador', exact: true }).click();
       popup = page.getByRole('dialog', { name: 'Colores del resaltador', exact: true });
       const paletteBox = await popup.boundingBox(); assert(paletteBox.x >= 0 && paletteBox.x + paletteBox.width <= width);
@@ -87,7 +99,7 @@ try {
       await pen('mouseMoved', second.x + second.width - 1, second.y + second.height / 2);
       await pen('mouseReleased', second.x + second.width - 1, second.y + second.height / 2); await highlights(2);
       assert.deepEqual(errors, []);
-      results.push({ layout, passed: true, input: 'Chromium CDP pen and touch input', individualPopovers: true, desktopFingerOptionRequiresDetectedPen: true, fingerDrawing: true, continuousEraserBeforeLift: true, fastSweepCrossesAllStrokes: true, oneUndoRestoresSweep: true, highlighterWaitsForLift: true, penHoverDoesNotRepeatHighlight: true, physicalPenTested: false });
+      results.push({ layout, passed: true, input: 'Chromium CDP pen and touch input', individualPopovers: true, closingPopoverDoesNotDraw: true, areaToolsOwnTouchDrag: true, desktopFingerOptionRequiresDetectedPen: true, fingerDrawing: true, continuousEraserBeforeLift: true, fastSweepCrossesAllStrokes: true, oneUndoRestoresSweep: true, highlighterWaitsForLift: true, penHoverDoesNotRepeatHighlight: true, physicalPenTested: false });
     } catch (error) { process.exitCode = 1; results.push({ layout, passed: false, error: error.stack }); await page.screenshot({ path: `${out}/${layout}-failure.png` }).catch(() => {}); }
     finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
   }

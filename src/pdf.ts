@@ -9,8 +9,9 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 export { getDocument, TextLayer };
 
 export function formatSize(bytes: number): string {
-  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toLocaleString('es', { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+export const plural = (count: number, one: string, many: string) => `${count.toLocaleString('es')} ${count === 1 ? one : many}`;
 
 export function downloadBytes(bytes: Uint8Array, name: string): void {
   const blob = new Blob([new Uint8Array(bytes).buffer], { type: 'application/pdf' });
@@ -22,20 +23,27 @@ export function downloadBytes(bytes: Uint8Array, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 15_000);
 }
 
-export async function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
-  const outline = await pdf.getOutline();
-  const entries: OutlineEntry[] = [];
-  async function walk(items: NonNullable<typeof outline>, depth = 0) {
-    for (const item of items) {
-      const destination = await resolvePDFDestination(pdf, item.dest);
+// One request per document: switching tabs reuses the same entries (and the
+// outline's folded chapters) instead of resolving every destination again.
+const outlineRequests = new WeakMap<PDFDocumentProxy, Promise<OutlineEntry[]>>();
+export function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
+  let request = outlineRequests.get(pdf);
+  if (!request) {
+    request = pdf.getOutline().then(outline => {
+      const items: { item: NonNullable<typeof outline>[number]; depth: number }[] = [];
+      const walk = (level: NonNullable<typeof outline>, depth = 0) => { for (const item of level) { items.push({ item, depth }); if (item.items?.length) walk(item.items, depth + 1); } };
+      if (outline) walk(outline);
       // A PDF outline heading can group chapters without having a destination.
       // Keep it in the tree; inventing a page would misrepresent the document.
-      entries.push({ title: item.title, page: destination && 'page' in destination ? destination.page : null, depth });
-      if (item.items?.length) await walk(item.items, depth + 1);
-    }
+      return Promise.all(items.map(async ({ item, depth }) => {
+        const destination = await resolvePDFDestination(pdf, item.dest);
+        return { title: item.title, page: destination && 'page' in destination ? destination.page : null, depth };
+      }));
+    });
+    outlineRequests.set(pdf, request);
+    request.catch(() => { if (outlineRequests.get(pdf) === request) outlineRequests.delete(pdf); });
   }
-  if (outline) await walk(outline);
-  return entries;
+  return request;
 }
 
 export async function buildTextIndex(pdf: PDFDocumentProxy, alive: () => boolean): Promise<string[]> {
@@ -85,7 +93,8 @@ function normalizedOffsets(text: string) {
   let offset = 0;
   for (const character of text) {
     const end = offset + character.length;
-    const normalized = /\s/.test(character) ? ' ' : normalize(character);
+    // ASCII needs no decomposition; skipping normalize() keeps long pages fast.
+    const normalized = /\s/.test(character) ? ' ' : character < '\x80' ? character.toLowerCase() : normalize(character);
     if (!normalized) { if (ends.length) ends[ends.length - 1] = end; }
     else if (normalized === ' ' && folded.endsWith(' ')) ends[ends.length - 1] = end;
     else for (let index = 0; index < normalized.length; index++) { folded += normalized[index]; starts.push(offset); ends.push(end); }
@@ -106,12 +115,36 @@ export function findTextMatches(text: string, query: string): { start: number; e
   return matches;
 }
 
-export function searchText(texts: string[], query: string): SearchResult[] {
-  let resultIndex = 0;
-  return texts.flatMap((text, index) => findTextMatches(text, query).map(match => {
-    const start = Math.max(0, match.start - 32), end = Math.min(text.length, match.end + 90);
-    return { page: index + 1, count: 1 as const, offset: match.start, index: resultIndex++, text: `${start ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}` };
-  }));
+// Folded page text keyed by its content, so each keystroke and each partial
+// index of the same document reuse it. Bounded to release closed documents.
+const foldedPages = new Map<string, string>();
+function foldedPage(text: string) {
+  let folded = foldedPages.get(text);
+  if (folded === undefined) {
+    foldedPages.set(text, folded = normalizedOffsets(text).text);
+    if (foldedPages.size > 4000) foldedPages.delete(foldedPages.keys().next().value!);
+  }
+  return folded;
+}
+
+/** Counts every occurrence but builds at most `limit` results, so a frequent
+ * term in a long document never produces thousands of entries. */
+export function searchText(texts: string[], query: string, limit = Infinity): { results: SearchResult[]; total: number } {
+  const term = normalizedOffsets(query.trim()).text, results: SearchResult[] = [];
+  let total = 0;
+  if (!term) return { results, total };
+  texts.forEach((text, index) => {
+    const folded = foldedPage(text);
+    let found = 0;
+    for (let offset = folded.indexOf(term); offset !== -1; offset = folded.indexOf(term, offset + term.length)) found++;
+    total += found;
+    if (!found || results.length >= limit) return;
+    for (const match of findTextMatches(text, query).slice(0, limit - results.length)) {
+      const start = Math.max(0, match.start - 32), end = Math.min(text.length, match.end + 90);
+      results.push({ page: index + 1, count: 1, offset: match.start, index: results.length, text: `${start ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}` });
+    }
+  });
+  return { results, total };
 }
 
 const labelRequests = new WeakMap<PDFDocumentProxy, Promise<string[] | null>>();

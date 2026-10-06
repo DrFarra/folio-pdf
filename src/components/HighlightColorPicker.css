@@ -1,11 +1,11 @@
 .highlight-color-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:44px;height:36px;padding:3px;border-radius:8px;flex-shrink:0;color:var(--muted)}
-.highlight-color-trigger:hover:not(:disabled),.highlight-color-trigger.active{background:var(--hover);color:var(--text)}
+.highlight-color-trigger.active{background:var(--hover);color:var(--text)}@media(hover:hover){.highlight-color-trigger:hover:not(:disabled){background:var(--hover);color:var(--text)}}
 .highlight-color-current{display:block;width:15px;height:15px;border-radius:50%;border:1px solid #0002;flex-shrink:0}
 .highlight-color-palette{position:fixed;z-index:85;width:290px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--surface);box-shadow:0 8px 28px #15223524;color:var(--text);user-select:none}
 .highlight-color-palette>strong{display:block;font-size:13px;font-weight:600;margin:0 4px 6px}
 .highlight-color-presets{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0}
 .highlight-color-presets button{display:flex;align-items:center;justify-content:center;height:44px;min-width:44px;padding:4px;border:1px solid transparent;border-radius:10px}
-.highlight-color-presets button:hover,.highlight-color-presets button[aria-pressed=true]{background:var(--hover)}
+.highlight-color-presets button[aria-pressed=true]{background:var(--hover)}@media(hover:hover){.highlight-color-presets button:hover{background:var(--hover)}}
 .highlight-color-presets button>span{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#374151;border:1px solid #0001}
 .highlight-color-presets button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .highlight-color-custom{display:flex;align-items:center;gap:7px;border-top:1px solid var(--line);padding:4px;margin-top:8px;font-size:12px;min-height:48px}

@@ -4,7 +4,8 @@ import { watchDesktopModalViewport } from '../desktop-modal-viewport';
 import './Modal.css';
 
 /** Shared dismissal affordance for mobile dialogs and the PDF explorer. Drag
- * only from the handle: scrolling, text selection and form inputs stay native. */
+ * only from the handle: scrolling, text selection and form inputs stay native.
+ * It is a pointer gesture aid; keyboards and screen readers use the close button. */
 export function SheetHandle({ onClose, label = 'Cerrar hoja' }: { onClose: () => void; label?: string }) {
   const gesture = useRef<{ pointerId: number; x: number; y: number; at: number; offset: number; target: HTMLElement } | null>(null);
   const suppressClick = useRef(false);
@@ -14,7 +15,7 @@ export function SheetHandle({ onClose, label = 'Cerrar hoja' }: { onClose: () =>
     gesture.current = null;
   };
   useEffect(() => reset, []);
-  return <button type="button" className="sheet-handle" aria-label={label} onClick={event => {
+  return <button type="button" className="sheet-handle" aria-label={label} tabIndex={-1} aria-hidden="true" onClick={event => {
     if (suppressClick.current) { event.preventDefault(); suppressClick.current = false; return; }
     onClose();
   }} onPointerDown={event => {
@@ -64,11 +65,15 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
     const initialFocus = dialog?.querySelector<HTMLElement>('[data-autofocus], [autofocus]');
     initialFocus?.setAttribute('autofocus', '');
     dialog?.showModal();
-    initialFocus?.focus({ preventScroll: true });
+    (initialFocus ?? dialog?.querySelector<HTMLElement>('.modal-heading button'))?.focus({ preventScroll: true });
     const stopViewport = ref.current ? watchDesktopModalViewport(ref.current) : () => {};
     return () => { stopViewport(); ref.current?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
   }, []);
-  return <dialog ref={ref} className={`modal mobile-sheet ${className}`} onCancel={event => { event.preventDefault(); onClose(); }} onPointerDownCapture={() => { pointerClickArmed.current = true; }} onClickCapture={event => {
+  return <dialog ref={ref} className={`modal mobile-sheet ${className}`} onCancel={event => {
+    // A dismissed file chooser inside the dialog fires a bubbling `cancel` of its own.
+    if (event.target !== event.currentTarget) return;
+    event.preventDefault(); onClose();
+  }} onPointerDownCapture={() => { pointerClickArmed.current = true; }} onClickCapture={event => {
     if (event.detail > 0 && !pointerClickArmed.current) { event.preventDefault(); event.stopPropagation(); }
     pointerClickArmed.current = false;
   }} onPointerDown={event => {

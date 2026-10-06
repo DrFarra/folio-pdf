@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, FileText, FolderOpen, Plus, X } from 'lucide-react';
 import type { RecentDocument } from '../types';
+import { plural } from '../pdf';
 import './DocumentSwitcher.css';
 
 type OpenDocument = { key: string; id: string; name: string; page: number; pages: number };
@@ -17,7 +18,7 @@ export default function DocumentSwitcher({ open, documents, recents, activeKey, 
   const [position, setPosition] = useState({ left: 12, top: 60, width: 360, maxHeight: 480 });
   const popup = useRef<HTMLDivElement>(null);
   const dismiss = useRef(onDismiss); dismiss.current = onDismiss;
-  const recentDocuments = recents.filter(recent => !recent.hidden && !documents.some(doc => doc.id === recent.id)).sort((a, b) => b.openedAt - a.openedAt).slice(0, 6);
+  const recentDocuments = recents.filter(recent => !documents.some(doc => doc.id === recent.id)).sort((a, b) => b.openedAt - a.openedAt).slice(0, 6);
 
   useEffect(() => {
     if (open) { setPresent(true); return; }
@@ -66,6 +67,8 @@ export default function DocumentSwitcher({ open, documents, recents, activeKey, 
     const focusOutside = (event: FocusEvent) => {
       if (event.target instanceof Node && event.target !== trigger && !popup.current?.contains(event.target)) dismiss.current();
     };
+    // Opened from the keyboard, focus starts on the current document.
+    if (trigger?.matches(':focus-visible')) (popup.current?.querySelector<HTMLButtonElement>('.document-switcher-row.selected button:not(:disabled)') ?? popup.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus({ preventScroll: true });
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', keyboard, true);
     document.addEventListener('focusin', focusOutside);
@@ -78,12 +81,12 @@ export default function DocumentSwitcher({ open, documents, recents, activeKey, 
     <div className="document-switcher-scroll">
       <div className="document-switcher-label">Abiertos</div>
       {documents.map(doc => <div key={doc.key} className={`document-switcher-row${doc.key === activeKey ? ' selected' : ''}`}>
-        <button className="document-switcher-document" aria-label={`Abrir pestaña ${doc.name}`} aria-current={doc.key === activeKey ? 'page' : undefined} disabled={disabled} onClick={() => onSelect(doc.key)}>
+        <button className="document-switcher-document" aria-label={`Cambiar a ${doc.name}`} aria-current={doc.key === activeKey ? 'page' : undefined} disabled={disabled} onClick={() => onSelect(doc.key)}>
           <span className="document-switcher-file"><FileText size={20} /></span><span className="document-switcher-name"><strong>{doc.name}</strong><small>Página {doc.page} de {doc.pages}</small></span>{doc.key === activeKey && <Check size={17} />}
         </button><button className="document-switcher-close" aria-label={`Cerrar ${doc.name}`} disabled={disabled} onClick={() => onCloseDocument(doc.key)}><X size={17} /></button>
       </div>)}
-      {recentDocuments.length > 0 && <><div className="document-switcher-label recent">Recientes</div>{recentDocuments.map(recent => <button key={recent.id} className="document-switcher-document document-switcher-recent" aria-label={`Abrir reciente ${recent.name}`} disabled={disabled} onClick={() => onRecent(recent)}><span className="document-switcher-file"><FileText size={20} /></span><span className="document-switcher-name"><strong>{recent.name}</strong><small>{recent.pages} {recent.pages === 1 ? 'página' : 'páginas'}</small></span></button>)}</>}
+      {recentDocuments.length > 0 && <><div className="document-switcher-label recent">Recientes</div>{recentDocuments.map(recent => <button key={recent.id} className="document-switcher-document document-switcher-recent" aria-label={`Abrir reciente ${recent.name}`} disabled={disabled} onClick={() => onRecent(recent)}><span className="document-switcher-file"><FileText size={20} /></span><span className="document-switcher-name"><strong>{recent.name}</strong><small>{plural(recent.pages, 'página', 'páginas')}</small></span></button>)}</>}
     </div>
-    <div className="document-switcher-actions"><button onClick={onImport} disabled={disabled}><Plus size={19} /><span>Importar PDF</span></button><button onClick={onLibrary} disabled={disabled}><FolderOpen size={19} /><span>Ver biblioteca</span></button></div>
+    <div className="document-switcher-actions"><button onClick={onImport} disabled={disabled}><Plus size={19} /><span>Abrir PDF</span></button><button onClick={onLibrary} disabled={disabled}><FolderOpen size={19} /><span>Ir a la biblioteca</span></button></div>
   </div>, document.body);
 }

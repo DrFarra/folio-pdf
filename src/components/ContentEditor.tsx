@@ -5,13 +5,14 @@ import { CheckCircle2, LoaderCircle, Move, RotateCcw, ZoomIn, ZoomOut } from 'lu
 import FilePicker from './FilePicker';
 import { assetUrl, pdfAssetSettings } from '../assets';
 import { getDocument } from '../pdf';
+import { errorMessage } from '../errors';
 import { processPdf, readAreaContent, readPageImage } from '../engine/client';
 import type { Area, AreaContentInfo, Operation, PageContentItem } from '../engine/operations.mjs';
 import type { LoadedDocument } from '../types';
 import './ContentEditor.css';
 
 export type ContentEditorKind = 'add-text' | 'replace-text' | 'add-image' | 'replace-image';
-type Props = { doc: LoadedDocument; area: Area; initialItem?: PageContentItem; cancelLabel?: string; kind: ContentEditorKind; active: boolean; busy: boolean; getBytes: () => Promise<Uint8Array>; onApply: (operation: Operation) => Promise<void>; onCancel: () => void; onReset?: () => void };
+type Props = { doc: LoadedDocument; area: Area; initialItem?: PageContentItem; cancelLabel?: string; kind: ContentEditorKind; active: boolean; busy: boolean; getBytes: () => Promise<Uint8Array>; onApply: (operation: Operation) => Promise<void>; onCancel: () => void; onReset?: () => void; onDirtyChange?: (dirty: boolean) => void };
 type ContentIntent = 'edit' | 'duplicate' | 'delete';
 type Box = { x: number; y: number; width: number; height: number };
 type Handle = 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -50,7 +51,7 @@ function boundBox(box: Box, viewport: PageViewport): Box {
 
 /** A draft is always rendered from the original snapshot, never from a preview.
  * PDF coordinates remain authoritative across view rotation, crop and resizing. */
-export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'Cancelar', kind, active, busy, getBytes, onApply, onCancel, onReset }: Props) {
+export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'Cancelar', kind, active, busy, getBytes, onApply, onCancel, onReset, onDirtyChange }: Props) {
   const isText = kind === 'add-text' || kind === 'replace-text';
   const [intent, setIntent] = useState<ContentIntent>('edit');
   const deleting = intent === 'delete';
@@ -68,11 +69,14 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
   const [fontBytes, setFontBytes] = useState<{ name: FontChoice; bytes: Uint8Array } | null>(null);
   const [fontError, setFontError] = useState('');
   const fontCache = useRef(new Map<FontChoice, Uint8Array>());
-  const [size, setSize] = useState(initialItem?.size || 12);
+  const [size, setSize] = useState(initialItem?.size ? rounded(initialItem.size) : 12);
   const [color, setColor] = useState(initialItem?.color || '#202020');
   const [align, setAlign] = useState<'left' | 'center' | 'right'>('left');
-  const [lineHeight, setLineHeight] = useState(initialItem?.lineHeight || 1.25);
+  const [lineHeight, setLineHeight] = useState(initialItem?.lineHeight ? rounded(initialItem.lineHeight) : 1.25);
   const [wrap, setWrap] = useState(true);
+  // A selected element is not a draft until one of its properties changes.
+  const initialFormat = useRef({ text, font, size, color, align, lineHeight, wrap }).current;
+  const originalImage = useRef<{ fit: 'contain' | 'cover' | 'stretch'; opacity: number; rotation: 0 | 90 | 180 | 270 } | null>(null);
   const [zoom, setZoom] = useState<'page' | 'area' | number>(() => initialItem ? 'area' : 'page');
   const inputTouched = useRef(!!initialItem);
   const imageFormatTouched = useRef({ fit: false, opacity: false, rotation: false });
@@ -99,12 +103,12 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
 
   useEffect(() => {
     let alive = true;
-    void getBytesRef.current().then(bytes => { if (alive) setSnapshot(new Uint8Array(bytes)); }).catch(error => { if (alive) setSourceError(error.message); });
+    void getBytesRef.current().then(bytes => { if (alive) setSnapshot(new Uint8Array(bytes)); }).catch(error => { if (alive) setSourceError(errorMessage(error)); });
     return () => { alive = false; imageSequence.current++; if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); };
   }, []);
   useEffect(() => {
     let alive = true;
-    void doc.pdf.getPage(area.page).then(page => { if (alive) setViewport(page.getViewport({ scale: 1 })); }).catch(error => { if (alive) setSourceError(error.message); });
+    void doc.pdf.getPage(area.page).then(page => { if (alive) setViewport(page.getViewport({ scale: 1 })); }).catch(error => { if (alive) setSourceError(errorMessage(error)); });
     return () => { alive = false; };
   }, [doc.pdf, area.page]);
   useEffect(() => {
@@ -134,7 +138,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
       if (!response.ok) throw new Error('No se pudo cargar la fuente.');
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (!controller.signal.aborted) { fontCache.current.set(font, bytes); setFontBytes({ name: font, bytes }); }
-    }).catch(error => { if (!controller.signal.aborted) setFontError(error.message); });
+    }).catch(error => { if (!controller.signal.aborted) setFontError(errorMessage(error)); });
     return () => controller.abort();
   }, [font, isText]);
   useEffect(() => {
@@ -145,7 +149,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
         setSuggestion(info);
         if (!inputTouched.current && info.text && !info.rotated) { useInfo(info); inputTouched.current = true; }
       }
-    }).catch(error => { if (!controller.signal.aborted) setSuggestionError(error.message); }).finally(() => { if (!controller.signal.aborted) setReadingArea(false); });
+    }).catch(error => { if (!controller.signal.aborted) setSuggestionError(errorMessage(error)); }).finally(() => { if (!controller.signal.aborted) setReadingArea(false); });
     return () => controller.abort();
   }, [snapshot, kind, doc.canCopy, doc.password, area.page, sourceRect]);
   useEffect(() => {
@@ -155,27 +159,32 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
     setImageLoading(true); setInputError('');
     void readPageImage(snapshot, area.page, initialItem.id, doc.password, controller.signal).then(info => {
       if (controller.signal.aborted || request !== imageSequence.current) return;
-      const bytes = new Uint8Array(info.bytes), url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+      const bytes = new Uint8Array(info.bytes), url = URL.createObjectURL(new Blob([bytes], { type: info.type }));
       if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); imageUrl.current = url;
       setImage({ bytes, url, name: 'Imagen original', width: info.width, height: info.height });
+      originalImage.current = { fit: 'stretch', opacity: rounded(info.opacity * 100), rotation: info.rotation };
       if (!imageFormatTouched.current.fit) setFit('stretch');
       if (!imageFormatTouched.current.opacity) setOpacity(rounded(info.opacity * 100));
       if (!imageFormatTouched.current.rotation) setRotation(info.rotation);
-    }).catch(error => { if (!controller.signal.aborted && request === imageSequence.current) setInputError((error as Error).message); }).finally(() => { if (!controller.signal.aborted && request === imageSequence.current) setImageLoading(false); });
+    }).catch(error => { if (!controller.signal.aborted && request === imageSequence.current) setInputError(errorMessage(error)); }).finally(() => { if (!controller.signal.aborted && request === imageSequence.current) setImageLoading(false); });
     return () => controller.abort();
   }, [snapshot, kind, initialItem, doc.canCopy, doc.password, area.page]);
 
   const validRect = rect.every(Number.isFinite) && rect[2] - rect[0] >= .1 && rect[3] - rect[1] >= .1;
   const fontReady = !font.startsWith('dm-sans') || fontBytes?.name === font;
   const validation = deleting ? '' : !validRect ? 'Selecciona un área válida.' : isText ? !text.trim() ? 'Escribe el texto que quieres colocar.' : !Number.isFinite(size) || size < 4 || size > 200 ? 'El tamaño debe estar entre 4 y 200 puntos.' : !Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3 ? 'El interlineado debe estar entre 0,8 y 3.' : '' : !image ? 'Elige una imagen PNG o JPEG.' : !Number.isFinite(opacity) || opacity < 0 || opacity > 100 ? 'La opacidad debe estar entre 0 y 100 %.' : '';
+  const dirty = !initialItem || intent !== 'edit' || rect.some((value, index) => Math.abs(value - sourceRect[index]) > .01) || (isText
+    ? text !== initialFormat.text || font !== initialFormat.font || size !== initialFormat.size || color.toLowerCase() !== initialFormat.color.toLowerCase() || align !== initialFormat.align || lineHeight !== initialFormat.lineHeight || wrap !== initialFormat.wrap
+    : manualImageChosen.current || !!originalImage.current && (fit !== originalImage.current.fit || opacity !== originalImage.current.opacity || rotation !== originalImage.current.rotation));
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   const operation = useMemo<Operation | null>(() => {
     if (deleting) return initialItem ? { operation: 'remove-content', page: area.page, id: initialItem.id, kind: initialItem.kind, rect: sourceRect } : null;
-    if (validation || isText && !fontReady) return null;
-    if (isText) return { operation: intent === 'duplicate' ? 'add-text' : kind as 'add-text' | 'replace-text', page: area.page, rect, ...(replacing ? { sourceRect } : {}), text, size, color, align, lineHeight, wrap,
+    if (!dirty || validation || isText && !fontReady) return null;
+    if (isText) return { operation: intent === 'duplicate' ? 'add-text' : kind as 'add-text' | 'replace-text', page: area.page, rect, ...(replacing ? { sourceRect, ...(initialItem ? { sourceId: initialItem.id } : {}) } : {}), text, size, color, align, lineHeight, wrap,
       ...(initialItem?.baselineOffset !== undefined && initialItem.size ? { baselineOffset: initialItem.baselineOffset * size / initialItem.size } : {}),
       ...(font.startsWith('dm-sans') ? { font: fontBytes!.bytes } : { fontName: font }) };
     return { operation: intent === 'duplicate' ? 'add-image' : kind as 'add-image' | 'replace-image', page: area.page, rect, ...(replacing ? { sourceRect } : {}), image: image!.bytes, fit, opacity: opacity / 100, rotation };
-  }, [intent, deleting, kind, area.page, rect, sourceRect, text, size, color, align, lineHeight, wrap, font, fontBytes, image, fit, opacity, rotation, replacing, isText, validation, fontReady, initialItem]);
+  }, [intent, deleting, dirty, kind, area.page, rect, sourceRect, text, size, color, align, lineHeight, wrap, font, fontBytes, image, fit, opacity, rotation, replacing, isText, validation, fontReady, initialItem]);
   const draftKey = JSON.stringify(deleting ? { intent, id: initialItem?.id, sourceRect } : { intent, rect, text, size, color, align, lineHeight, wrap, font, image: image?.url, fit, opacity, rotation, fontReady, validation });
   const renderKey = draftKey + ':' + hostSize.width + ':' + hostSize.height + ':' + zoom;
   const previewReady = previewResult?.key === renderKey && !previewResult.error && !dragging;
@@ -195,7 +204,13 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
       void (async () => {
         try {
           const previewOperation = operation && { ...operation, page: previewBase.page } as Operation;
-          const bytes = previewOperation ? await processPdf(previewBase.bytes, previewOperation, doc.password, controller.signal) : new Uint8Array(previewBase.bytes);
+          let bytes: Uint8Array, failure: string | undefined;
+          try { bytes = previewOperation ? await processPdf(previewBase.bytes, previewOperation, doc.password, controller.signal) : new Uint8Array(previewBase.bytes); }
+          catch (error) {
+            // Show the unchanged page, never the result of an earlier draft.
+            if (controller.signal.aborted) throw error;
+            failure = errorMessage(error); bytes = new Uint8Array(previewBase.bytes);
+          }
           controller.signal.throwIfAborted();
           loading = getDocument({ ...pdfAssetSettings(), data: new Uint8Array(bytes), password: doc.password });
           const pdf = await loading.promise; controller.signal.throwIfAborted();
@@ -212,11 +227,11 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
             if (generation !== sequence.current || !canvas.current) return;
             canvas.current.width = surface.width; canvas.current.height = surface.height;
             canvas.current.getContext('2d')!.drawImage(surface, 0, 0);
-            setGeometry({ width: view.width, height: view.height, scale }); setPreviewResult({ key: renderKey });
+            setGeometry({ width: view.width, height: view.height, scale }); setPreviewResult({ key: renderKey, ...(failure ? { error: failure } : {}) });
             if (zoom === 'area') requestAnimationFrame(() => { if (host.current) { host.current.scrollLeft = (areaBox.x + areaBox.width / 2) * scale - host.current.clientWidth / 2 + 16; host.current.scrollTop = (areaBox.y + areaBox.height / 2) * scale - host.current.clientHeight / 2 + 16; } });
           } finally { surface.width = 0; surface.height = 0; }
         } catch (error) {
-          if (!controller.signal.aborted && generation === sequence.current) setPreviewResult({ key: renderKey, error: (error as Error).message });
+          if (!controller.signal.aborted && generation === sequence.current) setPreviewResult({ key: renderKey, error: errorMessage(error) });
         } finally {
           controller.signal.removeEventListener('abort', abort);
           if (loading) await loading.destroy();
@@ -295,7 +310,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
       if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); imageUrl.current = url;
       setImage({ bytes, url, name: file.name, width: element.naturalWidth, height: element.naturalHeight });
       if (!imageFormatTouched.current.fit) setFit('contain');
-    } catch (error) { if (url) URL.revokeObjectURL(url); if (request === imageSequence.current) setInputError((error as Error).message); }
+    } catch (error) { if (url) URL.revokeObjectURL(url); if (request === imageSequence.current) setInputError(errorMessage(error, 'No se pudo leer la imagen. Elige otro archivo PNG o JPEG.')); }
     finally { if (request === imageSequence.current) setImageLoading(false); }
   }
   function useSuggestion() {
@@ -328,11 +343,12 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
         </div>
         {!geometry.width && <div className="content-preview-placeholder"><LoaderCircle className="spin" size={22} />Preparando página…</div>}
         {!previewReady && !previewError && !sourceError && <div className="content-preview-badge" role="status"><LoaderCircle className="spin" size={14} />Actualizando vista previa…</div>}
+        {previewError && geometry.width > 0 && <div className="content-preview-badge">Se muestra la página sin cambios.</div>}
       </div>
       </div>
       <div className="content-inspector">
         <div className="content-inspector-top">
-          <header className="content-inspector-heading"><div><span className="content-inspector-eyebrow">Página {area.page}{!initialItem && ' · Nueva área'}</span><h3>{isText ? 'Texto' : 'Imagen'}</h3></div>{initialItem && onReset && <button type="button" className="content-reset" aria-label="Restablecer" title="Restablecer selección original" disabled={busy || dragging} onClick={onReset}><RotateCcw size={17} aria-hidden="true" /></button>}{(!initialItem || intent !== 'edit') && <p>{deleting ? 'Revisa la eliminación antes de aplicarla.' : intent === 'duplicate' ? 'Crea una copia y conserva el original.' : 'Añade contenido a esta página.'}</p>}</header>
+          <header className="content-inspector-heading"><div><span className="content-inspector-eyebrow">Página {area.page}{!initialItem && ' · Nueva área'}</span><h3>{isText ? 'Texto' : 'Imagen'}</h3></div>{initialItem && onReset && <button type="button" className="content-reset" aria-label="Restablecer" title="Restablecer selección original" disabled={busy || dragging} onClick={onReset}><RotateCcw size={17} aria-hidden="true" /></button>}{intent === 'duplicate' && <p>Crea una copia y conserva el original.</p>}</header>
         {initialItem && <div className="content-editor-actions" role="group" aria-label="Acciones del elemento">
           <button type="button" className="secondary-button" aria-pressed={intent === 'edit'} disabled={busy || dragging || !viewport} onClick={() => changeIntent('edit')}>Editar</button>
           <button type="button" className="secondary-button" aria-pressed={intent === 'duplicate'} disabled={busy || dragging || !viewport} onClick={() => changeIntent('duplicate')}>Duplicar</button>
@@ -340,12 +356,12 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
         </div>}
         </div>
         <div className="content-inspector-scroll">
-        {deleting ? <p className="content-editor-delete-note">Se eliminará {isText ? 'el texto seleccionado' : 'la imagen seleccionada'}. Revisa la vista previa y pulsa Aplicar eliminación. Puedes deshacer después de aplicarla.</p> : <>
-        {!initialItem && <p className="content-editor-help"><Move size={15} aria-hidden="true" />Mueve el área y ajusta sus esquinas. Página {area.page}.</p>}
-        {intent === 'duplicate' ? <p className="content-editor-note">Arrastra el marco azul para colocar la copia.</p> : replacing && !initialItem && <p className="content-editor-note">{isText ? 'Se quita el texto del área marcada con línea discontinua. Puedes mover el texto nuevo.' : 'Se quitan sólo los píxeles de imagen del área marcada con línea discontinua. Otras imágenes solapadas podrían verse afectadas. Puedes mover la imagen nueva.'}</p>}
+        {deleting ? <p className="content-editor-delete-note">Se eliminará {isText ? 'el texto seleccionado' : 'la imagen seleccionada'}. Puedes deshacerlo después.</p> : <>
+        {!initialItem && <p className="content-editor-help"><Move size={15} aria-hidden="true" />Mueve el área y ajusta sus esquinas.</p>}
+        {intent === 'duplicate' ? <p className="content-editor-note">Arrastra el marco azul para colocar la copia.</p> : replacing && !initialItem && <p className="content-editor-note">{isText ? 'Se quita el texto que queda dentro del área marcada con línea discontinua. Puedes mover el texto nuevo.' : 'Se quitan solo los píxeles de imagen del área marcada con línea discontinua. Otras imágenes solapadas podrían verse afectadas. Puedes mover la imagen nueva.'}</p>}
         <fieldset disabled={busy} onChangeCapture={() => { inputTouched.current = true; }}>
           {isText ? <>
-            <label className="content-text-input">Contenido<textarea aria-label="Texto" value={text} maxLength={50000} onChange={event => { inputTouched.current = true; setText(event.target.value); }} rows={initialItem ? 3 : 5} placeholder="Escribe el texto" /></label>
+            <label className="content-text-input">Texto<textarea aria-label="Texto" value={text} maxLength={50000} onChange={event => { inputTouched.current = true; setText(event.target.value); }} rows={initialItem ? 3 : 5} placeholder="Escribe el texto" /></label>
             {!initialItem && kind === 'replace-text' && doc.canCopy && <div className="content-suggestion"><button type="button" className="secondary-button" disabled={readingArea || !suggestion?.text} onClick={useSuggestion}>{readingArea ? 'Leyendo texto del área…' : 'Usar texto del área'}</button>{suggestion && <p>{suggestion.text ? 'Fuente original: ' + (suggestion.fontName || 'no identificada') + '.' : 'No se encontró texto extraíble en esta área.'}{suggestion.mixedStyle ? ' El área mezcla estilos; revisa el formato.' : ''}{suggestion.rotated ? ' El texto original tiene rotación.' : ''}</p>}{suggestionError && <p role="alert">{suggestionError}</p>}</div>}
             <section className="content-property-section"><h4>Formato</h4>
             <label>Fuente<select aria-label="Fuente" value={font} onChange={event => { inputTouched.current = true; setFont(event.target.value); }}>{fontChoices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -378,6 +394,6 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
         </div>
       </div>
     </div>
-    <div className="content-editor-footer"><span className={'content-footer-status' + (failureMessage ? ' content-footer-error' : '')} role={failureMessage ? 'alert' : 'status'}>{previewReady && operation && !failureMessage && <CheckCircle2 size={16} aria-hidden="true" />}{busy ? 'Aplicando cambios…' : failureMessage || (!deleting && imageLoading ? 'Leyendo imagen…' : previewReady && operation ? 'Vista previa lista. Estos cambios aún no se han aplicado.' : validation || 'Preparando vista previa…')}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{cancelLabel}</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}{deleting ? 'Aplicar eliminación' : intent === 'duplicate' ? 'Aplicar duplicación' : 'Aplicar cambios'}</button></div>
+    <div className="content-editor-footer"><span className={'content-footer-status' + (failureMessage ? ' content-footer-error' : '')} role={failureMessage ? 'alert' : 'status'}>{previewReady && operation && !failureMessage && <CheckCircle2 size={16} aria-hidden="true" />}{busy ? 'Aplicando cambios…' : failureMessage || (!deleting && imageLoading ? 'Leyendo imagen…' : !dirty && !validation ? 'Sin cambios.' : previewReady && operation ? 'Vista previa lista.' : validation || 'Preparando vista previa…')}</span><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{cancelLabel}</button><button type="button" className="primary-button" disabled={!canApply} onClick={() => { if (canApply) void onApply(operation!); }}>{busy && <LoaderCircle size={16} className="spin" />}{deleting ? 'Aplicar eliminación' : intent === 'duplicate' ? 'Aplicar duplicación' : 'Aplicar cambios'}</button></div>
   </div>;
 }

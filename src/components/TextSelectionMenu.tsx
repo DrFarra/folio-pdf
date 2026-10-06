@@ -53,7 +53,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
 
   useEffect(() => {
     if (!enabled) { setSelected(null); return; }
-    let frame = 0;
+    let frame = 0, settle: ReturnType<typeof setTimeout> | undefined, escaped = false;
     const update = () => {
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => { frame = 0; setSelected(moving.current ? null : selectionDetails()); });
@@ -67,35 +67,40 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     // WebKit cancels a pointer when its native word-selection handles take
     // over. The Range remains valid and must still expose Folio's actions.
     const cancel = () => { moving.current = false; update(); };
-    const dismiss = () => { setSelected(null); if (frame) { cancelAnimationFrame(frame); frame = 0; } };
+    const dismiss = () => { setSelected(null); clearTimeout(settle); if (frame) { cancelAnimationFrame(frame); frame = 0; } };
+    // Hide while the page moves and bring the menu back next to a selection
+    // that is still visible once scrolling or zooming settles.
+    const moved = () => { dismiss(); if (!escaped) settle = setTimeout(update, 150); };
+    const selectionChange = () => { escaped = false; update(); };
     const keyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { dismiss(); return; }
-      if ((event.ctrlKey || event.metaKey) && ['+', '=', '-'].includes(event.key)) dismiss();
+      if (event.key === 'Escape') { escaped = true; dismiss(); return; }
+      if ((event.ctrlKey || event.metaKey) && ['+', '=', '-'].includes(event.key)) moved();
     };
-    document.addEventListener('selectionchange', update);
+    document.addEventListener('selectionchange', selectionChange);
     document.addEventListener('pointerdown', pointerDown, true);
     document.addEventListener('pointerup', pointerUp);
     document.addEventListener('mouseup', pointerUp);
     document.addEventListener('touchend', pointerUp, { passive: true });
     document.addEventListener('pointercancel', cancel);
-    document.addEventListener('scroll', dismiss, true);
-    document.addEventListener('wheel', dismiss, { passive: true });
+    document.addEventListener('scroll', moved, true);
+    document.addEventListener('wheel', moved, { passive: true });
     document.addEventListener('keydown', keyDown);
-    window.addEventListener('resize', dismiss);
+    window.addEventListener('resize', moved);
     window.addEventListener('folio:text-selection-finished', pointerUp);
     window.addEventListener('folio:pinch-start', dismiss);
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      document.removeEventListener('selectionchange', update);
+      clearTimeout(settle);
+      document.removeEventListener('selectionchange', selectionChange);
       document.removeEventListener('pointerdown', pointerDown, true);
       document.removeEventListener('pointerup', pointerUp);
       document.removeEventListener('mouseup', pointerUp);
       document.removeEventListener('touchend', pointerUp);
       document.removeEventListener('pointercancel', cancel);
-      document.removeEventListener('scroll', dismiss, true);
-      document.removeEventListener('wheel', dismiss);
+      document.removeEventListener('scroll', moved, true);
+      document.removeEventListener('wheel', moved);
       document.removeEventListener('keydown', keyDown);
-      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('resize', moved);
       window.removeEventListener('folio:text-selection-finished', pointerUp);
       window.removeEventListener('folio:pinch-start', dismiss);
     };
@@ -149,7 +154,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowLeft' ? buttons.length - 1 : 1)) % buttons.length;
     buttons[next]?.focus({ preventScroll: true });
   }}>
-    <button aria-label="Copiar" title="Copiar texto" onPointerUp={event => touchAction(event, () => void copy())} onTouchEnd={event => touchAction(event, () => void copy())} onClick={() => clickAction(() => void copy())}><Copy size={15} /><span>Copiar</span></button>
-    {canAnnotate && <><button aria-label="Resaltar" title="Resaltar texto" onPointerUp={event => touchAction(event, highlight)} onTouchEnd={event => touchAction(event, highlight)} onClick={() => clickAction(highlight)}><Highlighter size={15} /><span>Resaltar</span><i style={{ backgroundColor: color }} /></button><button aria-label="Comentar" title="Comentar selección" onPointerUp={event => touchAction(event, comment)} onTouchEnd={event => touchAction(event, comment)} onClick={() => clickAction(comment)}><MessageSquare size={15} /><span>Comentar</span></button></>}
+    <button aria-label="Copiar" onPointerUp={event => touchAction(event, () => void copy())} onTouchEnd={event => touchAction(event, () => void copy())} onClick={() => clickAction(() => void copy())}><Copy size={15} /><span>Copiar</span></button>
+    {canAnnotate && <><button aria-label="Resaltar" onPointerUp={event => touchAction(event, highlight)} onTouchEnd={event => touchAction(event, highlight)} onClick={() => clickAction(highlight)}><Highlighter size={15} /><span>Resaltar</span><i style={{ backgroundColor: color }} /></button><button aria-label="Comentar" onPointerUp={event => touchAction(event, comment)} onTouchEnd={event => touchAction(event, comment)} onClick={() => clickAction(comment)}><MessageSquare size={15} /><span>Comentar</span></button></>}
   </div>, document.body);
 }

@@ -182,7 +182,13 @@ def editor_validation(logs, frontend):
     }
 
 
-def source_build(version):
+AD_HOC = '''This build uses an ad-hoc signature. It is not notarized and does not claim
+Apple-verified publisher identity. Opening a downloaded copy may require
+approval in macOS Privacy & Security.'''
+SIGNED = '''This build is signed with a Developer ID certificate and notarized by Apple.'''
+
+
+def source_build(version, notarized):
     return f'''Folio {version} — macOS source and build information
 
 Application source: folio-{version}-fuente.zip, supplied with this Mac delivery.
@@ -198,10 +204,7 @@ targets, then builds a universal application and DMG for Intel and Apple Silicon
 Configuration: src-tauri/tauri.macos.conf.json; deployment target macOS 14.0.
 Actual verified build and smoke evidence are in evidence/ and docs/.
 
-This development build uses an ad-hoc signature. It is not notarized and does
-not claim Apple-verified publisher identity. Opening a downloaded copy may
-require approval in macOS Privacy & Security. No Apple account is required
-to produce the ad-hoc build. See README_Mac.md for installation instructions.
+{SIGNED if notarized else AD_HOC} See README_Mac.md for installation instructions.
 
 MuPDF.js 1.28.1 is used without modification from its published npm package.
 Complete official C, TypeScript, WASM and third-party build source:
@@ -225,39 +228,25 @@ available when redistributing the application as required by their licenses.
 '''
 
 
-def mac_readme(version):
+def mac_readme(version, notarized):
+    gatekeeper = '''
+macOS puede pedir permiso la primera vez que abres Folio. Si no se abre, ve a
+**Ajustes del Sistema → Privacidad y seguridad**, pulsa **Abrir igualmente** y
+confirma. [Instrucciones de Apple](https://support.apple.com/102445).
+'''
     return f'''# Folio {version} para Mac
 
-Aplicación universal para Mac con procesador Intel o Apple Silicon, desde macOS 14.
+Requiere macOS 14 o posterior, en un Mac con Intel o Apple Silicon.
 
 1. Abre el archivo DMG.
 2. Arrastra **Folio** a **Aplicaciones**.
-3. Abre Folio desde Aplicaciones y elige tus PDFs con el botón **+**.
+3. Abre Folio y elige un PDF, o arrástralo a su ventana.
+{'' if notarized else gatekeeper}
+Folio conserva tus anotaciones en este Mac mientras trabajas. **Guardar** las
+escribe en el PDF y **Guardar una copia…** crea otro archivo.
 
-Esta copia de desarrollo tiene firma ad hoc y no está notarizada. Si macOS
-pide autorización, después de intentar abrirla entra en **Ajustes del Sistema →
-Privacidad y seguridad → Abrir igualmente** y confirma la apertura de Folio.
-[Instrucciones de Apple](https://support.apple.com/102445).
-
-También se incluye una copia de la aplicación en un ZIP creado con `ditto`,
-conservando permisos y enlaces del bundle. La instalación habitual utiliza el DMG.
-
-La fuente correspondiente está en `folio-{version}-fuente.zip`. Para compilar
-en otro Mac: instala Node.js 22+, Rust y Xcode Command Line Tools, ejecuta
-`npm ci` y después `npm run desktop:macos`. Lee `SOURCE-BUILD.txt` para conocer
-las dependencias y sus licencias.
-
-Las comprobaciones de esta entrega están en `evidence` y `docs`. Las pruebas de
-Windows no se presentan como validación de macOS; el informe Mac identifica las
-comprobaciones realizadas. Impresora física, Gatekeeper tras una descarga y
-pruebas completas en ambos tipos de Mac requieren su validación correspondiente.
-
-El motor del editor se comprueba con 48 casos de PDF real y sus píxeles. Sus
-acciones, edición integrada y diseño se comprueban con 17 casos en WebKit
-mediante la interfaz HTTP de producción, incluidos dos tamaños de teléfono
-simulados. Estas comprobaciones del editor no son pruebas de sus acciones en
-la aplicación nativa WKWebView ni en un iPhone físico. El manifiesto separa
-estos resultados de las pruebas nativas de apertura, selección y búsqueda.
+La fuente está en `folio-{version}-fuente.zip`; `SOURCE-BUILD.txt` explica cómo
+compilarla y recoge las licencias de sus dependencias.
 '''
 
 
@@ -328,8 +317,11 @@ def main():
     require(set(architectures) == {'arm64', 'x86_64'}, 'Folio.app no contiene ambas arquitecturas: Intel y Apple Silicon.')
     command(['codesign', '--verify', '--deep', '--strict', '--verbose=2', str(app)])
     signature = command(['codesign', '--display', '--verbose=4', str(app)])
-    require('Signature=adhoc' in signature or re.search(r'flags=.*\badhoc\b', signature),
-            'El flujo de entrega requiere una firma ad hoc verificada.')
+    ad_hoc = 'Signature=adhoc' in signature or bool(re.search(r'flags=.*\badhoc\b', signature))
+    require(ad_hoc or 'Authority=Developer ID Application:' in signature,
+            'Folio.app debe tener firma ad hoc o de Developer ID.')
+    notarized = not ad_hoc and subprocess.run(['xcrun', 'stapler', 'validate', str(app)], capture_output=True).returncode == 0
+    require(ad_hoc or notarized, 'La aplicación con firma Developer ID no está notarizada. Define las credenciales APPLE_API_* al compilar.')
     candidates = sorted(path for path in (build / 'bundle/dmg').glob('*.dmg')
                         if version in path.name and 'universal' in path.name.lower())
     require(len(candidates) == 1, 'Debe existir un único DMG universal de esta versión en bundle/dmg.')
@@ -377,7 +369,7 @@ def main():
     shutil.copy2(dmg, output / dmg.name)
     for filename in ('LICENSE', 'THIRD-PARTY-NOTICES.txt', 'dependency-licenses.json'):
         shutil.copy2(ROOT / filename, output / filename)
-    instructions, readme = source_build(version), mac_readme(version)
+    instructions, readme = source_build(version, notarized), mac_readme(version, notarized)
     (output / 'SOURCE-BUILD.txt').write_text(instructions, encoding='utf-8')
     (output / 'README_Mac.md').write_text(readme, encoding='utf-8')
     source = output / f'folio-{version}-fuente.zip'
@@ -398,14 +390,14 @@ def main():
         (output / 'docs/acceptance-macos.md').write_text(
             f'# Aceptación Mac de Folio {version}\n\n'
             'El empaquetador verificó versión, identificador de producción, ambas arquitecturas, '
-            'firma ad hoc, integridad del DMG y conservación del ejecutable en el ZIP de la aplicación. '
+            'firma, integridad del DMG y conservación del ejecutable en el ZIP de la aplicación. '
             'El informe nativo `evidence/native-smoke-macos.json` pasó. '
             'Este resultado no certifica todas las funciones en ambos tipos de Mac ni una impresora física.\n', encoding='utf-8')
     environment = {'platform': 'darwin', 'macOS': command(['sw_vers', '-productVersion']),
                    'sdk': command(['xcrun', '--sdk', 'macosx', '--show-sdk-version']),
                    'rust': command(['rustc', '-V']), 'node': command(['node', '-v']),
                    'python': sys.version.split()[0], 'architectures': architectures,
-                   'signing': 'ad-hoc', 'notarized': False}
+                   'signing': 'ad-hoc' if ad_hoc else 'Developer ID', 'notarized': notarized}
     (output / 'docs/build-environment-macos.json').write_text(json.dumps(environment, indent=2), encoding='utf-8')
     prefix = f'folio-{version}-macos'
     complete = output / f'{prefix}-entrega.zip'
@@ -414,7 +406,7 @@ def main():
     (output / 'SHA256SUMS.txt').write_text(''.join(f"{record['sha256']}  {record['path']}\n" for record in records), encoding='utf-8')
     manifest = {'version': version, 'commit': commit, 'frontend': frontend, 'validation': validation,
                 'platform': 'macOS', 'architectures': architectures,
-                'identifier': 'org.folio.pdf', 'adHocSigned': True, 'notarized': False,
+                'identifier': 'org.folio.pdf', 'adHocSigned': ad_hoc, 'notarized': notarized,
                 'macOSFullAcceptanceComplete': False, 'nativeSmokePassed': True,
                 'dmgVerified': True, 'dmgPayloadMatchesApplication': True, 'applicationExecutableSha256': sha256(executable),
                 'sourceFileCount': len(source_files), 'sourceFiles': source_files,

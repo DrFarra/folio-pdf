@@ -248,7 +248,7 @@ await check('content-normalization-keeps-passwords-encryption-and-prior-edits', 
     assert(operateDocument(bytes, { operation: 'text' }, 'reader')[0].includes('FIRST PROTECTED'));
   }
   assert(operateDocument(compressed, { operation: 'text' }, 'reader')[0].includes('SECOND PROTECTED'));
-  assert.throws(() => operateDocument(compressed, { operation: 'text' }, 'wrong'), /contraseña correcta/);
+  assert.throws(() => operateDocument(compressed, { operation: 'text' }, 'wrong'), /Escribe su contraseña/);
   assert.equal(hash(protectedBytes), before);
   return { encryptedOutput: true, originalUserPasswordRetained: true, wrongPasswordRejected: true, sameFontRepeatedEditsRetained: true, sourceUnchanged: true };
 });
@@ -339,10 +339,11 @@ await check('client-area-inspection-and-preview-cancel-before-or-during-work', a
     const before = hash(original), pre = new AbortController(); pre.abort();
     await assert.rejects(client.readAreaContent(original, { page: 1, rect: [0, 0, 100, 100] }, undefined, pre.signal), error => error.name === 'AbortError'); assert.equal(workers.length, 0);
     const info = client.readAreaContent(original, { page: 1, rect: [15, 238, 135, 258] });
-    const worker = workers.at(-1); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); assert((await info).text.includes('ORIGINAL SECRET')); assert(worker.terminated);
+    const worker = workers.at(-1); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); assert((await info).text.includes('ORIGINAL SECRET')); assert(!worker.terminated);
     const abort = new AbortController(), promise = client.processPdf(original, { operation: 'add-text', page: 1, rect: [20, 40, 300, 140], text: 'Preview', size: 18, color: '#000000' }, undefined, abort.signal);
-    abort.abort(); await assert.rejects(promise, error => error.name === 'AbortError'); assert(workers.at(-1).terminated); assert.equal(hash(original), before);
-    return { alreadyAbortedStartsNoWorker: true, typedAreaResult: true, activePreviewWorkerTerminated: true, sourceUnchanged: true };
+    assert.equal(workers.at(-1), worker, 'The preview reuses the idle engine worker.');
+    abort.abort(); await assert.rejects(promise, error => error.name === 'AbortError'); assert(worker.terminated); assert.equal(hash(original), before);
+    return { alreadyAbortedStartsNoWorker: true, typedAreaResult: true, idleWorkerReused: true, activePreviewWorkerTerminated: true, sourceUnchanged: true };
   } finally { globalThis.Worker = priorWorker; }
 });
 

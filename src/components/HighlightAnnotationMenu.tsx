@@ -5,7 +5,7 @@ import HighlightColorPicker from './HighlightColorPicker';
 import { visibleBounds } from '../mobile';
 import './HighlightAnnotationMenu.css';
 
-type Props = { x: number; y: number; onRemove: () => void; onClose: () => void; color?: string; onColorChange?: (color: string) => void; onComment?: () => void };
+type Props = { x: number; y: number; onRemove: () => void; onClose: (restoreFocus?: unknown) => void; color?: string; onColorChange?: (color: string) => void; onComment?: () => void };
 
 export default function HighlightAnnotationMenu({ x, y, onRemove, onClose, color, onColorChange, onComment }: Props) {
   const menu = useRef<HTMLDivElement>(null);
@@ -21,7 +21,7 @@ export default function HighlightAnnotationMenu({ x, y, onRemove, onClose, color
   useEffect(() => {
     const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node) && !(event.target instanceof Element && event.target.closest('.highlight-color-palette'))) onClose(); };
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(true); }
     };
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key, true);

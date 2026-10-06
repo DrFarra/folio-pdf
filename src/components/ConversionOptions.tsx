@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileOutput, LoaderCircle } from 'lucide-react';
 import type { LoadedDocument } from '../types';
 import { conversionPages, DEFAULT_PNG_EXPORT_OPTIONS, pngPageDimensions } from '../conversion';
+import { errorMessage } from '../errors';
+import { plural } from '../pdf';
 import type { ConversionFormat, ConversionScope, PngExportOptions } from '../conversion';
 import './ConversionOptions.css';
 
@@ -31,7 +33,7 @@ export default function ConversionOptions({ doc, page, busy, onConvert }: Props)
     void doc.pdf.getPage(firstPage).then(value => {
       const view = value.getViewport({ scale: 1 });
       if (alive) setSample({ page: firstPage, width: view.width, height: view.height });
-    }).catch(error => { if (alive) setSampleError(error.message || 'No se pudo leer el tamaño de la página.'); });
+    }).catch(error => { if (alive) setSampleError(errorMessage(error, 'No se pudo leer el tamaño de la página.')); });
     return () => { alive = false; };
   }, [doc.pdf, firstPage, format]);
   const estimate = useMemo(() => {
@@ -52,7 +54,7 @@ export default function ConversionOptions({ doc, page, busy, onConvert }: Props)
         </select></label>
         <label>Páginas a exportar<select aria-label="Páginas a exportar" value={scope} onChange={event => setScope(event.target.value as ConversionScope)}>
           <option value="current">Página actual ({page})</option>
-          <option value="all">Todas ({doc.pdf.numPages} páginas)</option>
+          <option value="all">Todas ({plural(doc.pdf.numPages, 'página', 'páginas')})</option>
           <option value="range">Un intervalo o varias páginas</option>
         </select></label>
         {scope === 'range' && <label>Intervalo<input aria-label="Intervalo de páginas" value={range} onChange={event => setRange(event.target.value)} placeholder="1-3, 6" maxLength={50_000} /><small>Usa números de página del archivo, por ejemplo 1-3, 6.</small></label>}
@@ -69,18 +71,17 @@ export default function ConversionOptions({ doc, page, busy, onConvert }: Props)
             <option value="white">Blanco</option><option value="transparent">Transparente</option>
           </select></label>
         </div>
-        <p className="conversion-description">PNG sin pérdida. Una imagen por página, dentro de un ZIP. A mayor resolución, más detalle y archivos más grandes.</p>
+        <p className="conversion-description">Se guarda una imagen PNG por página en un archivo ZIP.</p>
         {png.background === 'transparent' && <p className="conversion-description">El fondo transparente conserva los fondos blancos que ya estén dibujados dentro del PDF.</p>}
         {estimate.label && <p className="conversion-dimensions">{estimate.label}</p>}
-        <p className="conversion-limits">Se comprueban todas las páginas antes de exportar. Máximo 16 millones de píxeles por página y 110 MiB por ZIP; la resolución elegida se conserva.</p>
       </> : <p className="conversion-description">{format === 'docx' ? 'Exporta el texto editable con separación de páginas. Las imágenes, tablas y distribución original no se trasladan a Word.' : 'Extrae el texto de las páginas elegidas, en su orden. Los PDF escaneados necesitan reconocer texto con OCR primero.'}</p>}
     </fieldset>
     {error && <p className="operation-error" role="alert">{error}</p>}
     <div className="operation-actions conversion-actions">
-      <span className="conversion-selection-summary" role="status" aria-live="polite">{selection.pages.length ? `${selection.pages.length} ${selection.pages.length === 1 ? 'página seleccionada' : 'páginas seleccionadas'}` : 'Sin páginas válidas'}</span>
+      <span className="conversion-selection-summary" role="status" aria-live="polite">{selection.pages.length ? plural(selection.pages.length, 'página seleccionada', 'páginas seleccionadas') : 'Sin páginas válidas'}</span>
       <button type="button" className="primary-button" disabled={busy || !doc.canCopy || !!error || !selection.pages.length} onClick={() => {
         if (!busy && doc.canCopy && !error && selection.pages.length) onConvert(format, [...selection.pages], format === 'png' ? { ...png } : undefined);
-      }}>{busy ? <LoaderCircle size={16} className="spin" /> : <FileOutput size={16} />}Exportar{format === 'png' ? ' PNG' : format === 'docx' ? ' Word' : ' texto'}</button>
+      }}>{busy ? <LoaderCircle size={16} className="spin" /> : <FileOutput size={16} />}Convertir a {format === 'png' ? 'PNG' : format === 'docx' ? 'Word' : 'texto'}</button>
     </div>
   </div>;
 }

@@ -146,4 +146,58 @@ await check('image-redaction-removes-embedded-pixels-and-hidden-copy', async () 
   } }
   assert(!oldImageFound); doc.destroy(); return { rasterFixture: true, independentPixelCheckRequired: true };
 });
+await check('sanitize-removes-script-launch-and-submit-actions-but-keeps-links', async () => {
+  const target = await PDFDocument.create(), page = target.addPage([400, 400]), dni = target.getForm().createTextField('dni');
+  dni.setText('12345678Z'); dni.addToPage(page, { x: 40, y: 300, width: 120, height: 20 });
+  const doc = new mupdf.PDFDocument(await target.save()), annots = doc.findPage(0).get('Annots'), root = doc.getTrailer().get('Root');
+  annots.get(0).put('AA', doc.newDictionary()); annots.get(0).get('AA').put('Fo', { S: 'JavaScript', JS: doc.newString('app.alert(1)') });
+  for (const [y, action] of [[200, { S: 'JavaScript', JS: doc.newString('this.submitForm("https://example.com")') }], [150, { S: 'Launch', F: doc.newString('calc.exe') }], [100, { S: 'URI', URI: doc.newString('https://example.org/'), Next: { S: 'JavaScript', JS: doc.newString('app.alert(2)') } }]])
+    annots.push(doc.addObject({ Type: 'Annot', Subtype: 'Link', Rect: [40, y, 200, y + 20], A: action }));
+  const outline = doc.addObject({ Title: doc.newString('Inicio'), A: { S: 'JavaScript', JS: doc.newString('app.alert(3)') } }), outlines = doc.addObject({ Type: 'Outlines', First: outline, Last: outline, Count: 1 });
+  outline.put('Parent', outlines); root.put('Outlines', outlines); root.get('AcroForm').put('XFA', doc.newString('<xdp:xdp/>'));
+  const source = new Uint8Array(doc.saveToBuffer('').asUint8Array()); doc.destroy();
+  const cleaned = new mupdf.PDFDocument(operateDocument(source, { operation: 'sanitize' })), links = cleaned.findPage(0).get('Annots'), actions = [];
+  for (let i = 0; i < links.length; i++) { assert(links.get(i).get('AA').isNull()); actions.push(links.get(i).get('A', 'S').asName()); }
+  assert.deepEqual(actions, ['', '', '', 'URI']); assert(links.get(3).get('A', 'Next').isNull());
+  assert(cleaned.getTrailer().get('Root', 'Outlines', 'First', 'A').isNull()); assert(cleaned.getTrailer().get('Root', 'AcroForm', 'XFA').isNull());
+  assert.equal(operateDocument(cleaned.saveToBuffer('').asUint8Array(), { operation: 'fields' })[0].value, '12345678Z'); cleaned.destroy();
+  return { fieldAndLinkScriptsRemoved: true, launchRemoved: true, chainedScriptRemoved: true, outlineScriptRemoved: true, xfaRemoved: true, uriLinkKept: true };
+});
+await check('same-named-fields-are-listed-once-and-filled-on-every-page', async () => {
+  const target = await PDFDocument.create(), pages = [target.addPage([400, 400]), target.addPage([400, 400])], name = target.getForm().createTextField('nombre');
+  name.setText('Original'); for (const page of pages) name.addToPage(page, { x: 40, y: 300, width: 160, height: 24 });
+  const original = await target.save(), listed = operateDocument(original, { operation: 'fields' });
+  assert.equal(listed.length, 1); assert.deepEqual(listed[0].pages, [1, 2]);
+  const bytes = operateDocument(original, { operation: 'fill', values: { [listed[0].id]: 'Ana Pérez' } }), doc = new mupdf.PDFDocument(bytes);
+  for (let i = 0; i < 2; i++) { const page = doc.loadPage(i); assert.equal(page.getWidgets()[0].getValue(), 'Ana Pérez'); page.destroy(); }
+  doc.destroy(); return { listedOnce: true, valueOnEveryPage: true };
+});
+const photo = (orientation = 1) => {
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 80, 40], false), samples = pixmap.getPixels();
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 80; x++) samples.set([x < 40 ? 230 : 20, y < 20 ? 20 : 200, x < 40 ? 20 : 230], y * pixmap.getStride() + x * 3);
+  const jpeg = new Uint8Array(pixmap.asJPEG(95, false)); pixmap.destroy();
+  if (orientation === 1) return jpeg;
+  const exif = [0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, orientation, 0, 0, 0, 0, 0, 0];
+  return new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, exif.length + 2, ...exif, ...jpeg.subarray(2)]);
+};
+await check('jpeg-images-stay-compressed-when-moved-or-duplicated', async () => {
+  const target = await PDFDocument.create(), jpeg = photo(), image = await target.embedJpg(jpeg); target.addPage([400, 400]).drawImage(image, { x: 40, y: 200, width: 160, height: 80 });
+  const original = await target.save(), item = operateDocument(original, { operation: 'page-content', page: 1 }).items.find(item => item.kind === 'image');
+  const info = operateDocument(original, { operation: 'page-image', page: 1, id: item.id });
+  assert.equal(info.type, 'image/jpeg'); assert.deepEqual(info.bytes, jpeg);
+  const moved = operateDocument(original, { operation: 'replace-image', page: 1, rect: [item.rect[0] + 20, item.rect[1], item.rect[2] + 20, item.rect[3]], sourceRect: item.rect, image: info.bytes, fit: 'stretch' });
+  const doc = new mupdf.PDFDocument(moved), streams = [];
+  for (let i = 1; i < doc.countObjects(); i++) { const object = doc.newIndirect(i); if (object.get('Subtype').asName() === 'Image') { const raw = object.readRawStream(); streams.push([object.get('Filter').toString(), raw.getLength()]); raw.destroy(); } }
+  doc.destroy(); assert.deepEqual(streams, [['/DCTDecode', jpeg.length]]);
+  return { originalJpegReturned: true, movedImageKeepsSameJpeg: true };
+});
+await check('camera-photo-exif-orientation-is-placed-upright', async () => {
+  const blank = await PDFDocument.create(); blank.addPage([300, 300]);
+  const bytes = operateDocument(await blank.save(), { operation: 'add-image', page: 1, rect: [50, 50, 250, 250], image: photo(6), fit: 'contain' });
+  const doc = mupdf.Document.openDocument(bytes, 'application/pdf'), page = doc.loadPage(0), pixmap = page.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false), samples = pixmap.getPixels();
+  const at = (x, y) => [...samples.subarray(y * pixmap.getStride() + x * 3, y * pixmap.getStride() + x * 3 + 3)], near = (a, b) => a.every((n, i) => Math.abs(n - b[i]) < 40);
+  // Rotated 90° clockwise: the stored top-left (red) shows top-right, the stored bottom-left top-left.
+  assert(near(at(175, 100), [230, 20, 20])); assert(near(at(125, 100), [230, 200, 20])); assert(near(at(175, 200), [20, 20, 230]));
+  pixmap.destroy(); page.destroy(); doc.destroy(); return { orientation6Upright: true, portraitFrame: true };
+});
 fs.writeFileSync('test-results/operations-results.json', JSON.stringify({ engine: 'MuPDF WASM', results }, null, 2));

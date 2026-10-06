@@ -59,10 +59,18 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
   }, [open]);
   useEffect(() => {
     if (!open) return;
-    const outside = (event: PointerEvent) => { if (!palette.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) dismiss(); };
+    const outside = (event: PointerEvent) => {
+      if (palette.current?.contains(event.target as Node) || trigger.current?.contains(event.target as Node)) return;
+      // A tap on the page only closes the palette, without starting a selection.
+      if (event.target instanceof Element && event.target.closest('.pdf-page')) { event.preventDefault(); event.stopPropagation(); }
+      dismiss();
+    };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(restoreFocus.current); } };
-    document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape); };
+    // Tabbing out of the palette closes it.
+    const leave = (event: FocusEvent) => { const next = event.relatedTarget as Node | null; if (next && !palette.current?.contains(next) && !trigger.current?.contains(next)) dismiss(); };
+    const node = palette.current;
+    document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', escape); node?.addEventListener('focusout', leave);
+    return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape); node?.removeEventListener('focusout', leave); };
   }, [open]);
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 

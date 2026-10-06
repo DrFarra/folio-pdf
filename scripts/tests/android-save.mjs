@@ -16,7 +16,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'previe
 let browser;
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch('http://127.0.0.1:4281')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
   for (const [layout, width, height] of [['tablet', 1280, 800], ['phone', 390, 844]]) {
     if (process.env.FOLIO_SAVE_LAYOUT && process.env.FOLIO_SAVE_LAYOUT !== layout) continue;
     const context = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true, userAgent: `Mozilla/5.0 (Linux; Android 15; ${layout}) AppleWebKit/537.36 Chrome/140.0.0.0 ${layout === 'phone' ? 'Mobile ' : ''}Safari/537.36` });
@@ -75,18 +75,18 @@ try {
     });
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:4281');
-    await page.getByRole('button', { name: 'Importar PDF', exact: true }).click();
+    await page.getByRole('button', { name: 'Abrir PDF', exact: true }).click();
     await page.locator('.reading-area .textLayer span').first().waitFor();
     const draw = async count => {
       await page.getByRole('button', { name: layout === 'phone' ? 'Anotar' : 'Anotar documento', exact: true }).click();
-      await page.getByRole('button', { name: 'Dibujar', exact: true }).click();
+      await page.getByRole('button', { name: 'Lápiz', exact: true }).click();
       const b = await page.locator('.ink-interactive').first().boundingBox(); const x = b.x + b.width * .2, y = Math.max(120, b.y + b.height * (.3 + count * .04));
       const cdp = await context.newCDPSession(page);
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: .5 });
       for (let i = 1; i <= 8; i++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + i * 5, y: y + i, button: 'left', buttons: 1, pointerType: 'pen', force: .6 });
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x + 40, y: y + 8, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
       await page.waitForFunction(n => document.querySelectorAll('[data-ink-id]').length === n, count);
-      await page.getByRole('button', { name: 'Terminar anotación', exact: true }).click();
+      await page.getByRole('button', { name: 'Listo', exact: true }).click();
     };
     const save = async (copy = false) => {
       const previousWrites = calls.filter(c => c === 'write_pdf_original' || c === 'write_pdf_copy').length;
@@ -99,21 +99,21 @@ try {
     await draw(1);
     mode = 'cancel'; await save(); assert.deepEqual(fs.readFileSync(original), fixture);
     assert.equal(await page.locator('[data-ink-id]').count(), 1);
-    mode = 'error'; await save(); await page.getByText(/El PDF cambió fuera de Folio/).waitFor(); assert.deepEqual(fs.readFileSync(original), fixture);
-    mode = 'save'; await save(); await page.getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    mode = 'error'; await save(); await page.locator('.toast').getByText(/El PDF cambió fuera de Folio/).waitFor(); assert.deepEqual(fs.readFileSync(original), fixture);
+    mode = 'save'; await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.equal(inspectDocument(fs.readFileSync(original)).annotations.filter(a => a.kind === 'ink').length, 1);
     assert.equal(catalog.size, 1); assert.equal(calls.filter(c => c === 'write_pdf_copy').length, 0);
-    await page.reload(); await page.getByRole('button', { name: 'Abrir Apuntes.pdf', exact: true }).click();
-    await page.locator('[data-ink-id]').waitFor();
-    await draw(2); await save(); await page.getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    // A restart (Android ending the app in the background) reopens the saved document by itself.
+    await page.reload(); await page.locator('[data-ink-id]').waitFor();
+    await draw(2); await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.equal(inspectDocument(fs.readFileSync(original)).annotations.filter(a => a.kind === 'ink').length, 2);
     assert.equal(catalog.size, 1);
     const savedOriginal = fs.readFileSync(original);
-    await draw(3); await save(true); await page.getByText('PDF guardado.', { exact: true }).waitFor();
+    await draw(3); await save(true); await page.locator('.toast').getByText(/^Copia guardada\. Ahora editas «.+»\.$/).waitFor();
     assert.deepEqual(fs.readFileSync(original), savedOriginal);
     assert.equal(inspectDocument(fs.readFileSync(`${out}/${layout}-copy.pdf`)).annotations.filter(a => a.kind === 'ink').length, 3);
     assert.equal(catalog.size, 2); assert.deepEqual(errors, []);
-    await draw(4); await save(); await page.getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    await draw(4); await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.deepEqual(fs.readFileSync(original), savedOriginal);
     assert.equal(inspectDocument(fs.readFileSync(`${out}/${layout}-copy.pdf`)).annotations.filter(a => a.kind === 'ink').length, 4);
     assert.equal(catalog.size, 2); assert.deepEqual(errors, []);

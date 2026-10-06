@@ -5,7 +5,8 @@ import WebKit
 
 private struct PickArgs: Decodable { let multiple: Bool? }
 private struct PathsArgs: Decodable { let paths: [String] }
-private struct FileArgs: Decodable { let path: String }
+private struct FileArgs: Decodable { let path: String; let anchor: [Double]? }
+private struct ChromeArgs: Decodable { let visible: Bool }
 private struct ThemeArgs: Decodable { let theme: String }
 private struct TextArgs: Decodable { let text: String }
 private struct URLArgs: Decodable { let url: String }
@@ -71,7 +72,8 @@ final class FolioPlugin: Plugin {
 
     private func fail(_ invoke: Invoke, _ error: Error) {
         let native = error as NSError
-        invoke.reject("\(native.localizedDescription) [\(native.domain):\(native.code)]")
+        NSLog("Folio native operation failed [%@:%ld]", native.domain, native.code)
+        invoke.reject(native.localizedDescription)
     }
 
     @objc public func setTheme(_ invoke: Invoke) throws {
@@ -81,6 +83,18 @@ final class FolioPlugin: Plugin {
             self.webview?.window?.overrideUserInterfaceStyle = style
             self.webview?.window?.rootViewController?.setNeedsStatusBarAppearanceUpdate()
             self.webview?.backgroundColor = .systemBackground
+            invoke.resolve()
+        }
+    }
+
+    /// Immersive reading hides the status bar. tao's root view controller owns
+    /// prefersStatusBarHidden; its setter refreshes the status bar appearance.
+    @objc public func setReaderChrome(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(ChromeArgs.self)
+        DispatchQueue.main.async {
+            if let controller = self.webview?.window?.rootViewController, controller.responds(to: NSSelectorFromString("setPrefersStatusBarHidden:")) {
+                UIView.animate(withDuration: 0.2) { controller.setValue(!args.visible, forKey: "prefersStatusBarHidden") }
+            }
             invoke.resolve()
         }
     }
@@ -144,7 +158,8 @@ final class FolioPlugin: Plugin {
             }
             if let error = coordinatorError ?? (copyError as NSError?) {
                 try? manager.removeItem(at: folder)
-                throw NSError(domain: "Folio.Import", code: error.code, userInfo: [NSLocalizedDescriptionKey: "No se pudo copiar \(url.lastPathComponent) a Folio: \(error.localizedDescription) [\(error.domain):\(error.code)]"])
+                NSLog("Folio import copy failed [%@:%ld]: %@", error.domain, error.code, error.localizedDescription)
+                throw NSError(domain: "Folio.Import", code: error.code, userInfo: [NSLocalizedDescriptionKey: "No se pudo importar «\(url.lastPathComponent)». Vuelve a intentarlo."])
             }
             copies.append(destination.path)
         }
@@ -188,8 +203,6 @@ final class FolioPlugin: Plugin {
                         DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; invoke.resolve(["paths": paths]) }
                     }
                     catch {
-                        let native = error as NSError
-                        NSLog("Folio file picker import failed [%@:%ld]", native.domain, native.code)
                         DispatchQueue.main.async { self.presenting = false; self.pickerDelegate = nil; self.fail(invoke, error) }
                     }
                 }
@@ -264,6 +277,13 @@ final class FolioPlugin: Plugin {
         }
     }
 
+    /// iPad popovers point at the control that opened them: the frontend sends
+    /// its rect as [x, y, width, height] in webview points.
+    private func source(_ anchor: [Double]?) -> (view: UIView, rect: CGRect)? {
+        guard let view = webview, let a = anchor, a.count == 4, a.allSatisfy({ $0.isFinite }) else { return nil }
+        return (view, CGRect(x: a[0], y: a[1], width: a[2], height: a[3]))
+    }
+
     @objc public func shareFile(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(FileArgs.self)
         let file = try localFile(args.path)
@@ -276,9 +296,12 @@ final class FolioPlugin: Plugin {
                 if let error = error { self.fail(invoke, error) } else { invoke.resolve(["completed": completed]) }
             }
             if let popover = sheet.popoverPresentationController {
-                popover.sourceView = parent.view
-                popover.sourceRect = CGRect(x: parent.view.bounds.midX, y: parent.view.bounds.maxY - 24, width: 1, height: 1)
-                popover.permittedArrowDirections = []
+                if let source = self.source(args.anchor) { popover.sourceView = source.view; popover.sourceRect = source.rect }
+                else {
+                    popover.sourceView = parent.view
+                    popover.sourceRect = CGRect(x: parent.view.bounds.midX, y: parent.view.bounds.maxY - 24, width: 1, height: 1)
+                    popover.permittedArrowDirections = []
+                }
             }
             parent.present(sheet, animated: true)
         }
@@ -300,7 +323,9 @@ final class FolioPlugin: Plugin {
                 if let error = error { self.fail(invoke, error) } else { invoke.resolve(["completed": completed]) }
             }
             let shown: Bool
-            if UIDevice.current.userInterfaceIdiom == .pad {
+            if UIDevice.current.userInterfaceIdiom == .pad, let source = self.source(args.anchor) {
+                shown = controller.present(from: source.rect, in: source.view, animated: true, completionHandler: completion)
+            } else if UIDevice.current.userInterfaceIdiom == .pad {
                 shown = controller.present(from: CGRect(x: parent.view.bounds.midX, y: 40, width: 1, height: 1), in: parent.view, animated: true, completionHandler: completion)
             } else { shown = controller.present(animated: true, completionHandler: completion) }
             if !shown { self.presenting = false; invoke.reject("No se pudo abrir el diálogo de impresión.") }

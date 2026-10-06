@@ -6,7 +6,7 @@
 .document-switcher-scroll{overflow:auto;min-height:0;padding:0 8px 8px;overscroll-behavior:contain}
 .document-switcher-row{display:flex;align-items:center;border-radius:10px;margin:2px 0}
 .document-switcher-document{display:flex;align-items:center;gap:12px;padding:10px;min-height:60px;min-width:0;flex:1;text-align:left;color:var(--text);border-radius:10px}
-.document-switcher-document:hover,.document-switcher-close:hover,.document-switcher-actions button:hover{background:var(--hover)}
+@media(hover:hover){.document-switcher-document:hover,.document-switcher-close:hover,.document-switcher-actions button:hover{background:var(--hover)}}
 .document-switcher-row.selected{background:var(--accent-soft)}
 .document-switcher-row.selected .document-switcher-file,.document-switcher-row.selected .document-switcher-document>svg{color:var(--accent)}
 .document-switcher-file{width:30px;flex-shrink:0;display:grid;place-items:center;color:var(--muted)}

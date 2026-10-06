@@ -8,15 +8,14 @@
 .document-tab.tab-drop-before::before{left:-4px}
 .document-tab.tab-drop-after::after{right:-4px}
 .document-tab-drag-preview{position:fixed;z-index:45;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--accent);border-radius:7px;background:var(--surface);color:var(--text);padding:8px 12px;font-size:11px;box-shadow:0 4px 15px #0003}
-.document-tab{display:flex;align-items:center;flex:0 0 auto;width:clamp(120px,17vw,228px);min-width:0;border:1px solid transparent;border-radius:7px;background:var(--panel);color:var(--muted)}
+.document-tab{display:flex;align-items:center;flex:0 0 auto;min-width:120px;max-width:228px;border:1px solid transparent;border-radius:7px;background:var(--panel);color:var(--muted)}
 .document-tab.selected{border-color:var(--line);background:var(--surface);color:var(--text)}
-.document-tab:hover{background:var(--hover)}
+@media(hover:hover){.document-tab:hover{background:var(--hover)}}
 .document-tab>[role=tab]{display:flex;align-items:center;gap:7px;min-width:0;flex:1;height:100%;padding:0 8px;font-size:11px;text-align:left;color:inherit;border-radius:6px 0 0 6px}
 .document-tab>[role=tab]>span:not(.modified-dot):not(.drive-document-indicator){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
 .document-tab>[role=tab]>svg{flex-shrink:0;color:var(--muted)}
 .document-tab-close{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:23px;height:25px;margin-right:4px;border-radius:5px;color:var(--muted)}
-.document-tab-close:hover:not(:disabled){background:var(--accent-soft);color:var(--accent)}
+@media(hover:hover){.document-tab-close:hover:not(:disabled){background:var(--accent-soft);color:var(--accent)}}
 .app-header .new-document-tab{width:30px;height:30px}
 .document-tab [role=tab]:focus-visible,.document-tab-close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-@media(max-width:920px){.app-header .document-tab-strip{flex:1;max-width:none}.document-tab{width:170px}}
-@media(max-width:650px){.document-tab{width:140px}.document-tab>[role=tab]{font-size:10px;gap:5px;padding-left:6px}.app-header .new-document-tab{width:25px}.app-header .header-actions{gap:0}}
+@media(max-width:650px){.document-tab{min-width:100px;max-width:140px}.document-tab>[role=tab]{font-size:10px;gap:5px;padding-left:6px}.app-header .new-document-tab{width:25px}.app-header .header-actions{gap:0}}

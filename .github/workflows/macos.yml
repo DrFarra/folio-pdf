@@ -84,7 +84,24 @@ jobs:
       - name: Verify native text selection and search diagnostics
         run: |
           python3 scripts/tests/native-smoke-macos.py --qa --app src-tauri/target/universal-apple-darwin/release/bundle/macos/Folio.app
+      # Without the APPLE_* secrets the build keeps its ad-hoc signature. With
+      # them, Tauri signs with Developer ID, notarizes and staples the ticket.
+      - name: Prepare the optional notarization key
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APPLE_API_PRIVATE_KEY" ]; then
+            umask 077
+            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          fi
       - name: Build the production universal application
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           set -o pipefail
           npm run desktop:macos -- --bundles app 2>&1 | tee test-results/mac-build.log
@@ -98,6 +115,12 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent src-tauri/target/universal-apple-darwin/release/bundle/macos/Folio.app test-results/recovery/Folio.app.zip
           cp THIRD-PARTY-NOTICES.txt dependency-licenses.json test-results/recovery/
       - name: Create the production DMG without recompiling
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           set -o pipefail
           npm run desktop:macos -- --bundle-only 2>&1 | tee -a test-results/mac-build.log

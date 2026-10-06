@@ -60,18 +60,16 @@ Sincronizar los bytes del PDF guardado, incluidas sus anotaciones, junto con los
 metadatos de lectura que Folio guarda por separado. Mantener los datos y colas
 aislados por cuenta y `fileId`. No borrar archivos al desconectar una cuenta.
 
-## Conflictos: condición obligatoria para entregar la función
+## Conflictos
 
-Esta protección **todavía no está implementada**. El contrato de comportamiento
-se detalla en [drive-sync-requirements.md](drive-sync-requirements.md).
-No basta con consultar la fecha antes de subir: dos dispositivos pueden leer
-la misma revisión y guardar a la vez. La escritura del original debe estar
-protegida por una condición de versión que el servidor haga cumplir y cuya
-eficacia se haya comprobado con subidas reales. No asumir que un parámetro
-`version` o un encabezado HTTP es suficiente sin esa prueba.
+La subida del original envía `If-Match` con el ETag de la versión abierta, así que
+Google rechaza (HTTP 412) una escritura sobre otra versión. Se comprobó con dos
+subidas reales simultáneas: una se aceptó y la otra recibió 412 (ver
+[drive-sync-implementation.md](drive-sync-implementation.md)). El contrato de
+comportamiento está en [drive-sync-requirements.md](drive-sync-requirements.md).
 
-En caso de divergencia, conservar las dos versiones y mostrar una resolución
-explícita. No aplicar "gana el último guardado", ni intentar mezclar binarios PDF.
+En caso de divergencia, Folio conserva las dos versiones y ofrece guardar una copia
+de conflicto. No aplica "gana el último guardado" ni mezcla binarios PDF.
 
 ## Integración por plataforma
 

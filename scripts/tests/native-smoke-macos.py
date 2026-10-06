@@ -90,6 +90,8 @@ try:
     assert identifier == 'org.folio.pdf', 'Solo se verifica el bundle Folio en el runner limpio.'
     assert info['CFBundleShortVersionString'] == version
     assert info['LSMinimumSystemVersion'] == '14.0'
+    # AppKit and WebKit show system panels and menus in the bundle's language.
+    assert info.get('CFBundleDevelopmentRegion') == 'es' and info.get('CFBundleLocalizations') == ['es'], 'El bundle no declara el español.'
     assert not pids(), 'Hay una instancia ajena abierta; no se automatiza ni cierra.'
     architectures = sorted(run('lipo', '-archs', str(executable)).split())
     assert architectures == ['arm64', 'x86_64']

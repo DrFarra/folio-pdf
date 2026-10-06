@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { enterAnnotationMode } from './ui-helpers.mjs';
+import { storedSession, waitForSession } from './session-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -26,7 +27,7 @@ const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/
 let browser, log = ''; preview.stdout.on('data', data => { log += data; }); preview.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
 const picker = page => page.getByRole('button', { name: 'Color del resaltador', exact: true });
-const mode = page => page.getByRole('button', { name: 'Resaltado automático (H)', exact: true });
+const mode = page => page.getByRole('button', { name: 'Resaltador (H)', exact: true });
 const palette = page => page.getByRole('dialog', { name: 'Colores del resaltador', exact: true });
 
 async function open(page, file = source) {
@@ -51,8 +52,8 @@ async function selectLine(page, number) {
   await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 14 }); await page.mouse.up();
 }
 async function selectPreset(page, name) { await picker(page).click(); await palette(page).waitFor(); await page.getByRole('button', { name: `Color ${name}`, exact: true }).click(); await palette(page).waitFor({ state: 'detached' }); }
-async function waitCount(page, hash, count) { await page.waitForFunction(({ hash, count }) => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.annotations?.filter(item => item.kind === 'highlight').length === count, { hash, count }); }
-async function annotations(page, hash = sourceHash) { return page.evaluate(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.annotations?.filter(item => item.kind === 'highlight') || [], hash); }
+async function waitCount(page, hash, count) { await waitForSession(page, (session, id) => id === hash && session.annotations?.filter(item => item.kind === 'highlight').length === count); }
+async function annotations(page, hash = sourceHash) { return (await storedSession(page, hash))?.annotations?.filter(item => item.kind === 'highlight') || []; }
 async function save(page, name) {
   const pending = page.waitForEvent('download'); await page.getByRole('button', { name: 'Descargar', exact: true }).click();
   const target = path.join(output, name); await (await pending).saveAs(target);

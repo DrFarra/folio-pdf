@@ -1,12 +1,12 @@
 export type Area = { page: number; rect: [number, number, number, number] };
 export type AreaContentInfo = { text: string; size: number; color: string; fontName: string; mixedStyle: boolean; rotated: boolean };
-export type PageContentItem = { id: string; kind: 'text' | 'image'; level?: 'line' | 'paragraph'; rect: Area['rect']; text?: string; size?: number; color?: string; fontName?: string; mixedStyle?: boolean; rotated?: boolean; editable: boolean; reason?: string; baselineOffset?: number; lineHeight?: number };
+export type PageContentItem = { id: string; kind: 'text' | 'image'; level?: 'line' | 'paragraph'; rect: Area['rect']; text?: string; size?: number; color?: string; fontName?: string; mixedStyle?: boolean; rotated?: boolean; editable: boolean; reason?: string; areaReplaceable?: boolean; baselineOffset?: number; lineHeight?: number };
 export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
-/** Intrinsic pixels and the quarter turn used to display one safe image instance. */
-export type PageImageInfo = { bytes: Uint8Array; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
-export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; baselineOffset?: number };
+/** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
+export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
+export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; sourceId?: string; baselineOffset?: number };
 export type ImageOptions = { image: Uint8Array; fit?: 'contain' | 'cover' | 'stretch'; opacity?: number; rotation?: 0 | 90 | 180 | 270; sourceRect?: Area['rect'] };
-export type Field = Area & { id: string; name: string; label: string; type: string; value: string; readOnly: boolean; multiline: boolean; maxLength: number; options: string[]; exportOptions: string[]; checked: boolean; buttonValue: string };
+export type Field = Area & { id: string; pages: number[]; name: string; label: string; type: string; value: string; readOnly: boolean; multiline: boolean; maxLength: number; options: string[]; exportOptions: string[]; checked: boolean; buttonValue: string };
 export type PageEntry = { page?: number; source?: number; blank?: [number, number]; rotation?: number };
 export type Operation =
   | { operation: 'fields' | 'text' | 'compress' | 'sanitize' | 'unprotect' }

@@ -60,7 +60,7 @@ function configuration() {
   if (!pkg.version || common.version !== pkg.version || cargoVersion !== pkg.version || lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version || platform.version && platform.version !== pkg.version) fail('Las versiones de package.json, package-lock.json, Cargo.toml y la configuración Tauri no coinciden. Usa la misma entrega de fuente para todos.');
   const mac = { ...common.bundle?.macOS, ...platform.bundle?.macOS };
   if (mac.minimumSystemVersion !== minimumMacOS) fail(`La configuración Mac debe declarar bundle.macOS.minimumSystemVersion "${minimumMacOS}", igual que MACOSX_DEPLOYMENT_TARGET de este script.`);
-  if (mac.signingIdentity !== '-') fail('Este flujo usa firma ad hoc: configura bundle.macOS.signingIdentity como "-". No requiere cuenta ni certificado Apple.');
+  if (mac.signingIdentity !== '-') fail('Deja bundle.macOS.signingIdentity como "-" (firma ad hoc). Para firmar con Developer ID, define APPLE_SIGNING_IDENTITY al compilar.');
   const icons = platform.bundle?.icon || common.bundle?.icon || [];
   const icns = icons.filter(icon => typeof icon === 'string' && icon.toLowerCase().endsWith('.icns'));
   if (!icns.length) fail('La configuración Mac debe incluir icons/icon.icns en bundle.icon. Los iconos ICO de Windows no bastan.');
@@ -92,7 +92,8 @@ function verifiedProductionApplication(version, env) {
   if (architectures.join(',') !== 'arm64,x86_64') fail('La aplicación existente no contiene ambas arquitecturas.');
   command('codesign', ['--verify', '--deep', '--strict', app], 'La firma de la aplicación existente no es válida.');
   const signature = spawnSync('codesign', ['--display', '--verbose=4', app], { cwd: root, env, encoding: 'utf8' });
-  if (signature.error || signature.status !== 0 || !/Signature=adhoc|flags=.*\badhoc\b/.test(`${signature.stdout}\n${signature.stderr}`)) fail('La aplicación existente no tiene la firma ad hoc esperada.');
+  const adHoc = env.APPLE_SIGNING_IDENTITY === '-';
+  if (signature.error || signature.status !== 0 || !(adHoc ? /Signature=adhoc|flags=.*\badhoc\b/ : /Authority=Developer ID Application:/).test(`${signature.stdout}\n${signature.stderr}`)) fail(`La aplicación existente no tiene la firma ${adHoc ? 'ad hoc' : 'Developer ID'} esperada.`);
   return app;
 }
 async function runTauri(cli, args, env) {
@@ -130,19 +131,23 @@ async function main() {
   }
   const cli = path.join(root, 'node_modules/@tauri-apps/cli/tauri.js');
   if (!fs.existsSync(cli)) fail('Falta la CLI de Tauri para este proyecto. Ejecuta npm ci en el Mac antes de compilar.');
-  const env = { ...process.env, MACOSX_DEPLOYMENT_TARGET: minimumMacOS, APPLE_SIGNING_IDENTITY: '-' };
-  // Ad-hoc builds never submit software to Apple's notarization service.
-  for (const name of ['APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD']) delete env[name];
   const bundleOnly = process.argv.slice(2).includes('--bundle-only');
   const args = process.argv.slice(2).filter(value => value !== '--bundle-only');
   const qa = optionValues(args, '--features', '-f').includes('native-qa') || args.includes('--all-features');
   if (bundleOnly && qa) fail('La variante QA no se utiliza para recuperar ni crear la entrega de producción.');
+  // Ad hoc unless APPLE_SIGNING_IDENTITY names a Developer ID certificate. Tauri
+  // then signs with the hardened runtime and notarizes with APPLE_API_* or
+  // APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID. The QA variant is always ad hoc.
+  const identity = !qa && process.env.APPLE_SIGNING_IDENTITY?.trim() || '-';
+  const env = { ...process.env, MACOSX_DEPLOYMENT_TARGET: minimumMacOS, APPLE_SIGNING_IDENTITY: identity };
+  // Ad-hoc builds never submit software to Apple's notarization service.
+  for (const name of ['APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_KEY', 'APPLE_API_ISSUER', 'APPLE_API_KEY_PATH', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD']) if (identity === '-' || !env[name]) delete env[name];
   const requestedBundles = optionValues(args, '--bundles', '-b');
   const hasBundlesOption = args.some(value => value === '--bundles' || value === '-b' || value.startsWith('--bundles='));
   const bundles = hasBundlesOption ? [] : ['--bundles', 'app,dmg'];
   const options = ['--target', 'universal-apple-darwin', '--ci', '--verbose', ...bundles, ...args];
   if (bundleOnly) verifiedProductionApplication(version, env);
-  console.log(`Folio ${version}: ${bundleOnly ? 'empaquetado de la aplicación ya compilada' : 'compilación universal para Intel y Apple Silicon'}, con firma ad hoc.`);
+  console.log(`Folio ${version}: ${bundleOnly ? 'empaquetado de la aplicación ya compilada' : 'compilación universal para Intel y Apple Silicon'}, con firma ${identity === '-' ? 'ad hoc' : identity}.`);
   let result = await runTauri(cli, [bundleOnly ? 'bundle' : 'build', ...options], env);
   const dmgRequested = !hasBundlesOption || requestedBundles.includes('dmg');
   if (result.code && !qa && result.code !== 130 && result.code !== 143 && dmgRequested &&

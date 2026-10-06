@@ -19,7 +19,7 @@ let browser, releaseStage;
 const calls = [], sessions = new Map(); let stageFail = true, staged = 0, sessionFail = false;
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch('http://127.0.0.1:4295')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, screen: { width: 1280, height: 800 }, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; SM-X800) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36' });
   const page = await context.newPage(); page.setDefaultTimeout(30000); const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.exposeFunction('folioInvoke', async (command, args) => {
@@ -63,7 +63,7 @@ try {
   const originalBox = await button.boundingBox();
   for (let i = 0; i < 4; i++) {
     assert.equal(await back(), false, 'Native Back is handled inside the reader');
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     assert.equal(await back(), true, 'At home Android can background without destroying the activity');
     await background();
     await page.getByRole('button', { name: /Continuar leyendo/ }).click();
@@ -73,7 +73,7 @@ try {
     const box = await button.boundingBox(); assert.equal(box.width, originalBox.width); assert.equal(box.height, originalBox.height);
   }
   await page.getByRole('button', { name: 'Anotar documento', exact: true }).click();
-  await page.getByRole('button', { name: 'Dibujar', exact: true }).click();
+  await page.getByRole('button', { name: 'Lápiz', exact: true }).click();
   const ink = await page.locator('.ink-interactive').first().boundingBox(), x = ink.x + ink.width * .3, y = ink.y + ink.height * .4;
   const cdp = await context.newCDPSession(page);
   await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1, force: .5 });
@@ -84,7 +84,7 @@ try {
   await page.waitForTimeout(300); assert.equal(staged, 0, 'Background persists annotations without rendering a full PDF');
   assert.equal([...sessions.values()].at(-1).annotations.filter(a => a.kind === 'ink').length, 1);
   await back();
-  await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
   for (let i = 0; i < 300 && !releaseStage; i++) await page.waitForTimeout(30);
   assert(releaseStage, 'Drive staging reached the deliberately delayed native write');
   await page.getByRole('button', { name: /Continuar leyendo/ }).click(); await page.locator('[data-ink-id]').waitFor();

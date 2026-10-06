@@ -1,9 +1,9 @@
-# Dependencias y certificados — 0.4.0
+# Dependencias y certificados
 
-PDF.js se actualizó a 6.2.108, fijado en package-lock.json. Tesseract.js 7.0.0,
-PKI.js 3.4.1, ASN1.js 3.0.6 y node-forge 1.4.0 también están fijados.
+PDF.js 6.2.108, Tesseract.js 7.0.0, PKI.js 3.4.1, ASN1.js 3.0.6 y node-forge
+1.4.0 están fijados en package-lock.json.
 
-La auditoría npm del 04/10/2026 informa de un aviso alto en node-forge:
+`npm audit --omit=dev` (06/10/2026) informa de un aviso alto en node-forge:
 GHSA-86w9-cpqp-85rv, verificación RSA/PKCS#1 v1.5 permisiva. No dispone de versión
 corregida publicada para este conjunto. Folio usa node-forge para abrir PKCS#12
 y generar firmas RSA, no para verificar RSA ni certificados. La verificación

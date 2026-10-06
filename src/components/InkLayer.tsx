@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageViewport } from 'pdfjs-dist';
 import type { Annotation, Tool } from '../types';
 import type { AnnotationDraft } from '../text-selection';
@@ -15,25 +15,33 @@ function distance(x: number, y: number, ax: number, ay: number, bx: number, by: 
   const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
   return Math.hypot(x - ax - t * dx, y - ay - t * dy);
 }
+function pathData(path: number[], viewport: PageViewport) {
+  const points = [];
+  for (let i = 0; i < path.length; i += 2) points.push(viewport.convertToViewportPoint(path[i], path[i + 1]).join(','));
+  return points.join(' ');
+}
 
 export default function InkLayer({ viewport, page, annotations, tool, color, width, eraserSize = 16, penOnly, enabled, onAdd, onRemove }: Props) {
   const [preview, setPreview] = useState<number[]>([]);
   const active = useRef<{ id: number; points: number[]; erase: boolean; erased: Set<string>; group: string } | null>(null);
-  const pan = useRef<{ id: number; x: number; y: number } | null>(null);
+  const pan = useRef<{ id: number; x: number; y: number; at: number; vx: number; vy: number } | null>(null);
   const frame = useRef(0);
+  const glide = useRef(0);
   const stylus = useRef(0);
   const interactive = enabled && (tool === 'draw' || tool === 'eraser');
-  const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; setPreview([]); };
-  useEffect(() => { clear(); }, [tool, enabled, viewport, penOnly]);
+  const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; cancelAnimationFrame(glide.current); glide.current = 0; setPreview([]); };
+  // A pen detected mid-stroke may switch the app to pen-only; keep that stroke.
+  useEffect(() => { clear(); }, [tool, enabled, viewport]);
   useEffect(() => {
     const background = () => { if (document.visibilityState === 'hidden') clear(); };
     window.addEventListener('folio:pinch-start', clear);
     window.addEventListener('blur', clear); window.addEventListener('pagehide', clear); document.addEventListener('visibilitychange', background);
-    return () => { cancelAnimationFrame(frame.current); window.removeEventListener('folio:pinch-start', clear); window.removeEventListener('blur', clear); window.removeEventListener('pagehide', clear); document.removeEventListener('visibilitychange', background); };
+    return () => { cancelAnimationFrame(frame.current); cancelAnimationFrame(glide.current); window.removeEventListener('folio:pinch-start', clear); window.removeEventListener('blur', clear); window.removeEventListener('pagehide', clear); document.removeEventListener('visibilitychange', background); };
   }, []);
   function point(event: { clientX: number; clientY: number }, svg: SVGSVGElement) {
     const box = svg.getBoundingClientRect();
-    return viewport.convertToPdfPoint(Math.max(0, Math.min(viewport.width, (event.clientX - box.left) * viewport.width / box.width)), Math.max(0, Math.min(viewport.height, (event.clientY - box.top) * viewport.height / box.height)));
+    // Hundredths of a point are far below pen precision and keep sessions small.
+    return viewport.convertToPdfPoint(Math.max(0, Math.min(viewport.width, (event.clientX - box.left) * viewport.width / box.width)), Math.max(0, Math.min(viewport.height, (event.clientY - box.top) * viewport.height / box.height))).map(value => Math.round(value * 100) / 100);
   }
   function eraseBetween(from: number[], to: number[], stroke: NonNullable<typeof active.current>) {
     const radius = eraserSize / (2 * viewport.scale);
@@ -68,18 +76,26 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
     }
     if (!frame.current) frame.current = requestAnimationFrame(() => { frame.current = 0; if (active.current && !active.current.erase) setPreview([...active.current.points]); });
   }
-  const pathData = (path: number[]) => {
-    const points = [];
-    for (let i = 0; i < path.length; i += 2) points.push(viewport.convertToViewportPoint(path[i], path[i + 1]).join(','));
-    return points.join(' ');
-  };
-  return <svg className={`ink-layer${interactive ? ' ink-interactive' : ''}`} aria-label={interactive ? tool === 'eraser' ? 'Borrar trazos' : 'Dibujar en la página' : 'Dibujos del PDF'} data-pen-only={penOnly} viewBox={`0 0 ${viewport.width} ${viewport.height}`}
+  // Saved strokes do not change while a new one is previewed every frame.
+  const strokes = useMemo(() => annotations.filter(a => a.kind === 'ink').map(a => <g key={a.id} data-ink-id={a.id} stroke={a.color} strokeWidth={(a.strokeWidth || 2) * viewport.scale} opacity={a.opacity ?? 1}>{a.inkPaths?.map((path, index) => <polyline key={index} points={pathData(path, viewport)} />)}</g>), [annotations, viewport]);
+  function release(reader: Element, vx: number, vy: number) {
+    // Finger scrolling in pen-only mode keeps its momentum like native scrolling.
+    let last = performance.now();
+    const step = (now: number) => {
+      const elapsed = now - last, decay = .95 ** (elapsed / 16);
+      last = now; reader.scrollLeft -= vx * elapsed; reader.scrollTop -= vy * elapsed; vx *= decay; vy *= decay;
+      glide.current = Math.hypot(vx, vy) > .02 ? requestAnimationFrame(step) : 0;
+    };
+    glide.current = requestAnimationFrame(step);
+  }
+  return <svg className={`ink-layer${interactive ? ' ink-interactive' : ''}`} aria-label={interactive ? tool === 'eraser' ? 'Borrar con la goma' : 'Dibujar con el lápiz' : 'Dibujos del PDF'} data-pen-only={penOnly} viewBox={`0 0 ${viewport.width} ${viewport.height}`}
     onPointerDown={event => {
       event.stopPropagation();
       if (!interactive) return;
+      cancelAnimationFrame(glide.current); glide.current = 0;
       if (event.pointerType === 'pen') stylus.current = performance.now();
       if (event.pointerType === 'touch' && (active.current || event.width > 35 || event.height > 35 || performance.now() - stylus.current < 400)) return;
-      if (event.pointerType === 'touch' && penOnly) { pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY }; event.currentTarget.setPointerCapture(event.pointerId); return; }
+      if (event.pointerType === 'touch' && penOnly) { pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(), vx: 0, vy: 0 }; event.currentTarget.setPointerCapture(event.pointerId); return; }
       if (active.current || event.button !== 0 && event.button !== 5) return;
       event.preventDefault(); window.getSelection()?.removeAllRanges();
       const points = point(event, event.currentTarget), erase = tool === 'eraser' || event.button === 5 || !!(event.buttons & 32);
@@ -90,13 +106,18 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
       event.stopPropagation();
       if (event.pointerType === 'pen') stylus.current = performance.now();
       if (pan.current?.id === event.pointerId && !active.current) {
-        const reader = event.currentTarget.closest('.reading-area');
-        if (reader) { reader.scrollLeft -= event.clientX - pan.current.x; reader.scrollTop -= event.clientY - pan.current.y; }
-        pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+        const reader = event.currentTarget.closest('.reading-area'), now = performance.now();
+        const dx = event.clientX - pan.current.x, dy = event.clientY - pan.current.y, elapsed = Math.max(1, now - pan.current.at);
+        if (reader) { reader.scrollLeft -= dx; reader.scrollTop -= dy; }
+        pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: now, vx: .8 * dx / elapsed + .2 * pan.current.vx, vy: .8 * dy / elapsed + .2 * pan.current.vy };
       } else append(event);
     }} onPointerUp={event => {
       event.stopPropagation();
-      if (pan.current?.id === event.pointerId) pan.current = null;
+      if (pan.current?.id === event.pointerId) {
+        const { at, vx, vy } = pan.current, reader = event.currentTarget.closest('.reading-area');
+        pan.current = null;
+        if (reader && performance.now() - at < 100) release(reader, vx, vy);
+      }
       const stroke = active.current;
       if (!stroke || stroke.id !== event.pointerId) return;
       append(event);
@@ -108,7 +129,7 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
       }
       clear(); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     }} onPointerCancel={event => { if (active.current?.id === event.pointerId || pan.current?.id === event.pointerId) clear(); }} onLostPointerCapture={event => { if (active.current?.id === event.pointerId) clear(); }} onClick={event => event.stopPropagation()} onContextMenu={event => event.preventDefault()}>
-    {annotations.filter(a => a.kind === 'ink').map(a => <g key={a.id} data-ink-id={a.id} stroke={a.color} strokeWidth={(a.strokeWidth || 2) * viewport.scale} opacity={a.opacity ?? 1}>{a.inkPaths?.map((path, index) => <polyline key={index} points={pathData(path)} />)}</g>)}
-    {preview.length > 0 && <polyline className="ink-preview" points={pathData(preview.length === 2 ? [...preview, preview[0] + .01, preview[1]] : preview)} stroke={color} strokeWidth={width * viewport.scale} />}
+    {strokes}
+    {preview.length > 0 && <polyline className="ink-preview" points={pathData(preview.length === 2 ? [...preview, preview[0] + .01, preview[1]] : preview, viewport)} stroke={color} strokeWidth={width * viewport.scale} />}
   </svg>;
 }

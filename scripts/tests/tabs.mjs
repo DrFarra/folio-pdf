@@ -8,6 +8,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 import { operateDocument } from '../../src/engine/operations.mjs';
 import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
+import { storedSession, waitForSession } from './session-helpers.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
 fs.mkdirSync(output, { recursive: true });
@@ -63,7 +64,7 @@ async function go(page, number) {
 async function annotate(page, source) {
   await zoom(page).selectOption('100'); await go(page, 1);
   await enterAnnotationMode(page);
-  await page.getByRole('button', { name: 'Resaltado automático (H)', exact: true }).click();
+  await page.getByRole('button', { name: 'Resaltador (H)', exact: true }).click();
   const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: `TAB ${source.letter} PAGE 1` }).first(); await span.waitFor();
   const rect = await span.boundingBox();
   await page.mouse.move(rect.x + 1, rect.y + rect.height / 2); await page.mouse.down(); await page.mouse.move(rect.x + rect.width - 1, rect.y + rect.height / 2, { steps: 10 }); await page.mouse.up();
@@ -78,8 +79,8 @@ async function download(page, name) {
 const row = (page, title) => page.locator('.bookmark-entry').filter({ has: page.locator('.bookmark-label', { hasText: new RegExp(`^${title}$`) }) }).first();
 async function options(page, title, action) { await page.getByRole('button', { name: `Opciones de ${title}`, exact: true }).click(); await page.getByRole('menuitem', { name: action, exact: true }).click(); }
 async function rename(page, title) { const editor = page.getByRole('textbox', { name: 'Nombre del marcador', exact: true }); await editor.fill(title); await editor.press('Enter'); await row(page, title).waitFor(); }
-async function session(page, source = a) { return page.evaluate(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null'), source.hash); }
-async function waitSession(page, source, title) { await page.waitForFunction(({ hash, title }) => (localStorage.getItem(`folio.session.${hash}`) || '').includes(title), { hash: source.hash, title }); }
+async function session(page, source = a) { return storedSession(page, source.hash); }
+async function waitSession(page, source, title) { await waitForSession(page, (value, id) => id === source.hash && JSON.stringify(value).includes(title)); }
 const children = (nodes, parentId) => nodes.filter(node => node.parentId === parentId).sort((left, right) => left.order - right.order);
 const tabOrder = page => page.locator('.document-tab [role=tab]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')));
 async function beginTabDrag(page, source) {
@@ -128,7 +129,7 @@ try {
     await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click(); await rename(page, 'First source page');
     await go(page, 3); await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click(); await rename(page, 'Third source page');
     await annotate(page, a); await zoom(page).selectOption('125'); await go(page, 2);
-    await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.lastPage === 2, a.hash);
+    await waitForSession(page, (value, id) => id === a.hash && value.lastPage === 2);
     const before = await session(page), scrollTop = await page.locator('.reading-area').evaluate(node => node.scrollTop);
     const sourceKey = await tab(page, a).locator('..').getAttribute('data-tab-key');
     await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
@@ -143,8 +144,7 @@ try {
     await page.locator('.highlight-annotation').first().waitFor();
     assert.equal(await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).isDisabled(), true, 'The extracted PDF starts with its own history.');
     await page.getByRole('button', { name: 'Marcadores', exact: true }).click(); await row(page, 'Third source page').waitFor();
-    await page.waitForFunction(hash => Object.keys(localStorage).some(key => key.startsWith('folio.session.') && key !== `folio.session.${hash}` && JSON.parse(localStorage.getItem(key)).bookmarks.some(node => node.title === 'Third source page' && node.page === 2)), a.hash);
-    const extractedSession = await page.evaluate(hash => Object.keys(localStorage).filter(key => key.startsWith('folio.session.') && key !== `folio.session.${hash}`).map(key => JSON.parse(localStorage.getItem(key))).find(value => value.bookmarks.some(node => node.title === 'Third source page')), a.hash);
+    const [, extractedSession] = await waitForSession(page, (value, id) => id !== a.hash && value.bookmarks.some(node => node.title === 'Third source page' && node.page === 2));
     assert.deepEqual(extractedSession.bookmarks.map(node => [node.title, node.page]), [['First source page', 1], ['Third source page', 2]]);
     await switchTo(page, a); assert.equal(await zoom(page).inputValue(), '125'); assert.equal(await input(page).inputValue(), '2');
     await page.waitForFunction(expected => Math.abs(document.querySelector('.reading-area').scrollTop - expected) < 3, scrollTop);
@@ -153,7 +153,7 @@ try {
     await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); assert.equal(await page.locator('.highlight-annotation').count(), 0);
     await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await go(page, 1); await page.locator('.highlight-annotation').first().waitFor();
     await page.getByRole('button', { name: `Cerrar ${extracted.name}`, exact: true }).click(); await tab(page, extracted).waitFor({ state: 'detached' });
-    await page.getByRole('button', { name: 'Mis documentos', exact: true }).click();
+    await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
     await page.getByRole('button', { name: `Abrir ${extracted.name}`, exact: true }).click(); await active(page, extracted);
     await page.locator('.highlight-annotation').first().waitFor(); assert.equal(await page.locator('.pdf-page-wrap').count(), 2);
     await page.getByRole('button', { name: 'Marcadores', exact: true }).click(); await row(page, 'Third source page').waitFor();
@@ -233,7 +233,7 @@ try {
     await page.keyboard.press('Control+Shift+Tab'); await active(page, a);
     await page.keyboard.press('Control+w'); await tab(page, a).waitFor({ state: 'detached' }); await active(page, b);
     await page.getByRole('button', { name: `Cerrar ${b.name}`, exact: true }).click(); await tab(page, b).waitFor({ state: 'detached' });
-    await page.getByRole('heading', { name: 'Documentos', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     return { inactiveCloseKeepsCurrentDocument: true, reopenRestoresAnnotation: true, keyboardSwitchAndClose: true, lastCloseReturnsToWelcome: true };
   });
 
@@ -246,7 +246,19 @@ try {
     await options(page, 'Kidney', 'Color Azul');
     await page.getByRole('button', { name: 'Contraer Kidney', exact: true }).click(); assert.equal(await row(page, 'Second page').count(), 0);
     await page.getByRole('button', { name: 'Expandir Kidney', exact: true }).click(); await row(page, 'Second page').waitFor();
-    await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.bookmarks.some(node => node.title === 'Kidney' && node.color === '#4579ba' && !node.collapsed), a.hash);
+    // Folding is view state: Deshacer reverts the color, not the folding.
+    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click();
+    await waitForSession(page, (value, id) => id === a.hash && value.bookmarks.some(node => node.title === 'Kidney' && node.color !== '#4579ba' && !node.collapsed));
+    assert.equal(await row(page, 'Second page').isVisible(), true);
+    await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click();
+    // Dragging through the custom color picker is a single undo step.
+    await page.getByRole('button', { name: 'Opciones de Kidney', exact: true }).click();
+    const custom = page.getByLabel('Color personalizado del marcador', { exact: true }); await custom.fill('#112233'); await custom.fill('#445566');
+    await page.keyboard.press('Escape'); await page.locator('.bookmark-menu').waitFor({ state: 'detached' });
+    await waitForSession(page, (value, id) => id === a.hash && value.bookmarks.some(node => node.title === 'Kidney' && node.color === '#445566'));
+    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click();
+    await waitForSession(page, (value, id) => id === a.hash && value.bookmarks.some(node => node.title === 'Kidney' && node.color === '#4579ba' && !node.collapsed));
+    await row(page, 'Second page').waitFor();
     await waitSession(page, a, 'Second page'); const saved = await session(page);
     const medicine = saved.bookmarks.find(node => node.title === 'Medicine'); assert(medicine && children(saved.bookmarks, medicine.id).length === 2);
     const kidney = children(saved.bookmarks, medicine.id).find(node => node.title === 'Kidney');
@@ -265,10 +277,7 @@ try {
     await options(page, 'First group', 'Añadir página actual dentro'); await rename(page, 'Keep this page');
     await page.getByRole('button', { name: 'Crear grupo de marcadores', exact: true }).click(); await rename(page, 'Second group');
     await options(page, 'Second group', 'Subir');
-    await page.waitForFunction(hash => {
-      const nodes = JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.bookmarks || [];
-      return nodes.filter(node => node.parentId === null).sort((left, right) => left.order - right.order)[0]?.title === 'Second group';
-    }, a.hash);
+    await waitForSession(page, (value, id) => id === a.hash && children(value.bookmarks, null)[0]?.title === 'Second group');
     assert.equal(children((await session(page)).bookmarks, null)[0].title, 'Second group');
     await options(page, 'Keep this page', 'Mover…');
     const destination = page.getByRole('combobox', { name: 'Dentro de', exact: true });
@@ -276,26 +285,29 @@ try {
     await destination.selectOption(value); await page.getByRole('button', { name: 'Mover', exact: true }).click();
     await page.getByRole('dialog', { name: 'Mover marcador', exact: true }).waitFor({ state: 'detached' });
     await waitSession(page, a, 'Keep this page');
-    await page.waitForFunction(hash => {
-      const nodes = JSON.parse(localStorage.getItem(`folio.session.${hash}`)).bookmarks;
-      const group = nodes.find(node => node.title === 'Second group'); return group && nodes.some(node => node.title === 'Keep this page' && node.parentId === group.id);
-    }, a.hash);
+    await waitForSession(page, (value, id) => {
+      const group = id === a.hash && value.bookmarks.find(node => node.title === 'Second group'); return group && value.bookmarks.some(node => node.title === 'Keep this page' && node.parentId === group.id);
+    });
     await options(page, 'Second group', 'Eliminar y conservar hijos'); await row(page, 'Second group').waitFor({ state: 'detached' }); await row(page, 'Keep this page').waitFor();
-    await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`)).bookmarks.some(node => node.title === 'Keep this page' && node.parentId === null), a.hash);
+    await waitForSession(page, (value, id) => id === a.hash && value.bookmarks.some(node => node.title === 'Keep this page' && node.parentId === null));
     const final = await session(page), nodes = final.bookmarks, retained = nodes.find(node => node.title === 'Keep this page');
     assert(retained && retained.page === 1 && retained.parentId === null); assert(!nodes.some(node => node.title === 'Second group'));
     return { rootOrderChanged: true, movedIntoOtherGroup: true, deletedFolderRetainsPageChild: true, targetPagePreserved: 1 };
   });
 
   await check('legacy-page-bookmarks-survive-tree-migration', async page => {
-    await page.addInitScript(hash => localStorage.setItem(`folio.session.${hash}`, JSON.stringify({ version: 2, annotations: [], bookmarks: [2, 3], lastPage: 2, documentRevision: hash })), a.hash);
-    await page.reload(); await open(page, a);
+    // Earlier versions kept web sessions in localStorage; the database upgrade moves them.
+    // Leave the app first so that it writes nothing after the reset.
+    await page.goto(`${origin}/folio.svg`);
+    await page.evaluate(hash => new Promise(resolve => {
+      localStorage.setItem(`folio.session.${hash}`, JSON.stringify({ version: 2, annotations: [], bookmarks: [2, 3], lastPage: 2, documentRevision: hash }));
+      const request = indexedDB.deleteDatabase('folio-library'); request.onsuccess = request.onerror = request.onblocked = resolve;
+    }), a.hash);
+    await page.goto(origin); await open(page, a);
     await page.getByRole('button', { name: 'Marcadores', exact: true }).click();
     await row(page, 'Página 2').waitFor(); await row(page, 'Página 3').waitFor();
-    await page.waitForFunction(hash => {
-      const saved = JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null');
-      return saved?.version === 3 && saved.bookmarks.length === 2 && saved.bookmarks.every(node => typeof node === 'object');
-    }, a.hash);
+    await waitForSession(page, (value, id) => id === a.hash && value.version === 3 && value.bookmarks.length === 2 && value.bookmarks.every(node => typeof node === 'object'));
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('folio.session.'))), false);
     const saved = await session(page); assert.deepEqual(saved.bookmarks.map(node => node.page).sort(), [2, 3]);
     assert(saved.bookmarks.every(node => node.parentId === null && node.title === `Página ${node.page}`));
     return { legacyVersion: 2, migratedVersion: 3, preservedDestinationPages: [2, 3] };
@@ -335,13 +347,16 @@ try {
       assert.equal(await page.getByRole('tab').count(), 1, 'Saving a copy must keep one tab for this open document.');
     }
     await zoom(page).selectOption('150');
-    await desktopDocumentAction(page, 'Rotar vista 90 grados');
+    await desktopDocumentAction(page, 'Girar vista 90°');
     await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
     await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'TAB A PAGE 1' }).first().waitFor();
-    assert.equal(await page.getByText('No se pudo renderizar la página.', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('No se pudo mostrar la página.', { exact: true }).count(), 0);
     assert(await page.locator('.pdf-page-wrap[data-page-number="1"] canvas').first().evaluate(canvas => canvas.width > 0 && canvas.height > 0));
     const bytes = await download(page, 'tabs-repeated-save-after-view-change.pdf');
     assert(operateDocument(bytes, { operation: 'text' })[0].includes('TAB A PAGE 1'));
+    await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
+    const entry = page.getByRole('button', { name: `Abrir ${a.name}`, exact: true }); await entry.waitFor();
+    assert.equal(await entry.count(), 1, 'Each download replaces the library entry of the document.');
     return { successiveSaves: 3, renderingAfterFourthSave: true, zoomPercent: 150, viewRotation: 90, currentProxyRemainsUsable: true };
   });
 } finally { await browser?.close(); preview.kill(); fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ results, errors }, null, 2)); }

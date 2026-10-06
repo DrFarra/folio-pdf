@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium, webkit } from 'playwright-core';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { storedSession, waitForSession } from './session-helpers.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
 fs.mkdirSync(output, { recursive: true });
@@ -25,11 +26,11 @@ const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/v
 let log = '', browser, page; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
 const errors = [], results = [];
 const row = id => page.locator(`.bookmark-entry[data-bookmark-id="${id}"]`);
-const stored = async (identity = hash) => page.evaluate(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null'), identity);
+const stored = async (identity = hash) => storedSession(page, identity);
 const children = (nodes, parentId) => nodes.filter(node => node.parentId === parentId).sort((a, b) => a.order - b.order);
 const branchAttributes = nodes => nodes.filter(node => ['mother', 'page', 'subgroup', 'grandchild'].includes(node.id)).map(({ parentId, order, collapsed, ...node }) => node);
 async function waitParent(id, parentId, identity = hash) {
-  await page.waitForFunction(({ hash, id, parentId }) => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.bookmarks.some(node => node.id === id && node.parentId === parentId), { hash: identity, id, parentId });
+  await waitForSession(page, (value, key) => key === identity && value.bookmarks.some(node => node.id === id && node.parentId === parentId));
 }
 async function open(file) {
   await page.locator('.app-header input[type=file]').setInputFiles(file);
@@ -60,12 +61,17 @@ try {
   assert(ready, log || 'Vite did not start.'); browser = process.env.FOLIO_TEST_BROWSER === 'webkit' ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: chrome, headless: true });
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 }, acceptDownloads: true }); page = await context.newPage(); page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push(error.message));
+  // A session in the localStorage format of earlier versions, moved to IndexedDB on first start.
   await page.addInitScript(({ hash, bookmarks }) => {
     const key = `folio.session.${hash}`;
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 3, annotations: [], bookmarks, lastPage: 1, documentRevision: hash }));
   }, { hash, bookmarks: original });
   await page.goto(origin); await open(source);
-  await startDrag('mother'); await over('target');
+  await startDrag('mother');
+  // Starting over its own row is not an invalid destination.
+  assert.equal(await page.locator('.bookmark-entry.drop-blocked').count(), 0);
+  assert.equal(await page.locator('.bookmark-drop-hint').textContent(), 'Arrastra a un grupo o entre marcadores');
+  await over('target');
   await row('target').locator('xpath=self::*[contains(@class,"drop-inside")]').waitFor();
   await row('target-child').waitFor(); // 600ms hover must expand the collapsed destination.
   await page.screenshot({ path: path.join(output, 'bookmark-drag-destination.png'), animations: 'disabled' });
@@ -98,7 +104,7 @@ try {
   await rootDrop.locator('xpath=self::*[contains(@class,"active")]').waitFor(); await page.mouse.up(); await waitParent('mother', null);
   assert.deepEqual(children((await stored()).bookmarks, null).map(node => node.id), ['target', 'page-parent', 'mother']);
   await drag('mother', 'target', 'before'); await waitParent('mother', null);
-  await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`)).bookmarks.find(node => node.id === 'mother').order === 0, hash);
+  await waitForSession(page, (value, key) => key === hash && value.bookmarks.find(node => node.id === 'mother').order === 0);
   const final = (await stored()).bookmarks;
   assert.deepEqual(children(final, null).map(node => node.id), ['mother', 'target', 'page-parent']);
   assert.deepEqual(branchAttributes(final), branchAttributes(original));

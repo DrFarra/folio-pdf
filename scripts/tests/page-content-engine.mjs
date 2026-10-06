@@ -81,7 +81,7 @@ await check('native-quarter-rotations-and-crop-box-return-original-pdf-coordinat
   const boxes = [];
   for (const rotation of [0, 90, 180, 270]) {
     const source = await textFixture(rotation), before = hash(source), line = content(source).items.find(item => item.level === 'line' && item.text === 'FIRST line');
-    assert(line); assert.equal(line.rotated, rotation !== 0); assert.equal(line.editable, rotation === 0);
+    assert(line); assert.equal(line.rotated, rotation !== 0); assert.equal(line.editable, rotation === 0); assert.equal(!!line.areaReplaceable, rotation !== 0, 'Rotated text offers area replacement.');
     assert(Math.abs(line.rect[0] - 60) < .01); boxes.push(line.rect);
     line.rect.forEach((value, i) => assert(Math.abs(value - boxes[0][i]) < .01)); assert.equal(hash(source), before);
   }
@@ -107,7 +107,7 @@ await check('ocr-is-readonly-and-widget-comment-text-is-not-content', async () =
   fonts.forEach((_value, key) => { name ??= key; });
   append(doc, 0, `BT /${name} 12 Tf 3 Tr 1 0 0 1 60 130 Tm (HIDDEN OCR) Tj ET\n`);
   const bytes = saveDoc(doc); doc.destroy(); const before = hash(bytes), info = content(bytes);
-  const hidden = info.items.filter(item => item.text === 'HIDDEN OCR'); assert.equal(hidden.length, 2); assert(hidden.every(item => !item.editable && /OCR invisible/.test(item.reason)));
+  const hidden = info.items.filter(item => item.text === 'HIDDEN OCR'); assert.equal(hidden.length, 2); assert(hidden.every(item => !item.editable && /OCR invisible/.test(item.reason) && !item.areaReplaceable));
   assert(!info.items.some(item => /SHOULD NOT EDIT/.test(item.text || '')));
   assert(content(bytes).items.some(item => item.text === 'FIRST line' && item.editable));
   assert.equal(operateDocument(bytes, { operation: 'fields' })[0].value, 'WIDGET SHOULD NOT EDIT'); assert.equal(inspectDocument(bytes).annotations.length, 1); assert.equal(hash(bytes), before);
@@ -172,7 +172,7 @@ await check('copy-edit-signature-permissions-and-original-bytes-remain-enforced'
   assert.throws(() => content(noCopy, 1, 'reader'), /no permite extraer/); assert.throws(() => pageImage(noCopy, 1, 'image-0', 'reader'), /no permite extraer/);
   const noEdit = operateDocument(source, { operation: 'protect', userPassword: 'reader', ownerPassword: 'owner', permissions: 16 }), restricted = content(noEdit, 1, 'reader'); assert(restricted.items.length); assert(restricted.items.every(item => !item.editable));
   const doc = new mupdf.PDFDocument(source); doc.getTrailer().get('Root').put('AcroForm', doc.addObject({ Fields: [doc.addObject({ FT: 'Sig', T: doc.newString('Signature guard fixture'), V: {} })] }));
-  const signed = saveDoc(doc); doc.destroy(); const signedInfo = content(signed); assert(signedInfo.items.every(item => !item.editable && /firmado/.test(item.reason)));
+  const signed = saveDoc(doc); doc.destroy(); const signedInfo = content(signed); assert(signedInfo.items.every(item => !item.editable && /firmado/.test(item.reason) && !item.areaReplaceable));
   for (const page of [0, NaN, 3, 1.5]) assert.throws(() => content(source, page), /página inválido/); assert.equal(hash(source), before);
   return { copyPermission: true, editPermission: true, existingSignatureGuard: true, sourceUnchanged: true };
 });
@@ -194,10 +194,10 @@ await check('page-content-and-image-client-copy-and-cancellation', async () => {
   try {
     const client = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64')), aborted = new AbortController(); aborted.abort();
     await assert.rejects(client.getPageContent(bytes, 1, '', aborted.signal), error => error.name === 'AbortError'); await assert.rejects(client.readPageImage(bytes, 1, 'image-0', '', aborted.signal), error => error.name === 'AbortError'); assert.equal(workers.length, 0);
-    const pending = client.getPageContent(bytes, 1), worker = workers.at(-1); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); const result = await pending; assert(result.items[0].editable); assert(worker.terminated);
-    const extracting = client.readPageImage(bytes, 1, result.items[0].id), imageWorker = workers.at(-1); imageWorker.onmessage({ data: { result: operateDocument(imageWorker.message.bytes, imageWorker.message.options) } }); assert((await extracting).bytes instanceof Uint8Array); assert(imageWorker.terminated);
-    const cancel = new AbortController(), cancelled = client.readPageImage(bytes, 1, 'image-0', undefined, cancel.signal); cancel.abort(); await assert.rejects(cancelled, error => error.name === 'AbortError'); assert(workers.at(-1).terminated); assert.equal(hash(bytes), before);
-    return { typedContentAndSinglePng: true, sourceCopy: true, preAbortNoWorkers: true, activeImageReadCancelled: true };
+    const pending = client.getPageContent(bytes, 1), worker = workers.at(-1); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); const result = await pending; assert(result.items[0].editable); assert(!worker.terminated);
+    const extracting = client.readPageImage(bytes, 1, result.items[0].id), imageWorker = workers.at(-1); assert.equal(imageWorker, worker, 'The idle engine worker is reused.'); imageWorker.onmessage({ data: { result: operateDocument(imageWorker.message.bytes, imageWorker.message.options) } }); assert((await extracting).bytes instanceof Uint8Array); assert(!imageWorker.terminated);
+    const cancel = new AbortController(), cancelled = client.readPageImage(bytes, 1, 'image-0', undefined, cancel.signal); cancel.abort(); await assert.rejects(cancelled, error => error.name === 'AbortError'); assert(worker.terminated); assert.equal(hash(bytes), before);
+    return { typedContentAndSinglePng: true, sourceCopy: true, preAbortNoWorkers: true, idleWorkerReused: true, activeImageReadCancelled: true };
   } finally { globalThis.Worker = priorWorker; }
 });
 

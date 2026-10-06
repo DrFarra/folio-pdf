@@ -1,5 +1,6 @@
 import * as mupdf from 'mupdf';
 import { open, hasSignature, save } from './mupdf-engine.mjs';
+import { jpegOrientation, orientationMatrix } from './jpeg-orientation.mjs';
 
 const fail = message => { throw new Error(message); };
 const finite = values => Array.isArray(values) && values.every(Number.isFinite);
@@ -22,6 +23,18 @@ const rgb = color => {
   return [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16) / 255);
 };
 const intersects = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+const quadBounds = q => [Math.min(q[0], q[2], q[4], q[6]), Math.min(q[1], q[3], q[5], q[7]), Math.max(q[0], q[2], q[4], q[6]), Math.max(q[1], q[3], q[5], q[7])];
+
+// Scripts, launched files, submissions and media actions; links and in-document
+// navigation remain. Chained actions are dropped from the actions that remain.
+const unsafeActions = new Set(['JavaScript', 'Launch', 'SubmitForm', 'ImportData', 'Rendition', 'Sound', 'Movie', 'RichMediaExecute', 'GoToE']);
+function stripActions(object) {
+  if (!object.isDictionary()) return;
+  object.delete('AA');
+  const action = object.get('A');
+  if (!action.isDictionary()) return;
+  if (unsafeActions.has(action.get('S').asName())) object.delete('A'); else action.delete('Next');
+}
 
 function clearPrivateData(doc, removeOutlines = false) {
   const trailer = doc.getTrailer(), root = trailer.get('Root');
@@ -30,33 +43,70 @@ function clearPrivateData(doc, removeOutlines = false) {
   if (!names.isNull()) { names.delete('EmbeddedFiles'); names.delete('JavaScript'); }
   root.delete('AF'); root.delete('Collection');
   if (removeOutlines) { root.delete('Outlines'); root.delete('Dests'); if (!names.isNull()) names.delete('Dests'); }
+  // Outline items and form fields carry actions too; XFA forms carry scripts.
+  const seen = new Set();
+  function outline(item, depth = 0) {
+    for (let count = 0; item.isDictionary() && count < 100000; item = item.get('Next'), count++) {
+      const ref = item.asIndirect(); if (ref && seen.has(ref)) return; if (ref) seen.add(ref);
+      stripActions(item); if (depth < 32) outline(item.get('First'), depth + 1);
+    }
+  }
+  function formFields(array, depth = 0) {
+    for (let i = 0; i < array.length && depth < 32; i++) {
+      const field = array.get(i), ref = field.asIndirect(); if (!field.isDictionary() || ref && seen.has(ref)) continue; if (ref) seen.add(ref);
+      stripActions(field); formFields(field.get('Kids'), depth + 1);
+    }
+  }
+  outline(root.get('Outlines', 'First'));
+  formFields(root.get('AcroForm', 'Fields'));
+  if (root.get('AcroForm').isDictionary()) root.get('AcroForm').delete('XFA');
   for (let i = 0; i < doc.countPages(); i++) {
     const page = doc.loadPage(i);
     try {
       page.getObject().delete('Metadata'); page.getObject().delete('PieceInfo'); page.getObject().delete('AA');
-      for (const a of [...page.getAnnotations()]) if (['FileAttachment', 'Sound', 'Movie', 'RichMedia'].includes(a.getType())) page.deleteAnnotation(a);
+      for (const a of [...page.getAnnotations()]) if (['FileAttachment', 'Sound', 'Movie', 'RichMedia', 'Screen'].includes(a.getType())) page.deleteAnnotation(a);
+      const annotations = page.getObject().get('Annots');
+      for (let n = 0; n < annotations.length; n++) stripActions(annotations.get(n));
     } finally { page.destroy(); }
   }
 }
 
+// Widgets of one field share its value: list it once, at its first widget.
+// Radio buttons stay separate because each widget is one of the choices.
+function fieldKey(widget, id) {
+  if (widget.isRadioButton()) return id;
+  let state = '';
+  if (widget.isCheckbox()) widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') state = key; });
+  return widget.getName() + '\n' + state;
+}
+
 function fields(doc) {
-  const result = [];
+  const result = [], groups = new Map();
   for (let i = 0; i < doc.countPages(); i++) {
     const page = doc.loadPage(i);
     try {
       for (const [position, widget] of page.getWidgets().entries()) {
+        const id = `${i + 1}:${position}:${widget.getName()}`, key = fieldKey(widget, id), group = groups.get(key);
+        if (group) { if (!group.pages.includes(i + 1)) group.pages.push(i + 1); continue; }
         let buttonValue = '';
-        if (widget.isRadioButton()) widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') buttonValue = key; });
-        result.push({
-        id: `${i + 1}:${position}:${widget.getName()}`, name: widget.getName(), label: widget.getLabel() || widget.getName(),
-        page: i + 1, type: widget.getFieldType(), value: widget.getValue(), readOnly: widget.isReadOnly(),
+        if (widget.isRadioButton()) {
+          widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') buttonValue = key; });
+          // Groups with /Opt name their states 0, 1…; the option is the text people read.
+          const options = widget.getObject().getInheritable('Opt');
+          if (options.isArray() && /^\d+$/.test(buttonValue) && Number(buttonValue) < options.length) buttonValue = options.get(Number(buttonValue)).asString() || buttonValue;
+        }
+        const field = {
+        id, name: widget.getName(), label: widget.getLabel() || widget.getName(),
+        page: i + 1, pages: [i + 1], type: widget.getFieldType(), value: widget.getValue(), readOnly: widget.isReadOnly(),
         multiline: widget.isText() && widget.isMultiline(), maxLength: widget.isText() ? widget.getMaxLen() : 0,
         options: widget.isChoice() ? widget.getOptions(false) : [],
         exportOptions: widget.isChoice() ? widget.getOptions(true) : [],
         checked: (widget.isCheckbox() || widget.isRadioButton()) && widget.getObject().get('AS').asName() !== 'Off',
         buttonValue,
         rect: mupdf.Rect.transform(widget.getBounds(), mupdf.Matrix.invert(page.getTransform())),
-      }); }
+        };
+        groups.set(key, field); result.push(field);
+      }
     } finally { page.destroy(); }
   }
   return result;
@@ -97,6 +147,8 @@ function importAnnotations(doc, source, sourceIndex, targetIndex, map, pendingLi
       let label = original.get('T').asString(), parent = original.get('Parent'), depth = 0;
       while (!parent.isNull() && depth++ < 32) { label = [parent.get('T').asString(), label].filter(Boolean).join('.'); parent = parent.get('Parent'); }
       copy.put('T', doc.newString(`Imported${to.asIndirect()}_${i}_${(label || 'Field').replaceAll('.', '_')}`));
+      // The renamed field keeps its original name as its label.
+      if (label && copy.get('TU').isNull()) { const tooltip = original.getInheritable('TU'); copy.put('TU', tooltip.isNull() ? doc.newString(label) : map.graftObject(tooltip)); }
       const root = doc.getTrailer().get('Root'); let acro = root.get('AcroForm');
       if (acro.isNull()) { acro = doc.newDictionary(); acro.put('Fields', doc.newArray()); root.put('AcroForm', acro); }
       let resources = acro.get('DR'); if (resources.isNull()) { resources = doc.newDictionary(); acro.put('DR', resources); }
@@ -243,7 +295,7 @@ function textDrawing(device, box, options) {
   } finally { text.destroy(); font.destroy(); }
 }
 
-function imagePlacement(image, box, options) {
+function imagePlacement(image, box, options, orientation = 1) {
   const fit = options.fit ?? 'stretch', alpha = options.opacity ?? 1, rotation = options.rotation ?? 0;
   if (!['contain', 'cover', 'stretch'].includes(fit)) fail('Ajuste de imagen inválido.');
   if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
@@ -251,7 +303,7 @@ function imagePlacement(image, box, options) {
   const width = box[2] - box[0], height = box[3] - box[1], turned = rotation === 90 || rotation === 270;
   let w = turned ? height : width, h = turned ? width : height;
   if (fit !== 'stretch') {
-    const iw = image.getWidth(), ih = image.getHeight();
+    const iw = orientation >= 5 ? image.getHeight() : image.getWidth(), ih = orientation >= 5 ? image.getWidth() : image.getHeight();
     const scale = (fit === 'contain' ? Math.min : Math.max)(width / (turned ? ih : iw), height / (turned ? iw : ih));
     w = iw * scale; h = ih * scale;
   }
@@ -260,7 +312,8 @@ function imagePlacement(image, box, options) {
     : rotation === 180 ? [-w, 0, 0, -h, cx + w / 2, cy + h / 2]
     : rotation === 270 ? [0, -w, h, 0, cx - h / 2, cy + w / 2]
     : [w, 0, 0, h, cx - w / 2, cy - h / 2];
-  return { matrix, alpha, clip: fit === 'cover' };
+  // Camera photos are placed upright, as galleries show them.
+  return { matrix: mupdf.Matrix.concat(orientationMatrix(orientation), matrix), alpha, clip: fit === 'cover' };
 }
 
 function imageDrawing(device, box, image, placement) {
@@ -283,8 +336,9 @@ function areaContent(page, box) {
       beginLine: (_bounds, mode, vector) => { selected = ''; direction = mode !== 0 || Math.abs(vector[1]) > .01 || vector[0] < .99; },
       onChar: (character, _origin, font, size, quad, color) => {
         try {
-          const xs = [quad[0], quad[2], quad[4], quad[6]], ys = [quad[1], quad[3], quad[5], quad[7]];
-          if (!intersects(box, [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])) return;
+          // Same rule as areaRemoval: a glyph belongs to the area by its centre.
+          const glyph = quadBounds(quad), x = (glyph[0] + glyph[2]) / 2, y = (glyph[1] + glyph[3]) / 2;
+          if (x < box[0] || x > box[2] || y < box[1] || y > box[3]) return;
           selected += character; result.rotated ||= direction;
           if (!character.trim()) return;
           const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
@@ -314,7 +368,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
   const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
   const warnings = new Set(), textPaint = [], images = [], imagePaint = [], glyphs = [], graphics = [], groups = [];
   const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, display, structured, device, selectedImage;
-  const reserve = () => { if (++events > 20000) fail('La página contiene demasiados elementos para la selección automática. Usa una selección manual.'); };
+  const reserve = () => { if (++events > 20000) fail('La página contiene demasiados elementos para detectarlos automáticamente.'); };
   const currentClip = () => clips.at(-1);
   const complexGroup = () => groups.some(Boolean);
   const pushClip = (box, complex) => { reserve(); clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex }); };
@@ -368,7 +422,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     // The installed walker truncates non-BMP runes with fromCharCode. JSON's
     // Unicode strings preserve them; only strings are used, not its rounded boxes.
     const jsonLines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
-    if (jsonLines.reduce((n, line) => n + line.length, 0) > 200000) fail('Hay demasiado texto para la selección automática. Usa una selección manual.');
+    if (jsonLines.reduce((n, line) => n + line.length, 0) > 200000) fail('La página tiene demasiado texto para detectarlo automáticamente.');
     const blocks = []; let block, line, index = 0, rune = 0, jsonRunes;
     structured.walk({
       beginTextBlock: box => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
@@ -397,12 +451,12 @@ function pageContent(doc, page, requestedImage, selectedContent) {
         const rotated = rows.some(row => row.mode !== 0 || Math.abs(row.direction[1]) > .01 || row.direction[0] < .99);
         const clipped = !equalBox(intersection(box, bounds), box) || related.some(event => !equalBox(intersection(box, event.clip), box));
         const complex = related.some(event => event.complex && !event.hidden);
-        let reason = !visible ? 'Texto OCR invisible: no representa letras visibles que puedan reemplazarse.' : hidden ? 'Hay capas de texto visibles e invisibles superpuestas.' : rotated ? 'Texto girado o vertical: usa una selección manual.' : clipped || complex ? 'Texto recortado o con efectos: usa una selección manual.' : undefined;
+        let reason = !visible ? 'Texto OCR invisible: no representa letras visibles que puedan reemplazarse.' : hidden ? 'Hay capas de texto visibles e invisibles superpuestas.' : rotated ? 'Texto girado o vertical.' : clipped || complex ? 'Texto recortado o con efectos.' : undefined;
         const baselineOffset = rows[0].origin?.[1] - box[1];
         const advances = !rotated ? rows.slice(1).map((row, i) => (row.origin?.[1] - rows[i].origin?.[1]) / style.size).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b) : [];
         const lineHeight = advances.length ? advances[Math.floor(advances.length / 2)] : undefined;
-        if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor: usa una selección manual.';
-        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}) };
+        if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor.';
+        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}) };
         candidates.push({ item, box, block: bi, rows });
       };
       rows.forEach((row, li) => addText(`text-line-b${bi}-l${li}`, 'line', row.box, [row]));
@@ -410,24 +464,24 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     }
     for (const candidate of candidates) {
       if (candidate.item.editable && candidates.some(other => other.block !== candidate.block && other.item.level === 'line' && overlap(candidate.box, other.box))) {
-        candidate.item.editable = false; candidate.item.reason = 'Hay otro bloque de texto superpuesto: usa una selección manual.';
+        Object.assign(candidate.item, { editable: false, reason: 'Hay otro bloque de texto superpuesto.', areaReplaceable: true });
       }
       if (candidate.item.editable && images.some(image => image.alpha >= .999 && !image.masked && overlap(candidate.box, image.box) && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box) && image.order > event.order))) {
-        candidate.item.editable = false; candidate.item.reason = 'El texto está cubierto por una imagen: usa una selección manual.';
+        Object.assign(candidate.item, { editable: false, reason: 'El texto está cubierto por una imagen.', areaReplaceable: true });
       }
       if (candidate.item.reason) warnings.add(candidate.item.reason);
     }
     const imageItems = images.map((image, i) => {
       const [a, b, c, d] = image.matrix, orthogonal = (Math.abs(b) < .01 && Math.abs(c) < .01) || (Math.abs(a) < .01 && Math.abs(d) < .01);
       const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box)) && overlap(image.box, candidate.box)) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
-      const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos: usa una selección manual.' : a * d - b * c <= 0 ? 'Imagen reflejada: usa una selección manual.' : !orthogonal ? 'Imagen inclinada: usa una selección manual.' : overlaps ? 'Imagen con contenido superpuesto: usa una selección manual.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
+      const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos.' : a * d - b * c <= 0 ? 'Imagen reflejada.' : !orthogonal ? 'Imagen inclinada.' : overlaps ? 'Imagen con contenido superpuesto.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
       if (reason) warnings.add(reason);
-      return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, ...(reason ? { reason } : {}) };
+      return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, ...(reason ? { reason } : {}), ...(reason && image.alpha > 0 ? { areaReplaceable: true } : {}) };
     });
     const items = [...candidates.map(candidate => candidate.item), ...imageItems];
     if (hasSignature(doc) || !doc.hasPermission('edit')) {
       const reason = 'El documento firmado o sus permisos no permiten editar el contenido.';
-      items.forEach(item => { item.editable = false; item.reason = reason; }); warnings.add(reason);
+      items.forEach(item => { item.editable = false; item.reason = reason; delete item.areaReplaceable; }); warnings.add(reason);
     }
     if (selectedContent) {
       const { id, kind } = selectedContent, item = items.find(item => item.id === id);
@@ -439,47 +493,25 @@ function pageContent(doc, page, requestedImage, selectedContent) {
         // IMAGE_REMOVE tests the complete painted image, even when it is hidden
         // by alpha or clipping. The picker deliberately tolerates tiny overlaps;
         // deletion must not use that tolerance or remove a second instance.
-        if (imagePaint.some(other => other !== image && intersects(image.fullBox, other.fullBox))) fail('Otra imagen toca el área seleccionada; no se puede eliminar sólo esta instancia con seguridad.');
+        if (imagePaint.some(other => other !== image && intersects(image.fullBox, other.fullBox))) fail('Otra imagen toca el área seleccionada; no se puede eliminar solo esta instancia con seguridad.');
         return { boxes: [image.fullBox], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()) };
       }
       const candidate = candidates.find(candidate => candidate.item === item), selected = new Set(candidate.rows.flatMap(row => row.glyphs));
-      if (selected.size > 5000) fail('Hay demasiados caracteres para eliminar esta selección automáticamente. Selecciona menos líneas.');
-      const glyphBoxes = [...selected].map(glyph => {
-        if (!finite(glyph.quad) || !finite(glyph.origin)) fail('Los límites del texto no permiten una eliminación segura.');
-        const xs = glyph.quad.filter((_n, i) => i % 2 === 0), ys = glyph.quad.filter((_n, i) => i % 2 === 1);
-        const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-        // Inset normal quads to avoid deleting a neighbouring glyph that only
-        // shares an edge. Zero-width accents still need a small removal area.
-        const insetX = Math.min(.02, (box[2] - box[0]) / 10), insetY = Math.min(.02, (box[3] - box[1]) / 10);
-        return [box[0] + insetX - (insetX === 0 ? .01 : 0), box[1] + insetY - (insetY === 0 ? .01 : 0), box[2] - insetX + (insetX === 0 ? .01 : 0), box[3] - insetY + (insetY === 0 ? .01 : 0)];
-      });
-      // Merge touching quads with the same vertical extent, but never bridge
-      // lines or differently sized spans. This avoids thousands of annotations
-      // for an ordinary paragraph while retaining its actual glyph geometry.
-      const boxes = [];
-      glyphBoxes.sort((a, b) => a[1] - b[1] || a[3] - b[3] || a[0] - b[0]);
-      for (const box of glyphBoxes) {
-        const last = boxes.at(-1);
-        if (last && Math.abs(last[1] - box[1]) < .02 && Math.abs(last[3] - box[3]) < .02 && box[0] <= last[2] + .041) last[2] = Math.max(last[2], box[2]);
-        else boxes.push(box);
-      }
-      if (boxes.length > 500) fail('La selección tiene demasiados fragmentos para eliminarla con seguridad. Selecciona menos líneas.');
-      const retainedGlyphs = glyphs.filter(glyph => !selected.has(glyph) && glyph.c.trim());
-      const boundsOf = glyph => [Math.min(glyph.quad[0], glyph.quad[2], glyph.quad[4], glyph.quad[6]), Math.min(glyph.quad[1], glyph.quad[3], glyph.quad[5], glyph.quad[7]), Math.max(glyph.quad[0], glyph.quad[2], glyph.quad[4], glyph.quad[6]), Math.max(glyph.quad[1], glyph.quad[3], glyph.quad[5], glyph.quad[7])];
-      if (retainedGlyphs.some(glyph => boxes.some(box => intersects(boundsOf(glyph), box)))) fail('Hay caracteres vecinos dentro de la selección; no se pueden eliminar sólo los elegidos con seguridad.');
-      return { boxes, retainedGlyphs };
+      if (selected.size > 5000) fail('Hay demasiados caracteres para modificar esta selección automáticamente. Selecciona menos líneas.');
+      return textRemoval([...selected], glyphs.filter(glyph => !selected.has(glyph) && glyph.c.trim()), item.level === 'line'
+        ? 'Esta línea está demasiado cerca de otro texto para modificarla sola. Selecciona el párrafo completo.' : 'Este párrafo está demasiado cerca de otro texto para modificarlo solo.');
     }
     if (requestedImage !== undefined) {
       const item = imageItems.find(item => item.id === requestedImage);
       if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
       if (!item.editable) fail(item.reason);
-      return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))]);
+      return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))], jpegSource(page, selectedImage));
     }
     return { items, warnings: [...warnings] };
   } finally { selectedImage?.destroy(); device?.destroy(); structured?.destroy(); display?.destroy(); }
 }
 
-function contentGlyphs(page) {
+function contentGlyphs(page, whitespace = false) {
   let display, structured, rune = 0, line = 0, chars; const result = [];
   try {
     display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
@@ -488,7 +520,7 @@ function contentGlyphs(page) {
     structured.walk({
       beginLine: () => { chars = [...(lines[line++] || '')]; rune = 0; },
       onChar: (c, origin, font, size, quad, color) => {
-        try { const value = chars[rune++] ?? c; if (value.trim()) result.push({ c: value, origin: [...origin], quad: [...quad], fontName: font.getName(), size, color: [...color] }); }
+        try { const value = chars[rune++] ?? c; if (whitespace || value.trim()) result.push({ c: value, origin: [...origin], quad: [...quad], fontName: font.getName(), size, color: [...color] }); }
         finally { font.destroy(); }
       },
     });
@@ -496,24 +528,90 @@ function contentGlyphs(page) {
   } finally { structured?.destroy(); display?.destroy(); }
 }
 
-function verifyRetainedGlyphs(expected, actual) {
+// Redaction removes every glyph whose font box touches a mark, and with ordinary
+// leading those boxes overlap the adjacent lines. Mark only the middle band of
+// each selected glyph; verifyRetainedGlyphs then checks the saved result.
+function textRemoval(selected, retainedGlyphs, conflict) {
+  const marks = selected.map(({ quad, origin }) => {
+    if (!finite(quad) || !finite(origin)) fail('Los límites del texto no permiten una eliminación segura.');
+    const at = (t, i) => quad[i] + t * (quad[i + 4] - quad[i]);
+    const box = quadBounds([.4, .6].flatMap(t => [at(t, 0), at(t, 1), at(t, 2), at(t, 3)]));
+    // Inset normal boxes to avoid deleting a neighbouring glyph that only
+    // shares an edge. Zero-width accents still need a small removal area.
+    const insetX = Math.min(.02, (box[2] - box[0]) / 10), insetY = Math.min(.02, (box[3] - box[1]) / 10);
+    return [box[0] + insetX - (insetX === 0 ? .01 : 0), box[1] + insetY - (insetY === 0 ? .01 : 0), box[2] - insetX + (insetX === 0 ? .01 : 0), box[3] - insetY + (insetY === 0 ? .01 : 0)];
+  });
+  // Merge touching marks with the same vertical extent, but never bridge
+  // lines or differently sized spans. This avoids thousands of annotations
+  // for an ordinary paragraph while retaining its actual glyph geometry.
+  const boxes = [];
+  marks.sort((a, b) => a[1] - b[1] || a[3] - b[3] || a[0] - b[0]);
+  for (const box of marks) {
+    const last = boxes.at(-1);
+    if (last && Math.abs(last[1] - box[1]) < .02 && Math.abs(last[3] - box[3]) < .02 && box[0] <= last[2] + .041) last[2] = Math.max(last[2], box[2]);
+    else boxes.push(box);
+  }
+  if (boxes.length > 500) fail('La selección tiene demasiados fragmentos para modificarla con seguridad. Selecciona menos texto.');
+  if (retainedGlyphs.some(glyph => boxes.some(box => intersects(quadBounds(glyph.quad), box)))) fail(conflict);
+  return { boxes, retainedGlyphs };
+}
+
+// A drawn area takes the glyphs whose centre lies inside it, so a generous
+// rectangle never clips letters of neighbouring words or lines.
+function areaRemoval(page, box) {
+  const glyphs = contentGlyphs(page, true), inside = ({ quad }) => {
+    const b = quadBounds(quad), x = (b[0] + b[2]) / 2, y = (b[1] + b[3]) / 2;
+    return x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
+  };
+  return textRemoval(glyphs.filter(inside), glyphs.filter(glyph => !inside(glyph) && glyph.c.trim()), 'El área corta letras de otro texto. Ajústala para incluirlas completas o dejarlas fuera.');
+}
+
+function verifyRetainedGlyphs(output, index, expected, password, message = 'La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.') {
+  const verification = open(output, password); let page, actual;
+  try { page = verification.loadPage(index); actual = contentGlyphs(page); }
+  finally { page?.destroy(); verification.destroy(); }
   const key = glyph => JSON.stringify([glyph.c, glyph.fontName, glyph.color.map(n => Math.round(n * 255))]);
   const sort = (a, b) => key(a).localeCompare(key(b)) || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0] || a.size - b.size;
   expected.sort(sort); actual.sort(sort);
   if (expected.length !== actual.length || expected.some((glyph, i) => {
     const next = actual[i];
     return key(glyph) !== key(next) || Math.abs(glyph.size - next.size) > .025 || [...glyph.origin, ...glyph.quad].some((n, j) => Math.abs(n - [...next.origin, ...next.quad][j]) > .025);
-  })) fail('La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.');
+  })) fail(message);
 }
 
-function pageImagePixels(image, info) {
+// Keep a JPEG compressed when it is moved or duplicated. Only one unambiguous
+// DCT XObject with this size and plain RGB or gray samples qualifies; every
+// other image is decoded to PNG.
+function jpegSource(page, image) {
+  const found = new Map(), visited = new Set();
+  (function walk(resources, depth) {
+    if (depth > 8 || !resources.isDictionary()) return;
+    const xobjects = resources.get('XObject'); if (!xobjects.isDictionary()) return;
+    xobjects.forEach(value => {
+      const ref = value.asIndirect(); if (!ref || visited.has(ref)) return; visited.add(ref);
+      const subtype = value.get('Subtype').asName();
+      if (subtype === 'Form') walk(value.get('Resources'), depth + 1);
+      else if (subtype === 'Image' && value.get('Width').asNumber() === image.getWidth() && value.get('Height').asNumber() === image.getHeight()) found.set(ref, value);
+    });
+  })(page.getObject().getInheritable('Resources'), 0);
+  if (found.size !== 1) return null;
+  const [object] = found.values(), filter = object.get('Filter');
+  if ((filter.isArray() ? filter.length === 1 && filter.get(0).asName() : filter.asName()) !== 'DCTDecode' || !['DeviceRGB', 'DeviceGray'].includes(object.get('ColorSpace').asName())
+    || ['Decode', 'SMask', 'Mask', 'DecodeParms'].some(key => !object.get(key).isNull()) || object.get('ImageMask').asBoolean()) return null;
+  const buffer = object.readRawStream();
+  try { const bytes = new Uint8Array(buffer.asUint8Array()); return jpegOrientation(bytes) === 1 ? bytes : null; }
+  finally { buffer.destroy(); }
+}
+
+function pageImagePixels(image, info, jpeg) {
   const width = image.getWidth(), height = image.getHeight();
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height > 16000000) fail('La imagen supera el límite de 16 megapíxeles para editarla automáticamente.');
+  const rotation = ((Math.round(Math.atan2(info.matrix[1], info.matrix[0]) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
+  if (jpeg) return { bytes: jpeg, type: 'image/jpeg', width, height, opacity: info.alpha, rotation };
   let decoded, rgb;
   try {
     decoded = image.toPixmap(); rgb = decoded.convertToColorSpace(mupdf.ColorSpace.DeviceRGB, true);
-    const rotation = ((Math.round(Math.atan2(info.matrix[1], info.matrix[0]) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
-    return { bytes: new Uint8Array(rgb.asPNG()), width, height, opacity: info.alpha, rotation };
+    return { bytes: new Uint8Array(rgb.asPNG()), type: 'image/png', width, height, opacity: info.alpha, rotation };
   } finally { rgb?.destroy(); decoded?.destroy(); }
 }
 
@@ -568,9 +666,7 @@ export function operateDocument(bytes, options, password = '') {
       // Redaction uses font character bounds rather than the picker's quads.
       // Verify the saved result before returning it; nearby text must survive
       // with its original glyphs/positions, including other lines in the block.
-      const output = save(doc), verification = open(output, password);
-      try { const page = verification.loadPage(index); try { verifyRetainedGlyphs(selection.retainedGlyphs, contentGlyphs(page)); } finally { page.destroy(); } }
-      finally { verification.destroy(); }
+      const output = save(doc); verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password);
       return output;
     }
     if (operation === 'text') {
@@ -665,20 +761,24 @@ export function operateDocument(bytes, options, password = '') {
       } finally { sources.forEach(source => source.destroy()); }
     } else if (operation === 'fill') {
       allowed(doc, 'form');
-      const pending = new Map(Object.entries(options.values || {})), seen = new Set();
+      const pending = new Map(Object.entries(options.values || {})), seen = new Set(), groups = new Map();
       for (let i = 0; i < doc.countPages(); i++) {
         const page = doc.loadPage(i);
         try {
           for (const [position, widget] of page.getWidgets().entries()) {
-            const id = `${i + 1}:${position}:${widget.getName()}`; if (!pending.has(id)) continue;
+            const id = `${i + 1}:${position}:${widget.getName()}`, key = fieldKey(widget, id);
+            if (!groups.has(key)) groups.set(key, id);
+            const field = groups.get(key); if (!pending.has(field)) continue;
             if (widget.isReadOnly()) fail(`El campo «${widget.getName()}» es de solo lectura.`);
-            const value = pending.get(id); seen.add(id);
+            // Later widgets of a field usually share the value already and only
+            // need their appearance updated; same-named separate fields still get it.
+            const value = pending.get(field), repeated = field !== id; seen.add(field);
             if (widget.isText()) {
               if (typeof value !== 'string' || value.length > 100000 || (widget.getMaxLen() > 0 && value.length > widget.getMaxLen())) fail('El valor excede el límite del campo.');
-              if (!widget.setTextValue(value)) fail(`No se pudo actualizar «${widget.getName()}».`);
+              if ((!repeated || widget.getValue() !== value) && !widget.setTextValue(value)) fail(`No se pudo actualizar «${widget.getName()}».`);
             } else if (widget.isChoice()) {
               if (typeof value !== 'string' || !widget.getOptions(true).includes(value)) fail('Opción de formulario inválida.');
-              if (!widget.setChoiceValue(value)) fail('No se pudo actualizar la opción.');
+              if ((!repeated || widget.getValue() !== value) && !widget.setChoiceValue(value)) fail('No se pudo actualizar la opción.');
             } else if (widget.isCheckbox() || widget.isRadioButton()) {
               const checked = widget.getObject().get('AS').asName() !== 'Off';
               if (typeof value !== 'boolean') fail('Valor de casilla inválido.');
@@ -774,7 +874,7 @@ export function operateDocument(bytes, options, password = '') {
             const image = new mupdf.Image(options.image);
             let replacement;
             try {
-              const placement = imagePlacement(image, box, options);
+              const placement = imagePlacement(image, box, options, options.image instanceof Uint8Array ? jpegOrientation(options.image) : 1);
               if (operation === 'replace-image') {
                 const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
                 // Image editing removes pixels in the source area; text and annotations remain.
@@ -789,10 +889,19 @@ export function operateDocument(bytes, options, password = '') {
             // Fit validation happens before redaction; errors never return a modified PDF.
             if (operation === 'replace-text') {
               textDrawing({ fillText() {} }, box, options);
-              const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
-              redactPage(doc, page, [source], { black: false, images: false, graphics: false, preserveAnnotations: true });
+              const source = rect(options.sourceRect ?? options.rect), index = pageIndex(doc, options.page);
+              // A selected line or paragraph removes exactly its glyphs, like remove-content.
+              let selection;
+              if (options.sourceId !== undefined) {
+                if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+                if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
+                selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
+              } else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
+              if (selection.boxes.length) redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
+              const output = save(doc);
+              if (selection.boxes.length) verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
               // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
-              return operateDocument(save(doc), { ...options, operation: 'add-text' }, password);
+              return operateDocument(output, { ...options, operation: 'add-text' }, password);
             }
             appendDrawing(doc, page, device => textDrawing(device, box, options));
           }

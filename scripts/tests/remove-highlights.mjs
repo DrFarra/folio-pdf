@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { enterAnnotationMode } from './ui-helpers.mjs';
+import { waitForSession } from './session-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -104,7 +105,7 @@ const results = [], errors = [];
 const overlays = page => page.locator('.highlight-annotation:not(.preview)');
 const menu = page => page.getByRole('menu', { name: 'Resaltado', exact: true });
 const removeAction = page => menu(page).getByRole('menuitem', { name: 'Eliminar resaltado', exact: true });
-const automatic = page => page.getByRole('button', { name: 'Resaltado automático (H)', exact: true });
+const automatic = page => page.getByRole('button', { name: 'Resaltador (H)', exact: true });
 
 async function open(page, file) {
   await page.locator('.app-header input[type=file]').setInputFiles(file);
@@ -214,7 +215,7 @@ try {
     await remove(page, await target.count() ? target : overlays(page).nth(1)); await expectOverlays(page, 1);
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'); await expectOverlays(page, 3);
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+y'); await expectOverlays(page, 1);
-    await page.waitForFunction(hash => JSON.parse(localStorage.getItem(`folio.session.${hash}`) || 'null')?.annotations.length === 2, originals.get(imported));
+    await waitForSession(page, (session, id) => id === originals.get(imported) && session.annotations?.length === 2);
     await page.reload(); await open(page, imported); await expectOverlays(page, 1);
     const saved = await download(page, 'external-deleted');
     assert.equal(saved.annotations.length, 2);
@@ -262,7 +263,7 @@ try {
     await page.getByRole('button', { name: 'Anotar documento', exact: true }).click();
     const explanation = page.getByRole('dialog', { name: 'Herramientas disponibles', exact: true });
     await explanation.waitFor();
-    assert.match(await explanation.innerText(), /permisos|anotaciones/i);
+    assert.match(await explanation.innerText(), /no permite anotarlo/i);
     await explanation.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
     const saved = await download(page, 'readonly-preserved');
     assert.deepEqual(saved.annotations, pdfAnnotations(new Uint8Array(fs.readFileSync(readOnly))));

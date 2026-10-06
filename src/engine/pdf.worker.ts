@@ -13,5 +13,8 @@ self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' 
       : writeAnnotations(request.bytes, request.annotations || [], request.password, request.incremental);
     const buffer = result instanceof Uint8Array ? result.buffer : !Array.isArray(result) && 'previewBytes' in result ? result.previewBytes?.buffer : undefined;
     self.postMessage({ result }, { transfer: buffer ? [buffer] : [] });
-  } catch (error) { self.postMessage({ error: error instanceof Error ? error.message : 'El motor PDF no pudo completar la operación.' }); }
+  } catch (error) {
+    // A WebAssembly trap can leave the engine inconsistent; the client then discards this worker.
+    self.postMessage({ error: error instanceof Error ? error.message : 'No se pudo completar la operación.', fatal: error instanceof WebAssembly.RuntimeError });
+  }
 };

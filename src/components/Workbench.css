@@ -8,7 +8,7 @@
 .page-plan>article.plan-drop-before::before{left:1px}
 .page-plan>article.plan-drop-after::after{right:1px}
 .plan-drag-handle{position:absolute;right:6px;top:6px;display:grid;place-items:center;width:24px;height:24px;cursor:grab;color:var(--muted);border-radius:4px}
-.plan-drag-handle:hover{background:var(--hover);color:var(--accent)}
+@media(hover:hover){.plan-drag-handle:hover{background:var(--hover);color:var(--accent)}}
 .plan-drag-handle:active{cursor:grabbing}
 .page-plan-drag-preview{position:fixed;display:flex;align-items:center;gap:8px;max-width:210px;padding:11px 14px;background:var(--surface);color:var(--text);border:1px solid var(--accent);border-radius:7px;box-shadow:0 8px 28px #0003;font-size:12px;z-index:2;pointer-events:none}
 .page-plan-drag-preview span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -29,23 +29,22 @@ dialog.content-workbench>.operation-loading{margin:8px 0 0}
 .edit-pdf-history>span{font-size:12px;color:var(--muted)}
 .edit-pdf-history .edit-pdf-done{margin-left:auto}
 @media(max-width:500px){.edit-pdf-history{flex-basis:100%}}
-.workbench-back{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:7px 9px;margin-left:-9px;border-radius:6px;font-size:13px;color:var(--muted)}
-.workbench-back:hover{background:var(--hover);color:var(--text)}
+.workbench-back{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:7px 9px;margin-left:0;border-radius:6px;font-size:13px;color:var(--muted)}
+@media(hover:hover){.workbench-back:hover{background:var(--hover);color:var(--text)}}
 html:not([data-phone]) .app-shell .workbench{width:min(760px,calc(100vw - 28px));font-size:13px}
-html:not([data-phone]) .app-shell .workbench:not(.compare-workbench):has(.compare-documents){width:min(760px,calc(100vw - 28px))}
 html:not([data-phone]) .app-shell .workbench.pages-workbench{width:min(940px,calc(100vw - 28px))}
-html:not([data-phone]) .app-shell .workbench.compare-workbench{width:min(1120px,calc(100vw - 28px))}
+html:not([data-phone]) .app-shell .workbench.compare-workbench:has(.compare-controls){width:min(1120px,calc(100vw - 28px))}
 html:not([data-phone]) .app-shell .workbench .tool-categories{gap:22px;margin-top:18px}
 html:not([data-phone]) .app-shell .workbench .tool-category-heading{font-size:14px;font-weight:600;margin-bottom:10px}
 html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
 html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:62px;padding:12px;gap:10px;flex-direction:row;justify-content:flex-start;align-items:center;font-size:13px;line-height:1.35;border-radius:8px}
-html:not([data-phone]) .app-shell .workbench .operation-grid>button:hover:not(:disabled){background:var(--hover);border-color:var(--muted)}
+@media(hover:hover){html:not([data-phone]) .app-shell .workbench .operation-grid>button:hover:not(:disabled){background:var(--hover);border-color:var(--muted)}}
 html:not([data-phone]) .app-shell .workbench .operation-grid>button>svg{width:21px;height:21px;color:var(--accent);flex-shrink:0}
 html:not([data-phone]) .app-shell .workbench .workbench-back{font-size:13px;min-height:36px}
 html:not([data-phone]) .app-shell .workbench label,html:not([data-phone]) .app-shell .workbench input:not([type=checkbox]):not([type=color]):not([type=file]),html:not([data-phone]) .app-shell .workbench select,html:not([data-phone]) .app-shell .workbench textarea{font-size:13px}
 html:not([data-phone]) .app-shell .workbench .page-plan-drag-help{font-size:12px}
 html:not([data-phone]) .app-shell .workbench .plan-drag-handle{width:28px;height:28px}
-html:not([data-phone]) .app-shell .workbench .page-plan-actions button{font-size:12px;min-height:30px}
+html:not([data-phone]) .app-shell .workbench .page-plan-actions :is(button,label){font-size:12px;min-height:30px}
 html:not([data-phone]) .app-shell .workbench .operation-actions .primary-button,html:not([data-phone]) .app-shell .workbench .operation-actions .secondary-button{font-size:13px;min-height:36px}
 @media(max-width:700px){html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:58px;padding:10px;font-size:13px}}
 @media(max-width:430px){html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid{grid-template-columns:1fr}html:not([data-phone]) .app-shell .workbench .operation-grid>button{min-height:48px}}
@@ -65,7 +64,11 @@ html:not([data-phone]) dialog.bounded-workbench>.modal-heading{position:relative
 .forms-workbench-body .form-fields>label>span{min-width:0;overflow-wrap:anywhere}
 .forms-workbench-body .form-fields>label>span>small{flex-shrink:0}
 html:not([data-phone]) .app-shell dialog.bounded-workbench:has(.form-fields:empty)[open]{height:fit-content}
+/* Conversion settings are short: the dialog fits them and scrolls only when the window does not. */
+html:not([data-phone]) .app-shell dialog.workbench.bounded-workbench:has(.conversion-options)[open]{height:auto;max-height:min(760px,calc(var(--modal-visible-height,100dvh) - 48px))}
 .forms-workbench-body>.form-fields:empty{display:none}
+.form-field-location{display:flex;align-items:center;justify-content:center;flex-shrink:0;height:96px;margin-top:12px;padding:4px;overflow:hidden;border:1px solid var(--line);border-radius:6px;color:var(--muted);font-size:12px;text-align:center}
+.form-field-location canvas{display:block;max-width:100%;max-height:100%}
 
 /* The organizer owns one bounded layout: controls and actions stay in place,
    while only the thumbnail grid consumes and scrolls the remaining space. */
@@ -82,6 +85,8 @@ dialog.pages-workbench>.page-plan-footer>span{white-space:nowrap}
 html[data-phone] dialog.pages-workbench>.page-plan-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:12px;margin-top:12px}
 html[data-phone] dialog.pages-workbench>.page-plan-footer>span{grid-column:1/-1;margin:0}
 html[data-phone] dialog.pages-workbench>.page-plan-footer>button{width:100%;min-width:0;white-space:normal}
+/* Portrait phones: the two add actions share the first row and the selection icons the second. */
+@media(min-height:501px){html[data-phone] dialog.pages-workbench>.page-plan-actions>.secondary-button{flex:1 1 calc(50% - 4px)}}
 @media(max-height:500px){
   html:not([data-phone]) dialog.pages-workbench{padding:14px 20px}
   html:not([data-phone]) dialog.pages-workbench>.workbench-navigation{margin-bottom:8px}
@@ -119,9 +124,9 @@ html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:12px}
 @media(max-height:500px){html[data-phone] .app-shell .reader>.workbench.workspace-editor{padding:7px 10px}.workspace-editor .edit-pdf-history{flex-basis:auto}.workspace-editor>.workbench-navigation{flex-wrap:nowrap;gap:6px}.workspace-editor .workbench-back{white-space:nowrap;font-size:12px}}
 html:not([data-phone]) .workspace-editor .edit-history-label{display:none}
 html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label){width:34px;min-width:34px;min-height:34px;padding:8px;gap:0;border-color:transparent;background:transparent;color:var(--muted)}
-html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label):hover:not(:disabled){background:var(--hover);color:var(--text)}
+@media(hover:hover){html:not([data-phone]) .workspace-editor .edit-pdf-history>button:has(.edit-history-label):hover:not(:disabled){background:var(--hover);color:var(--text)}}
 html:not([data-phone]) .app-shell .workspace-editor .workbench-back{margin-left:0;padding:7px 8px;min-height:36px;border-color:transparent;background:transparent;font-size:12px;color:var(--muted)}
-html:not([data-phone]) .app-shell .workspace-editor .workbench-back:hover:not(:disabled){background:var(--hover);color:var(--text)}
+@media(hover:hover){html:not([data-phone]) .app-shell .workspace-editor .workbench-back:hover:not(:disabled){background:var(--hover);color:var(--text)}}
 .workspace-editor .edit-pdf-history .edit-pdf-save{min-height:36px;padding:8px 12px;box-shadow:none}
 .workspace-editor .edit-pdf-history .edit-pdf-done{min-height:36px;padding:8px 12px}
 @media(min-width:701px) and (max-width:850px){

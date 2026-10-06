@@ -3,18 +3,16 @@
 html:not([data-phone]) .app-shell {
   --app-header-height: 44px;
   --toolbar-height: 44px;
-  --muted: #687385;
 }
-html:not([data-phone])[data-theme=dark] .app-shell { --muted: #acb5c7; }
-html:not([data-phone]) .app-shell .icon-button { color: var(--muted); }
-html:not([data-phone]) .app-shell .icon-button:hover:not(:disabled) { color: var(--text); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .icon-button:hover:not(:disabled):not(.active) { color: var(--text); } }
 html:not([data-phone]) .app-shell .icon-button.active { color: var(--accent); background: var(--accent-soft); }
 html:not([data-phone]) .app-shell .app-header { padding: 0 10px; gap: 8px; }
 html:not([data-phone]) .app-shell.native-mac .app-header { padding-left: 78px; }
+html:not([data-phone]) .app-shell.native-mac.mac-fullscreen .app-header { padding-left: 10px; }
+@media (hover: hover) { html:not([data-phone]) .app-shell .window-actions .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; } }
 html:not([data-phone]) .app-shell .document-tab { font-size: 12px; }
 html:not([data-phone]) .app-shell .document-tab > [role=tab] { font-size: 12px; }
 html:not([data-phone]) .app-shell .document-tab-close { width: 28px; height: 28px; }
-html:not([data-phone]) .app-shell .open-button { font-size: 12px; min-height: 32px; }
 
 html:not([data-phone]) .app-shell.library-visible > .workspace { visibility: hidden; pointer-events: none; }
 html:not([data-phone]) .app-shell > .library-screen {
@@ -32,6 +30,7 @@ html:not([data-phone]) .app-shell .tool-rail {
   padding: 8px 4px;
   gap: 12px;
 }
+html:not([data-phone]) .app-shell .tool-rail[inert] { opacity: .45; cursor: default; }
 html:not([data-phone]) .app-shell .rail-button {
   width: 67px;
   min-height: 60px;
@@ -43,21 +42,21 @@ html:not([data-phone]) .app-shell .rail-button {
 }
 html:not([data-phone]) .app-shell .rail-button > span:not(.rail-count) { display: block; }
 html:not([data-phone]) .app-shell .rail-button.active { color: var(--accent); background: var(--accent-soft); }
-html:not([data-phone]) .app-shell .rail-button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .rail-button:hover:not(:disabled):not(.active) { color: var(--text); background: var(--hover); } }
 html:not([data-phone]) .app-shell .rail-count { font-size: 10px; right: 2px; top: 3px; }
 html:not([data-phone]) .app-shell .rail-bottom .icon-button { width: 42px; height: 34px; }
 
 html:not([data-phone]) .app-shell .reader { container-type: inline-size; container-name: desktop-reader; }
 html:not([data-phone]) .app-shell .reader-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: 1fr auto 1fr;
   min-height: 44px;
   height: auto;
   padding: 5px 10px;
   gap: 8px;
 }
 html:not([data-phone]) .app-shell .toolbar-left,
-html:not([data-phone]) .app-shell .toolbar-right { gap: 5px; min-width: 0; }
+html:not([data-phone]) .app-shell .toolbar-right { gap: 5px; }
 html:not([data-phone]) .app-shell .toolbar-left { justify-self: start; }
 html:not([data-phone]) .app-shell .toolbar-right { justify-self: end; }
 html:not([data-phone]) .app-shell .undo-group { display: flex; gap: 2px; }
@@ -106,7 +105,7 @@ html:not([data-phone]) .app-shell .tools-button {
   color: var(--text);
 }
 html:not([data-phone]) .app-shell .tools-button > span { display: inline; }
-html:not([data-phone]) .app-shell .tools-button:hover:not(:disabled) { background: var(--hover); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .tools-button:hover:not(:disabled) { background: var(--hover); } }
 html:not([data-phone]) .app-shell .page-controls { justify-self: center; gap: 3px; color: var(--muted); font-size: 12px; }
 html:not([data-phone]) .app-shell .page-controls form { gap: 7px; }
 html:not([data-phone]) .app-shell .page-controls input {
@@ -153,26 +152,19 @@ html:not([data-phone]) .app-shell .desktop-annotation-toolbar button { font-size
 html:not([data-phone]) .app-shell .desktop-tool-description { font-size: 12px; line-height: 1.5; color: var(--muted); }
 html:not([data-phone]) .app-shell .desktop-annotation-toolbar > .text-button { margin-left: auto; padding: 7px 9px; font-size: 12px; color: var(--text); }
 html:not([data-phone]) .app-shell .desktop-annotation-toolbar .highlight-color-trigger { min-height: 32px; }
-html:not([data-phone]) .app-shell .highlight-color-custom { font-size: 12px; }
-html:not([data-phone]) .app-shell .highlight-color-custom code { font-size: 11px; }
-html:not([data-phone]) .app-shell .desktop-annotation-toolbar .tool-group .active { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--line); }
+html:not([data-phone]) .highlight-color-custom { font-size: 12px; }
+html:not([data-phone]) .highlight-color-custom code { font-size: 11px; }
 
 html:not([data-phone]) .app-shell .sidebar-title { min-height: 44px; height: 44px; padding: 0 14px; font-size: 13px; letter-spacing: 0; color: var(--text); }
-html:not([data-phone]) .app-shell .sidebar-tabs button { font-size: 12px; min-height: 32px; }
-html:not([data-phone]) .app-shell .page-total { background: var(--hover); color: var(--muted); font-size: 11px; }
-html:not([data-phone]) .app-shell .thumbnail-label { font-size: 12px; color: var(--muted); letter-spacing: 0; }
-html:not([data-phone]) .app-shell .thumbnail-label > span { font-size: 11px; color: var(--muted); }
-html:not([data-phone]) .app-shell .outline-entry { font-size: 13px; padding: 11px 10px; line-height: 1.45; }
-html:not([data-phone]) .app-shell .outline-entry > span:last-child { font-size: 12px; }
+html:not([data-phone]) .app-shell .page-total { font-size: 11px; }
+html:not([data-phone]) .app-shell .thumbnail-label { font-size: 12px; letter-spacing: 0; }
+html:not([data-phone]) .app-shell .thumbnail-label > span { font-size: 11px; }
 html:not([data-phone]) .app-shell .search-field input { font-size: 13px; }
-html:not([data-phone]) .app-shell .search-field input::placeholder { color: var(--muted); }
 html:not([data-phone]) .app-shell .search-summary { font-size: 12px; gap: 6px; }
 html:not([data-phone]) .app-shell .search-summary .icon-button { width: 28px; height: 28px; }
-html:not([data-phone]) .app-shell .search-result { font-size: 12px; color: var(--muted); line-height: 1.65; }
-html:not([data-phone]) .app-shell .search-result.selected { color: var(--text); border-color: var(--line); }
+html:not([data-phone]) .app-shell .search-result { font-size: 12px; line-height: 1.65; }
 html:not([data-phone]) .app-shell .result-heading { font-size: 12px; }
 html:not([data-phone]) .app-shell .result-heading > span { font-size: 11px; }
-html:not([data-phone]) .app-shell .bookmark-item > button:first-child { font-size: 13px; color: var(--text); }
 html:not([data-phone]) .app-shell .bookmark-label,
 html:not([data-phone]) .app-shell .bookmark-name-input { font-size: 13px; }
 html:not([data-phone]) .app-shell .bookmark-page,
@@ -181,33 +173,28 @@ html:not([data-phone]) .app-shell .bookmark-root-drop,
 html:not([data-phone]) .app-shell .bookmark-drop-hint { font-size: 12px; }
 html:not([data-phone]) .app-shell .bookmark-entry { min-height: 38px; }
 html:not([data-phone]) .app-shell .bookmark-options { width: 28px; height: 28px; }
-html:not([data-phone]) .app-shell .bookmark-menu,
-html:not([data-phone]) .app-shell .bookmark-menu > button { font-size: 13px; }
-html:not([data-phone]) .app-shell .bookmark-menu > button { min-height: 36px; line-height: 1.5; }
+html:not([data-phone]) .bookmark-menu,
+html:not([data-phone]) .bookmark-menu > button { font-size: 13px; }
+html:not([data-phone]) .bookmark-menu > button { min-height: 36px; line-height: 1.5; }
 html:not([data-phone]) .app-shell .notes-heading h2 { font-size: 13px; }
 html:not([data-phone]) .app-shell .notes-heading > div { color: var(--text); }
 html:not([data-phone]) .app-shell .notes-heading > div > span { font-size: 11px; }
-html:not([data-phone]) .app-shell .annotation-card-heading > button:first-child { font-size: 12px; color: var(--muted); }
-html:not([data-phone]) .app-shell .annotation-card-heading .icon-button { width: 28px; height: 28px; color: var(--muted); }
-html:not([data-phone]) .app-shell .annotation-card p { font-size: 13px; color: var(--text); line-height: 1.7; }
+html:not([data-phone]) .app-shell .annotation-card-heading > button:first-child { font-size: 12px; }
+html:not([data-phone]) .app-shell .annotation-card-heading .icon-button { width: 28px; height: 28px; }
+html:not([data-phone]) .app-shell .annotation-card p { font-size: 13px; line-height: 1.7; }
 html:not([data-phone]) .app-shell .highlight-description,
-html:not([data-phone]) .app-shell .note-edit { font-size: 12px; color: var(--muted); }
-html:not([data-phone]) .app-shell .notes-footer { font-size: 12px; color: var(--muted); }
+html:not([data-phone]) .app-shell .note-edit { font-size: 12px; }
 html:not([data-phone]) .app-shell .empty-panel p,
 html:not([data-phone]) .app-shell .search-hint p,
-html:not([data-phone]) .app-shell .annotations-empty p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+html:not([data-phone]) .app-shell .annotations-empty p { font-size: 13px; line-height: 1.6; }
 html:not([data-phone]) .app-shell .empty-panel > span,
-html:not([data-phone]) .app-shell .search-hint > span { font-size: 12px; color: var(--muted); }
-html:not([data-phone]) .app-shell .annotations-empty h3 { font-size: 14px; color: var(--text); }
-html:not([data-phone]) .app-shell .reader-status { min-height: 28px; height: 28px; padding: 0 12px; font-size: 11px; color: var(--muted); }
-html:not([data-phone]) .app-shell .save-status,
-html:not([data-phone]) .app-shell .status-shortcuts,
-html:not([data-phone]) .app-shell .status-zoom { font-size: 11px; color: var(--muted); }
-html:not([data-phone]) .app-shell .save-status.failed { color: var(--accent); }
-html:not([data-phone]) .app-shell .page-caption { font-size: 11px; color: var(--muted); }
+html:not([data-phone]) .app-shell .search-hint > span { font-size: 12px; }
+html:not([data-phone]) .app-shell .annotations-empty h3 { font-size: 14px; }
+html:not([data-phone]) .app-shell .page-caption { font-size: 11px; }
+html:not([data-touch]) .app-shell .pdf-stack:has(> .sample-hint) { padding-top: 30px; }
 
 html:not([data-phone]) .app-shell dialog.modal { font-size: 13px; box-shadow: 0 18px 70px #15203526; }
-html:not([data-phone]) .app-shell .modal-description { font-size: 13px; line-height: 1.6; color: var(--muted); }
+html:not([data-phone]) .app-shell .modal-description { font-size: 13px; line-height: 1.6; }
 html:not([data-phone]) .app-shell .modal-heading h2 { font-size: 21px; font-weight: 600; letter-spacing: -.4px; }
 html:not([data-phone]) .app-shell .modal-heading .icon-button { width: 32px; height: 32px; }
 html:not([data-phone]) .app-shell dialog.modal .modal-heading { position: sticky; top: 0; z-index: 3; padding-bottom: 10px; background: var(--bg); box-shadow: 0 -28px 0 0 var(--bg); }
@@ -221,13 +208,15 @@ html:not([data-phone]) .app-shell .desktop-document-actions > button { display: 
 html:not([data-phone]) .app-shell .desktop-document-actions > button > svg { grid-column: 1; grid-row: 1 / span 2; color: var(--muted); }
 html:not([data-phone]) .app-shell .desktop-document-actions > button > span { grid-column: 2; }
 html:not([data-phone]) .app-shell .desktop-document-actions > button > span + span { font-size: 12px; color: var(--muted); }
-html:not([data-phone]) .app-shell .desktop-document-actions > button:hover { background: var(--hover); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .desktop-document-actions > button:hover { background: var(--hover); } }
 html:not([data-phone]) .app-shell .desktop-document-actions > button:nth-last-child(2) { border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; margin-top: 4px; padding-top: 14px; }
 html:not([data-phone]) .app-shell .desktop-return-location { position: absolute; z-index: 6; bottom: 42px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; max-width: calc(100% - 24px); padding: 8px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; box-shadow: 0 3px 12px #00000014; }
-html:not([data-phone]) .app-shell .desktop-return-location:hover { background: var(--hover); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .desktop-return-location:hover { background: var(--hover); } }
 html:not([data-phone]) .app-shell .desktop-return-location:active { transform: translateX(-50%) translateY(.5px); }
+html:not([data-phone]) .app-shell .reader:has(> .workspace-editor) > .desktop-return-location { display: none; }
+html:not([data-phone]) .app-shell .toast { font-size: 13px; }
 
-@container desktop-reader (max-width: 980px) {
+@container desktop-reader (max-width: 1060px) {
   html:not([data-phone]) .app-shell .reader-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; row-gap: 5px; }
   html:not([data-phone]) .app-shell .toolbar-left { flex: 1 1 auto; }
   html:not([data-phone]) .app-shell .toolbar-right { margin-left: auto; }
@@ -242,13 +231,11 @@ html:not([data-phone]) .app-shell .desktop-return-location:active { transform: t
   html:not([data-phone]) .app-shell .page-controls { order: 2; }
   html:not([data-phone]) .app-shell .toolbar-right { order: 3; }
   html:not([data-phone]) .app-shell .reader-toolbar { padding: 5px 8px; }
-  html:not([data-phone]) .app-shell .zoom-select select { max-width: 100px; }
   html:not([data-phone]) .app-shell .desktop-tool-description { display: none; }
 }
 @container desktop-reader (max-width: 340px) {
   html:not([data-phone]) .app-shell .toolbar-right { width: 100%; justify-content: flex-end; }
   html:not([data-phone]) .app-shell .page-controls { margin: 0 auto; }
-  html:not([data-phone]) .app-shell .reader-status .status-shortcuts { display: none; }
 }
 @media (max-width: 650px) {
   html:not([data-phone]) .app-shell .tool-rail { width: 48px; min-width: 48px; padding: 6px 4px; }
@@ -256,7 +243,6 @@ html:not([data-phone]) .app-shell .desktop-return-location:active { transform: t
   html:not([data-phone]) .app-shell .rail-button > span:not(.rail-count) { display: none; }
   html:not([data-phone]) .app-shell .rail-bottom .icon-button { width: 36px; }
   html:not([data-phone]) .app-shell .sidebar { left: 48px; top: 0; }
-  html:not([data-phone]) .app-shell .reader-status .save-status > span { display: inline; }
 }
 @media (max-height: 600px) {
   html:not([data-phone]) .app-shell .tool-rail { width: 48px; min-width: 48px; gap: 7px; padding: 5px 4px; }

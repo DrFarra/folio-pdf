@@ -44,7 +44,7 @@ final class NativePDFService {
             if document.isLocked { _ = document.unlock(withPassword: args.password ?? "") }
             entries[token] = Entry(args, document, signed(URL(fileURLWithPath: args.path))); boundCache(token)
         }
-        guard let value = entries[token] else { throw error("El lector nativo ya cerró este PDF. Vuelve a abrirlo.") }
+        guard let value = entries[token] else { throw error("El documento se cerró. Vuelve a abrirlo.") }
         guard !value.document.isLocked else { throw error("Este PDF necesita una contraseña.") }
         value.used = Date(); return value
     }
@@ -64,7 +64,7 @@ final class NativePDFService {
         return CGPDFDictionaryGetDictionary(catalog, "Perms", &perms) && perms != nil && CGPDFDictionaryGetDictionary(perms!, "DocMDP", &signature)
     }
     func open(_ args: PDFOpenArgs) throws -> [String: Any] {
-        guard let document = PDFDocument(url: URL(fileURLWithPath: args.path)) else { throw error("PDFKit no pudo abrir el archivo. Comprueba que sea un PDF válido.") }
+        guard let document = PDFDocument(url: URL(fileURLWithPath: args.path)) else { throw error("No se pudo abrir este PDF. Puede estar dañado.") }
         if document.isLocked, let password = args.password, !password.isEmpty { _ = document.unlock(withPassword: password) }
         let value = Entry(args, document, signed(URL(fileURLWithPath: args.path)))
         opened[args.token] = args
@@ -109,7 +109,10 @@ final class NativePDFService {
                 folio_pdf_read_annotations(path, password, Int32(number), &pointer, &count, &message, messageCapacity)
             }
         }
-        guard status == 0 else { throw error("No se pudieron leer las anotaciones originales: " + String(cString: message)) }
+        guard status == 0 else {
+            NSLog("Folio annotation read failed: %@", String(cString: message))
+            throw error("No se pudieron leer las anotaciones de esta página.")
+        }
         defer { folio_pdf_free_annotations(pointer, count) }
         var result = [[String: Any]]()
         if let pointer = pointer {
@@ -195,9 +198,14 @@ final class NativePDFService {
         let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(data: nil, width: args.width, height: args.height, bitsPerComponent: 8, bytesPerRow: args.width * 4,
             space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw error("No hay memoria disponible para dibujar esta página.") }
-        let target = CGRect(x: 0, y: 0, width: args.width, height: args.height)
-        context.setFillColor(UIColor.white.cgColor); context.fill(target)
-        context.concatenate(cgPage.getDrawingTransform(.cropBox, rect: target, rotate: Int32(args.rotation - page.rotation), preserveAspectRatio: true))
+        context.setFillColor(UIColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: args.width, height: args.height))
+        // getDrawingTransform only scales down. Map the turned crop box at 1:1 and
+        // scale explicitly so the page fills the bitmap, as the text layer expects.
+        let box = page.bounds(for: .cropBox), turned = args.rotation % 180 != 0
+        let size = CGSize(width: turned ? box.height : box.width, height: turned ? box.width : box.height)
+        guard size.width > 0, size.height > 0 else { throw error("No se pudo mostrar esta página.") }
+        context.scaleBy(x: CGFloat(args.width) / size.width, y: CGFloat(args.height) / size.height)
+        context.concatenate(cgPage.getDrawingTransform(.cropBox, rect: CGRect(origin: .zero, size: size), rotate: Int32(args.rotation - page.rotation), preserveAspectRatio: true))
         context.drawPDFPage(cgPage)
         // PDFPage's base CGPDFPage excludes annotations. Draw exactly those that
         // are not represented by editable HTML overlays, preserving widgets,
@@ -260,7 +268,7 @@ final class NativePDFService {
     }
     func export(_ args: PDFExportArgs) throws -> [String: Any] {
         let value = try entry(args.token), target = URL(fileURLWithPath: args.path)
-        guard target.standardizedFileURL != URL(fileURLWithPath: value.args.path).standardizedFileURL else { throw error("El original debe conservarse. Elige una copia.") }
+        guard target.standardizedFileURL != URL(fileURLWithPath: value.args.path).standardizedFileURL else { throw error("No se pudo guardar la copia. El original no cambió.") }
         let changed = !args.annotations.isEmpty || !args.removedSourceRefs.isEmpty
         if !changed { try FileManager.default.copyItem(at: URL(fileURLWithPath: value.args.path), to: target); return ["path": target.path] }
         guard value.canAnnotate else { throw error("Este documento no permite modificar anotaciones.") }
@@ -341,7 +349,13 @@ final class NativePDFService {
                 folio_pdf_export(source, output, password, overlays.baseAddress, overlays.count, refs.baseAddress, refs.count, &message, capacity)
             } }
         } } }
-        guard status == 0 else { throw error("No se pudo guardar la copia conservando el original: " + String(cString: message)) }
+        guard status == 0 else {
+            // MuPDF reports in English for the log; the user gets the outcome.
+            let detail = String(cString: message)
+            NSLog("Folio annotation export failed: %@", detail)
+            throw error(detail.hasPrefix("This PDF requires repair") ? "Este PDF está dañado. Folio no puede añadirle anotaciones sin modificar el original."
+                : "No se pudo guardar la copia. El original no cambió.")
+        }
         return ["path": target.path, "annotationWriter": "MuPDF " + String(cString: folio_pdf_engine_version()), "incremental": true]
     }
 }

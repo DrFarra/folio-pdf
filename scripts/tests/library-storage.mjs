@@ -4,7 +4,8 @@ import path from 'node:path';
 import { chromium, webkit } from 'playwright-core';
 import { build, preview } from 'vite';
 
-// Exercise real IndexedDB and localStorage with the application storage module.
+// Exercise real IndexedDB with the application storage module, including the
+// migration of sessions that earlier versions kept in localStorage.
 // The blank same-origin page isolates persistence from the reader and workers.
 const root = process.cwd();
 const output = path.join(root, 'test-results', 'library-storage');
@@ -54,33 +55,45 @@ try {
       tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
     });
     db.close();
+    const legacySession = { version: 2, annotations: [{ id: 'old', page: 1, kind: 'note', rect: [1, 2, 3, 4], text: 'Legacy note', color: '#4579ba', created: 1 }], bookmarks: [], lastPage: 2 };
+    localStorage.setItem(`folio.session.${id(1)}`, JSON.stringify(legacySession));
+    localStorage.setItem(`folio.session.${id(2)}`, '{damaged');
+    localStorage.setItem('folio.theme', 'dark');
     const storage = window.__storageQA;
-    const legacy = (await storage.listRecent())[0];
-    check(legacy?.id === id(1) && !legacy.hidden && await legacy.data.text() === 'original', 'Schema upgrade must preserve legacy bytes and visible recency.');
+    const legacy = (await storage.listLibrary())[0];
+    check(legacy?.id === id(1) && legacy.data === undefined && await (await storage.readLibraryData(id(1))).text() === 'original', 'Schema upgrade must move legacy bytes out of the catalog without losing them.');
+    check((await storage.readSession(id(1))).annotations[0]?.text === 'Legacy note', 'Schema upgrade must move localStorage sessions into IndexedDB.');
+    check(!Object.keys(localStorage).some(key => key.startsWith('folio.session.')) && localStorage.getItem('folio.theme') === 'dark', 'Migrated and damaged sessions must leave localStorage; other preferences stay.');
     for (let number = 2; number <= 25; number++) await storage.rememberDocument({ id: id(number), name: `Document ${number}.pdf`, pages: 2, size: 8, openedAt: number, data: new Blob([`bytes-${number}`]) });
-    const all = await storage.listLibrary(), recent = await storage.listRecent();
-    check(all.length === 25 && all.some(document => document.id === id(1)), 'Opening more than five PDFs must not evict older library entries.');
-    check(recent.length === 20 && recent[0].id === id(25) && recent[19].id === id(6), 'Only the history response is capped; newest entries come first.');
+    const all = await storage.listLibrary();
+    check(all.length === 25 && all[0].id === id(25) && all.every(document => document.data === undefined), 'The catalog keeps every entry, newest first, without reading PDF bytes.');
 
     const session = { annotations: [{ id: 'note', page: 2, kind: 'note', rect: [10, 20, 40, 50], text: 'Retained note', color: '#4579ba', created: 1 }], bookmarks: [{ id: 'mark', title: 'Chapter', page: 2, parentId: null, order: 0, color: '#4579ba' }], lastPage: 2 };
     check(await storage.saveSession(id(25), session), 'Session must persist.');
+    check(!Object.keys(localStorage).some(key => key.startsWith('folio.session.')), 'Sessions must not use the localStorage quota.');
+    const ink = { id: 'ink', page: 1, kind: 'ink', rect: [0, 0, 10, 10], text: '', color: '#2455b5', created: 1, strokeWidth: 2, inkPaths: [Array.from({ length: 20000 }, (_, index) => index / 3)] };
+    check(await storage.saveSession(id(24), { annotations: Array.from({ length: 40 }, (_, index) => ({ ...ink, id: `ink-${index}` })), bookmarks: [], lastPage: 1 }), 'A session larger than the localStorage quota must persist.');
+    check((await storage.readSession(id(24))).annotations.length === 40, 'A large handwritten session must read back intact.');
+    check(await storage.saveSession(id(23), { annotations: [null, session.annotations[0]], bookmarks: [null], lastPage: 1 }), 'A damaged session can be written.');
+    check((await storage.readSession(id(23))).annotations.map(item => item.id).join() === 'note', 'Damaged elements are dropped instead of failing the whole session.');
     await storage.storeDraft(id(25), new TextEncoder().encode('modified25'));
-    await storage.hideRecent(id(25));
-    check((await storage.listLibrary()).length === 25, 'Hiding history must leave the full catalog intact.');
-    check(!(await storage.listRecent()).some(document => document.id === id(25)), 'Hidden documents must leave Recent.');
-    const retained = await storage.readSession(id(25));
-    check(retained.lastPage === 2 && retained.annotations[0]?.text === 'Retained note' && retained.bookmarks[0]?.title === 'Chapter', 'Hiding history must preserve reading position, notes and bookmarks.');
-    check(new TextDecoder().decode(await storage.readDraft(id(25))) === 'modified25', 'Hiding history must preserve the modified PDF.');
-    check(await (await storage.listLibrary()).find(document => document.id === id(25)).data.text() === 'bytes-25', 'Hiding history must preserve original PDF bytes.');
     await storage.rememberDocument({ id: id(25), name: 'Renamed.pdf', pages: 2, size: 8, openedAt: 26 });
     const renamed = (await storage.listLibrary()).find(document => document.id === id(25));
-    check(!renamed.hidden && await renamed.data.text() === 'bytes-25', 'Metadata-only updates must preserve PDF bytes and restore recency.');
-    await storage.hideRecent(id(25));
+    check(renamed.name === 'Renamed.pdf' && await (await storage.readLibraryData(id(25))).text() === 'bytes-25', 'Metadata-only updates must preserve PDF bytes.');
+    await storage.touchDocument({ id: id(3), pages: 2 }, 30);
+    await storage.touchDocument({ id: id(99), pages: 2 }, 31);
+    const touched = await storage.listLibrary();
+    check(touched[0].id === id(3) && touched.length === 25, 'Using a document moves it first; touching an unknown id adds nothing.');
+    const retained = await storage.readSession(id(25));
+    check(retained.lastPage === 2 && retained.annotations[0]?.text === 'Retained note' && retained.bookmarks[0]?.title === 'Chapter', 'Library updates must preserve reading position, notes and bookmarks.');
+    check(new TextDecoder().decode(await storage.readDraft(id(25))) === 'modified25', 'Library updates must preserve the modified PDF.');
     return [
       { id: 'legacy-v1-migration', status: 'passed', retainedOriginalBytes: true, storedFormat: legacyBlob ? 'Blob' : 'ArrayBuffer', historicalBlobFormatVerified: legacyBlob },
-      { id: 'complete-catalog-and-bounded-history', status: 'passed', catalog: 25, recents: 20 },
-      { id: 'hide-preserves-original-session-and-draft', status: 'passed' },
-      { id: 'metadata-update-preserves-bytes-and-restores-recency', status: 'passed' },
+      { id: 'legacy-local-storage-sessions-migrate', status: 'passed' },
+      { id: 'complete-catalog-reads-metadata-only', status: 'passed', catalog: 25 },
+      { id: 'sessions-beyond-local-storage-quota', status: 'passed' },
+      { id: 'damaged-session-elements-are-dropped', status: 'passed' },
+      { id: 'metadata-update-and-last-use-preserve-bytes-session-and-draft', status: 'passed' },
     ];
   }, engine === 'chromium'));
 
@@ -91,22 +104,20 @@ try {
     const id = number => number.toString(16).padStart(64, '0');
     const storage = window.__storageQA;
     const reloaded = await storage.listLibrary();
-    check(reloaded.length === 25 && reloaded.find(document => document.id === id(25)).hidden, 'The catalog and hidden state must survive reload.');
-    check(new TextDecoder().decode(await storage.readDraft(id(25))) === 'modified25', 'The modified PDF must survive reload.');
+    check(reloaded.length === 25 && reloaded[0].id === id(3), 'The catalog and its order must survive reload.');
+    check(new TextDecoder().decode(await storage.readDraft(id(25))) === 'modified25' && (await storage.readSession(id(25))).lastPage === 2, 'The modified PDF and session must survive reload.');
     await storage.forgetDocument(id(25));
     check((await storage.listLibrary()).length === 24 && !(await storage.listLibrary()).some(document => document.id === id(25)), 'Explicit deletion must remove only its target.');
-    check(await storage.readDraft(id(25)) === null && (await storage.readSession(id(25))).annotations.length === 0, 'Explicit deletion must clear its draft and session.');
-    check(await (await storage.listLibrary()).find(document => document.id === id(1)).data.text() === 'original', 'Deleting one copy must preserve other documents.');
-    await storage.saveSession(id(24), { annotations: [], bookmarks: [], lastPage: 2 });
+    check(await storage.readDraft(id(25)) === null && await storage.readLibraryData(id(25)) === null && (await storage.readSession(id(25))).annotations.length === 0, 'Explicit deletion must clear its bytes, draft and session.');
+    check(await (await storage.readLibraryData(id(1))).text() === 'original', 'Deleting one copy must preserve other documents.');
     await storage.storeDraft(id(24), new TextEncoder().encode('modified24'));
-    await storage.hideRecent(id(24));
     await storage.clearSavedState();
-    check((await storage.listLibrary()).length === 0 && (await storage.listRecent()).length === 0, 'Clear must include hidden catalog entries.');
-    check(await storage.readDraft(id(24)) === null && (await storage.readSession(id(24))).lastPage === 1, 'Clear must include hidden drafts and sessions.');
+    check((await storage.listLibrary()).length === 0 && await storage.readLibraryData(id(1)) === null, 'Clear must remove every catalog entry and its bytes.');
+    check(await storage.readDraft(id(24)) === null && (await storage.readSession(id(24))).annotations.length === 0, 'Clear must remove drafts and sessions.');
     return [
-      { id: 'catalog-hidden-state-and-draft-survive-reload', status: 'passed' },
+      { id: 'catalog-session-and-draft-survive-reload', status: 'passed' },
       { id: 'explicit-delete-clears-only-target-copy-and-changes', status: 'passed' },
-      { id: 'clear-includes-hidden-documents', status: 'passed' },
+      { id: 'clear-removes-every-document', status: 'passed' },
     ];
   }));
   report.passed = true;
