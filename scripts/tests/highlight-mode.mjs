@@ -108,8 +108,8 @@ try {
     assert(highlights.some(item => item.color === '#123abc' && item.text.includes('FOURTH:')));
     const savedHash = createHash('sha256').update(bytes).digest('hex');
     assert.equal(await mode(page).getAttribute('aria-pressed'), 'true', 'Saving must keep automatic highlighting enabled.');
-    await selectLine(page, 0); await waitCount(page, savedHash, 4);
-    await page.keyboard.press('Control+z'); await waitCount(page, savedHash, 3);
+    await selectLine(page, 0); await waitCount(page, sourceHash, 4);
+    await page.keyboard.press('Control+z'); await waitCount(page, sourceHash, 3);
     assert.equal(await mode(page).getAttribute('aria-pressed'), 'true');
     await page.reload(); await open(page, target);
     await mode(page).click();

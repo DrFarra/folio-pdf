@@ -204,21 +204,17 @@ fn remove_export(desktop: &Desktop, path: &Path) {
 
 /// Swift copies each imported PDF to Documents/Imports/<uuid>/ and saved copies
 /// go to exports/<uuid>/; each folder holds one private copy. Deletes those that
-/// neither the library, a pending output nor `open` uses. Folders changed in
-/// the last minute may still be on their way to a tab.
+/// neither the library, a pending output nor `open` uses. When in doubt (an
+/// unreadable library, busy file records) every copy stays.
 fn remove_unused_copies(desktop: &Desktop, mut open: Vec<PathBuf>) {
-    open.extend(read_recents(desktop).into_iter().map(|r| r.path));
-    if let Ok(files) = desktop.files.lock() { open.extend(files.outputs.values().map(|o| o.path.clone())); }
-    // Compare resolved paths: Swift and HOME may spell the sandbox differently.
-    let kept = open.iter().filter_map(|p| fs::canonicalize(p.parent()?).ok()).collect::<Vec<_>>();
-    let imports = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents").join("Imports"));
-    for root in [Some(desktop.data.join("exports")), imports].into_iter().flatten() {
-        for entry in fs::read_dir(root).into_iter().flatten().flatten() {
-            let fresh = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() < 60));
-            if fresh || !entry.file_type().is_ok_and(|t| t.is_dir()) || uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()).is_err() { continue; }
-            if fs::canonicalize(entry.path()).is_ok_and(|folder| !kept.contains(&folder)) { let _ = fs::remove_dir_all(entry.path()); }
-        }
-    }
+    let Some(recents) = stored_recents(desktop) else { return };
+    open.extend(recents.into_iter().map(|r| r.path));
+    let Ok(files) = desktop.files.lock() else { return };
+    open.extend(files.outputs.values().map(|o| o.path.clone()));
+    drop(files);
+    let imports = container_home().map(|home| home.join("Documents").join("Imports"));
+    let roots = [Some(desktop.data.join("exports")), imports].into_iter().flatten().collect::<Vec<_>>();
+    remove_unused_folders(&roots, &open);
 }
 
 /// Setup runs before any tab is open.

@@ -9,18 +9,23 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 /// Ends a desktop sign-in that is waiting for the browser.
 pub fn cancel() { CANCEL.store(true, Ordering::Relaxed); }
 
+/// Kotlin and Swift reject with text written for the user, such as a cancelled
+/// sign-in or missing Google Play services; bridge errors are technical English.
+#[cfg(any(target_os="ios",target_os="android"))]
+fn rejected(fallback: &str) -> impl FnOnce(tauri::plugin::mobile::PluginInvokeError) -> String + '_ {
+    move |error| match error { tauri::plugin::mobile::PluginInvokeError::InvokeRejected(response) => response.message.unwrap_or_else(|| fallback.into()), _ => fallback.into() }
+}
+
 pub fn token(app: &tauri::AppHandle, http: &Client, interactive: bool) -> Result<Token, String> {
     #[cfg(target_os = "android")]
     let value = {
         use tauri_plugin_folio_android::FolioAndroidExt;
-        app.folio_android().call("driveAuthorize", serde_json::json!({"interactive":interactive}))
-            .map_err(|_| "Inicia sesión con Google Drive para continuar.".to_string())?
+        app.folio_android().call("driveAuthorize", serde_json::json!({"interactive":interactive})).map_err(rejected("Inicia sesión con Google Drive para continuar."))?
     };
     #[cfg(target_os = "ios")]
     let value = {
         use tauri_plugin_folio_ios::FolioIosExt;
-        app.folio_ios().call("driveAuthorize", serde_json::json!({"interactive":interactive}))
-            .map_err(|_| "Inicia sesión con Google Drive para continuar.".to_string())?
+        app.folio_ios().call("driveAuthorize", serde_json::json!({"interactive":interactive})).map_err(rejected("Inicia sesión con Google Drive para continuar."))?
     };
     #[cfg(not(any(target_os="ios",target_os="android")))]
     let value = desktop_token(app, http, interactive)?;
@@ -34,9 +39,9 @@ pub fn token(app: &tauri::AppHandle, http: &Client, interactive: bool) -> Result
 
 pub fn disconnect(app: &tauri::AppHandle, http: &Client) -> Result<(), String> {
     #[cfg(target_os="android")]
-    { use tauri_plugin_folio_android::FolioAndroidExt; app.folio_android().call("driveDisconnect", serde_json::json!({})).map_err(|_| "No se pudo desconectar Google.".to_string())?; }
+    { use tauri_plugin_folio_android::FolioAndroidExt; app.folio_android().call("driveDisconnect", serde_json::json!({})).map_err(rejected("No se pudo desconectar Google."))?; }
     #[cfg(target_os="ios")]
-    { use tauri_plugin_folio_ios::FolioIosExt; app.folio_ios().call("driveDisconnect", serde_json::json!({})).map_err(|_| "No se pudo desconectar Google.".to_string())?; }
+    { use tauri_plugin_folio_ios::FolioIosExt; app.folio_ios().call("driveDisconnect", serde_json::json!({})).map_err(rejected("No se pudo desconectar Google."))?; }
     #[cfg(any(target_os="windows",target_os="macos"))]
     {
         // Google keeps a refresh token valid until it is revoked. Offline, it is still forgotten here.

@@ -372,8 +372,46 @@ try {
     assert(operateDocument(bytes, { operation: 'text' })[0].includes('TAB A PAGE 1'));
     await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
     const entry = page.getByRole('button', { name: `Abrir ${a.name}`, exact: true }); await entry.waitFor();
-    assert.equal(await entry.count(), 1, 'Each download replaces the library entry of the document.');
+    assert.equal(await entry.count(), 1, 'Downloading keeps the single library entry of the document.');
     return { successiveSaves: 3, renderingAfterFourthSave: true, zoomPercent: 150, viewRotation: 90, currentProxyRemainsUsable: true };
+  });
+  await check('web-download-keeps-original-session-and-library-entry', async page => {
+    await annotate(page, a); await waitForSession(page, (value, id) => id === a.hash && value.annotations.length === 1);
+    assert.equal(await tab(page, a).locator('.modified-dot').count(), 1);
+    assert.equal(inspectDocument(await download(page, 'tabs-download-keeps-original.pdf')).annotations.length, 1);
+    assert.equal(await tab(page, a).locator('.modified-dot').count(), 0, 'The downloaded changes no longer read as unsaved.');
+    await page.waitForTimeout(500);
+    assert.equal((await session(page, a))?.annotations.length, 1, 'Downloading must keep the session of the original PDF.');
+    await page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true }).click(); await tab(page, a).waitFor({ state: 'detached' });
+    await open(page, a); await page.locator('.highlight-annotation').first().waitFor();
+    await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
+    const entry = page.getByRole('button', { name: `Abrir ${a.name}`, exact: true }); await entry.waitFor();
+    assert.equal(await entry.count(), 1, 'Downloading must neither duplicate nor delete the library entry.');
+    return { sessionKept: true, reopenedOriginalShowsAnnotations: true, libraryEntries: 1 };
+  });
+
+  await check('unreadable-session-is-not-overwritten', async page => {
+    await annotate(page, a); await waitForSession(page, (value, id) => id === a.hash && value.annotations.length === 1);
+    await open(page, b); await page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true }).click(); await tab(page, a).waitFor({ state: 'detached' });
+    // The next read of the 'sessions' store fails once, as a locked or lost database would.
+    await page.evaluate(() => { const get = IDBObjectStore.prototype.get; let fail = true; IDBObjectStore.prototype.get = function (...args) { if (fail && this.name === 'sessions') { fail = false; throw new DOMException('Simulated read failure', 'UnknownError'); } return get.apply(this, args); }; });
+    await open(page, a); await page.locator('.toast').getByText(/No se pudieron cargar las anotaciones guardadas/).waitFor();
+    await switchTo(page, b); await switchTo(page, a); await page.waitForTimeout(1800);
+    assert.equal((await session(page, a))?.annotations.length, 1, 'A session that could not be read must not be rewritten automatically.');
+    await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click();
+    await waitForSession(page, (value, id) => id === a.hash && value.bookmarks.length === 1 && value.annotations.length === 0);
+    return { storedAnnotationsKept: true, firstChangeWritesSession: true };
+  });
+
+  await check('return-location-survives-smooth-thumbnail-jump', async page => {
+    await page.getByRole('button', { name: 'Páginas', exact: true }).click();
+    await page.getByRole('button', { name: 'Ir a página 3', exact: true }).click();
+    const back = page.getByRole('button', { name: 'Volver a p. 1', exact: true }); await back.waitFor();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Número de página"]')?.value === '3'); await page.waitForTimeout(800);
+    assert.equal(await back.count(), 1, 'A smooth jump keeps «Volver a p. N» after the animation.');
+    await back.click(); await back.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Número de página"]')?.value === '1');
+    return { returnShownAfterSmoothJump: true, returnRestoresPage: true };
   });
 } finally { await browser?.close(); preview.kill(); fs.writeFileSync(path.join(output, 'tabs-results.json'), JSON.stringify({ results, errors }, null, 2)); }
 if (errors.length) { console.log(JSON.stringify({ uncaughtErrors: errors })); process.exitCode = 1; }

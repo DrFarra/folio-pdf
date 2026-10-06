@@ -22,6 +22,7 @@ import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.ArrayDeque
+import java.util.UUID
 import java.util.concurrent.Executor
 
 @RunWith(RobolectricTestRunner::class)
@@ -123,13 +124,23 @@ class IncomingDocumentsTest {
         assertTrue(runCatching { privateFile(context, File(saved.parentFile, "../../exports/../shared_prefs/x.xml").path) }.isFailure)
     }
     @Test fun unusedPrivateCopiesAreDeleted() {
-        fun copy(root: File, path: String) = File(root, path).apply { parentFile!!.mkdirs(); writeBytes(pdf); parentFile!!.setLastModified(0) }
-        val listed = copy(context.filesDir, "FolioImports/a/Listado.pdf"); val forgotten = copy(context.filesDir, "FolioImports/b/Olvidado.pdf")
-        val saved = copy(context.dataDir, "exports/c/Guardado.pdf"); val replaced = copy(context.dataDir, "exports/d/Anterior.pdf")
-        val arriving = File(context.filesDir, "FolioImports/e/Nuevo.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
-        deleteUnusedCopies(context, listOf(listed.absolutePath, saved.absolutePath))
-        assertTrue(listed.exists() && saved.exists() && arriving.exists())
+        fun copy(root: File, folder: String, name: String) = File(root, "$folder/${UUID.randomUUID()}/$name").apply { parentFile!!.mkdirs(); writeBytes(pdf); parentFile!!.setLastModified(0) }
+        val listed = copy(context.filesDir, "FolioImports", "Listado.pdf"); val forgotten = copy(context.filesDir, "FolioImports", "Olvidado.pdf")
+        val saved = copy(context.dataDir, "exports", "Guardado.pdf"); val replaced = copy(context.dataDir, "exports", "Anterior.pdf")
+        val arriving = File(context.filesDir, "FolioImports/${UUID.randomUUID()}/Nuevo.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
+        val foreign = File(context.filesDir, "FolioImports/Mis PDF/Propio.pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf); parentFile!!.setLastModified(0) }
+        // A path stored before the data folder moved still keeps its copy.
+        val moved = "/data/user/10/org.folio.pdf/files/FolioImports/${listed.parentFile!!.name}/Listado.pdf"
+        deleteUnusedCopies(context, listOf(moved, saved.absolutePath))
+        assertTrue(listed.exists() && saved.exists() && arriving.exists() && foreign.exists())
         assertFalse(forgotten.parentFile!!.exists() || replaced.parentFile!!.exists())
+    }
+    @Test fun recoveredVersionReachesRustAsItsOwnEvent() {
+        incoming.listen(received::add)
+        val recovered = File(context.filesDir, "FolioImports/${UUID.randomUUID()}/Apuntes (versión anterior).pdf").apply { parentFile!!.mkdirs(); writeBytes(pdf) }
+        incoming.recovered(recovered); flush()
+        assertEquals(recovered.absolutePath, received.single().getJSONArray("recovered").getString(0))
+        assertFalse(received.single().has("paths"))
     }
     @Test fun regularLaunchIsIgnoredAndMissingAttachmentIsExplained() {
         incoming.listen(received::add); incoming.receive(Intent(Intent.ACTION_MAIN)); flush()

@@ -177,12 +177,13 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
     onAdd(mode, { page: currentPage, rect: normalized([a[0], a[1], b[0], b[1]]) });
   }
   // From the keyboard or a screen reader, adding starts with a centred area that
-  // the editor's fields then adjust; a pointer draws the area instead.
+  // the editor's fields then adjust; a pointer draws the area instead. The band
+  // is laid out as the page is shown, so it stays wide on /Rotate 90 or 270 pages.
   function chooseAdd(next: 'add-text' | 'add-image', keyboard: boolean) {
     if (!keyboard || !view) { setTool(next); return; }
     if (busy || !doc.canEdit) return;
-    const [x0, y0, x1, y1] = view.viewport.viewBox, w = x1 - x0, h = y1 - y0;
-    onAdd(next, { page: currentPage, rect: [x0 + w * .25, y0 + h * .425, x0 + w * .75, y0 + h * .575] });
+    const { viewport } = view, a = viewport.convertToPdfPoint(viewport.width * .25, viewport.height * .425), b = viewport.convertToPdfPoint(viewport.width * .75, viewport.height * .575);
+    onAdd(next, { page: currentPage, rect: normalized([a[0], a[1], b[0], b[1]]) });
   }
   const touch = document.documentElement.dataset.touch === 'true';
   const hint = mode === 'select' ? `${touch ? 'Toca' : 'Haz clic en'} un texto o una imagen para editarlo.` : `Arrastra en la página para marcar dónde irá ${mode === 'add-text' ? 'el texto' : 'la imagen'}.`;

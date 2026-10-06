@@ -36,9 +36,9 @@ ningún servidor.
 Las anotaciones y los cambios se conservan en el dispositivo mientras trabajas.
 Para escribirlos en un PDF:
 
-- **Windows y macOS:** **Guardar** (Ctrl+S, ⌘S) actualiza el PDF abierto. Si otro
-  programa lo modificó después de abrirlo, Folio no lo sobrescribe y te lo indica.
-  **Guardar una copia…** (Ctrl+Mayús+S, ⇧⌘S) crea otro archivo.
+- **Windows y macOS:** **Guardar** (Ctrl+S, ⌘S) actualiza el PDF abierto. Si es de
+  solo lectura o otro programa lo modificó después de abrirlo, Folio no lo
+  sobrescribe y te lo indica. **Guardar una copia…** (Ctrl+Mayús+S, ⇧⌘S) crea otro archivo.
 - **Android:** **Guardar** actualiza el PDF original y **Guardar una copia** crea otro.
 - **iPhone y iPad:** Folio trabaja con una copia importada. **Guardar una copia**
   exporta el PDF a Archivos y **Compartir** abre la hoja de iOS.

@@ -11,6 +11,10 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+# MainActivity registers SelectionGate as the page's FolioSelection object.
+-keep class org.folio.android.SelectionGate {
+   @android.webkit.JavascriptInterface public <methods>;
+}
 
 # Uncomment this to preserve the line number information for
 # debugging stack traces.

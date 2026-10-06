@@ -306,7 +306,10 @@ try {
     // The drawn area can also be adjusted from the keyboard, in points from the page's top-left corner.
     const field=label=>page.getByLabel(label,{exact:true});
     assert(Math.abs(Number(await field('Posición X').inputValue())-40)<2); assert(Math.abs(Number(await field('Posición Y').inputValue())-435)<2);
-    await field('Ancho').fill('150'); await field('Alto').fill('35'); await field('Posición X').fill('50'); await field('Posición Y').fill('400');
+    // Clearing a measure and typing a new one keeps what is typed and does not move the area.
+    await field('Ancho').fill(''); await field('Ancho').pressSequentially('150'); assert.equal(await field('Ancho').inputValue(),'150');
+    await field('Alto').focus(); assert.equal(await field('Ancho').inputValue(),'150'); assert(Math.abs(Number(await field('Posición X').inputValue())-40)<2,'Retyping the width must not move the area.');
+    await field('Alto').fill('35'); await field('Posición X').fill('50'); await field('Posición Y').fill('400');
     await page.getByLabel('Nombre del campo',{exact:true}).fill('created_by_user'); await page.getByRole('button',{name:'Crear campo',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});
     await tools(page,'Rellenar formulario'); await page.locator('.form-fields label').filter({hasText:'created_by_user'}).locator('input').fill('Nuevo valor');
     await page.getByRole('button',{name:'Aplicar valores',exact:true}).click(); await page.locator('.workbench').waitFor({state:'detached'});

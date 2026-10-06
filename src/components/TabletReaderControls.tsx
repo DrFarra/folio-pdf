@@ -30,14 +30,15 @@ export function TabletReaderHeader({ name, nameAdornment, count, page, pageStep,
 }
 
 // Same order and behaviour as the phone and desktop toolbars; the settings slot
-// at the end is always reserved so no tool moves under the finger.
-export function TabletAnnotationDock({ tool, setTool, disabled, canCopy, settings, onHighlight }: { tool: Tool; setTool: (tool: Tool) => void; disabled: boolean; canCopy: boolean; settings: ReactNode; onHighlight: () => void }) {
+// at the end is always reserved so no tool moves under the finger, and its
+// divider shows only when the tool has options.
+export function TabletAnnotationDock({ tool, setTool, disabled, canCopy, settings, hasSettings, onHighlight }: { tool: Tool; setTool: (tool: Tool) => void; disabled: boolean; canCopy: boolean; settings: ReactNode; hasSettings: boolean; onHighlight: () => void }) {
   return <div className="tablet-annotation-dock" role="toolbar" aria-label="Herramientas de anotación">
     <Button label="Seleccionar texto" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={21} /></Button>
     <Button label="Resaltador" active={tool === 'highlight'} disabled={disabled || !canCopy} onMouseDown={event => event.preventDefault()} onClick={onHighlight}><Highlighter size={22} /></Button>
     <Button label="Nota" active={tool === 'note'} disabled={disabled} onClick={() => setTool(tool === 'note' ? 'select' : 'note')}><StickyNote size={21} /></Button>
     <Button label="Lápiz" active={tool === 'draw'} disabled={disabled} onClick={() => setTool('draw')}><PenLine size={22} /></Button>
     <Button label="Goma" active={tool === 'eraser'} disabled={disabled} onClick={() => setTool('eraser')}><Eraser size={22} /></Button>
-    <span className="tablet-dock-divider" />{settings}
+    <span className="tablet-dock-divider" style={hasSettings ? undefined : { visibility: 'hidden' }} />{settings}
   </div>;
 }

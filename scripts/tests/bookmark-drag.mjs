@@ -114,13 +114,14 @@ try {
   const pending = page.waitForEvent('download'); await page.getByRole('button', { name: 'Descargar', exact: true }).click();
   const downloaded = await pending, saved = path.join(output, 'bookmark-drag-saved.pdf'); await downloaded.saveAs(saved);
   await page.waitForFunction(() => !document.querySelector('.loading-overlay') && !document.querySelector('.download-button')?.disabled);
-  const savedHash = createHash('sha256').update(fs.readFileSync(saved)).digest('hex');
-  await waitParent('mother', null, savedHash); assert.deepEqual((await stored(savedHash)).bookmarks, final);
-  await page.reload(); await open(saved); assert.deepEqual((await stored(savedHash)).bookmarks, final);
+  assert.notEqual(createHash('sha256').update(fs.readFileSync(saved)).digest('hex'), hash, 'The download carries the edited outline.');
+  // A web download is an export: the document keeps its session, so reopening it restores the branch.
+  await waitParent('mother', null); assert.deepEqual((await stored()).bookmarks, final);
+  await page.reload(); await open(source); assert.deepEqual((await stored()).bookmarks, final);
   assert.equal(await row('mother').getAttribute('aria-level'), '1'); assert.equal(await row('grandchild').getAttribute('aria-level'), '3');
   assert.equal(createHash('sha256').update(fs.readFileSync(source)).digest('hex'), hash);
   await page.screenshot({ path: path.join(output, 'bookmark-drag-restored.png'), animations: 'disabled' });
-  results.push({ id: 'save-and-reopen-restores-entire-branch', passed: true, sessionVersion: (await stored(savedHash)).version, originalPdfUnchanged: true });
+  results.push({ id: 'save-and-reopen-restores-entire-branch', passed: true, sessionVersion: (await stored()).version, originalPdfUnchanged: true });
   assert.deepEqual(errors, []);
 } catch (error) {
   process.exitCode = 1; results.push({ id: 'bookmark-drag', passed: false, error: error.stack });

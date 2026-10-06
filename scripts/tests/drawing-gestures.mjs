@@ -104,4 +104,37 @@ try {
     } catch (error) { process.exitCode = 1; results.push({ layout, passed: false, error: error.stack }); await page.screenshot({ path: `${out}/${layout}-failure.png` }).catch(() => {}); }
     finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
   }
+  // Pen-only finger momentum is one glide for the whole reader: a finger held on
+  // another page stops it, so a pencil put down there never draws on a sliding page.
+  const long = await PDFDocument.create(), longFont = await long.embedFont(StandardFonts.Helvetica);
+  for (let i = 1; i <= 6; i++) long.addPage([420, 600]).drawText(`PAGE ${i}`, { x: 32, y: 510, size: 16, font: longFont });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, screen: { width: 390, height: 844 }, hasTouch: true, isMobile: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; phone) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36' });
+  await context.addInitScript(() => localStorage.setItem('folio.ink.penMode', 'pen'));
+  const page = await context.newPage(), errors = []; page.setDefaultTimeout(12000); page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.goto(origin); await page.locator('.app-header input[type=file]').setInputFiles({ name: 'Largo.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await long.save()) });
+    await page.locator('.textLayer span').first().waitFor(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Anotar', exact: true }).click(); await page.getByRole('button', { name: 'Lápiz', exact: true }).click();
+    assert.equal(await page.locator('.ink-layer.ink-interactive').first().getAttribute('data-pen-only'), 'true');
+    const cdp = await context.newCDPSession(page), top = () => page.locator('.reading-area').evaluate(reader => reader.scrollTop);
+    const touch = (type, x, y, id = 1) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, radiusX: 3, radiusY: 3, force: .7, id }] });
+    const first = await page.locator('.pdf-page-wrap[data-page-number="1"] .ink-layer').boundingBox(); assert(first);
+    const startY = first.y + first.height * .8; await touch('touchStart', 200, startY);
+    for (let i = 1; i <= 6; i++) { await touch('touchMove', 200, startY - i * 50); await page.waitForTimeout(8); }
+    await touch('touchEnd'); const lifted = await top(); await page.waitForTimeout(80);
+    const flung = await top(), hold = await page.evaluate(() => {
+      const reader = document.querySelector('.reading-area').getBoundingClientRect();
+      for (const layer of document.querySelectorAll('.pdf-page-wrap:not([data-page-number="1"]) .ink-layer')) {
+        const box = layer.getBoundingClientRect(), y = Math.max(box.top, reader.top) + 30;
+        if (y < Math.min(box.bottom, reader.bottom) - 120) return { y, page: layer.closest('.pdf-page-wrap').dataset.pageNumber };
+      }
+    });
+    assert(hold, 'Another page must be under the finger after the fling.');
+    await touch('touchStart', 200, hold.y, 2); const held = await top(); await page.waitForTimeout(300); const after = await top(); await touch('touchEnd');
+    assert(flung > lifted + 5, `The fling must keep gliding after the finger lifts (scrollTop ${lifted} -> ${flung}).`);
+    assert(Math.abs(after - held) <= 2, `A finger held on page ${hold.page} must stop the glide started on page 1 (scrollTop ${held} -> ${after}).`);
+    assert.deepEqual(errors, []);
+    results.push({ layout: 'phone-pen-only', passed: true, glideContinuesAfterFling: true, pressOnAnotherPageStopsGlide: true, heldOnPage: hold.page });
+  } catch (error) { process.exitCode = 1; results.push({ layout: 'phone-pen-only', passed: false, error: error.stack }); await page.screenshot({ path: `${out}/phone-pen-only-failure.png` }).catch(() => {}); }
+  finally { await context.close(); console.log(JSON.stringify(results.at(-1))); }
 } finally { await browser?.close(); server.kill(); fs.writeFileSync(`${out}/results.json`, JSON.stringify(results, null, 2)); }

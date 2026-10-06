@@ -62,8 +62,21 @@ try {
         await jump.getByRole('button', { name: 'Ir a página', exact: true }).tap();
         await page.waitForFunction(() => document.querySelector('.mobile-page-jump')?.title.startsWith('Página 4 de')); await page.waitForTimeout(300);
         for (const size of [{ width: 844, height: 390 }, viewport]) { await page.setViewportSize(size); await page.waitForTimeout(500); assert.match(await reading(), /^Página 4 de/, `Rotation to ${size.width}x${size.height} keeps the reading page.`); }
+        // With Lápiz a finger draws, so two fingers scroll: their drift must not zoom; a clear pinch still does.
+        await page.getByRole('button', { name: 'Anotar', exact: true }).tap(); await page.getByRole('button', { name: 'Lápiz', exact: true }).tap();
+        const cdp = await context.newCDPSession(page), touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+        const twoFingers = async (spread, dy) => { await touch('touchStart', [[145, 420], [245, 420]]); for (let i = 1; i <= 10; i++) await touch('touchMove', [[145 - spread * i / 20, 420 + dy * i / 10 + (i % 2 ? 2 : -2)], [245 + spread * i / 20, 420 + dy * i / 10]]); await touch('touchEnd', []); };
+        const paper = () => page.locator('.reading-area').evaluate(element => ({ width: element.querySelector('.pdf-page').getBoundingClientRect().width, top: element.scrollTop, overflow: element.scrollWidth - element.clientWidth }));
+        const start = await paper();
+        for (const spread of [-3, 3, -3]) await twoFingers(spread, -100);
+        await page.waitForTimeout(300); const panned = await paper();
+        assert(Math.abs(panned.width - start.width) < .5 && panned.overflow <= 0, `Two-finger scrolling must keep Ajustar página: ${start.width} → ${panned.width}px.`);
+        assert(panned.top > start.top + 150, 'Two-finger scrolling pans the pages.');
+        assert.equal(await page.locator('[data-ink-id]').count(), 0, 'The first finger of a two-finger gesture leaves no stroke.');
+        await twoFingers(120, 0); await page.waitForTimeout(500);
+        assert((await paper()).width > start.width * 1.3, 'A clear pinch still zooms.');
       }
-      results.push({ viewport, status: 'passed', stableImmersiveViewport: true, controls44pt: true, visibleSheets: true, ...viewport.width === 390 ? { rotationKeepsPage: true } : {} });
+      results.push({ viewport, status: 'passed', stableImmersiveViewport: true, controls44pt: true, visibleSheets: true, ...viewport.width === 390 ? { rotationKeepsPage: true, twoFingerPanKeepsZoom: true } : {} });
     } catch (error) { results.push({ viewport, status: 'failed', error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, `failure-${viewport.width}.png`) }).catch(() => {}); }
     finally { console.log(JSON.stringify(results.at(-1))); await context.close(); }
   }

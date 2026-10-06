@@ -12,6 +12,7 @@ import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.print.*
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -126,7 +127,7 @@ class FolioPlugin(private val launch: Activity) : Plugin(launch) {
         }
     }
     private fun saveFailed(invoke: Invoke, error: Exception) {
-        if (error is OriginalRecovered) incoming.deliver(listOf(error.file))
+        if (error is OriginalRecovered) incoming.recovered(error.file)
         invoke.reject(userMessage(error, "No se pudo guardar en el original."))
     }
     @Command fun saveOriginal(invoke: Invoke) {
@@ -189,13 +190,18 @@ class FolioPlugin(private val launch: Activity) : Plugin(launch) {
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) { done(invoke, false); return }
         io.execute { try {
+            // The picker also returns a file the user chose to replace. Only an
+            // empty document, the one it has just created, is removed on failure.
+            val created = runCatching {
+                activity.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { it.moveToFirst() && !it.isNull(0) && it.getLong(0) == 0L }
+            }.getOrNull() == true
             val file = try {
                 privateFile(activity, invoke.parseArgs(PathArgs::class.java).path).also { file ->
                     activity.contentResolver.openOutputStream(uri, "wt")?.use { output -> file.inputStream().use { it.copyTo(output) } } ?: throw FolioError("No se pudo guardar en esa ubicación. Elige otra carpeta.")
                 }
             } catch (error: Exception) {
-                // Create document already left an empty file in the chosen folder.
-                runCatching { DocumentsContract.deleteDocument(activity.contentResolver, uri) }; throw error
+                if (created) runCatching { DocumentsContract.deleteDocument(activity.contentResolver, uri) }
+                throw error
             }
             if (file.extension.equals("pdf", true)) {
                 retainDocumentAccess(activity, uri, result.data?.flags ?: 0)

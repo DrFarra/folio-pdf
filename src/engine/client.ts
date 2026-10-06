@@ -3,14 +3,16 @@ import type { Inspection } from './mupdf-engine.mjs';
 import type { Operation, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo } from './operations.mjs';
 
 // Starting a worker loads ~10 MB of WASM, so idle workers are reused. A worker
-// runs one request at a time; cancelling or timing out a request terminates its
-// worker, and an aborted preview gets a warm replacement for the next request.
+// runs one request at a time and is reused only after a successful result: an
+// error can leave MuPDF's heap inconsistent, or come from an engine that failed
+// to load. Cancelling or timing out a request terminates its worker too, and an
+// aborted preview gets a warm replacement for the next request.
 const idle: Worker[] = [];
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
 const spawn = () => new Worker(new URL('./pdf.worker.ts', import.meta.url), { type: 'module' });
 function release(worker: Worker) {
   if (idle.length >= 2) { worker.terminate(); return; }
-  // A worker that fails while idle, e.g. while loading, is dropped instead of reused.
+  // A worker that crashes while idle is dropped instead of reused.
   worker.onerror = () => { idle.splice(idle.indexOf(worker), 1); worker.terminate(); };
   idle.push(worker); clearTimeout(idleTimer);
   // The WASM heap only grows; give its memory back after a quiet period.
@@ -28,7 +30,7 @@ function run<T>(operation: 'inspect' | 'annotate' | 'operate', bytes: Uint8Array
     const timeout = setTimeout(() => { stop(false); reject(new Error('La operación tardó demasiado y se canceló. El documento no cambió.')); }, 90_000);
     signal?.addEventListener('abort', abort, { once: true });
     // A large document leaves a large heap behind; that worker is not kept.
-    worker.onmessage = event => { stop(!event.data.fatal && bytes.length < 32 * 1024 * 1024); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.result); };
+    worker.onmessage = event => { stop(!event.data.error && bytes.length < 32 * 1024 * 1024); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.result); };
     worker.onerror = () => { stop(false); reject(new Error('No se pudo completar la operación. El documento no cambió.')); };
     const copy = new Uint8Array(bytes);
     worker.postMessage({ operation, bytes: copy, password, annotations, options, incremental }, [copy.buffer]);

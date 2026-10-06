@@ -30,7 +30,7 @@ internal fun userMessage(error: Throwable, fallback: String): String {
 internal data class OriginalDocument(val uri: Uri, val digest: String)
 internal class OriginalAccessRequired : FolioError("Selecciona el PDF original para permitir su escritura.")
 /** The original could not be restored after a failed write. [file] holds the
- * version it had before and is opened as a new library document. */
+ * version it had before and is added to the library. */
 internal class OriginalRecovered(val file: File, message: String, cause: Throwable) : FolioError(message, cause)
 
 internal fun pdfDigest(input: InputStream): String = input.use {
@@ -133,7 +133,7 @@ internal fun overwriteOriginal(context: Context, source: File, edited: File, sel
             val recovered = File(File(context.filesDir, "FolioImports/${UUID.randomUUID()}").apply { mkdirs() }, "${source.nameWithoutExtension} (versión anterior).pdf")
             if (backup.renameTo(recovered)) {
                 originFile(backup).delete()
-                throw OriginalRecovered(recovered, "No se pudo guardar y el original puede estar dañado. La versión anterior se abrió como «${recovered.name}»; tus cambios siguen en Folio.", error)
+                throw OriginalRecovered(recovered, "No se pudo guardar y el original puede estar dañado. La versión anterior está en la biblioteca como «${recovered.name}»; tus cambios siguen en Folio.", error)
             }
             recovered.parentFile?.delete()
             throw FolioError("No se pudo guardar y el original puede estar dañado. Tus cambios siguen en Folio; usa Guardar una copia para conservarlos.", error)

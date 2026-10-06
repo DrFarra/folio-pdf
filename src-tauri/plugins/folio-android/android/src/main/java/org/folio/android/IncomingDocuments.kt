@@ -77,11 +77,13 @@ internal fun privateFile(context: Context, path: String): File {
 
 /** Deletes the private copies that neither the library nor an open tab uses
  * ([keep]), then the document access Android kept only for their originals.
- * A copy written in the last minute may still be on its way to the reader. */
+ * Each copy has its own UUID-named folder, matched by name so that a path
+ * stored before the data folder moved still keeps it. A copy written in the
+ * last minute may still be on its way to the reader. */
 internal fun deleteUnusedCopies(context: Context, keep: Collection<String>, now: Long = System.currentTimeMillis()) {
-    val kept = keep.mapNotNull { runCatching { File(it).canonicalFile.parentFile }.getOrNull() }.toSet()
+    val kept = keep.mapNotNull { File(it).parentFile?.name }.toSet()
     val (retained, unused) = listOf(File(context.filesDir, "FolioImports"), File(context.dataDir, "exports")).flatMap { it.listFiles().orEmpty().filter(File::isDirectory) }
-        .partition { it.canonicalFile in kept || now - it.lastModified() < 60_000 }
+        .partition { it.name in kept || runCatching { UUID.fromString(it.name) }.isFailure || now - it.lastModified() < 60_000 }
     unused.forEach { it.deleteRecursively() }
     val originals = retained.flatMap { it.listFiles().orEmpty().filter { file -> file.name.endsWith(".origin.json") } }
         .mapNotNull { runCatching { readOriginal(File(it.parentFile, it.name.removeSuffix(".origin.json")))?.uri }.getOrNull() }.toSet()
@@ -126,8 +128,9 @@ internal class IncomingDocuments(private val context: Context, private val io: E
         }
     }
 
-    /** Opens a PDF that Folio wrote itself, such as a recovered previous version. */
-    fun deliver(files: List<File>) = io.execute { dispatch(paths(files)) }
+    /** A previous version recovered after a failed save: Rust adds it to the
+     * library, so that it is never deleted as an unused copy. */
+    fun recovered(file: File) = io.execute { dispatch(JSObject().put("recovered", JSArray().apply { put(file.absolutePath) })) }
 
     private fun paths(files: List<File>, errors: List<String> = emptyList()) = JSObject().put("paths", JSArray().apply { files.forEach { put(it.absolutePath) } })
         .apply { if (errors.isNotEmpty()) put("errors", JSArray().apply { errors.forEach { put(it) } }) }

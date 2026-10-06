@@ -19,10 +19,11 @@ type Props = {
 export default function ReadingSettings(props: Props) {
   const { preferences: prefs } = props, phone = props.layout === 'phone', desktop = props.layout === 'desktop';
   // The licence ships with the app, so it also opens offline; the full third-party notices are online.
+  // Its hard-wrapped paragraphs are joined so they reflow to the dialog; indented lines keep their own.
   const [license, setLicense] = useState<{ text?: string; failed?: boolean } | null>(null);
   const showLicense = () => {
     setLicense({});
-    void fetch(assetUrl('/licenses/LICENSE.txt')).then(response => response.ok ? response.text() : Promise.reject()).then(text => setLicense(current => current && { text }), () => setLicense(current => current && { failed: true }));
+    void fetch(assetUrl('/licenses/LICENSE.txt')).then(response => response.ok ? response.text() : Promise.reject()).then(text => setLicense(current => current && { text: text.replace(/\r\n?/g, '\n').replace(/([^\n])\n(?=\S)/g, '$1 ') }), () => setLicense(current => current && { failed: true }));
   };
   const visit = (url: string) => { void openExternalUrl(url).catch(() => {}); };
   const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) => props.onPreferences({ ...prefs, [key]: value });
@@ -47,9 +48,9 @@ export default function ReadingSettings(props: Props) {
     </details>}
     <h3>Archivos locales</h3>
     <label className="settings-toggle"><span>Añadir a la biblioteca los PDF que abras</span><input type="checkbox" checked={props.rememberRecent} onChange={event => props.onRemember(event.target.checked)} /></label>
-    <details className="settings-advanced"><summary>Eliminar datos locales</summary><p className="modal-description">{isDesktop ? 'Se vaciará la biblioteca y se eliminarán las anotaciones, marcadores y cambios guardados en este equipo.' : 'Se eliminarán las copias de la biblioteca y sus cambios guardados.'} Los archivos originales no se modifican.</p>
+    <details className="settings-advanced"><summary>Eliminar datos locales</summary><p className="modal-description">{isDesktop ? 'Se vaciará la biblioteca y se eliminarán las anotaciones, marcadores y cambios guardados en este equipo.' : 'Se vaciará la biblioteca y se eliminarán sus copias, anotaciones, marcadores y cambios guardados.'} Los archivos originales no se modifican.</p>
     {props.confirmClear && props.openDocuments > 0 && <p className="modal-description">{props.openDocuments === 1 ? 'También se cerrará el documento abierto' : `También se cerrarán los ${props.openDocuments} documentos abiertos`} y perderás los cambios que no hayas guardado en un PDF.</p>}
-    <button className={`clear-library ${props.confirmClear ? 'confirm' : ''}`} onClick={props.onClear}><Trash2 size={16} /><span>{!props.confirmClear ? 'Eliminar biblioteca y anotaciones locales' : props.openDocuments > 0 ? 'Eliminar y cerrar documentos' : 'Confirmar: eliminar archivos y anotaciones locales'}</span></button>
+    <button className={`clear-library ${props.confirmClear ? 'confirm' : ''}`} onClick={props.onClear}><Trash2 size={16} /><span>{!props.confirmClear ? 'Eliminar biblioteca y anotaciones locales' : props.openDocuments > 0 ? 'Eliminar y cerrar documentos' : 'Confirmar: eliminar biblioteca y anotaciones locales'}</span></button>
     {props.confirmClear && <button className="text-button" onClick={props.onCancelClear}>Cancelar eliminación</button>}
     </details>
     <h3>Acerca de Folio</h3>
@@ -63,7 +64,7 @@ export default function ReadingSettings(props: Props) {
     </div>
     <div className="modal-actions"><span className="folio-version">Folio · {version}</span><button className="primary-button" onClick={props.onClose}><Check size={15} />Listo</button></div>
   </Modal>
-  {license && <Modal title="Licencia de Folio" onClose={() => setLicense(null)}>
+  {license && <Modal title="Licencia de Folio" onClose={() => setLicense(null)} className="license-modal">
     {license.text ? <pre className="license-text">{license.text}</pre> : <p className="modal-description" role={license.failed ? 'alert' : 'status'}>{license.failed ? 'No se pudo abrir la licencia. Puedes leerla en gnu.org/licenses/agpl-3.0.' : 'Cargando la licencia…'}</p>}
   </Modal>}
   </>;

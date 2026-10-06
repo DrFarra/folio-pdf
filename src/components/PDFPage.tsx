@@ -128,7 +128,8 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const mark = textRef.current?.querySelector<HTMLElement>(`mark[data-search-offset="${active.offset}"]`);
     if (!mark) return;
     lastSearchScroll.current = key;
-    requestAnimationFrame(() => { if (mark.isConnected) mark.scrollIntoView({ block: 'center', inline: 'nearest' }); });
+    // A newer result chosen before this frame (key repeat, F3 held) keeps its own scroll.
+    requestAnimationFrame(() => { const current = activeSearchRef.current; if (mark.isConnected && current?.page === number && current.offset === active.offset) mark.scrollIntoView({ block: 'center', inline: 'nearest' }); });
   }
 
   useEffect(() => {

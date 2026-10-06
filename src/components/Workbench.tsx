@@ -16,7 +16,7 @@ import { saveExport, isNative, isAndroid, isDesktop, isMac } from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
-import ContentEditor, { type ContentEditorKind } from './ContentEditor';
+import ContentEditor, { NumberField, type ContentEditorKind } from './ContentEditor';
 import PdfContentPicker from './PdfContentPicker';
 import ConversionOptions from './ConversionOptions';
 import { usePagePlanDrag } from './usePagePlanDrag';
@@ -87,7 +87,8 @@ function AreaFields({ pdf, area, disabled, onChange }: { pdf: PDFDocumentProxy; 
     const a = viewport.convertToPdfPoint(x, y), b = viewport.convertToPdfPoint(x + width, y + height);
     onChange({ page: area.page, rect: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])] });
   };
-  const field = (label: string, name: string, key: keyof typeof box, min: number) => <label>{label}<input aria-label={name} type="number" min={min} step={.5} disabled={disabled} value={Math.round(box[key] * 100) / 100} onChange={event => update(key, Number(event.target.value))} /></label>;
+  // Typed values apply as they are completed; clamping shows once the field is left.
+  const field = (label: string, name: string, key: keyof typeof box, min: number) => <label>{label}<NumberField aria-label={name} min={min} step={.5} disabled={disabled} value={Math.round(box[key] * 100) / 100} onValue={value => update(key, value)} /></label>;
   return <fieldset className="area-fields"><legend>Posición y tamaño, en puntos desde la esquina superior izquierda</legend>{field('X (pt)', 'Posición X', 'x', 0)}{field('Y (pt)', 'Posición Y', 'y', 0)}{field('Ancho (pt)', 'Ancho', 'width', 1)}{field('Alto (pt)', 'Alto', 'height', 1)}</fieldset>;
 }
 

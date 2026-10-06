@@ -72,9 +72,10 @@ function clearPrivateData(doc, removeOutlines = false) {
 }
 
 // Widgets of one field share its value: list it once, at its first widget.
-// Radio buttons stay separate because each widget is one of the choices.
+// Radio buttons stay separate because each widget is one of the choices, and
+// fields without a name because an empty name does not identify a field.
 function fieldKey(widget, id) {
-  if (widget.isRadioButton()) return id;
+  if (widget.isRadioButton() || !widget.getName()) return id;
   let state = '';
   if (widget.isCheckbox()) widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') state = key; });
   return widget.getName() + '\n' + state;
@@ -367,11 +368,15 @@ function pageContent(doc, page, requestedImage, selectedContent) {
   const equalBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < .5);
   const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
   const warnings = new Set(), textPaint = [], images = [], imagePaint = [], glyphs = [], graphics = [], groups = [];
-  const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, display, structured, device, selectedImage;
-  const reserve = () => { if (++events > 20000) fail('La página contiene demasiados elementos para detectarlos automáticamente.'); };
+  const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, overflow = false, deviceError, display, structured, device, selectedImage;
+  // Device callbacks run inside MuPDF: an exception unwinding through them skips
+  // its cleanup and corrupts the WASM heap. They record the failure and stop
+  // collecting; it is raised once runPageContents has returned.
+  const reserve = () => { if (++events > 20000) overflow = true; return !overflow && !deviceError; };
+  const guard = callback => (...args) => { try { callback(...args); } catch (error) { deviceError ??= error; } };
   const currentClip = () => clips.at(-1);
   const complexGroup = () => groups.some(Boolean);
-  const pushClip = (box, complex) => { reserve(); clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex }); };
+  const pushClip = (box, complex) => { if (reserve()) clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex }); };
   const isRectangle = (path, matrix) => {
     let count = 0, curve = false, closed = false; const points = [];
     path.walk({ moveTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, lineTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, curveTo: () => { curve = true; }, closePath: () => { closed = true; } });
@@ -380,11 +385,11 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     return points.every(([x, y]) => (Math.abs(x - box[0]) < .1 || Math.abs(x - box[2]) < .1) && (Math.abs(y - box[1]) < .1 || Math.abs(y - box[3]) < .1));
   };
   const paintText = (text, matrix, alpha, hidden, stroke = null) => {
-    reserve(); const box = text.getBounds(stroke, matrix);
+    if (!reserve()) return; const box = text.getBounds(stroke, matrix);
     textPaint.push({ box, hidden: hidden || alpha <= 0, complex: complexGroup() || currentClip().complex || alpha < .999, clip: currentClip().box, order: order++ });
   };
   const paintImage = (image, matrix, alpha, mask = false) => {
-    reserve(); const box = mupdf.Rect.transform([0, 0, 1, 1], matrix), clip = currentClip(), visible = intersection(box, clip.box);
+    if (!reserve()) return; const box = mupdf.Rect.transform([0, 0, 1, 1], matrix), clip = currentClip(), visible = intersection(box, clip.box);
     let softMask;
     try {
       softMask = image.getMask();
@@ -396,9 +401,9 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       }
     } finally { softMask?.destroy(); }
   };
-  const paintPath = (path, matrix, alpha, stroke = null) => { reserve(); if (alpha > 0) graphics.push({ box: path.getBounds(stroke, matrix), order: order++ }); };
+  const paintPath = (path, matrix, alpha, stroke = null) => { if (reserve() && alpha > 0) graphics.push({ box: path.getBounds(stroke, matrix), order: order++ }); };
   try {
-    device = new mupdf.Device({
+    device = new mupdf.Device(Object.fromEntries(Object.entries({
       fillText: (text, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false); } finally { text.destroy(); cs.destroy(); } },
       strokeText: (text, stroke, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false, stroke); } finally { text.destroy(); stroke.destroy(); cs.destroy(); } },
       ignoreText: (text, matrix) => { try { paintText(text, matrix, 0, true); } finally { text.destroy(); } },
@@ -412,12 +417,14 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       clipStrokeText: (text, stroke, matrix) => { try { pushClip(text.getBounds(stroke, matrix), true); } finally { text.destroy(); stroke.destroy(); } },
       clipImageMask: (image, matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true); } finally { image.destroy(); } },
       popClip: () => { if (clips.length > 1) clips.pop(); },
-      beginGroup: (_box, cs, _isolated, knockout, blend, alpha) => { reserve(); groups.push(knockout || blend !== 'Normal' || alpha < .999); cs.destroy(); },
+      beginGroup: (_box, cs, _isolated, knockout, blend, alpha) => { try { if (reserve()) groups.push(knockout || blend !== 'Normal' || alpha < .999); } finally { cs.destroy(); } },
       endGroup: () => { groups.pop(); },
-      beginMask: (box, _luminosity, cs) => { pushClip(box, true); cs.destroy(); },
+      beginMask: (box, _luminosity, cs) => { try { pushClip(box, true); } finally { cs.destroy(); } },
       endMask: () => {},
-    });
+    }).map(([name, callback]) => [name, guard(callback)])));
     page.runPageContents(device, mupdf.Matrix.identity); device.close(); device.destroy(); device = undefined;
+    if (deviceError) throw deviceError;
+    if (overflow) fail('La página contiene demasiados elementos para detectarlos automáticamente.');
     display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
     // The installed walker truncates non-BMP runes with fromCharCode. JSON's
     // Unicode strings preserve them; only strings are used, not its rounded boxes.
@@ -505,7 +512,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       const item = imageItems.find(item => item.id === requestedImage);
       if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
       if (!item.editable) fail(item.reason);
-      return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))], jpegSource(page, selectedImage));
+      return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))], jpegSource(doc, page, selectedImage));
     }
     return { items, warnings: [...warnings] };
   } finally { selectedImage?.destroy(); device?.destroy(); structured?.destroy(); display?.destroy(); }
@@ -580,9 +587,10 @@ function verifyRetainedGlyphs(output, index, expected, password, message = 'La e
 }
 
 // Keep a JPEG compressed when it is moved or duplicated. Only one unambiguous
-// DCT XObject with this size and plain RGB or gray samples qualifies; every
-// other image is decoded to PNG.
-function jpegSource(page, image) {
+// DCT XObject with this size and plain RGB or gray samples qualifies, and only
+// when it is the painted image itself, not an inline image of the same size;
+// every other image is decoded to PNG.
+function jpegSource(doc, page, image) {
   const found = new Map(), visited = new Set();
   (function walk(resources, depth) {
     if (depth > 8 || !resources.isDictionary()) return;
@@ -598,6 +606,10 @@ function jpegSource(page, image) {
   const [object] = found.values(), filter = object.get('Filter');
   if ((filter.isArray() ? filter.length === 1 && filter.get(0).asName() : filter.asName()) !== 'DCTDecode' || !['DeviceRGB', 'DeviceGray'].includes(object.get('ColorSpace').asName())
     || ['Decode', 'SMask', 'Mask', 'DecodeParms'].some(key => !object.get(key).isNull()) || object.get('ImageMask').asBoolean()) return null;
+  // MuPDF's store hands out the image it already loaded for this XObject, so a
+  // different pointer means another image was painted, e.g. an inline one.
+  let loaded;
+  try { loaded = doc.loadImage(object); if (loaded.pointer !== image.pointer) return null; } catch { return null; } finally { loaded?.destroy(); }
   const buffer = object.readRawStream();
   try { const bytes = new Uint8Array(buffer.asUint8Array()); return jpegOrientation(bytes) === 1 ? bytes : null; }
   finally { buffer.destroy(); }
@@ -680,10 +692,9 @@ export function operateDocument(bytes, options, password = '') {
       allowed(doc, 'assemble');
       if (!Array.isArray(options.plan) || !options.plan.length || options.plan.length > 10000) fail('La lista de páginas está vacía o es demasiado larga.');
       // Preserve the original document dictionaries and use MuPDF to remap destinations.
-      const sources = (options.sources || []).map(source => {
-        const other = open(source.bytes, source.password); allowed(other, 'assemble'); return other;
-      });
+      const sources = [];
       try {
+        for (const source of options.sources || []) { const other = open(source.bytes, source.password); sources.push(other); allowed(other, 'assemble'); }
         const order = [], used = new Set(), importedPages = new Map(), pendingLinks = [];
         for (const entry of options.plan) {
           let index;
@@ -794,7 +805,7 @@ export function operateDocument(bytes, options, password = '') {
     } else if (operation === 'create-field') {
       allowed(doc, 'edit');
       if (typeof options.name !== 'string' || !options.name.trim() || options.name.length > 200 || fields(doc).some(field => field.name === options.name)) fail('El nombre del campo está vacío o ya existe.');
-      const page = doc.loadPage(pageIndex(doc, options.page)), box = rect(options.rect);
+      const index = pageIndex(doc, options.page), box = rect(options.rect), page = doc.loadPage(index);
       try {
         const root = doc.getTrailer().get('Root');
         let acro = root.get('AcroForm');
@@ -822,7 +833,7 @@ export function operateDocument(bytes, options, password = '') {
         object.put('BS', { W: 1, S: 'S' }); object.put('MK', { BC: [0.6, 0.6, 0.6], BG: [1, 1, 1] });
         const ref = doc.addObject(object); acro.get('Fields').push(ref);
         let annots = page.getObject().get('Annots'); if (annots.isNull()) { annots = doc.newArray(); page.getObject().put('Annots', annots); } annots.push(ref);
-        const reloaded = doc.loadPage(pageIndex(doc, options.page));
+        const reloaded = doc.loadPage(index);
         try { for (const widget of reloaded.getWidgets()) if (widget.getObject().asIndirect() === ref.asIndirect()) widget.update(); reloaded.update(); }
         finally { reloaded.destroy(); }
       } finally { page.destroy(); }

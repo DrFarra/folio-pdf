@@ -133,7 +133,7 @@ Sin más variables se obtiene el APK de prueba, depurable y firmado con
 | `FOLIO_ANDROID_KEY_ALIAS` | Alias de la clave. |
 | `FOLIO_ANDROID_KEY_PASSWORD` | Contraseña de la clave, si difiere de la del almacén. |
 | `FOLIO_ANDROID_TARGETS` | Arquitecturas, por defecto `aarch64`; por ejemplo `aarch64 armv7 x86_64`. |
-| `FOLIO_ANDROID_VERSION_CODE` | Sustituye el `versionCode` que Tauri deriva de la versión (0.8.11 → 8011). |
+| `FOLIO_ANDROID_VERSION_CODE` | Sustituye el `versionCode` que Tauri deriva de la versión (0.9.0 → 9000). |
 
 Con el almacén se compila en modo release (no depurable, sin tráfico HTTP sin
 cifrar, Rust optimizado y R8) y se generan `Folio-Android-<versión>.aab` y

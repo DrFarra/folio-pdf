@@ -60,6 +60,14 @@ try {
     check(legacy?.id === id(1) && legacy.data === undefined && await (await storage.readLibraryData(id(1))).text() === 'original', 'Schema upgrade must move legacy bytes out of the catalog without losing them.');
     check((await storage.readSession(id(1))).annotations[0]?.text === 'Legacy note', 'Schema upgrade must move localStorage sessions into IndexedDB.');
     check(!Object.keys(localStorage).some(key => key.startsWith('folio.session.')) && localStorage.getItem('folio.theme') === 'dark', 'Migrated and damaged sessions must leave localStorage; other preferences stay.');
+    // A tab still running the earlier version keeps writing localStorage after the upgrade.
+    const late = { ...legacySession, version: 3, revision: Date.now() * 1000, annotations: [{ ...legacySession.annotations[0], id: 'late', text: 'Written by an earlier tab' }] };
+    localStorage.setItem(`folio.session.${id(1)}`, JSON.stringify(late));
+    check((await storage.readSession(id(1))).annotations[0]?.text === 'Written by an earlier tab', 'A newer session written by an earlier version must be picked up on read.');
+    check(localStorage.getItem(`folio.session.${id(1)}`) === null && (await storage.readSession(id(1))).annotations[0]?.text === 'Written by an earlier tab', 'The picked-up session moves to IndexedDB and leaves localStorage.');
+    check(await storage.saveSession(id(1), { annotations: [{ ...legacySession.annotations[0], id: 'current', text: 'Current note' }], bookmarks: [], lastPage: 1 }), 'The current version writes the session.');
+    localStorage.setItem(`folio.session.${id(1)}`, JSON.stringify({ ...late, revision: 1 }));
+    check((await storage.readSession(id(1))).annotations[0]?.text === 'Current note' && localStorage.getItem(`folio.session.${id(1)}`) === null, 'An older legacy copy never replaces a newer stored session.');
     for (let number = 2; number <= 25; number++) await storage.rememberDocument({ id: id(number), name: `Document ${number}.pdf`, pages: 2, size: 8, openedAt: number, data: new Blob([`bytes-${number}`]) });
     const all = await storage.listLibrary();
     check(all.length === 25 && all[0].id === id(25) && all.every(document => document.data === undefined), 'The catalog keeps every entry, newest first, without reading PDF bytes.');
@@ -86,6 +94,7 @@ try {
     return [
       { id: 'legacy-v1-migration', status: 'passed', retainedOriginalBytes: true, storedFormat: legacyBlob ? 'Blob' : 'ArrayBuffer', historicalBlobFormatVerified: legacyBlob },
       { id: 'legacy-local-storage-sessions-migrate', status: 'passed' },
+      { id: 'sessions-written-by-an-earlier-tab-after-upgrade-are-kept', status: 'passed' },
       { id: 'complete-catalog-reads-metadata-only', status: 'passed', catalog: 25 },
       { id: 'sessions-beyond-local-storage-quota', status: 'passed' },
       { id: 'damaged-session-elements-are-dropped', status: 'passed' },
@@ -102,12 +111,16 @@ try {
     const reloaded = await storage.listLibrary();
     check(reloaded.length === 25 && reloaded[0].id === id(3), 'The catalog and its order must survive reload.');
     check(new TextDecoder().decode(await storage.readDraft(id(25))) === 'modified25' && (await storage.readSession(id(25))).lastPage === 2, 'The modified PDF and session must survive reload.');
+    localStorage.setItem(`folio.session.${id(25)}`, '{}');
     await storage.forgetDocument(id(25));
+    check(localStorage.getItem(`folio.session.${id(25)}`) === null, 'Explicit deletion must also drop a legacy copy, so it never comes back.');
     check((await storage.listLibrary()).length === 24 && !(await storage.listLibrary()).some(document => document.id === id(25)), 'Explicit deletion must remove only its target.');
     check(await storage.readDraft(id(25)) === null && await storage.readLibraryData(id(25)) === null && (await storage.readSession(id(25))).annotations.length === 0, 'Explicit deletion must clear its bytes, draft and session.');
     check(await (await storage.readLibraryData(id(1))).text() === 'original', 'Deleting one copy must preserve other documents.');
     await storage.storeDraft(id(24), new TextEncoder().encode('modified24'));
+    localStorage.setItem(`folio.session.${id(5)}`, '{}');
     await storage.clearSavedState();
+    check(!Object.keys(localStorage).some(key => key.startsWith('folio.session.')), 'Clear must also drop legacy session copies.');
     check((await storage.listLibrary()).length === 0 && await storage.readLibraryData(id(1)) === null, 'Clear must remove every catalog entry and its bytes.');
     check(await storage.readDraft(id(24)) === null && (await storage.readSession(id(24))).annotations.length === 0, 'Clear must remove drafts and sessions.');
     return [

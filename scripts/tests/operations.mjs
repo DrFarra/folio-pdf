@@ -172,6 +172,16 @@ await check('same-named-fields-are-listed-once-and-filled-on-every-page', async 
   for (let i = 0; i < 2; i++) { const page = doc.loadPage(i); assert.equal(page.getWidgets()[0].getValue(), 'Ana Pérez'); page.destroy(); }
   doc.destroy(); return { listedOnce: true, valueOnEveryPage: true };
 });
+await check('fields-without-a-name-stay-separate', () => {
+  const doc = new mupdf.PDFDocument(), page = doc.addPage([0, 0, 400, 400], 0, {}, ''), refs = [];
+  for (const [i, value] of ['orig0', 'orig1'].entries()) refs.push(doc.addObject({ Type: 'Annot', Subtype: 'Widget', FT: 'Tx', Rect: [40, 300 - i * 50, 200, 324 - i * 50], V: doc.newString(value), DA: doc.newString('/Helv 12 Tf 0 g') }));
+  page.put('Annots', refs); doc.insertPage(-1, page); doc.getTrailer().get('Root').put('AcroForm', doc.addObject({ Fields: refs }));
+  const original = new Uint8Array(doc.saveToBuffer('').asUint8Array()); doc.destroy();
+  const listed = operateDocument(original, { operation: 'fields' }); assert.deepEqual(listed.map(field => field.value), ['orig0', 'orig1']);
+  const filled = new mupdf.PDFDocument(operateDocument(original, { operation: 'fill', values: { [listed[0].id]: 'Escrito' } })), widgets = filled.loadPage(0).getWidgets();
+  assert.deepEqual(widgets.map(widget => widget.getValue()), ['Escrito', 'orig1']); filled.destroy();
+  return { bothListed: true, fillingOneKeepsTheOther: true };
+});
 const photo = (orientation = 1) => {
   const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 80, 40], false), samples = pixmap.getPixels();
   for (let y = 0; y < 40; y++) for (let x = 0; x < 80; x++) samples.set([x < 40 ? 230 : 20, y < 20 ? 20 : 200, x < 40 ? 20 : 230], y * pixmap.getStride() + x * 3);
@@ -190,6 +200,17 @@ await check('jpeg-images-stay-compressed-when-moved-or-duplicated', async () => 
   for (let i = 1; i < doc.countObjects(); i++) { const object = doc.newIndirect(i); if (object.get('Subtype').asName() === 'Image') { const raw = object.readRawStream(); streams.push([object.get('Filter').toString(), raw.getLength()]); raw.destroy(); } }
   doc.destroy(); assert.deepEqual(streams, [['/DCTDecode', jpeg.length]]);
   return { originalJpegReturned: true, movedImageKeepsSameJpeg: true };
+});
+await check('inline-image-never-returns-another-images-jpeg', () => {
+  const doc = new mupdf.PDFDocument(), gray = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 32, 32], false); gray.clear(40);
+  const xobject = doc.addRawStream(new Uint8Array(gray.asJPEG(90, false)), { Type: 'XObject', Subtype: 'Image', Width: 32, Height: 32, ColorSpace: 'DeviceRGB', BitsPerComponent: 8, Filter: 'DCTDecode' }); gray.destroy();
+  const red = 'ff0000'.repeat(32 * 32), page = doc.addPage([0, 0, 400, 400], 0, { XObject: { Im1: xobject } }, `q 100 0 0 100 20 280 cm /Im1 Do Q\nq 100 0 0 100 200 40 cm BI /W 32 /H 32 /CS /RGB /BPC 8 /F /AHx ID ${red}> EI Q\n`);
+  doc.insertPage(-1, page); const original = new Uint8Array(doc.saveToBuffer('').asUint8Array()); doc.destroy();
+  const items = operateDocument(original, { operation: 'page-content', page: 1 }).items.filter(item => item.kind === 'image'); assert.equal(items.length, 2);
+  const first = pixels => { const image = new mupdf.Image(pixels.bytes), pixmap = image.toPixmap(); try { return [...pixmap.getPixels().subarray(0, 3)]; } finally { pixmap.destroy(); image.destroy(); } };
+  const [stored, inline] = items.map(item => operateDocument(original, { operation: 'page-image', page: 1, id: item.id }));
+  assert.equal(stored.type, 'image/jpeg'); assert.equal(inline.type, 'image/png'); assert.deepEqual(first(inline), [255, 0, 0]);
+  return { xobjectJpegReturned: true, inlineImageDecodedItself: true };
 });
 await check('camera-photo-exif-orientation-is-placed-upright', async () => {
   const blank = await PDFDocument.create(); blank.addPage([300, 300]);

@@ -33,7 +33,7 @@ android {
         applicationId = "org.folio.pdf"
         minSdk = 26
         targetSdk = 36
-        // Tauri derives it from the version (0.8.11 → 8011); a store upload may override it.
+        // Tauri derives it from the version (0.9.0 → 9000); a store upload may override it.
         versionCode = (System.getenv("FOLIO_ANDROID_VERSION_CODE") ?: tauriProperties.getProperty("tauri.android.versionCode", "1")).toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }

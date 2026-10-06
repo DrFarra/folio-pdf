@@ -185,6 +185,22 @@ await check('image-raster-limit-is-checked-before-decoding', () => {
   return { declaredPixels: w * h, limit: 16000000, imageRejectedBeforeRasterization: true };
 });
 
+await check('too-many-elements-fails-cleanly-and-later-saves-still-work', async () => {
+  // Heavy vector art inside nested transparency groups, as in layered CAD and map exports.
+  const doc = new mupdf.PDFDocument(); let rects = '';
+  for (let i = 0; i < 20500; i++) rects += `${(i % 200) * 2} ${Math.floor(i / 200) * 2} 1 1 re f\n`;
+  let form = doc.addStream(rects, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 612, 792] });
+  for (let depth = 0; depth < 6; depth++) form = doc.addStream('q 0 0 612 792 re W n /X Do Q', { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 612, 792], Resources: { XObject: { X: form } }, Group: { S: 'Transparency' } });
+  doc.insertPage(-1, doc.addPage([0, 0, 612, 792], 0, { XObject: { X: form } }, 'q /X Do Q')); const heavy = saveDoc(doc); doc.destroy();
+  const light = await textFixture(), note = [{ id: 'after-heavy', page: 1, kind: 'note', rect: [100, 100, 100, 100], color: '#ffcc00', text: 'Nota', created: 1 }];
+  const saved = writeAnnotations(heavy, note).length, edited = operateDocument(light, { operation: 'add-text', page: 1, rect: [60, 60, 300, 120], text: 'Añadido', size: 12 }).length;
+  // The device callbacks run inside MuPDF; an exception thrown through them used to corrupt its heap.
+  for (let i = 0; i < 10; i++) assert.throws(() => content(heavy), /demasiados elementos/);
+  assert.equal(writeAnnotations(heavy, note).length, saved); assert.equal(operateDocument(light, { operation: 'add-text', page: 1, rect: [60, 60, 300, 120], text: 'Añadido', size: 12 }).length, edited);
+  assert(content(light).items.some(item => item.text === 'FIRST line'));
+  return { failures: 10, saveAfterFailures: true, editAfterFailures: true };
+});
+
 await check('page-content-and-image-client-copy-and-cancellation', async () => {
   const pdf = await PDFDocument.create(), image = await pdf.embedPng(png); pdf.addPage([320, 320]).drawImage(image, { x: 20, y: 20, width: 100, height: 50 }); const bytes = await pdf.save(), before = hash(bytes);
   const file = path.resolve('src/engine/client.ts'), source = fs.readFileSync(file, 'utf8').replaceAll('import.meta.url', JSON.stringify(pathToFileURL(file).href)), code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;

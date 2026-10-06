@@ -215,6 +215,12 @@ try {
     await dialog.locator('.sheet-handle').waitFor(); assert.equal(await dialog.getByRole('button', { name: 'Cerrar hoja' }).count(), 0);
     assert.equal(await dialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }).evaluate(button => document.activeElement === button), true);
     const box = await dialog.boundingBox(); assert(box && box.y + box.height <= 845, 'The sheet must fit the visible viewport.');
+    const grid = await dialog.evaluate(sheet => {
+      const save = sheet.querySelector('.mobile-file-actions').getBoundingClientRect(), tiles = [...sheet.querySelectorAll('.mobile-action-grid>button')].map(tile => tile.getBoundingClientRect());
+      return { gap: tiles[0].top - save.bottom, emptyCell: sheet.querySelector('.mobile-action-grid').getBoundingClientRect().right - tiles.at(-2).right };
+    });
+    assert(grid.gap >= 8, `The save button keeps its distance from the action grid: ${grid.gap}px.`);
+    assert(grid.emptyCell < 1, 'The last tile before Cerrar documento ends its row, without an empty cell beside it.');
     await dialog.locator('.sheet-handle').evaluate(handle => {
       const rect = handle.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
       // Pointer capture requires hardware pointers. This contract drives the

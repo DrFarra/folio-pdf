@@ -224,9 +224,11 @@ await check('client-remove-preview-cancels-with-source-owned-by-caller', async (
     const controller = new AbortController(), pending = client.processPdf(bytes, operation, undefined, controller.signal), active = workers.at(-1); controller.abort(); await assert.rejects(pending, error => error.name === 'AbortError');
     assert(active.terminated); assert.equal(workers.length, 2); assert(!workers[1].terminated, 'A warm replacement waits for the next preview.');
     const ready = client.processPdf(bytes, operation), worker = workers.at(-1); assert.equal(workers.length, 2); worker.onmessage({ data: { result: operateDocument(worker.message.bytes, worker.message.options) } }); assert(!text(await ready)[0].includes('FIRST LINE')); assert(!worker.terminated); assert.equal(hash(bytes), before);
-    const failed = client.processPdf(bytes, operation); assert.equal(workers.length, 2, 'A finished worker is reused.'); worker.onmessage({ data: { error: 'Error del motor.' } }); await assert.rejects(failed, /Error del motor/); assert(!worker.terminated);
-    const trapped = client.processPdf(bytes, operation); worker.onmessage({ data: { error: 'Aborted()', fatal: true } }); await assert.rejects(trapped, /Aborted/); assert(worker.terminated, 'A worker whose engine trapped is discarded.');
-    return { preAbortNoWorker: true, activePreviewTerminated: true, warmWorkerReused: true, trappedWorkerDiscarded: true, originalBufferNotTransferred: true, realBackendResultReturned: true };
+    const failed = client.processPdf(bytes, operation); assert.equal(workers.length, 2, 'A finished worker is reused.'); worker.onmessage({ data: { error: 'Error del motor.' } }); await assert.rejects(failed, /Error del motor/);
+    assert(worker.terminated, 'A worker whose request failed is discarded: the error may have left its heap inconsistent or its engine unloaded.');
+    const next = client.processPdf(bytes, operation), fresh = workers.at(-1); assert.equal(workers.length, 3, 'The next request gets a fresh worker.');
+    fresh.onmessage({ data: { result: operateDocument(fresh.message.bytes, fresh.message.options) } }); await next; assert(!fresh.terminated);
+    return { preAbortNoWorker: true, activePreviewTerminated: true, warmWorkerReused: true, failedWorkerDiscarded: true, originalBufferNotTransferred: true, realBackendResultReturned: true };
   } finally { globalThis.Worker = previousWorker; }
 });
 

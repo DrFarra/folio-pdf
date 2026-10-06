@@ -92,8 +92,11 @@ final class FolioPlugin: Plugin {
     @objc public func setReaderChrome(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ChromeArgs.self)
         DispatchQueue.main.async {
+            // On iPhones with a Home button the status bar is the whole top safe
+            // area: hiding it would move the page 20 pt on every tap, so it stays.
+            let homeButton = UIDevice.current.userInterfaceIdiom == .phone && (self.webview?.window?.safeAreaInsets.bottom ?? 0) == 0
             if let controller = self.webview?.window?.rootViewController, controller.responds(to: NSSelectorFromString("setPrefersStatusBarHidden:")) {
-                UIView.animate(withDuration: 0.2) { controller.setValue(!args.visible, forKey: "prefersStatusBarHidden") }
+                UIView.animate(withDuration: 0.2) { controller.setValue(!args.visible && !homeButton, forKey: "prefersStatusBarHidden") }
             }
             invoke.resolve()
         }

@@ -5,7 +5,8 @@ import { isNative } from './platform';
 import type { NativeDocument } from './platform';
 import { normalizeBookmarks } from './bookmarks';
 
-// Sessions written by earlier web versions; the database upgrade moves them.
+// Sessions written by earlier web versions; the database upgrade moves them and
+// readSession picks up any that a tab of an earlier version writes afterwards.
 const LEGACY_SESSION_PREFIX = 'folio.session.';
 const EMPTY: Session = { annotations: [], bookmarks: [], lastPage: 1 };
 const STORES = ['documents', 'files', 'drafts', 'sessions'];
@@ -43,7 +44,17 @@ export async function readSession(id: string): Promise<Session> {
     revisions.set(id, raw?.revision || 0);
     return parseSession(raw);
   }
-  return parseSession(await transact<Partial<Session> | undefined>('sessions', 'readonly', tx => tx.objectStore('sessions').get(id)) ?? null);
+  type Stored = Partial<Session> & { revision?: number };
+  const stored = await transact<Stored | undefined>('sessions', 'readonly', tx => tx.objectStore('sessions').get(id));
+  // A tab still running an earlier version keeps writing sessions to localStorage
+  // after the upgrade moved them: the newer copy wins, then the key goes.
+  let legacy: Stored | null = null;
+  try { legacy = JSON.parse(localStorage.getItem(LEGACY_SESSION_PREFIX + id) || 'null'); } catch { /* A damaged legacy copy is ignored. */ }
+  if (!legacy || typeof legacy !== 'object') return parseSession(stored ?? null);
+  const newer = !stored || (Number(legacy.revision) || 0) > (Number(stored.revision) || 0);
+  if (newer) await transact('sessions', 'readwrite', tx => { tx.objectStore('sessions').put(legacy, id); });
+  try { localStorage.removeItem(LEGACY_SESSION_PREFIX + id); } catch { /* It is read again next time. */ }
+  return parseSession(newer ? legacy : stored ?? null);
 }
 export async function saveSession(id: string, session: Session): Promise<boolean> {
   const revision = Math.max((revisions.get(id) || 0) + 1, Date.now() * 1000);
@@ -168,10 +179,12 @@ export async function touchDocument(doc: Pick<RecentDocument, 'id' | 'pages' | '
 export async function forgetDocument(id: string): Promise<void> {
   if (isNative) { await invoke('forget_document', { id }); return; }
   await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).delete(id); });
+  try { localStorage.removeItem(LEGACY_SESSION_PREFIX + id); } catch { /* Without storage access there is no legacy copy. */ }
   revisions.delete(id);
 }
 export async function clearSavedState(): Promise<void> {
   if (isNative) { await invoke('clear_saved_state'); return; }
   await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).clear(); });
+  try { for (const key of Object.keys(localStorage)) if (key.startsWith(LEGACY_SESSION_PREFIX)) localStorage.removeItem(key); } catch { /* Without storage access there is no legacy copy. */ }
   revisions.clear();
 }

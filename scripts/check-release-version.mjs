@@ -24,4 +24,6 @@ for (const [name, value] of Object.entries(versions)) {
 for (const name of ['README.md', 'docs/android.md', 'docs/ios.md']) {
   for (const [, cited] of read(name).matchAll(/Folio[ _](\d+\.\d+\.\d+)/g)) assert.equal(cited, version, `${name} names Folio ${cited} instead of ${version}.`);
 }
+// The installers ship SOURCE-BUILD.txt, which names the matching source package.
+for (const [, cited] of read('SOURCE-BUILD.txt').matchAll(/(?:Folio |folio-)(\d+\.\d+\.\d+)/g)) assert.equal(cited, version, `SOURCE-BUILD.txt names ${cited} instead of ${version}.`);
 console.log(`Folio ${version}: Windows, macOS, iOS, Android and web versions match.`);

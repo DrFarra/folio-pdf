@@ -186,6 +186,11 @@ fn replace_original(desktop: &Desktop, token: &str, bytes: &[u8]) -> Result<Docu
     };
     // A symbolic link keeps pointing to the saved file.
     let target = if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) { fs::canonicalize(&path).map_err(|_| REOPEN)? } else { path.clone() };
+    // A rename would replace a read-only or locked file on macOS and fail with
+    // the wrong advice on Windows: the user's protection is kept instead.
+    let locked = fs::metadata(&target).is_ok_and(|m| m.permissions().readonly())
+        || fs::OpenOptions::new().write(true).open(&target).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if locked { return Err("Este PDF es de solo lectura. Usa «Guardar una copia…» para no perder tus cambios.".into()); }
     atomic_write(&target, &bytes, Some(&digest)).map_err(|error| match error.as_str() {
         folio_core::DESTINATION_CHANGED if target.exists() => "Otro programa modificó este PDF después de abrirlo. Usa «Guardar una copia…» para no perder tus cambios.".into(),
         folio_core::DESTINATION_CHANGED => "El PDF original ya no está en su carpeta. Usa «Guardar una copia…» para no perder tus cambios.".into(),
@@ -243,23 +248,34 @@ fn validated_external_url(value: &str) -> Result<tauri::Url, String> {
 async fn open_external_url(url: String) -> Result<(), String> {
     let url = validated_external_url(&url)?;
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(target_os = "windows")]
-        let mut command = std::process::Command::new("explorer.exe");
-        #[cfg(target_os = "macos")]
-        let mut command = { let mut command = std::process::Command::new("open"); command.arg("--"); command };
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        let mut command = std::process::Command::new("xdg-open");
-        // The URL is one argument to an OS launcher, never shell source.
-        command.arg(url.as_str());
+        // ShellExecuteW hands the whole URL to its registered handler; explorer.exe
+        // would split it at commas and equals signs.
         #[cfg(target_os = "windows")]
         {
-            // Explorer forwards to the existing shell and its exit status does
-            // not reliably describe whether that handoff opened the URL.
-            command.spawn().map_err(|_| "No se pudo abrir la aplicación para este enlace.".to_string())?;
+            use std::ffi::c_void;
+            #[link(name = "ole32")]
+            extern "system" { fn CoInitializeEx(reserved: *mut c_void, model: u32) -> i32; fn CoUninitialize(); }
+            #[link(name = "shell32")]
+            extern "system" { fn ShellExecuteW(window: *mut c_void, operation: *const u16, file: *const u16, parameters: *const u16, directory: *const u16, show: i32) -> isize; }
+            const COINIT_APARTMENTTHREADED: u32 = 0x2;
+            const COINIT_DISABLE_OLE1DDE: u32 = 0x4;
+            const SW_SHOWNORMAL: i32 = 1;
+            let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+            let (operation, file) = (wide("open"), wide(url.as_str()));
+            // Shell handlers may use COM, which this worker thread has not set up.
+            let com = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) } >= 0;
+            let result = unsafe { ShellExecuteW(std::ptr::null_mut(), operation.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+            if com { unsafe { CoUninitialize() } }
+            if result <= 32 { return Err("El sistema no pudo abrir este enlace.".into()); }
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let status = command.status().map_err(|_| "No se pudo abrir la aplicación para este enlace.".to_string())?;
+            #[cfg(target_os = "macos")]
+            let mut command = { let mut command = std::process::Command::new("open"); command.arg("--"); command };
+            #[cfg(not(target_os = "macos"))]
+            let mut command = std::process::Command::new("xdg-open");
+            // The URL is one argument to an OS launcher, never shell source.
+            let status = command.arg(url.as_str()).status().map_err(|_| "No se pudo abrir la aplicación para este enlace.".to_string())?;
             if !status.success() { return Err("El sistema no pudo abrir este enlace.".into()); }
         }
         Ok(())
@@ -339,8 +355,54 @@ fn store_session(id: String, session: Value, desktop: State<'_, Desktop>) -> Res
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Recent { id: String, name: String, size: u64, pages: usize, opened_at: u64, path: PathBuf, #[serde(default)] draft: bool, #[serde(default)] hidden: bool }
-fn read_recents(desktop: &Desktop) -> Vec<Recent> {
-    fs::read(desktop.data.join("recent.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+/// None when recent.json exists but cannot be read: it may still name any copy.
+fn stored_recents(desktop: &Desktop) -> Option<Vec<Recent>> {
+    let entries: Vec<Recent> = match fs::read(desktop.data.join("recent.json")) {
+        Ok(bytes) => serde_json::from_slice(&bytes).ok()?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return None,
+    };
+    Some(entries.into_iter().map(|mut entry| { entry.path = relocate(desktop, entry.path); entry }).collect())
+}
+fn read_recents(desktop: &Desktop) -> Vec<Recent> { stored_recents(desktop).unwrap_or_default() }
+
+/// iOS imports live in Documents/Imports/<uuid>/ of the app container.
+#[cfg(target_os = "ios")]
+fn container_home() -> Option<PathBuf> { std::env::var_os("HOME").map(PathBuf::from) }
+#[cfg(not(target_os = "ios"))]
+fn container_home() -> Option<PathBuf> { None }
+/// Stored paths can predate a move of the app's container (an iOS backup
+/// restore, a new device, some updates). A missing file stored inside Folio's
+/// own folders is looked up at the same place in the current ones.
+fn relocate(desktop: &Desktop, path: PathBuf) -> PathBuf { relocate_under(&desktop.data, container_home().as_deref(), path) }
+fn relocate_under(data: &Path, home: Option<&Path>, path: PathBuf) -> PathBuf {
+    let parts = path.components().map(|part| part.as_os_str()).collect::<Vec<_>>();
+    let n = parts.len();
+    // <data>/drafts|exports|drive/… and, on Android, <data>/files/FolioImports/…
+    let in_data = data.file_name().and_then(|name| (0..n.saturating_sub(2)).rev().find(|&i| parts[i] == name && ["drafts", "exports", "drive", "files"].iter().any(|folder| parts[i + 1] == *folder)))
+        .map(|i| data.join(parts[i + 1..].iter().collect::<PathBuf>()));
+    let imported = home.filter(|_| n >= 4 && parts[n - 4] == "Documents" && parts[n - 3] == "Imports")
+        .map(|home| home.join("Documents").join("Imports").join(parts[n - 2]).join(parts[n - 1]));
+    match in_data.or(imported) {
+        Some(moved) if moved != path && !path.exists() && moved.exists() => moved,
+        _ => path,
+    }
+}
+
+/// Private copies live one per UUID-named folder under `roots`. Deletes the
+/// folders that no path in `keep` is inside, matched by folder name, so a moved
+/// container keeps them. Folders changed in the last minute may still be on
+/// their way to a tab.
+#[cfg(any(target_os = "ios", test))]
+fn remove_unused_folders(roots: &[PathBuf], keep: &[PathBuf]) {
+    let kept = keep.iter().filter_map(|path| path.parent()?.file_name()).collect::<std::collections::HashSet<_>>();
+    for root in roots {
+        for entry in fs::read_dir(root).into_iter().flatten().flatten() {
+            let fresh = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() < 60));
+            if fresh || !entry.file_type().is_ok_and(|t| t.is_dir()) || uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()).is_err() { continue; }
+            if !kept.contains(entry.file_name().as_os_str()) { let _ = fs::remove_dir_all(entry.path()); }
+        }
+    }
 }
 fn save_recents(desktop: &Desktop, entries: &[Recent]) -> Result<(), String> {
     write_private(&desktop.data.join("recent.json"), &serde_json::to_vec(entries).map_err(|_| "No se pudo guardar la biblioteca.")?)
@@ -530,8 +592,8 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
             &item("close-tab", "Cerrar pestaña", Some("CmdOrCtrl+W"))?,
         ])?,
         &Submenu::with_items(app, "Edición", true, &[
-            &PredefinedMenuItem::undo(app, Some("Deshacer"))?,
-            &PredefinedMenuItem::redo(app, Some("Rehacer"))?,
+            &item("undo", "Deshacer", Some("CmdOrCtrl+Z"))?,
+            &item("redo", "Rehacer", Some("CmdOrCtrl+Shift+Z"))?,
             &separator()?,
             &PredefinedMenuItem::cut(app, Some("Cortar"))?,
             &PredefinedMenuItem::copy(app, Some("Copiar"))?,
@@ -562,6 +624,11 @@ fn menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         // Closing the window runs the frontend's close flow, which keeps open tabs and edits.
         "quit" => match app.get_webview_window("main") { Some(window) => { let _ = window.close(); } None => app.exit(0) },
         id @ ("settings" | "save" | "save-copy" | "print" | "close-tab" | "find" | "zoom-in" | "zoom-out" | "zoom-reset" | "help") => { let _ = app.emit("folio-menu", id); }
+        // Folio's history lives in the page. The items act like ⌘Z and ⇧⌘Z: WebKit's
+        // own undo in a text field, the reader's shortcut handler everywhere else.
+        id @ ("undo" | "redo") => if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval(format!("(() => {{ const target = document.activeElement || document.body; if (target.closest('input,textarea,select,[contenteditable]')) document.execCommand('{id}'); else target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'z', code: 'KeyZ', metaKey: true, shiftKey: {}, bubbles: true, cancelable: true }})); }})()", id == "redo"));
+        },
         _ => {}
     }
 }
@@ -718,6 +785,42 @@ mod tests {
         assert!(!read_recents(&store.0)[0].hidden);
     }
 
+    // Pruning runs on iOS; ageing a folder needs File::open on a directory.
+    #[cfg(unix)]
+    #[test]
+    fn private_copies_survive_a_moved_container_and_only_unused_ones_go() {
+        let store = TestLibrary::new();
+        let (old, home) = (store.0.data.join("old-container"), store.0.data.join("container"));
+        let imports = home.join("Documents").join("Imports");
+        let aged = |folder: &Path| fs::File::open(folder).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(120)).unwrap();
+        let copy = |name: &str, age: bool| {
+            let folder = imports.join(uuid::Uuid::new_v4().to_string().to_uppercase());
+            fs::create_dir_all(&folder).unwrap(); fs::write(folder.join(name), b"%PDF-1.7\n%%EOF\n").unwrap();
+            if age { aged(&folder); }
+            folder.join(name)
+        };
+        let (library, unused, fresh) = (copy("Biblioteca.pdf", true), copy("Sin usar.pdf", true), copy("Recién importado.pdf", false));
+        let other = imports.join("Mis PDF"); fs::create_dir_all(&other).unwrap(); aged(&other);
+        // recent.json still names the copy inside the previous container.
+        let stale = old.join("Documents").join("Imports").join(library.strip_prefix(&imports).unwrap());
+        assert_eq!(relocate_under(&store.0.data, Some(&home), stale.clone()), library);
+        let draft = store.0.data.join("drafts").join("a.pdf"); fs::create_dir_all(draft.parent().unwrap()).unwrap(); fs::write(&draft, b"draft").unwrap();
+        let stale_draft = old.join(store.0.data.file_name().unwrap()).join("drafts").join("a.pdf");
+        assert_eq!(relocate_under(&store.0.data, Some(&home), stale_draft), draft);
+        for kept in [PathBuf::from("/Users/Emilio/Documents/Informe.pdf"), draft.clone(), old.join("Documents").join("Imports").join("X").join("missing.pdf")] {
+            assert_eq!(relocate_under(&store.0.data, Some(&home), kept.clone()), kept, "Other paths are kept as stored");
+        }
+        remove_unused_folders(&[imports.clone()], &[stale]);
+        assert!(library.exists(), "A copy the library names is kept even under its old container path");
+        assert!(fresh.exists() && other.exists());
+        assert!(!unused.parent().unwrap().exists());
+        // An unreadable library may name any copy: pruning must not treat it as empty.
+        fs::write(store.0.data.join("recent.json"), b"{").unwrap();
+        assert!(stored_recents(&store.0).is_none());
+        fs::remove_file(store.0.data.join("recent.json")).unwrap();
+        assert_eq!(stored_recents(&store.0).map(|r| r.len()), Some(0));
+    }
+
     #[test]
     fn opening_many_documents_never_evicts_the_library() {
         let store = TestLibrary::new();
@@ -813,6 +916,13 @@ mod tests {
         assert!(refused.contains("Guardar una copia"), "{refused}");
         assert_eq!(fs::read(&path).unwrap(), b"%PDF-1.7\nanother app\n%%EOF\n");
         assert!(replace_original(&store.0, "unknown", b"%PDF-1.7\n%%EOF\n").is_err());
+        let reopened = register(&store.0, path.clone()).unwrap();
+        let mut readonly = fs::metadata(&path).unwrap().permissions(); readonly.set_readonly(true); fs::set_permissions(&path, readonly).unwrap();
+        let refused = replace_original(&store.0, &reopened.token, b"%PDF-1.7\nmine\n%%EOF\n").err().unwrap();
+        assert!(refused.contains("solo lectura") && refused.contains("Guardar una copia"), "{refused}");
+        assert_eq!(fs::read(&path).unwrap(), b"%PDF-1.7\nanother app\n%%EOF\n");
+        #[allow(clippy::permissions_set_readonly_false)]
+        { let mut writable = fs::metadata(&path).unwrap().permissions(); writable.set_readonly(false); fs::set_permissions(&path, writable).unwrap(); }
     }
 
     fn document(token: &str) -> DocumentInfo {

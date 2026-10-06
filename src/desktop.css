@@ -151,7 +151,8 @@ html:not([data-phone]) .app-shell .desktop-annotation-toolbar > * { flex-shrink:
 html:not([data-phone]) .app-shell .desktop-annotation-toolbar button { font-size: 12px; }
 html:not([data-phone]) .app-shell .desktop-tool-description { font-size: 12px; line-height: 1.5; color: var(--muted); }
 html:not([data-phone]) .app-shell .desktop-annotation-toolbar > .text-button { margin-left: auto; padding: 7px 9px; font-size: 12px; color: var(--text); }
-html:not([data-phone]) .app-shell .desktop-annotation-toolbar .highlight-color-trigger { min-height: 32px; }
+/* The option triggers match the icon buttons, so switching tools never changes the toolbar height or the fit zoom. */
+html:not([data-phone]) .app-shell .desktop-annotation-toolbar :is(.highlight-color-trigger, .drawing-settings-trigger) { height: 32px; min-height: 32px; }
 html:not([data-phone]) .highlight-color-custom { font-size: 12px; }
 html:not([data-phone]) .highlight-color-custom code { font-size: 11px; }
 

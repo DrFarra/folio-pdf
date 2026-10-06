@@ -61,6 +61,9 @@ fn root(desktop:&Desktop)->PathBuf { desktop.data.join("drive") }
 fn key(s:&str)->String { folio_core::digest(s.as_bytes()) }
 fn safe_id(id:&str)->Result<(),String> { if id.is_empty() || !id.bytes().all(|c|c.is_ascii_alphanumeric() || b"-_".contains(&c)) { Err("Identificador de Drive inválido.".into()) } else { Ok(()) } }
 fn json_read<T:serde::de::DeserializeOwned>(p:&Path)->Result<T,String> { serde_json::from_slice(&fs::read(p).map_err(readerr)?).map_err(|_|"El registro local de Drive no es válido.".into()) }
+// Records store absolute paths, which a move of the app's container (iOS) leaves behind.
+fn read_binding(d:&Desktop,p:&Path)->Result<Binding,String> { json_read::<Binding>(p).map(|mut b|{b.path=crate::relocate(d,b.path);b}) }
+fn read_pending(d:&Desktop,p:&Path)->Result<Pending,String> { json_read::<Pending>(p).map(|mut q|{q.path=crate::relocate(d,q.path);q}) }
 fn json_write(p:&Path, v:&impl Serialize)->Result<(),String> {
     fs::create_dir_all(p.parent().ok_or("Carpeta de Drive inválida.")?).map_err(ioerr)?;
     folio_core::write_private(p,&serde_json::to_vec(v).map_err(ioerr)?)
@@ -127,7 +130,7 @@ fn delta_base(local:&Remote,remote:&Remote)->bool {
     (direct || historical) && remote.property("folioResultMd5")==Some(remote.md5_checksum.as_str()) && remote.size()>local.size()
 }
 fn pendings(d:&Desktop)->Vec<Pending> {
-    fs::read_dir(root(d).join("pending")).into_iter().flatten().flatten().filter_map(|e|json_read::<Pending>(&e.path()).ok()).collect()
+    fs::read_dir(root(d).join("pending")).into_iter().flatten().flatten().filter_map(|e|read_pending(d,&e.path()).ok()).collect()
 }
 fn discard(d:&Desktop,p:&Pending) {
     if let Ok(record)=pending_path(d,&p.id) {let _=fs::remove_file(record);}
@@ -151,8 +154,8 @@ pub fn prune(d:&Desktop,offline:bool) {
     let cache=root(d).join("cache");
     if !offline {let _=fs::remove_dir_all(&cache);}
     let pending=pendings(d);
-    let cached=fs::read_dir(&cache).into_iter().flatten().flatten().filter_map(|e|json_read::<Binding>(&e.path()).ok()).collect::<Vec<_>>();
-    let bindings=fs::read_dir(root(d).join("bindings")).into_iter().flatten().flatten().filter_map(|e|Some((e.path(),json_read::<Binding>(&e.path()).ok()?))).collect::<Vec<_>>();
+    let cached=fs::read_dir(&cache).into_iter().flatten().flatten().filter_map(|e|read_binding(d,&e.path()).ok()).collect::<Vec<_>>();
+    let bindings=fs::read_dir(root(d).join("bindings")).into_iter().flatten().flatten().filter_map(|e|Some((e.path(),read_binding(d,&e.path()).ok()?))).collect::<Vec<_>>();
     let ids=pending.iter().map(|p|p.binding.as_str()).chain(cached.iter().map(|b|b.id.as_str())).collect::<Vec<_>>();
     let recents=crate::read_recents(d);
     let kept=bindings.iter().filter(|(_,b)|ids.contains(&b.id.as_str())).map(|(_,b)|b.path.as_path())
@@ -257,7 +260,7 @@ pub async fn drive_list(app:tauri::AppHandle,folder:String,page_token:Option<Str
 #[tauri::command]
 pub async fn drive_open(app:tauri::AppHandle,file_id:String,offline:Option<bool>)->Result<Opened,String> {
     work(app,move|app,d,c,g| {
-        safe_id(&file_id)?;let a=account(d)?;let cached:Option<Binding>=json_read(&cache_path(d,&a,&file_id)).ok();
+        safe_id(&file_id)?;let a=account(d)?;let cached=read_binding(d,&cache_path(d,&a,&file_id)).ok();
         if offline==Some(true) {let b=cached.ok_or("Este PDF todavía no está descargado en el dispositivo.")?;if checksum(&b.path)?!=(b.remote.md5_checksum.clone(),b.remote.size()){return Err("La copia local está dañada. Descárgala de nuevo.".into());}return opened(d,&b,true,0);}
         with_token(app,c,g,&a,|t| {let remote=metadata(c,t,&file_id,OFFLINE)?;download(c,t,d,&a,remote,cached.clone())})
     }).await
@@ -266,7 +269,7 @@ pub async fn drive_open(app:tauri::AppHandle,file_id:String,offline:Option<bool>
 pub async fn drive_cached(app:tauri::AppHandle)->Result<Value,String> {
     local(app,|d| {
         let a=account(d)?;let mut items=vec![];
-        if let Ok(dir)=fs::read_dir(root(d).join("cache")) {for p in dir.flatten() {if let Ok(b)=json_read::<Binding>(&p.path()){if b.account.id==a.id && b.path.is_file(){items.push(json!({"id":b.remote.id,"title":b.remote.title,"mimeType":"application/pdf","fileSize":b.remote.file_size}));}}}}
+        if let Ok(dir)=fs::read_dir(root(d).join("cache")) {for p in dir.flatten() {if let Ok(b)=read_binding(d,&p.path()){if b.account.id==a.id && b.path.is_file(){items.push(json!({"id":b.remote.id,"title":b.remote.title,"mimeType":"application/pdf","fileSize":b.remote.file_size}));}}}}
         Ok(json!({"items":items}))
     }).await
 }
@@ -276,15 +279,15 @@ pub async fn drive_lookup(app:tauri::AppHandle,token:String)->Result<Option<Valu
         let path=d.files.lock().map_err(|_|"Archivos ocupados.")?.sources.get(&token).map(|s|s.path.clone());let Some(path)=path else{return Ok(None)};
         // Drive copies live only in drive/: any other PDF opens without reading Drive's records.
         if !path.starts_with(root(d)) {return Ok(None);}
-        if let Ok(dir)=fs::read_dir(root(d).join("bindings")){for p in dir.flatten(){if let Ok(b)=json_read::<Binding>(&p.path()){if b.path==path{return Ok(Some(json!({"binding":b.id,"account":b.account.id,"fileId":b.remote.id,"baseChecksum":b.remote.md5_checksum,"editable":b.remote.editable})));}}}}
-        if let Some(p)=pendings(d).into_iter().find(|p|p.path==path){let b:Binding=json_read(&binding_path(d,&p.binding)?)?;return Ok(Some(json!({"binding":b.id,"account":b.account.id,"fileId":b.remote.id,"baseChecksum":b.remote.md5_checksum,"editable":b.remote.editable})));}
+        if let Ok(dir)=fs::read_dir(root(d).join("bindings")){for p in dir.flatten(){if let Ok(b)=read_binding(d,&p.path()){if b.path==path{return Ok(Some(json!({"binding":b.id,"account":b.account.id,"fileId":b.remote.id,"baseChecksum":b.remote.md5_checksum,"editable":b.remote.editable})));}}}}
+        if let Some(p)=pendings(d).into_iter().find(|p|p.path==path){let b=read_binding(d,&binding_path(d,&p.binding)?)?;return Ok(Some(json!({"binding":b.id,"account":b.account.id,"fileId":b.remote.id,"baseChecksum":b.remote.md5_checksum,"editable":b.remote.editable})));}
         Err("No se pudo recuperar el vínculo de este PDF con Drive. Ábrelo desde Google Drive o desde Ediciones pendientes.".into())
     }).await
 }
 /// Each document keeps a single pending edit: a newer one, which holds the
 /// whole PDF, replaces the earlier ones of the same binding.
 fn stage(d:&Desktop,binding:String,path:PathBuf)->Result<Pending,String> {
-    let b:Binding=json_read(&binding_path(d,&binding)?)?;if !b.remote.editable{return Err("Este PDF tiene permiso de solo lectura en Drive.".into());}
+    let b=read_binding(d,&binding_path(d,&binding)?)?;if !b.remote.editable{return Err("Este PDF tiene permiso de solo lectura en Drive.".into());}
     let (hash,size)=checksum(&path)?;folio_core::inspect_pdf_file(&path)?;
     let earlier=queue(d,Some(&b.account.id)).into_iter().filter(|p|p.binding==binding).collect::<Vec<_>>();
     if let Some(existing)=earlier.iter().find(|p|p.checksum==hash && p.size==size && checksum(&p.path).ok()==Some((hash.clone(),size))) { if path!=existing.path{let _=fs::remove_file(path);}return Ok(existing.clone()); }
@@ -367,7 +370,7 @@ fn upload(c:&Client,t:&str,p:&Pending,base:&Binding,remote:&Remote,copy_id:Optio
 fn completed(d:&Desktop,p:&Pending,remote:Remote)->Result<Synced,String> {
     if remote.md5_checksum!=p.checksum || remote.size()!=p.size {return Err("Drive no confirmó los mismos bytes. La edición local sigue conservada.".into());}
     let a=account(d)?;let b=Binding{id:uuid::Uuid::new_v4().to_string(),account:a,remote,path:p.path.clone()};
-    let previous=json_read::<Binding>(&cache_path(d,&b.account,&b.remote.id)).ok();
+    let previous=read_binding(d,&cache_path(d,&b.account,&b.remote.id)).ok();
     json_write(&binding_path(d,&b.id)?,&b)?;json_write(&cache_path(d,&b.account,&b.remote.id),&b)?;
     let result=opened(d,&b,false,0)?;fs::remove_file(pending_path(d,&p.id)?).map_err(ioerr)?;
     // Earlier edits of the same version are older states of this document.
@@ -379,13 +382,13 @@ fn completed(d:&Desktop,p:&Pending,remote:Remote)->Result<Synced,String> {
 pub async fn drive_sync(app:tauri::AppHandle,id:String,conflict_copy:Option<bool>)->Result<Synced,String> {
     work(app,move|app,d,c,g| {
         let a=account(d)?;
-        let first:Pending=json_read(&pending_path(d,&id)?)?;
+        let first=read_pending(d,&pending_path(d,&id)?)?;
         if first.account!=a.id {return Err("Conecta la cuenta original para sincronizar este cambio.".into());}
         if checksum(&first.path)?!=(first.checksum.clone(),first.size){return Err("La edición pendiente cambió o está dañada. No se subió ningún archivo.".into());}
-        let b:Binding=json_read(&binding_path(d,&first.binding)?)?;
+        let b=read_binding(d,&binding_path(d,&first.binding)?)?;
         with_token(app,c,g,&a,|t| {
             // A retry reads the journal again: it may already hold the conflict copy's id.
-            let mut p:Pending=json_read(&pending_path(d,&id)?)?;
+            let mut p=read_pending(d,&pending_path(d,&id)?)?;
             if let Some(copy)=&p.copy_id {if let Ok(remote)=metadata(c,t,copy,OFFLINE_EDIT){return completed(d,&p,remote);}}
             let remote=metadata(c,t,&p.file_id,OFFLINE_EDIT)?;remote.pdf()?;
             if remote.md5_checksum==p.checksum && remote.size()==p.size && p.copy_id.is_none(){return completed(d,&p,remote);}
@@ -407,11 +410,11 @@ pub async fn drive_sync(app:tauri::AppHandle,id:String,conflict_copy:Option<bool
 }
 #[tauri::command]
 pub async fn drive_discard(app:tauri::AppHandle,id:String)->Result<(),String> {
-    work(app,move|_,d,_,_| {let p:Pending=json_read(&pending_path(d,&id)?)?;discard(d,&p);Ok(())}).await
+    work(app,move|_,d,_,_| {let p=read_pending(d,&pending_path(d,&id)?)?;discard(d,&p);Ok(())}).await
 }
 #[tauri::command]
 pub async fn drive_pending_open(app:tauri::AppHandle,id:String)->Result<Opened,String> {
-    local(app,move|d|{let p:Pending=json_read(&pending_path(d,&id)?)?;let mut b:Binding=json_read(&binding_path(d,&p.binding)?)?;if account(d)?.id!=p.account{return Err("Conecta la cuenta original.".into());}b.path=p.path;b.remote.title=p.name;opened(d,&b,true,0)}).await
+    local(app,move|d|{let p=read_pending(d,&pending_path(d,&id)?)?;let mut b=read_binding(d,&binding_path(d,&p.binding)?)?;if account(d)?.id!=p.account{return Err("Conecta la cuenta original.".into());}b.path=p.path;b.remote.title=p.name;opened(d,&b,true,0)}).await
 }
 
 #[cfg(test)]
@@ -463,6 +466,12 @@ mod tests {
         assert_eq!([&library.id,&duplicate.id].iter().filter(|id|binding_path(&d,id).unwrap().exists()).count(),1,"One binding per library file");
         crate::save_recents(&d,&[]).unwrap();prune(&d,false);
         assert!(base.path.exists() && edit.path.exists() && !offline.path.exists() && !library.path.exists());
+        fs::remove_dir_all(&d.data).unwrap();
+    }
+    #[test] fn records_follow_a_moved_container(){
+        let d=local_store();let file=pdf(&d,"files","base");let mut b=bound(&d,file.clone());
+        b.path=PathBuf::from("/old-container").join(d.data.file_name().unwrap()).join("drive").join("files").join(file.file_name().unwrap());json_write(&binding_path(&d,&b.id).unwrap(),&b).unwrap();
+        assert_eq!(read_binding(&d,&binding_path(&d,&b.id).unwrap()).unwrap().path,file);
         fs::remove_dir_all(&d.data).unwrap();
     }
     #[test] fn ids_cannot_escape_storage(){for s in ["../file","file/x","a'b","a\\b",""]{assert!(safe_id(s).is_err());}assert!(safe_id("1AB_-xy").is_ok());}

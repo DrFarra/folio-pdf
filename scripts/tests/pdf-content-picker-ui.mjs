@@ -179,6 +179,10 @@ try {
     }
     // From the keyboard, adding opens the editor on a centred area instead of waiting for a drag.
     await page.getByRole('button', { name: 'Añadir texto', exact: true }).press('Enter'); await page.locator('.content-editor[data-kind="add-text"]').waitFor();
+    // The band is centred as the page is shown, so it stays wide on this /Rotate 90 page.
+    const centred = mupdf.Rect.transform([width * .25, height * .425, width * .75, height * .575], mupdf.Matrix.invert(transform));
+    const keyboardRect = (await page.locator('.content-editor').getAttribute('data-source-rect')).split(',').map(Number);
+    for (let index = 0; index < 4; index++) assert(Math.abs(keyboardRect[index] - centred[index]) < 2, `Keyboard area must be a horizontal band on the shown page: ${keyboardRect} vs ${centred}.`);
     await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page, 2);
     return { addText: true, addImage: true, originalPdfCoordinates: true, keyboardAddsCentredArea: true, page: 2 };
   });

@@ -99,6 +99,11 @@ async function nativeTitlebar(page, mac) {
 }
 async function desktopActions(page, label) {
   await open(page); await enterAnnotationMode(page); assert.equal(await page.getByRole('button', { name: 'Deshacer (⌘Z)', exact: true }).count(), 1);
+  // ⌃⌘F is the menu's Pantalla completa: the page leaves it unhandled and does not open Buscar.
+  await page.evaluate(() => window.addEventListener('keydown', event => { window.fullScreenKeyHandled = event.defaultPrevented; }, { once: true }));
+  await page.keyboard.press('Control+Meta+f');
+  assert.equal(await page.evaluate(() => window.fullScreenKeyHandled), false, '⌃⌘F must reach the menu');
+  assert.equal(await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).count(), 0);
   await page.keyboard.press('Meta+f'); await page.getByRole('textbox', { name: 'Buscar texto en el PDF', exact: true }).fill('Mac'); await page.locator('.search-result').first().waitFor();
   await page.getByRole('button', { name: 'Cerrar búsqueda', exact: true }).click();
   await page.locator('.pdf-page').first().hover(); await page.keyboard.down('Meta'); await page.mouse.wheel(0, -180); await page.keyboard.up('Meta');
@@ -122,7 +127,7 @@ async function desktopActions(page, label) {
   await page.locator('[role=tab][aria-selected=true]').filter({ hasText: 'mac-platform-source' }).waitFor();
   await page.keyboard.press('Meta+w'); await page.getByRole('tab', { name: path.basename(another), exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, `${label}.png`), animations: 'disabled' });
-  return { commandFind: true, commandWheelZoom: true, commandUndoRedo: true, commandSaveStandardPdf: true, commandTabsAndClose: true, legacyPdfRuntime: true };
+  return { fullScreenShortcutLeftToMenu: true, commandFind: true, commandWheelZoom: true, commandUndoRedo: true, commandSaveStandardPdf: true, commandTabsAndClose: true, legacyPdfRuntime: true };
 }
 async function tabLayout(page, mac) {
   await page.setViewportSize({ width: mac ? 1024 : 1360, height: 760 });

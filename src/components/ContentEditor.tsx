@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { InputHTMLAttributes, PointerEvent as ReactPointerEvent } from 'react';
 import type { PageViewport, RenderTask } from 'pdfjs-dist';
 import { CheckCircle2, LoaderCircle, Move, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import FilePicker from './FilePicker';
@@ -36,6 +36,15 @@ function matchingFont(name: string): { font: FontChoice; exact: boolean } {
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const normalize = (rect: Area['rect']): Area['rect'] => [Math.min(rect[0], rect[2]), Math.min(rect[1], rect[3]), Math.max(rect[0], rect[2]), Math.max(rect[1], rect[3])];
 const rounded = (value: number) => Math.round(value * 100) / 100;
+/** A measure field that keeps what is typed while it has focus. A complete
+ * number applies at once, but its clamped result replaces the text only on
+ * blur or Enter, so clearing the field and typing a new value works. */
+export function NumberField({ value, onValue, onBlur, onKeyDown, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'> & { value: number; onValue: (value: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return <input {...props} type="number" value={draft ?? value}
+    onChange={event => { const text = event.target.value, number = Number(text); setDraft(text); if (text.trim() && Number.isFinite(number)) onValue(number); }}
+    onBlur={event => { setDraft(null); onBlur?.(event); }} onKeyDown={event => { if (event.key === 'Enter') setDraft(null); onKeyDown?.(event); }} />;
+}
 function boxFor(viewport: PageViewport, rect: Area['rect']): Box {
   const a = viewport.convertToViewportPoint(rect[0], rect[1]), b = viewport.convertToViewportPoint(rect[2], rect[3]);
   return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) };
@@ -253,11 +262,14 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
     if (next !== 'delete') setRect(placements.current[next]!);
     setIntent(next);
   }
+  const typedAspect = useRef<number | null>(null);
+  const keepAspect = () => { typedAspect.current = box ? box.width / box.height : null; }, releaseAspect = () => { typedAspect.current = null; };
   function updateBox(next: Box) { const view = viewportRef.current; if (view) setRect(rectFor(view, boundBox(next, view))); }
   function resizeWithRatio(next: Box, axis: 'width' | 'height') {
     if (!box || !viewport) return;
     if (!isText && lockRatio && image) {
-      const aspect = box.width / box.height;
+      // While a measure is typed, its first digits must not reshape the frame.
+      const aspect = typedAspect.current ?? box.width / box.height;
       if (axis === 'width') next.height = next.width / aspect; else next.width = next.height * aspect;
       const factor = Math.min(1, viewport.width / next.width, viewport.height / next.height); next.width *= factor; next.height *= factor;
     }
@@ -386,7 +398,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
             <label>Rotación<select aria-label="Rotación" value={rotation} onChange={event => { imageFormatTouched.current.rotation = true; setRotation(Number(event.target.value) as typeof rotation); }}><option value={0}>0°</option><option value={90}>90°</option><option value={180}>180°</option><option value={270}>270°</option></select></label>
             </section>
           </>}
-          {box && <section className="content-property-section"><h4>Posición y tamaño</h4><p className="content-editor-note">Medidas en puntos desde la esquina superior izquierda de la página.</p><div className="content-property-row"><label>X (pt)<input aria-label="Posición X" type="number" min={0} step={.5} value={rounded(box.x)} onChange={event => updateBox({ ...box, x: Number(event.target.value) })} /></label><label>Y (pt)<input aria-label="Posición Y" type="number" min={0} step={.5} value={rounded(box.y)} onChange={event => updateBox({ ...box, y: Number(event.target.value) })} /></label></div><div className="content-property-row"><label>Ancho (pt)<input aria-label="Ancho" type="number" min={1} step={.5} value={rounded(box.width)} onChange={event => resizeWithRatio({ ...box, width: Number(event.target.value) }, 'width')} /></label><label>Alto (pt)<input aria-label="Alto" type="number" min={1} step={.5} value={rounded(box.height)} onChange={event => resizeWithRatio({ ...box, height: Number(event.target.value) }, 'height')} /></label></div></section>}
+          {box && <section className="content-property-section"><h4>Posición y tamaño</h4><p className="content-editor-note">Medidas en puntos desde la esquina superior izquierda de la página.</p><div className="content-property-row"><label>X (pt)<NumberField aria-label="Posición X" min={0} step={.5} value={rounded(box.x)} onValue={x => updateBox({ ...box, x })} /></label><label>Y (pt)<NumberField aria-label="Posición Y" min={0} step={.5} value={rounded(box.y)} onValue={y => updateBox({ ...box, y })} /></label></div><div className="content-property-row"><label>Ancho (pt)<NumberField aria-label="Ancho" min={1} step={.5} value={rounded(box.width)} onFocus={keepAspect} onBlur={releaseAspect} onValue={width => resizeWithRatio({ ...box, width }, 'width')} /></label><label>Alto (pt)<NumberField aria-label="Alto" min={1} step={.5} value={rounded(box.height)} onFocus={keepAspect} onBlur={releaseAspect} onValue={height => resizeWithRatio({ ...box, height }, 'height')} /></label></div></section>}
         </fieldset>
         </>}
         {failureMessage && <p className="operation-error">{failureMessage}</p>}

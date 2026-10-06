@@ -23,6 +23,10 @@ pub fn watch_system_documents(app: tauri::AppHandle) {
             for error in value["errors"].as_array().into_iter().flatten().filter_map(Value::as_str) { incoming_error(&receiver, error.to_owned()); }
             let paths = value["paths"].as_array().into_iter().flatten().filter_map(|path| path.as_str().map(PathBuf::from)).collect::<Vec<_>>();
             if !paths.is_empty() { open_from_system(&receiver, paths); }
+            for path in value["recovered"].as_array().into_iter().flatten().filter_map(|path| path.as_str().map(PathBuf::from)) {
+                let app = receiver.clone();
+                tauri::async_runtime::spawn_blocking(move || if keep_recovered(&app, path).is_err() { incoming_error(&app, "No se pudo añadir la versión anterior a la biblioteca.".into()); });
+            }
         }
         Ok(())
     });
@@ -31,6 +35,21 @@ pub fn watch_system_documents(app: tauri::AppHandle) {
             incoming_error(&app, error);
         }
     });
+}
+
+/// The previous version Kotlin recovered after a failed save may be the only
+/// intact copy. A library entry of its own keeps it from being pruned, whatever
+/// the library preference.
+fn keep_recovered(app: &tauri::AppHandle, path: PathBuf) -> Result<(), String> {
+    let desktop = app.state::<Desktop>();
+    let file = inspect_pdf_file(&path)?;
+    let name = path.file_name().ok_or("Nombre de archivo inválido.")?.to_string_lossy().into_owned();
+    let opened_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+    let pages = read_recents(&desktop).into_iter().find(|r| r.id == file.digest).map_or(0, |r| r.pages);
+    // A separate id leaves the document's own entry and draft untouched.
+    let id = folio_core::digest(format!("recovered:{}", path.display()).as_bytes());
+    remember_catalog_entry(&desktop, Recent { id, name, size: file.snapshot.size, pages, opened_at, path, draft: false, hidden: false })
 }
 
 async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Result<Value, String> {
@@ -117,8 +136,10 @@ pub async fn prune_private_copies(keep: Vec<String>, app: tauri::AppHandle) -> R
     let paths = {
         let desktop = app.state::<Desktop>();
         let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+        // An unreadable library may still name any copy: every copy stays.
+        let Some(recents) = stored_recents(&desktop) else { return Ok(()) };
         let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
-        read_recents(&desktop).into_iter().map(|r| r.path)
+        recents.into_iter().map(|r| r.path)
             .chain(keep.iter().filter_map(|token| files.sources.get(token).map(|s| s.path.clone())))
             .chain(files.outputs.values().map(|o| o.path.clone()))
             .map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>()

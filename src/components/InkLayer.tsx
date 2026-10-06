@@ -10,6 +10,10 @@ type Props = {
   onAdd: (draft: AnnotationDraft) => void; onRemove: (id: string, gesture?: string) => void;
 };
 
+// One momentum glide for the whole reader: a press anywhere, also on another
+// page, between pages or on the toolbar, stops it as native scrolling does.
+let stopGlide: (() => void) | null = null;
+
 function distance(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
   const dx = bx - ax, dy = by - ay;
   const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
@@ -26,17 +30,18 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
   const active = useRef<{ id: number; points: number[]; erase: boolean; erased: Set<string>; group: string } | null>(null);
   const pan = useRef<{ id: number; x: number; y: number; at: number; vx: number; vy: number } | null>(null);
   const frame = useRef(0);
-  const glide = useRef(0);
+  const glide = useRef<(() => void) | null>(null);
   const stylus = useRef(0);
   const interactive = enabled && (tool === 'draw' || tool === 'eraser');
-  const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; cancelAnimationFrame(glide.current); glide.current = 0; setPreview([]); };
+  // Stops only a glide this page started: a page mounting mid-glide must not end it.
+  const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; glide.current?.(); setPreview([]); };
   // A pen detected mid-stroke may switch the app to pen-only; keep that stroke.
   useEffect(() => { clear(); }, [tool, enabled, viewport]);
   useEffect(() => {
     const background = () => { if (document.visibilityState === 'hidden') clear(); };
     window.addEventListener('folio:pinch-start', clear);
     window.addEventListener('blur', clear); window.addEventListener('pagehide', clear); document.addEventListener('visibilitychange', background);
-    return () => { cancelAnimationFrame(frame.current); cancelAnimationFrame(glide.current); window.removeEventListener('folio:pinch-start', clear); window.removeEventListener('blur', clear); window.removeEventListener('pagehide', clear); document.removeEventListener('visibilitychange', background); };
+    return () => { cancelAnimationFrame(frame.current); glide.current?.(); window.removeEventListener('folio:pinch-start', clear); window.removeEventListener('blur', clear); window.removeEventListener('pagehide', clear); document.removeEventListener('visibilitychange', background); };
   }, []);
   function point(event: { clientX: number; clientY: number }, svg: SVGSVGElement) {
     const box = svg.getBoundingClientRect();
@@ -80,19 +85,22 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
   const strokes = useMemo(() => annotations.filter(a => a.kind === 'ink').map(a => <g key={a.id} data-ink-id={a.id} stroke={a.color} strokeWidth={(a.strokeWidth || 2) * viewport.scale} opacity={a.opacity ?? 1}>{a.inkPaths?.map((path, index) => <polyline key={index} points={pathData(path, viewport)} />)}</g>), [annotations, viewport]);
   function release(reader: Element, vx: number, vy: number) {
     // Finger scrolling in pen-only mode keeps its momentum like native scrolling.
-    let last = performance.now();
+    stopGlide?.();
+    let last = performance.now(), id = 0;
+    const stop = () => { cancelAnimationFrame(id); window.removeEventListener('pointerdown', stop, true); if (stopGlide === stop) stopGlide = null; };
     const step = (now: number) => {
       const elapsed = now - last, decay = .95 ** (elapsed / 16);
       last = now; reader.scrollLeft -= vx * elapsed; reader.scrollTop -= vy * elapsed; vx *= decay; vy *= decay;
-      glide.current = Math.hypot(vx, vy) > .02 ? requestAnimationFrame(step) : 0;
+      if (Math.hypot(vx, vy) > .02) id = requestAnimationFrame(step); else stop();
     };
-    glide.current = requestAnimationFrame(step);
+    // Capture runs before any handler, so the press that stops it never draws on a sliding page.
+    stopGlide = glide.current = stop; window.addEventListener('pointerdown', stop, true);
+    id = requestAnimationFrame(step);
   }
   return <svg className={`ink-layer${interactive ? ' ink-interactive' : ''}`} aria-label={interactive ? tool === 'eraser' ? 'Borrar con la goma' : 'Dibujar con el lápiz' : 'Dibujos del PDF'} data-pen-only={penOnly} viewBox={`0 0 ${viewport.width} ${viewport.height}`}
     onPointerDown={event => {
       event.stopPropagation();
       if (!interactive) return;
-      cancelAnimationFrame(glide.current); glide.current = 0;
       if (event.pointerType === 'pen') stylus.current = performance.now();
       if (event.pointerType === 'touch' && (active.current || event.width > 35 || event.height > 35 || performance.now() - stylus.current < 400)) return;
       if (event.pointerType === 'touch' && penOnly) { pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(), vx: 0, vy: 0 }; event.currentTarget.setPointerCapture(event.pointerId); return; }

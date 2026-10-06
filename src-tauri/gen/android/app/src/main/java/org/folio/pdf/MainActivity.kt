@@ -9,6 +9,7 @@ import android.view.View
 import android.webkit.WebView
 import android.widget.PopupMenu
 import androidx.activity.OnBackPressedCallback
+import org.folio.android.SelectionGate
 import org.folio.android.applySavedTheme
 import org.folio.android.prepareAppWebView
 import androidx.core.graphics.Insets
@@ -23,6 +24,7 @@ class MainActivity : TauriActivity() {
     super.onWebViewCreate(webView)
     this.webView = webView
     prepareAppWebView(webView, BuildConfig.VERSION_CODE)
+    webView.addJavascriptInterface(SelectionGate, "FolioSelection")
     applySavedTheme(this, webView)
     readerBack?.remove()
     readerBack = object : OnBackPressedCallback(true) {
@@ -60,10 +62,11 @@ class MainActivity : TauriActivity() {
     ViewCompat.requestApplyInsets(content)
   }
   // Selected PDF text has Folio's own Copy/Highlight/Comment menu, and WebView
-  // would draw its floating toolbar on top. Editable fields keep the toolbar.
+  // would draw its floating toolbar on top. Editable fields and any other
+  // selectable text keep the toolbar.
   override fun onWindowStartingActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
     val view = webView
-    if (type != ActionMode.TYPE_FLOATING || view == null || view.onCheckIsTextEditor()) return super.onWindowStartingActionMode(callback, type)
+    if (type != ActionMode.TYPE_FLOATING || view == null || view.onCheckIsTextEditor() || !SelectionGate.pdfText) return super.onWindowStartingActionMode(callback, type)
     val mode = SilentActionMode(callback, PopupMenu(this, view).menu, menuInflater)
     return if (callback.onCreateActionMode(mode, mode.menu)) mode else null
   }

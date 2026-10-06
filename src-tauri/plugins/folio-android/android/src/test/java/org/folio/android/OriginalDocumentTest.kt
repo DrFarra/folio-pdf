@@ -112,12 +112,13 @@ class OriginalDocumentTest {
         assertEquals(1, provider.restores)
         assertTrue(File(context.filesDir, "FolioRecovery").listFiles()!!.isEmpty())
     }
-    @Test fun failedRestoreOpensThePreviousVersionAsADocument() {
+    @Test fun failedRestoreKeepsThePreviousVersionAsADocument() {
         provider.corruptNextSave = true; provider.failRestore = true
         val failure = runCatching { overwriteOriginal(context, source, edited()) }.exceptionOrNull()
         assertTrue(failure is OriginalRecovered)
         val recovered = (failure as OriginalRecovered).file
         assertEquals("Apuntes (versión anterior).pdf", recovered.name)
+        assertTrue(failure.message!!.contains("en la biblioteca como «Apuntes (versión anterior).pdf»"))
         assertArrayEquals(before, recovered.readBytes())
         assertEquals(File(context.filesDir, "FolioImports").canonicalPath, recovered.parentFile!!.parentFile!!.canonicalPath)
         assertTrue(File(context.filesDir, "FolioRecovery").listFiles()!!.isEmpty())

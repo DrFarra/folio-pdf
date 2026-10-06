@@ -129,6 +129,40 @@ fn keep_metadata(from: &Path, to: &Path) {
     }
 }
 
+const REPLACE_FAILED: &str = "No se pudo reemplazar el archivo; el anterior se conservó. Ciérralo en otras aplicaciones e inténtalo de nuevo.";
+
+#[cfg(not(windows))]
+fn replace(path: &Path, temporary: tempfile::NamedTempFile) -> Result<(), String> {
+    temporary.persist(path).map(|_| ()).map_err(|_| REPLACE_FAILED.into())
+}
+/// ReplaceFileW keeps the replaced file's ACL, attributes, creation time and
+/// alternate streams, such as the Mark of the Web, which a rename would drop.
+#[cfg(windows)]
+fn replace(path: &Path, temporary: tempfile::NamedTempFile) -> Result<(), String> {
+    use std::{ffi::c_void, os::windows::ffi::OsStrExt, path::PathBuf};
+    #[link(name = "kernel32")]
+    extern "system" { fn ReplaceFileW(replaced: *const u16, replacement: *const u16, backup: *const u16, flags: u32, exclude: *mut c_void, reserved: *mut c_void) -> i32; }
+    const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
+    const REPLACEFILE_IGNORE_ACL_ERRORS: u32 = 0x4;
+    let wide = |path: &Path| path.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
+    let (file, replacement) = temporary.keep().map_err(|_| REPLACE_FAILED)?;
+    drop(file);
+    // With a backup name, a failed call leaves the original under a known name.
+    let mut backup = replacement.clone().into_os_string(); backup.push(".bak");
+    let backup = PathBuf::from(backup);
+    let replaced = unsafe { ReplaceFileW(wide(path).as_ptr(), wide(&replacement).as_ptr(), wide(&backup).as_ptr(), REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS, std::ptr::null_mut(), std::ptr::null_mut()) } != 0;
+    if replaced { let _ = fs::remove_file(&backup); return Ok(()); }
+    if !path.exists() && backup.exists() && fs::rename(&backup, path).is_err() {
+        let _ = fs::remove_file(&replacement);
+        return Err(format!("No se pudo reemplazar el archivo. El anterior está en la misma carpeta como «{}».", backup.file_name().unwrap_or_default().to_string_lossy()));
+    }
+    let _ = fs::remove_file(&backup);
+    // A volume without ReplaceFileW still gets the atomic rename.
+    if path.exists() && fs::rename(&replacement, path).is_ok() { return Ok(()); }
+    let _ = fs::remove_file(&replacement);
+    Err(REPLACE_FAILED.into())
+}
+
 /// Write and sync a sibling temporary file before its atomic commit. A destination
 /// changed since the save dialog is refused; a newly created destination uses
 /// persist_noclobber to prevent a race with another writer.
@@ -137,8 +171,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8], expected: Option<&str>) -> Result
     #[cfg(unix)]
     if expected.is_some() { keep_metadata(path, temporary.path()); }
     if fingerprint(path)?.as_deref() != expected { return Err(DESTINATION_CHANGED.into()); }
-    let committed = if expected.is_some() { temporary.persist(path) } else { temporary.persist_noclobber(path) };
-    committed.map_err(|_| "No se pudo reemplazar el archivo; el anterior se conservó. Ciérralo en otras aplicaciones e inténtalo de nuevo.")?;
+    if expected.is_some() { replace(path, temporary)?; } else { temporary.persist_noclobber(path).map_err(|_| REPLACE_FAILED)?; }
     sync_folder(path);
     Ok(())
 }
@@ -224,6 +257,24 @@ mod tests {
         assert_ne!(fs::metadata(&created).unwrap().permissions().mode() & 0o044, 0, "New files are readable like any other user file");
         let private = folder.path().join("draft.pdf"); write_private(&private, b"draft").unwrap(); write_private(&private, b"draft 2").unwrap();
         assert_eq!(fs::read(&private).unwrap(), b"draft 2"); assert_eq!(fs::metadata(&private).unwrap().permissions().mode() & 0o077, 0);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn saved_files_keep_windows_streams_and_attributes() {
+        use std::os::windows::{ffi::OsStrExt, fs::MetadataExt};
+        #[link(name = "kernel32")]
+        extern "system" { fn SetFileAttributesW(path: *const u16, attributes: u32) -> i32; }
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        let folder = tempfile::tempdir().unwrap(); let p = folder.path().join("descargado.pdf");
+        fs::write(&p, b"previous").unwrap();
+        let zone = format!("{}:Zone.Identifier", p.display()); fs::write(&zone, "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        let wide = p.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
+        assert_ne!(unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN) }, 0);
+        atomic_write(&p, b"replaced", fingerprint(&p).unwrap().as_deref()).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"replaced");
+        assert_eq!(fs::read_to_string(&zone).unwrap(), "[ZoneTransfer]\r\nZoneId=3\r\n");
+        assert_ne!(fs::metadata(&p).unwrap().file_attributes() & FILE_ATTRIBUTE_HIDDEN, 0);
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1, "No temporary or backup file is left behind");
     }
     #[test]
     fn partial_and_invalid_pdf_are_rejected() {
