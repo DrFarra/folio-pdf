@@ -48,7 +48,11 @@ jobs:
           DEBUG_KEYSTORE: ${{ secrets.FOLIO_ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
           mkdir -p ~/.android
-          if [ -n "$DEBUG_KEYSTORE" ]; then printf '%s' "$DEBUG_KEYSTORE" | tr -cd 'A-Za-z0-9+/=' | base64 -d > ~/.android/debug.keystore; fi
+          if [ -n "$DEBUG_KEYSTORE" ]; then
+            printf '%s' "$DEBUG_KEYSTORE" | tr -cd 'A-Za-z0-9+/=' | base64 -d > ~/.android/debug.keystore
+            # The registered key also signs the optimized release APK.
+            { echo "FOLIO_ANDROID_KEYSTORE=$HOME/.android/debug.keystore"; echo FOLIO_ANDROID_KEYSTORE_PASSWORD=android; echo FOLIO_ANDROID_KEY_ALIAS=androiddebugkey; } >> "$GITHUB_ENV"
+          fi
           test -f ~/.android/debug.keystore || keytool -genkeypair -v -keystore ~/.android/debug.keystore \
             -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -dname 'CN=Android Debug,O=Android,C=US'
