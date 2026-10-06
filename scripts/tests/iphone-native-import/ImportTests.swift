@@ -22,12 +22,16 @@ final class ImportTests: XCTestCase {
         let jump = folio.buttons["Ir a página"].firstMatch
         XCTAssertTrue(jump.waitForExistence(timeout: 10), "No reading page control")
         XCTAssertTrue(jump.isEnabled); jump.tap()
-        let number = folio.textFields["Número de página"].firstMatch
+        let number = pageNumberField()
         XCTAssertTrue(number.waitForExistence(timeout: 10), "The page-jump sheet did not open")
         XCTAssertEqual(number.value as? String, "1")
         folio.buttons["Cancelar"].firstMatch.tap()
         attach(screenshot, app: folio)
     }
+    // The phone page-jump sheet labels its field 'Página (1–N)'.
+    private func pageNumberField() -> XCUIElement { folio.textFields.matching(NSPredicate(format: "label BEGINSWITH 'Página'")).firstMatch }
+    // Files follows the app language: 'Cancel' or 'Cancelar', exposed as a button or a plain element.
+    private func pickerCancel() -> XCUIElement { folio.descendants(matching: .any).matching(NSPredicate(format: "label IN {'Cancel', 'Cancelar'}")).firstMatch }
     private func openPicker() {
         // Import belongs to the library. Returning there preserves the open
         // documents; choosing a second provider PDF must keep the first tab.
@@ -36,7 +40,7 @@ final class ImportTests: XCTestCase {
         let importPDF = folio.buttons["Abrir PDF"].firstMatch
         XCTAssertTrue(importPDF.waitForExistence(timeout: 15)); XCTAssertTrue(importPDF.isEnabled)
         importPDF.tap()
-        XCTAssertTrue(folio.buttons["Cancel"].firstMatch.waitForExistence(timeout: 15), "UIDocumentPicker did not appear")
+        XCTAssertTrue(pickerCancel().waitForExistence(timeout: 15), "UIDocumentPicker did not appear")
     }
     private func select(_ filename: String) {
         let basename = (filename as NSString).deletingPathExtension
@@ -84,7 +88,7 @@ final class ImportTests: XCTestCase {
             }
             XCTFail("Files did not dismiss after confirming the selected PDF")
         } else {
-            XCTAssertTrue(folio.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 10), "The file picker never completed")
+            XCTAssertTrue(pickerCancel().waitForNonExistence(timeout: 10), "The file picker never completed")
         }
     }
     func test01CancelThenSelectTwoActualProviderDocuments() {
@@ -93,7 +97,7 @@ final class ImportTests: XCTestCase {
         folio.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         folio.launch()
         XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "This test must start without argv/seeded startup PDF")
-        openPicker(); folio.buttons["Cancel"].firstMatch.tap()
+        openPicker(); pickerCancel().tap()
         XCTAssertTrue(folio.buttons["Abrir PDF"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(folio.buttons["Ir a página"].firstMatch.exists, "Cancel created a reading document")
         attach("picker-canceled", app: folio)
@@ -136,7 +140,7 @@ final class ImportTests: XCTestCase {
         attach("iphone-documents-popup-before-outside-tap", app: folio)
         folio.buttons["Ir a página"].firstMatch.tap()
         XCTAssertTrue(firstTab.waitForNonExistence(timeout: 10))
-        XCTAssertTrue(folio.textFields["Número de página"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(pageNumberField().waitForExistence(timeout: 10))
         folio.buttons["Cancelar"].firstMatch.tap()
         reading("FOLIO PICKER DOS", screenshot: "iphone-documents-outside-dismiss-return")
         documents.tap()
