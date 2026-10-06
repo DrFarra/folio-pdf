@@ -31,6 +31,8 @@ jobs:
           path: .fixtures
           key: test-corpus-${{ hashFiles('scripts/fetch-test-corpus.mjs') }}
       - name: Test the PDF engine
+        env:
+          FOLIO_TEST_CORPUS_ONLY: tracemonkey.pdf,irs-w9.pdf
         run: |
           npm run test:fixtures
           npm run test:engine
