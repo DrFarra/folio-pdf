@@ -1,0 +1,54 @@
+name: Folio release
+
+# Pushing a v<version> tag publishes a prerelease with the packages that the
+# platform workflows built and verified. Packages built from an earlier commit
+# are used only when it differs from the tag in .github/ alone.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - name: Collect the verified packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test "$version" = "$(node -p 'require("./package.json").version')"
+          for pair in windows.yml:Folio-Windows android.yml:Folio-Android macos.yml:Folio-macos ios.yml:Folio-iOS; do
+            workflow="${pair%%:*}" artifact="${pair#*:}" run=""
+            for sha in $(git rev-list --max-count=20 HEAD); do
+              git diff --quiet "$sha" HEAD -- . ':(exclude).github' || break
+              run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              [ -n "$run" ] && break
+            done
+            [ -n "$run" ] || { echo "::error::No hay una compilación verificada de $workflow para el código de $GITHUB_REF_NAME."; exit 1; }
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "staging/$artifact"
+          done
+          # Top-level packages plus MuPDF's source. Notices and Folio's source are the same
+          # in every platform package, so one copy of each name is enough.
+          mkdir -p assets
+          find staging -type f ! -name '*-entrega.zip' ! -name 'SHA256SUMS.txt' ! -name 'release-manifest.json' \
+            \( -path 'staging/*/sources/*' -o ! -path 'staging/*/*/*' \) -print0 | sort -z |
+            while IFS= read -r -d '' file; do [ -e "assets/${file##*/}" ] || cp "$file" assets/; done
+          (cd assets && sha256sum -- * > SHA256SUMS.txt)
+          awk -v heading="## Cambios en $version" '$0 == heading {on = 1; next} on && /^## / {exit} on' docs/releases.md > notes.md
+          test -s notes.md
+          printf '\nEl estado de firma de cada paquete está en [docs/releases.md](https://github.com/%s/blob/%s/docs/releases.md). Las sumas SHA-256 están en SHA256SUMS.txt.\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> notes.md
+          ls -l assets
+      - name: Publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "Folio ${GITHUB_REF_NAME#v}" --notes-file notes.md
