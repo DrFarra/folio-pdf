@@ -44,6 +44,10 @@ jobs:
         env:
           FOLIO_OAUTH_CONFIG: ${{ secrets.FOLIO_GOOGLE_DESKTOP_CREDENTIALS_JSON }}
         run: |
+          if [ -z "$FOLIO_OAUTH_CONFIG" ]; then
+            echo "::warning::FOLIO_GOOGLE_DESKTOP_CREDENTIALS_JSON is not set: this build does not include Google Drive."
+            exit 0
+          fi
           python3 - <<'PY'
           import json, os, pathlib
           config = json.loads(os.environ['FOLIO_OAUTH_CONFIG'])
