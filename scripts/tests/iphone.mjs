@@ -624,6 +624,8 @@ try {
     await page.getByRole('button',{name:'Rehacer',exact:true}).tap(); await highlights(page).waitFor();
     const saved = await save(page, 'iphone-automatic-export.pdf'); const highlight = saved.inspection.annotations.find(item => item.kind === 'highlight');
     assert.equal(highlight.text, automaticPhrase); assert.equal(highlight.color.toLowerCase(), '#1177dd');
+    // A web download is an export: open the downloaded PDF to remove the highlight it now contains.
+    await page.reload(); await open(page, saved.file); await highlights(page).waitFor();
     await annotateMode(page); await page.getByRole('button', {name:'Resaltador',exact:true}).tap();
     await removeHighlight(page); await highlights(page).waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('button', { name: 'Resaltador', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -647,7 +649,7 @@ try {
     assert.equal(await page.getByRole('button', {name:'Anotar',exact:true}).isDisabled(),false);
     await page.getByRole('button', {name:'Anotar',exact:true}).tap();
     await page.getByRole('dialog', {name:'Herramientas disponibles',exact:true}).waitFor();
-    assert(await page.getByRole('dialog', {name:'Herramientas disponibles',exact:true}).textContent().then(text=>text.includes('permisos')));
+    assert(await page.getByRole('dialog', {name:'Herramientas disponibles',exact:true}).textContent().then(text=>text.includes('no permite anotarlo')));
     await closeDialog(page);
     await selection(page); await selectionMenu(page).waitFor(); assert.equal(await selectionMenu(page).getByRole('button').count(), 1);
     const saved = await save(page, 'iphone-readonly-export.pdf'), originalBytes = new Uint8Array(fs.readFileSync(readOnly));

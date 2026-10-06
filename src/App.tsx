@@ -1042,7 +1042,7 @@ export default function App() {
       if (!gesture || event.touches.length !== 2) return;
       event.preventDefault(); const center = geometry(event), active = gesture;
       // Fingers drift while scrolling: only a clear change of spacing starts the zoom, which then follows the whole gesture.
-      if (!active.pinched && Math.abs(center.distance - active.distance) > Math.max(8, active.distance * .08)) active.pinched = true;
+      if (!active.pinched && Math.abs(center.distance - active.distance) > Math.max(6, active.distance * .08)) active.pinched = true;
       if (active.pinched) active.next = Math.max(.25, Math.min(3, active.scale * center.distance / active.distance));
       active.pointerX = center.x; active.pointerY = center.y;
       if (active.frame) cancelAnimationFrame(active.frame);
