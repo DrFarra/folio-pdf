@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Library background (--bg in src/styles.css): splash and first frame. -->
+    <!-- Library background (the bg token in src/styles.css): splash and first frame. -->
     <color name="folio_background">#F4F5F7</color>
 </resources>
