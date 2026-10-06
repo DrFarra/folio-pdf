@@ -6,6 +6,7 @@ import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.View
+import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.PopupMenu
 import androidx.activity.OnBackPressedCallback
@@ -46,16 +47,20 @@ class MainActivity : TauriActivity() {
       window.isStatusBarContrastEnforced = false
       window.isNavigationBarContrastEnforced = false
     }
+    // Without this Android letterboxes the camera cutout once the status bar hides.
+    if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
     val content = findViewById<View>(android.R.id.content)
     applySavedTheme(this)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val types = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-      // Hidden bars keep their space: hiding them with a tap must not resize the
-      // WebView, which would rescale a fitted page.
-      val bars = Insets.max(insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars()), insets.getInsets(WindowInsetsCompat.Type.displayCutout()))
+      // With the reader chrome hidden the page reaches the top edge. The web keeps
+      // its fit size while hidden, so the taller WebView does not rescale the page.
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+      val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+      val top = if (insets.isVisible(WindowInsetsCompat.Type.statusBars())) maxOf(bars.top, cutout.top) else 0
       // Native owns the top/sides once. The PDF extends behind gesture navigation;
       // getSafeArea protects only interactive web controls at the bottom.
-      view.setPadding(bars.left, bars.top, bars.right, 0)
+      view.setPadding(maxOf(bars.left, cutout.left), top, maxOf(bars.right, cutout.right), 0)
       // Forward zeros rather than CONSUMED, retaining WebView keyboard updates.
       WindowInsetsCompat.Builder(insets).setInsets(types, Insets.NONE).build()
     }
