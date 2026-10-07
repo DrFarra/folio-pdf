@@ -10,6 +10,15 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.1
+
+- Los PDF muy grandes (libros de 1 GB) se abren con un tercio de la memoria y ya no se cancelan por tiempo en equipos de 8 GB.
+- Un PDF grande que ya trae resaltados de otra app se abre sin rehacer el archivo; sus resaltados aparecen una sola vez.
+- El desplazamiento es fluido en documentos de miles de páginas, también con el panel de miniaturas abierto.
+- La búsqueda prepara el texto al abrirla y muestra resultados mientras avanza.
+- En tablet y teléfono, pasar entre Anotaciones y Páginas, Índice o Marcadores ya no cierra y vuelve a abrir el panel.
+- Si un PDF es demasiado grande para guardarlo modificado, Folio lo explica y conserva tus anotaciones.
+
 ## Cambios en 0.9.0
 
 - En Windows y macOS, Guardar (Ctrl+S / ⌘S) actualiza el PDF abierto y «Guardar una copia…» (Ctrl+Mayús+S / ⇧⌘S) crea otro archivo. Un PDF de solo lectura, o que otro programa cambió, no se reemplaza.
