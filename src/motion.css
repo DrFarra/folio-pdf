@@ -1,0 +1,69 @@
+/* Folio's motion: one vocabulary for the whole app.
+   Things appear with a quick ease-out and leave faster than they came; sheets
+   slide like iOS drawers. Only transform-like properties and opacity animate,
+   and nothing a person repeats constantly waits on an animation. */
+:root{
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+  --motion-enter:200ms;
+  --motion-exit:150ms;
+  --motion-sheet:380ms;
+  --motion-sheet-exit:220ms;
+}
+
+@keyframes motion-fade-in{from{opacity:0}}
+@keyframes motion-fade-out{to{opacity:0}}
+@keyframes motion-pop-in{from{opacity:0;scale:.96}}
+@keyframes motion-pop-out{to{opacity:0;scale:.97}}
+@keyframes motion-sheet-in{from{translate:0 100%}}
+@keyframes motion-sheet-out{to{translate:0 100%}}
+@keyframes motion-rise-in{from{opacity:0;translate:0 10px}}
+
+/* Dialogs: a small zoom on wide screens, a bottom sheet on phones. */
+dialog.modal[open]{animation:motion-pop-in var(--motion-enter) var(--ease-out)}
+dialog.modal[open]::backdrop{animation:motion-fade-in var(--motion-enter) var(--ease-out)}
+dialog.modal.closing{animation:motion-pop-out var(--motion-exit) var(--ease-in) forwards;pointer-events:none}
+dialog.modal.closing::backdrop{animation:motion-fade-out var(--motion-exit) var(--ease-in) forwards}
+html[data-phone] dialog.modal.mobile-sheet[open]{animation:motion-sheet-in var(--motion-sheet) var(--ease-drawer)}
+html[data-phone] dialog.modal.mobile-sheet.closing{animation:motion-sheet-out var(--motion-sheet-exit) var(--ease-in) forwards}
+html[data-phone] dialog.modal.mobile-sheet[open]::backdrop{animation-duration:var(--motion-sheet)}
+html[data-phone] dialog.modal.mobile-sheet.closing::backdrop{animation-duration:var(--motion-sheet-exit)}
+
+/* Explorar and Anotaciones: drawers on phones and tablets, with their dimming. */
+.phone-layout .mobile-drawer{animation:motion-sheet-in var(--motion-sheet) var(--ease-drawer)}
+.phone-layout .mobile-drawer.closing{animation:motion-sheet-out var(--motion-sheet-exit) var(--ease-in) forwards;pointer-events:none}
+.mobile-panel-backdrop{animation:motion-fade-in var(--motion-sheet) var(--ease-out)}
+.mobile-panel-backdrop.closing{animation:motion-fade-out var(--motion-sheet-exit) var(--ease-in) forwards;pointer-events:none}
+
+/* Menus and popovers grow from where they are anchored. */
+:is(.highlight-annotation-menu,.text-selection-menu,.highlight-color-palette,.bookmark-menu){animation:motion-pop-in 160ms var(--ease-out)}
+
+/* Notices rise into place and fade away. */
+.toast{animation:motion-rise-in var(--motion-enter) var(--ease-out)}
+.toast.closing{animation:motion-fade-out var(--motion-exit) var(--ease-in) forwards;pointer-events:none}
+
+/* Tapping the page slides the reader chrome out instead of switching it off. */
+.phone-layout :is(.app-header,.mobile-reading-status,.mobile-reading-toolbar,.page-caption){transition:opacity var(--motion-enter) var(--ease-out),translate var(--motion-enter) var(--ease-out),visibility 0s}
+.phone-layout.reader-chrome-hidden :is(.app-header,.mobile-reading-status,.mobile-reading-toolbar,.page-caption){transition:opacity var(--motion-exit) var(--ease-in),translate var(--motion-exit) var(--ease-in),visibility 0s linear var(--motion-exit)}
+.phone-layout.reader-chrome-hidden .app-header{translate:0 -12px}
+.phone-layout.reader-chrome-hidden :is(.mobile-reading-status,.mobile-reading-toolbar,.page-caption){translate:0 12px}
+
+/* Buttons answer the press. `scale` composes with any transform a button already has. */
+:is(.primary-button,.secondary-button,.icon-button,.text-button,.mobile-action-grid>button,.mobile-reading-toolbar button,.tablet-annotation-dock button,.drive-browser button,.library-actions button){transition:scale .12s var(--ease-out),background-color .15s,color .15s,border-color .15s,box-shadow .15s}
+:is(.primary-button,.secondary-button,.icon-button,.text-button,.mobile-action-grid>button,.mobile-reading-toolbar button,.tablet-annotation-dock button,.drive-browser button,.library-actions button):active:not(:disabled){scale:.97}
+
+/* Reduced motion keeps the information (what appeared, what left) as a short fade. */
+@media(prefers-reduced-motion:reduce){
+  dialog.modal[open],html[data-phone] dialog.modal.mobile-sheet[open],.phone-layout .mobile-drawer,:is(.highlight-annotation-menu,.text-selection-menu,.highlight-color-palette,.bookmark-menu),.toast{animation:motion-fade-in 150ms linear}
+  dialog.modal.closing,html[data-phone] dialog.modal.mobile-sheet.closing,.phone-layout .mobile-drawer.closing,.toast.closing{animation:motion-fade-out 120ms linear forwards}
+  .phone-layout.reader-chrome-hidden :is(.app-header,.mobile-reading-status,.mobile-reading-toolbar,.page-caption){translate:none}
+  :is(.primary-button,.secondary-button,.icon-button,.text-button,.mobile-action-grid>button,.mobile-reading-toolbar button,.tablet-annotation-dock button,.drive-browser button,.library-actions button):active:not(:disabled){scale:none}
+}
+
+/* Tablets open the same drawers from the side. */
+@keyframes motion-side-in{from{translate:-100% 0}}
+@keyframes motion-side-out{to{translate:-100% 0}}
+html[data-tablet] .app-shell .mobile-drawer{animation:motion-side-in 320ms var(--ease-drawer)}
+html[data-tablet] .app-shell .mobile-drawer.closing{animation:motion-side-out var(--motion-exit) var(--ease-in) forwards;pointer-events:none}
+@media(prefers-reduced-motion:reduce){html[data-tablet] .app-shell .mobile-drawer{animation:motion-fade-in 150ms linear}html[data-tablet] .app-shell .mobile-drawer.closing{animation:motion-fade-out 120ms linear forwards}}

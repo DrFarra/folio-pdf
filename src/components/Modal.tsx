@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { watchDesktopModalViewport } from '../desktop-modal-viewport';
+import { exitDuration } from '../motion';
 import './Modal.css';
 
 /** Shared dismissal affordance for mobile dialogs and the PDF explorer. Drag
@@ -42,8 +43,9 @@ export function SheetHandle({ onClose, label = 'Cerrar hoja' }: { onClose: () =>
     const velocity = active.offset / Math.max(1, performance.now() - active.at);
     const dismiss = active.offset >= 80 || active.offset >= 36 && velocity > .7;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    reset();
-    if (dismiss) { suppressClick.current = true; onClose(); }
+    // A dismissed sheet keeps its dragged offset and slides away from there.
+    if (dismiss) { active.target.classList.remove('sheet-dragging'); gesture.current = null; suppressClick.current = true; onClose(); }
+    else reset();
   }} onPointerCancel={() => { suppressClick.current = true; reset(); }}><span aria-hidden="true" /></button>;
 }
 
@@ -57,6 +59,19 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
   // pointerdown arms pointer clicks; keyboard and accessibility clicks still work.
   const pointerClickArmed = useRef(false);
   const titleId = useId();
+  // Closing plays the exit first; a parent that keeps the dialog open gets it back.
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false), mounted = useRef(true), onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => () => { mounted.current = false; }, []);
+  const close = () => {
+    if (closingRef.current) return;
+    closingRef.current = true; setClosing(true);
+    setTimeout(() => {
+      onCloseRef.current();
+      setTimeout(() => { if (!mounted.current) return; closingRef.current = false; setClosing(false); ref.current?.style.removeProperty('translate'); }, 0);
+    }, exitDuration());
+  };
   useEffect(() => {
     const dialog = ref.current;
     // React focuses autoFocus controls while the dialog is still closed.
@@ -69,10 +84,10 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
     const stopViewport = ref.current ? watchDesktopModalViewport(ref.current) : () => {};
     return () => { stopViewport(); ref.current?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
   }, []);
-  return <dialog ref={ref} className={`modal mobile-sheet ${className}`} onCancel={event => {
+  return <dialog ref={ref} className={`modal mobile-sheet ${className}${closing ? ' closing' : ''}`} onCancel={event => {
     // A dismissed file chooser inside the dialog fires a bubbling `cancel` of its own.
     if (event.target !== event.currentTarget) return;
-    event.preventDefault(); onClose();
+    event.preventDefault(); close();
   }} onPointerDownCapture={() => { pointerClickArmed.current = true; }} onClickCapture={event => {
     if (event.detail > 0 && !pointerClickArmed.current) { event.preventDefault(); event.stopPropagation(); }
     pointerClickArmed.current = false;
@@ -80,11 +95,11 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
     const box = event.currentTarget.getBoundingClientRect();
     backdropDown.current = event.target === event.currentTarget && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
   }} onPointerCancel={() => { backdropDown.current = false; pointerClickArmed.current = false; }} onClick={event => {
-    if (event.target === ref.current && backdropDown.current) onClose();
+    if (event.target === ref.current && backdropDown.current) close();
     backdropDown.current = false;
   }} aria-labelledby={titleId}>
-    <SheetHandle onClose={onClose} />
-    <div className="modal-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Cerrar diálogo"><X size={19} /></button></div>
+    <SheetHandle onClose={close} />
+    <div className="modal-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={close} aria-label="Cerrar diálogo"><X size={19} /></button></div>
     {children}
   </dialog>;
 }
