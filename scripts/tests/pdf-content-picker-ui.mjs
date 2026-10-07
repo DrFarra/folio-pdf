@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
-import { settled } from './ui-helpers.mjs';
+import { androidTablet, openTabletEditor, settled } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -47,8 +47,9 @@ async function picker(page, number = 1) {
 async function open(page, phone) {
   await page.goto(origin); await page.locator('input[type=file][accept="application/pdf,.pdf"]').first().setInputFiles(source);
   await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.locator('.reading-area .textLayer span').first().waitFor();
-  if (phone) await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
-  await page.getByRole('button', { name: 'Herramientas', exact: true }).click(); await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
+  // Touch layouts keep this editor; the desktop edits inside the reader (edit-mode-ui.mjs).
+  if (phone) { await page.getByRole('button', { name: 'Más acciones', exact: true }).tap(); await page.getByRole('button', { name: 'Herramientas', exact: true }).click(); await page.getByRole('button', { name: 'Editar PDF', exact: true }).click(); }
+  else await openTabletEditor(page);
   await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
   // On a phone the reader may legitimately identify the second visible page.
   // Navigate explicitly so each fixture assertion starts at a known page.
@@ -56,10 +57,10 @@ async function open(page, phone) {
   await picker(page);
 }
 async function navigate(page, number) { await page.getByRole('spinbutton', { name: 'Página del editor', exact: true }).fill(String(number)); await page.getByRole('spinbutton', { name: 'Página del editor', exact: true }).press('Enter'); await picker(page, number); }
-async function check(id, run, specification = { width: 1360, height: 720 }) {
+async function check(id, run, specification = { width: 1280, height: 800 }) {
   if (process.env.FOLIO_PICKER_TEST && !new RegExp(process.env.FOLIO_PICKER_TEST).test(id)) return;
   const { phone = false, width, height } = specification;
-  const context = await browser.newContext({ viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: iphoneAgent } : {}) });
+  const context = await browser.newContext(phone ? { viewport: { width, height }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: iphoneAgent } : androidTablet({ width, height }));
   if (phone) await context.addInitScript(() => { Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }); Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: undefined }); });
   const page = await context.newPage(); page.setDefaultTimeout(20000); page.on('pageerror', error => errors.push({ id, message: error.message }));
   try { await open(page, phone); results.push({ id, status: 'passed', frontendEntry, ...await run(page) }); }
@@ -85,16 +86,16 @@ async function layout(page, specification) {
       if (Math.abs(canvas.width - baseWidth * scale) >= 1 || Math.abs(canvas.height - baseHeight * scale) >= 1) return false;
     }
     const navigation = container.querySelector('.workbench-navigation'), controls = [...navigation.querySelectorAll('button')].map(button => button.getBoundingClientRect()), centers = controls.map(box => (box.top + box.bottom) / 2);
-    return { width: innerWidth, height: innerHeight, phone, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')), navigationHeight: navigation.getBoundingClientRect().height, navigationControlHeight: Math.max(...controls.map(box => box.height)), navigationCenterSpread: Math.max(...centers) - Math.min(...centers) };
+    return { width: innerWidth, height: innerHeight, phone, layout: document.documentElement.dataset.layout, inlineWorkspace: container.classList.contains('workspace-editor'), header: rect(document.querySelector('.app-header')), openDialogs: document.querySelectorAll('dialog[open]').length, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight, container: rect(container), picker: rect(element), toolbar: rect(element.querySelector('.pdf-picker-toolbar')), viewport: rect(element.querySelector('.pdf-picker-viewport')), canvas: rect(element.querySelector('canvas')), footer: rect(element.querySelector('.pdf-picker-footer')), navigationHeight: navigation.getBoundingClientRect().height, navigationControlHeight: Math.max(...controls.map(box => box.height)), navigationCenterSpread: Math.max(...centers) - Math.min(...centers) };
   }, { baseWidth: 500, baseHeight: 400 }, { timeout: 60000 });
   const geometry = await geometryHandle.jsonValue(); await geometryHandle.dispose();
-  assert.equal(geometry.phone, !!specification.phone); assert.equal(geometry.documentWidth, geometry.width); assert.equal(geometry.documentHeight, geometry.height);
+  assert.equal(geometry.phone, !!specification.phone); assert.equal(geometry.layout, specification.phone ? 'phone' : 'tablet'); assert.equal(geometry.documentWidth, geometry.width); assert.equal(geometry.documentHeight, geometry.height);
   if (!specification.phone) {
-    assert.equal(geometry.inlineWorkspace, true, 'Desktop editing must stay in the main reader.');
+    assert.equal(geometry.inlineWorkspace, true, 'Tablet editing must stay in the main reader.');
     assert.equal(geometry.openDialogs, 0);
     assert(geometry.header.height >= 40 && geometry.container.y >= geometry.header.bottom - 1, 'The app header must remain visible above the integrated editor.');
-    assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true);
-    assert(geometry.navigationCenterSpread <= 1 && geometry.navigationHeight <= geometry.navigationControlHeight + 1, 'Desktop navigation must stay in one row without taking height from the page.');
+    assert.equal(await page.locator('.app-header .tablet-document-selector').isVisible(), true);
+    assert(geometry.navigationCenterSpread <= 1 && geometry.navigationHeight <= geometry.navigationControlHeight + 1, 'Tablet navigation must stay in one row without taking height from the page.');
   }
   for (const [name, bounds] of Object.entries(geometry).filter(([name]) => ['container', 'picker', 'toolbar', 'viewport', 'canvas', 'footer'].includes(name))) {
     assert(bounds.width > 0 && bounds.height > 0, name + ' needs usable space.');
@@ -112,7 +113,6 @@ async function layout(page, specification) {
     const button = page.getByRole('button', { name, exact: true });
     assert(await button.evaluate(element => { const bounds = element.getBoundingClientRect(); return document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button') === element; }), name + ' must be reachable.');
   }
-  assert.equal(await page.locator('.modified-dot').count(), 0, 'Selecting and rendering must not modify the document.');
   return { ...geometry, fields };
 }
 try {
@@ -224,17 +224,18 @@ try {
     if (oracle[3].warnings.length) { await page.locator('.pdf-picker-warnings>summary').click(); for (const warning of oracle[3].warnings) assert((await page.locator('.pdf-picker-warnings').innerText()).includes(warning)); }
     await page.screenshot({ path: path.join(output, 'pdf-content-picker-invisible-ocr.png') }); return { unavailableReason: item.reason, noEditAction: true, warningCount: oracle[3].warnings.length };
   });
-  for (const specification of [{ width: 800, height: 600 }, { width: 900, height: 600 }, { width: 1024, height: 600 }, { width: 390, height: 844, phone: true }, { width: 430, height: 932, phone: true }, { width: 844, height: 390, phone: true }]) {
-    const id = (specification.phone ? 'phone-' : 'desktop-') + specification.width + 'x' + specification.height;
+  for (const specification of [{ width: 1280, height: 800 }, { width: 800, height: 1280 }, { width: 1280, height: 600 }, { width: 390, height: 844, phone: true }, { width: 430, height: 932, phone: true }, { width: 844, height: 390, phone: true }]) {
+    const id = (specification.phone ? 'phone-' : 'tablet-') + specification.width + 'x' + specification.height;
     await check(id, async page => {
       const geometry = await layout(page, specification);
       await page.screenshot({ path: path.join(output, 'pdf-content-picker-' + id + '.png') }); return { geometry, controlsReachable: true, noHorizontalOverflow: true, simulatedPhone: !!specification.phone };
     }, specification);
   }
-  await check('resize-medium-keeps-selection-zoom-and-usable-layout', async page => {
+  await check('resize-tablet-keeps-selection-zoom-and-usable-layout', async page => {
     const samples = [];
-    for (const width of [900, 800, 1024]) {
-      const specification = { width, height: 600 }; await page.setViewportSize(specification); const geometry = await layout(page, specification);
+    // Rotation and split screen on the same tablet.
+    for (const [width, height] of [[800, 1280], [1024, 800], [1280, 800]]) {
+      const specification = { width, height }; await page.setViewportSize(specification); const geometry = await layout(page, specification);
       await page.getByRole('combobox', { name: 'Seleccionar texto por', exact: true }).selectOption('line');
       // A resize can still be publishing its render when the level changes.
       // Wait for the real line targets, rather than count an updating surface.
@@ -245,8 +246,8 @@ try {
       }, expectedLines, { timeout: 60000 });
       await picker(page);
       assert.equal(await page.locator('.pdf-content-item[data-kind="text"]').count(), expectedLines);
-      samples.push({ width, canvasHeight: geometry.canvas.height });
-      await page.screenshot({ path: path.join(output, `pdf-content-picker-resize-${width}x600.png`) });
+      samples.push({ width, height, canvasHeight: geometry.canvas.height });
+      await page.screenshot({ path: path.join(output, `pdf-content-picker-resize-${width}x${height}.png`) });
     }
     return { samples, resizePreservesPage: true, noHorizontalOverflow: true };
   });

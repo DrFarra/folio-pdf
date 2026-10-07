@@ -77,6 +77,75 @@ pub fn protect_original(source: &Path, output: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// One face of a TrueType or OpenType font file or collection, as Editar lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontFace { pub index: u32, pub family: String, pub post_script_name: String, pub bold: bool, pub italic: bool, pub embeddable: bool }
+
+fn be16(bytes: &[u8], offset: usize) -> Option<u16> { bytes.get(offset..offset + 2).map(|b| u16::from_be_bytes([b[0], b[1]])) }
+fn be32(bytes: &[u8], offset: usize) -> Option<u32> { bytes.get(offset..offset + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]])) }
+fn read_at<R: Read + Seek>(reader: &mut R, offset: u64, length: usize) -> Option<Vec<u8>> {
+    if length > 1 << 20 { return None; }
+    reader.seek(SeekFrom::Start(offset)).ok()?;
+    let mut buffer = vec![0; length];
+    reader.read_exact(&mut buffer).ok()?;
+    Some(buffer)
+}
+
+/// The faces of a font file, read from its table directory and its name and
+/// OS/2 tables only, so listing a computer's fonts does not read them whole.
+pub fn font_faces<R: Read + Seek>(reader: &mut R) -> Vec<FontFace> {
+    let Some(head) = read_at(reader, 0, 12) else { return Vec::new(); };
+    let offsets: Vec<u32> = if &head[0..4] == b"ttcf" {
+        let count = be32(&head, 8).unwrap_or(0).min(64) as usize;
+        read_at(reader, 12, 4 * count).map(|table| (0..count).filter_map(|i| be32(&table, 4 * i)).collect()).unwrap_or_default()
+    } else { vec![0] };
+    offsets.iter().enumerate().filter_map(|(index, &offset)| face_at(reader, offset as u64, index as u32)).collect()
+}
+
+fn face_at<R: Read + Seek>(reader: &mut R, offset: u64, index: u32) -> Option<FontFace> {
+    let header = read_at(reader, offset, 12)?;
+    if ![0x0001_0000, 0x4F54_544F, 0x7472_7565].contains(&be32(&header, 0)?) { return None; }
+    let tables = be16(&header, 4)? as usize;
+    if tables > 512 { return None; }
+    let directory = read_at(reader, offset + 12, 16 * tables)?;
+    let (mut name, mut os2) = (None, None);
+    for t in 0..tables {
+        let entry = &directory[16 * t..16 * t + 16];
+        let location = (be32(entry, 8)? as u64, be32(entry, 12)? as usize);
+        if &entry[0..4] == b"name" { name = Some(location); } else if &entry[0..4] == b"OS/2" { os2 = Some(location); }
+    }
+    let (start, length) = name?;
+    let table = read_at(reader, start, length.min(1 << 20))?;
+    let (count, strings) = (be16(&table, 2)? as usize, be16(&table, 4)? as usize);
+    // Name IDs: 1/2 family and style, 16/17 their typographic forms, 6 PostScript name.
+    let mut names: std::collections::HashMap<u16, (u8, String)> = std::collections::HashMap::new();
+    for j in 0..count.min(2000) {
+        let record = 6 + 12 * j;
+        let (platform, encoding, language, id) = (be16(&table, record)?, be16(&table, record + 2)?, be16(&table, record + 4)?, be16(&table, record + 6)?);
+        if ![1, 2, 6, 16, 17].contains(&id) { continue; }
+        let (size, at) = (be16(&table, record + 8)? as usize, strings + be16(&table, record + 10)? as usize);
+        let Some(raw) = table.get(at..at + size) else { continue; };
+        let (text, rank) = match platform {
+            0 | 3 => (String::from_utf16_lossy(&raw.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect::<Vec<_>>()), if language == 0x409 || platform == 0 { 0 } else { 1 }),
+            1 if encoding == 0 => (raw.iter().map(|&b| b as char).collect(), 2),
+            _ => continue,
+        };
+        let text = text.trim().to_string();
+        if !text.is_empty() && names.get(&id).map_or(true, |(best, _)| rank < *best) { names.insert(id, (rank, text)); }
+    }
+    let get = |id: u16| names.get(&id).map(|(_, text)| text.clone());
+    let family = get(16).or_else(|| get(1))?;
+    let style = get(17).or_else(|| get(2)).unwrap_or_default().to_lowercase();
+    let (mut bold, mut italic, mut embeddable) = (["bold", "black", "heavy"].iter().any(|w| style.contains(w)), style.contains("italic") || style.contains("oblique"), true);
+    if let Some(os2) = os2.and_then(|(start, length)| read_at(reader, start, length.min(96))) {
+        // fsType 2 forbids embedding; weight 600+ or fsSelection bit 5 is bold, bit 0 italic.
+        if let Some(kind) = be16(&os2, 8) { embeddable = kind & 0x000F != 0x0002; }
+        if let Some(weight) = be16(&os2, 4) { bold |= weight >= 600; }
+        if let Some(selection) = be16(&os2, 62) { italic |= selection & 1 != 0; bold |= selection & 0x20 != 0; }
+    }
+    Some(FontFace { index, family, post_script_name: get(6).unwrap_or_default(), bold, italic, embeddable })
+}
+
 /// Paths in `folder` for `names`: the file name only, ending in .pdf, and never an
 /// existing file or a name used earlier in the list ("Parte.pdf", "Parte (2).pdf"…).
 pub fn unique_pdf_paths(folder: &Path, names: &[String]) -> Result<Vec<PathBuf>, String> {
@@ -204,6 +273,18 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn font_faces_read_names_and_style_without_the_whole_file() {
+        let regular = include_bytes!("../../../public/fonts/dm-sans-regular.ttf");
+        let semibold = include_bytes!("../../../public/fonts/dm-sans-semibold.ttf");
+        let faces = font_faces(&mut io::Cursor::new(&regular[..]));
+        assert_eq!(faces.len(), 1);
+        assert_eq!((faces[0].index, faces[0].bold, faces[0].italic, faces[0].embeddable), (0, false, false, true));
+        assert!(faces[0].family.contains("DM Sans"), "{:?}", faces[0]);
+        assert!(faces[0].post_script_name.starts_with("DMSans"), "{:?}", faces[0]);
+        assert!(font_faces(&mut io::Cursor::new(&semibold[..]))[0].bold);
+        assert!(font_faces(&mut io::Cursor::new(&b"%PDF-1.7 not a font"[..])).is_empty());
+    }
     #[test]
     fn split_parts_never_replace_a_file_or_each_other() {
         let folder = tempfile::tempdir().unwrap();

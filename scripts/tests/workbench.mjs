@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { enterAnnotationMode } from './ui-helpers.mjs';
+import { androidTablet, desktopDocumentAction, enterAnnotationMode, openTabletEditor, tabletDownload } from './ui-helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -32,9 +32,9 @@ const chrome = findChrome();
 const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', '4176', '--strictPort'], { stdio: 'pipe', windowsHide: true });
 const origin = 'http://127.0.0.1:4176'; let browser, log = ''; preview.stdout.on('data', data => { log += data; }); preview.stderr.on('data', data => { log += data; });
 const results = [], errors = [];
-async function check(id, action) {
+async function check(id, action, device = { viewport: { width: 1360, height: 760 } }) {
   if (process.env.FOLIO_UI_TEST && !new RegExp(process.env.FOLIO_UI_TEST).test(id)) return;
-  const context = await browser.newContext({ viewport: { width: 1360, height: 760 }, acceptDownloads: true }), page = await context.newPage(); page.setDefaultTimeout(20000);
+  const context = await browser.newContext({ ...device, acceptDownloads: true }), page = await context.newPage(); page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push({ id, error: error.message }));
   page.on('console', message => { if (message.type() === 'error') console.log(JSON.stringify({ id, browserConsole: message.text() })); });
   page.on('requestfailed', request => console.log(JSON.stringify({ id, failedRequest: request.url(), error: request.failure()?.errorText })));
@@ -206,15 +206,17 @@ try {
     return { actualFieldsSaved: true, unselectedDropdownKept: true, readableInternalLabels: true, focusedFieldPreview: true };
   });
   await check('text-replacement-and-content-history', async page => {
-    await tools(page, 'Editar PDF'); await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
+    // Touch layouts keep this editor; the desktop edits inside the reader (edit-mode-ui.mjs).
+    await openTabletEditor(page); await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
     await page.getByRole('button', { name: /^(Párrafo|Texto): SECRET 123456/ }).first().click(); await page.locator('.content-editor').waitFor();
     const done = page.locator('.workspace-editor').getByRole('button', { name: 'Listo', exact: true }); assert(await done.isEnabled(), 'Selecting an element alone is not a draft.');
     await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('UI REPLACED'); await page.waitForFunction(() => document.querySelector('.workspace-editor .edit-pdf-done')?.disabled);
     await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).click(); await page.locator('.pdf-content-picker[data-picker-state="ready"]').waitFor({ timeout: 60000 });
     await done.click(); await page.locator('.workspace-editor').waitFor({ state: 'detached' });
-    await page.getByRole('button', { name: 'Deshacer (Ctrl+Z)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-    const bytes = await save(page, 'ui-edited.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('UI REPLACED')); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE THIS TEXT')); return { originalTextRemoved: true, undoRedoContent: true };
-  });
+    await desktopDocumentAction(page, 'Deshacer'); await page.locator('.loading-overlay').waitFor({ state: 'detached' }); await desktopDocumentAction(page, 'Rehacer'); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    const download = await tabletDownload(page), target = path.join(output, 'ui-edited.pdf'); await (await download).saveAs(target); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    const bytes = new Uint8Array(fs.readFileSync(target)), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('UI REPLACED')); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE THIS TEXT')); return { originalTextRemoved: true, undoRedoContent: true };
+  }, androidTablet());
   await check('redaction-removes-content', async page => {
     await tools(page, 'Censurar'); await drawArea(page, [30, 340, 250, 380]); await page.getByRole('button', { name: 'Revisar 1 área', exact: true }).click(); await page.getByRole('button', { name: 'Censurar 1 área', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached' });
     const bytes = await save(page, 'ui-redacted.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE')); return { dataRemoved: true };

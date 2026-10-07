@@ -1,4 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import EditLayer from '../edit/EditLayer';
+import { ShapeSvg } from '../edit/ShapeLayer';
+import type { EditStore } from '../edit/store';
+import type { LoadedDocument } from '../types';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { LoaderCircle, MessageSquare } from 'lucide-react';
 import type { Annotation, Tool, SearchResult, PDFNavigationTarget } from '../types';
@@ -140,19 +144,24 @@ type Props = {
   onCommentHighlight?: (annotation: Annotation) => void;
   onArea: (area: Area) => void;
   redactions: Area[];
+  /** Present while Editar is open on desktop. */
+  edit?: { store: EditStore; doc: LoadedDocument };
 };
 
 export default memo(function PDFPage(props: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const nearby = useNearby(ref, '.reading-area', props.number === 1, '.pdf-stack');
-  const [page, setPage] = useState<PDFPageProxy | null>(null);
+  // After an edit the document is reopened: a nearby page keeps showing its old
+  // pixels until the new revision's page is ready, then swaps it in place.
+  const [loaded, setLoaded] = useState<{ pdf: PDFDocumentProxy; page: PDFPageProxy } | null>(null);
   const [error, setError] = useState('');
+  const page = loaded && (loaded.pdf === props.pdf || nearby) ? loaded.page : null;
   useEffect(() => {
-    if (!nearby || page) return;
+    if (!nearby || loaded?.pdf === props.pdf) return;
     let alive = true;
-    props.pdf.getPage(props.number).then(p => { if (alive) setPage(p); }).catch(() => { if (alive) setError('No se pudo cargar esta página.'); });
+    props.pdf.getPage(props.number).then(p => { if (alive) setLoaded({ pdf: props.pdf, page: p }); }).catch(() => { if (alive) setError('No se pudo cargar esta página.'); });
     return () => { alive = false; };
-  }, [nearby, page, props.pdf, props.number]);
+  }, [nearby, loaded, props.pdf, props.number]);
   const rotated = props.rotation % 180 !== 0;
   const viewport = page?.getViewport({ scale: props.scale, rotation: (page.rotate + props.rotation) % 360 });
   const width = viewport?.width ?? (rotated ? props.dimensions.height : props.dimensions.width) * props.scale;
@@ -165,11 +174,12 @@ export default memo(function PDFPage(props: Props) {
   </div>;
 });
 
-function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, inkOpacity = 1, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
+function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, inkOpacity = 1, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number, edit }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detailRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const textRotation = useRef<number | null>(null);
+  const textPage = useRef<PDFPageProxy | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -186,6 +196,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
   const lastSearchScroll = useRef('');
   const [links, setLinks] = useState<{ rect: number[]; target: PDFNavigationTarget }[]>([]);
   const viewport = useMemo(() => page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 }), [page, scale, rotation]);
+  const shapes = useMemo(() => annotations.filter(annotation => annotation.kind === 'shape'), [annotations]);
 
   function revealActiveSearch() {
     const active = activeSearchRef.current;
@@ -222,7 +233,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     if (!canvas || !container) return;
     // The text layer follows --total-scale-factor, so zoom keeps it (and any
     // selection) and repaints the stretched bitmap once the zoom settles.
-    const keepText = textRotation.current === rotation;
+    const keepText = textRotation.current === rotation && textPage.current === page;
     setFailed(false);
     if (!keepText) rendering.current = true;
     canvas.dataset.rendering = 'true';
@@ -268,7 +279,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
           container.setAttribute('data-main-rotation', nextText.getAttribute('data-main-rotation') || '0');
           container.dataset.searchText = nextText.dataset.searchText;
           container.replaceChildren(...nextText.childNodes);
-          textRotation.current = rotation;
+          textRotation.current = rotation; textPage.current = page;
           markSearch(container, queryRef.current, activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined);
           revealActiveSearch();
         }
@@ -285,12 +296,14 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     // Search is updated separately to avoid rerendering the PDF canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, scale, rotation]);
+  // PDF.js keeps operator lists and decoded images until cleanup(). WebKit frees
+  // a canvas backing store only when it is resized or collected, but a new
+  // revision of the page draws over the old bitmap instead of blanking it first.
+  useEffect(() => () => { page.cleanup(); }, [page]);
   useEffect(() => {
-    // PDF.js keeps operator lists and decoded images until cleanup(); WebKit
-    // frees a canvas backing store only when it is resized or collected.
     const canvas = canvasRef.current;
-    return () => { if (canvas) canvas.width = canvas.height = 0; page.cleanup(); };
-  }, [page]);
+    return () => { if (canvas) canvas.width = canvas.height = 0; };
+  }, []);
   useEffect(() => {
     // The full-page bitmap is capped by the pixel budget. When zoom drops it
     // below the screen density, repaint only the visible part at full density.
@@ -591,6 +604,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
       })}
     </div>
+    <ShapeSvg viewport={viewport} shapes={shapes} />
     <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} opacity={inkOpacity} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
@@ -605,6 +619,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     </div>
     {!rendered && <div className="page-loading">{failed ? 'No se pudo mostrar la página.' : <LoaderCircle size={22} className="spin" />}</div>}
     {rendered && failed && <div className="page-render-error" role="alert">No se pudo actualizar esta página.</div>}
+    {edit && <EditLayer store={edit.store} doc={edit.doc} number={number} viewport={viewport} page={page} canvas={canvasRef} shapes={shapes} />}
     {highlightMenu && canAnnotate && <HighlightAnnotationMenu x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); requestAnimationFrame(() => document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true })); }} />}
   </div>;
 }

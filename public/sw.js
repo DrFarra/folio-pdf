@@ -1,6 +1,6 @@
 // Folio's version; scripts/check-release-version.mjs keeps it equal to package.json.
 // A new version gets a new cache and the previous ones are deleted.
-const VERSION = '0.9.3';
+const VERSION = '0.9.4';
 const CACHE = `folio-${VERSION}`;
 const SHELL = ['/', '/theme.js', '/folio.svg', '/manifest.webmanifest', '/apple-touch-icon.png', '/folio-192.png', '/folio-512.png',
   '/sample.pdf', '/licenses/LICENSE.txt', '/fonts/dm-sans-regular.ttf', '/fonts/dm-sans-semibold.ttf'];

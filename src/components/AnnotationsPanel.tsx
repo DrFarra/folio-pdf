@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Download, GraduationCap, Highlighter, PenLine, Search, Share2, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, Copy, Download, GraduationCap, Highlighter, PenLine, Shapes, Search, Share2, StickyNote, Trash2, X } from 'lucide-react';
 import type { Annotation } from '../types';
 import { normalize, plural } from '../pdf';
 import { HIGHLIGHT_PRESETS } from './HighlightColorPicker';
@@ -12,7 +12,7 @@ type Props = {
   pageName: (page: number) => string; onSelect: (annotation: Annotation) => void; onDelete: (annotation: Annotation) => void;
   onEditNote: (annotation: Annotation) => void; onCopy: (text: string) => Promise<void>; onSave: (text: string, name: string) => Promise<boolean>;
 };
-const KINDS: { id: Kind; label: string }[] = [{ id: 'all', label: 'Todo' }, { id: 'highlight', label: 'Resaltados' }, { id: 'note', label: 'Notas' }, { id: 'ink', label: 'Dibujos' }];
+const KINDS: { id: Kind; label: string }[] = [{ id: 'all', label: 'Todo' }, { id: 'highlight', label: 'Resaltados' }, { id: 'note', label: 'Notas' }, { id: 'ink', label: 'Dibujos' }, { id: 'shape', label: 'Formas' }];
 export const colorName = (hex: string) => HIGHLIGHT_PRESETS.find(([, value]) => value.toLowerCase() === hex.toLowerCase())?.[0] || 'Color personalizado';
 // The reader's meaning for a color when there is one, else its name.
 const meaning = (hex: string) => highlightLabel(hex) || colorName(hex);
@@ -49,7 +49,7 @@ export function AnnotationsPanel(props: Props) {
       for (const item of items) {
         if (item.kind === 'highlight') lines.push(`> ${item.text.replace(/\s*\n\s*/g, ' ').trim() || 'Texto resaltado'}`, `> — *${meaning(item.color)}*`, '');
         else if (item.kind === 'note') lines.push(`- **Nota:** ${item.text.trim().replace(/\n/g, '\n  ')}`, '');
-        else lines.push('- _Dibujo a mano_', '');
+        else lines.push(item.kind === 'shape' ? '- _Forma_' : '- _Dibujo a mano_', '');
       }
     }
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
@@ -98,9 +98,9 @@ export function AnnotationsPanel(props: Props) {
     {groups.length ? groups.map(([page, items]) => <section key={page} className="annotations-group" aria-label={`Página ${props.pageName(page)}`}>
       <h3>Página {props.pageName(page)}<span>{items.length}</span></h3>
       {items.map(item => <article key={item.id} className={`annotation-card ${item.kind}${props.activeId === item.id ? ' selected' : ''}`} style={{ '--annotation-color': item.color } as React.CSSProperties}>
-        <button type="button" className="annotation-open" aria-label={`Ir a ${item.kind === 'note' ? 'la nota' : item.kind === 'ink' ? 'el dibujo' : 'el resaltado'} de la página ${props.pageName(page)}`} onClick={() => props.onSelect(item)}>
-          <span className="annotation-kind" aria-hidden="true">{item.kind === 'note' ? <StickyNote size={14} /> : item.kind === 'ink' ? <PenLine size={14} /> : <Highlighter size={14} />}</span>
-          <span className="annotation-text">{item.kind === 'highlight' && highlightLabel(item.color) && <span className="annotation-label">{highlightLabel(item.color)}</span>}<span className="annotation-body">{item.kind === 'ink' ? 'Dibujo a mano' : item.text.trim() || (item.kind === 'note' ? 'Nota vacía' : 'Texto resaltado')}</span></span>
+        <button type="button" className="annotation-open" aria-label={`Ir a ${item.kind === 'note' ? 'la nota' : item.kind === 'ink' ? 'el dibujo' : item.kind === 'shape' ? 'la forma' : 'el resaltado'} de la página ${props.pageName(page)}`} onClick={() => props.onSelect(item)}>
+          <span className="annotation-kind" aria-hidden="true">{item.kind === 'note' ? <StickyNote size={14} /> : item.kind === 'ink' ? <PenLine size={14} /> : item.kind === 'shape' ? <Shapes size={14} /> : <Highlighter size={14} />}</span>
+          <span className="annotation-text">{item.kind === 'highlight' && highlightLabel(item.color) && <span className="annotation-label">{highlightLabel(item.color)}</span>}<span className="annotation-body">{item.kind === 'ink' ? 'Dibujo a mano' : item.kind === 'shape' ? { rect: 'Rectángulo', ellipse: 'Elipse', line: 'Línea', arrow: 'Flecha' }[item.shape || 'rect'] : item.text.trim() || (item.kind === 'note' ? 'Nota vacía' : 'Texto resaltado')}</span></span>
         </button>
         <div className="annotation-actions">
           {item.kind === 'note' && <button type="button" className="note-edit" disabled={!props.editable} onClick={() => props.onEditNote(item)}>Editar nota</button>}

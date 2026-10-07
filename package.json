@@ -1,6 +1,6 @@
 {
   "name": "folio-pdf",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "node scripts/check-release-version.mjs && node scripts/prepare-resources.mjs && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "demo": "node scripts/create-demo.mjs",
-    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:page-content:engine && npm run test:content-actions:engine && npm run test:content-actions:ui && npm run test:pdf-editing:ui && npm run test:pdf-content-picker:ui && npm run test:inline-editor && npm run test:conversion && npm run test:split && npm run test:responsive-workbench && npm run test:content-editor:engine && npm run test:content-editor:ui && npm run test:content-editor:races && npm run test:content-editor:layout && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:focus-modality && npm run test:organizer-layout && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:column-selection && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics && npm run test:explorer-drawers && npm run test:file-picker && npm run test:ink && npm run test:drawing && npm run test:pencil-palette && npm run test:service-worker && npm run test:native-scripts",
+    "test": "npm run build && npm run test:fixtures && npm run test:engine && npm run test:operations && npm run test:page-content:engine && npm run test:content-actions:engine && npm run test:edit-engine && npm run test:content-actions:ui && npm run test:pdf-editing:ui && npm run test:edit-mode:ui && npm run test:pdf-content-picker:ui && npm run test:inline-editor && npm run test:conversion && npm run test:split && npm run test:responsive-workbench && npm run test:content-editor:engine && npm run test:content-editor:ui && npm run test:content-editor:races && npm run test:content-editor:layout && npm run test:signatures && node scripts/tests/layout.mjs && npm run test:workbench && npm run test:highlighting && npm run test:tabs && npm run test:focus-modality && npm run test:organizer-layout && npm run test:bookmarks && npm run test:selection-menu && npm run test:highlight-mode && npm run test:column-selection && npm run test:interop && npm run test:reading-settings && npm run test:remove-highlights && npm run test:bookmark-drag && npm run test:mobile-architecture && npm run test:library-storage && npm run test:search-navigation && npm run test:reader-ergonomics && npm run test:explorer-drawers && npm run test:file-picker && npm run test:ink && npm run test:drawing && npm run test:pencil-palette && npm run test:service-worker && npm run test:native-scripts",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:windows": "tauri build --target x86_64-pc-windows-msvc",
@@ -48,6 +48,8 @@
     "test:pdf-content-picker:ui": "node scripts/tests/pdf-content-picker-ui.mjs",
     "test:conversion": "node scripts/tests/conversion.mjs",
     "test:split": "node scripts/tests/split.mjs",
+    "test:edit-engine": "node scripts/tests/edit-engine.mjs",
+    "test:edit-mode:ui": "node scripts/tests/edit-mode-ui.mjs",
     "test:content-editor:races": "node scripts/tests/content-editor-races.mjs",
     "test:responsive-workbench": "node scripts/tests/responsive-workbench.mjs",
     "test:inline-editor": "node scripts/tests/inline-editor-integration.mjs",

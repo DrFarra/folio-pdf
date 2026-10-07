@@ -5,7 +5,7 @@ export type SideTab = 'pages' | 'outline' | 'bookmarks';
 export type Annotation = {
   id: string;
   page: number;
-  kind: 'highlight' | 'note' | 'ink';
+  kind: 'highlight' | 'note' | 'ink' | 'shape';
   rect: [number, number, number, number];
   color: string;
   text: string;
@@ -19,6 +19,10 @@ export type Annotation = {
   /** PDF coordinates; each path is [x, y, x, y, ...], independent of zoom. */
   inkPaths?: number[][];
   strokeWidth?: number;
+  /** Shapes drawn in Editar: border `color`, optional `fill`, and for lines their two ends in PDF coordinates. */
+  shape?: 'rect' | 'ellipse' | 'line' | 'arrow';
+  fill?: string | null;
+  line?: [number, number, number, number];
 };
 export type BookmarkNode = {
   id: string;
@@ -41,6 +45,8 @@ export type Session = {
   nativeLegacySession?: boolean;
 };
 export type LoadedDocument = {
+  /** Fingerprint of the annotations inside `bytes`, fixed when the bytes are loaded. */
+  bytesAnnotations?: string;
   drive?: import('./drive').DriveBinding;
   pdf: PDFDocumentProxy;
   bytes: Uint8Array;

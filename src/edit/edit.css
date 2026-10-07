@@ -1,0 +1,53 @@
+/* Editar inside the reader: nothing is outlined at rest; hover draws a hairline,
+   the selection a frame with handles. */
+.edit-layer{position:absolute;inset:0;z-index:6;user-select:none;-webkit-user-select:none;touch-action:none}
+.edit-layer.committing{cursor:progress!important}
+.edit-hover,.edit-selection,.edit-progress{position:absolute;pointer-events:none;box-sizing:border-box;border-radius:2px}
+.edit-hover{outline:1px solid color-mix(in srgb,var(--accent) 75%,transparent);outline-offset:2px}
+.edit-hover.locked{outline:1px dashed color-mix(in srgb,var(--muted) 70%,transparent)}
+.edit-selection{outline:1.5px solid var(--accent);outline-offset:2px}
+.edit-selection.dragging{outline-style:dashed;background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.edit-handle{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:2px;background:var(--surface);border:1.5px solid var(--accent);box-shadow:0 1px 2px #0003;pointer-events:auto;box-sizing:border-box}
+.edit-handle.handle-nw,.edit-handle.handle-w,.edit-handle.handle-sw{left:-2px}
+.edit-handle.handle-ne,.edit-handle.handle-e,.edit-handle.handle-se{left:calc(100% + 2px)}
+.edit-handle.handle-n,.edit-handle.handle-s{left:50%}
+.edit-handle.handle-nw,.edit-handle.handle-n,.edit-handle.handle-ne{top:-2px}
+.edit-handle.handle-w,.edit-handle.handle-e{top:50%}
+.edit-handle.handle-sw,.edit-handle.handle-s,.edit-handle.handle-se{top:calc(100% + 2px)}
+.edit-handle.handle-nw,.edit-handle.handle-se{cursor:nwse-resize}.edit-handle.handle-ne,.edit-handle.handle-sw{cursor:nesw-resize}
+.edit-handle.handle-n,.edit-handle.handle-s{cursor:ns-resize}.edit-handle.handle-e,.edit-handle.handle-w{cursor:ew-resize}
+.edit-handle.handle-end{border-radius:50%;cursor:move}
+.kind-text>.edit-handle{width:6px;height:18px;margin:-9px 0 0 -3px;border-radius:3px}
+.edit-mask,.edit-snapshot{position:absolute;pointer-events:none}
+.edit-progress{outline:1.5px solid var(--accent);outline-offset:2px;animation:edit-pulse 1s ease-in-out infinite alternate}
+@keyframes edit-pulse{from{outline-color:color-mix(in srgb,var(--accent) 30%,transparent)}to{outline-color:var(--accent)}}
+@media(prefers-reduced-motion:reduce){.edit-progress{animation:none}}
+.edit-draft{position:absolute;z-index:2}
+.edit-draft>.edit-mask{z-index:0}
+.edit-draft>textarea{position:relative;z-index:1;display:block;width:100%;box-sizing:border-box;margin:0;padding:0;border:0;border-radius:0;resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;outline:1.5px solid var(--accent);outline-offset:2px;caret-color:var(--accent);font-kerning:normal}
+.edit-draft>textarea::placeholder{color:color-mix(in srgb,currentColor 40%,transparent)}
+.edit-draft>.draft-width{z-index:2;top:50%;left:calc(100% + 2px);width:6px;height:18px;margin:-9px 0 0 -3px;border-radius:3px;cursor:ew-resize}
+.shape-layer,.edit-shape-preview{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.edit-shape-preview{z-index:1;opacity:.85}
+
+/* The second toolbar row, like Anotar's. */
+.edit-toolbar{display:flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--bg);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.edit-toolbar::-webkit-scrollbar{display:none}
+.edit-toolbar .tool-group{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.edit-toolbar .edit-divider{width:1px;height:22px;background:var(--line);margin:0 6px;flex-shrink:0}
+.edit-properties{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.edit-properties select,.edit-properties input[type=number]{height:30px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;padding:0 6px}
+.edit-properties select{max-width:190px}
+.edit-properties input[type=number]{width:56px}
+.edit-properties label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.edit-color{position:relative;width:30px;height:30px;border:1px solid var(--line);border-radius:6px;background:var(--surface);display:grid;place-items:center;cursor:pointer;flex-shrink:0}
+.edit-color>span{width:16px;height:16px;border-radius:4px;border:1px solid #0002}
+.edit-color>span.empty{background:linear-gradient(135deg,transparent 45%,#d33 45% 55%,transparent 55%)}
+.edit-color>input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.edit-toggle{height:30px;min-width:30px;padding:0 6px;border-radius:6px;display:grid;place-items:center;color:var(--text);font-size:12px;white-space:nowrap}
+.edit-toggle[aria-pressed=true]{background:var(--accent-soft);color:var(--accent)}
+@media(hover:hover){.edit-toggle:hover:not(:disabled){background:var(--hover)}}
+.edit-properties input[type=range]{width:90px;accent-color:var(--accent)}
+.edit-status{margin-left:auto;padding-left:10px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1;display:flex;align-items:center;gap:6px}
+.edit-status.notice{color:var(--text)}
+.edit-toolbar>.text-button{flex-shrink:0}

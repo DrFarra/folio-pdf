@@ -154,9 +154,12 @@ await check('masked-or-cropped-images-cannot-bypass-the-safe-selection-gate', as
   for (const scenario of ['mask', 'crop']) {
     const pdf = await PDFDocument.create(), page = pdf.addPage([320, 320]), image = await pdf.embedPng(picture(scenario === 'mask')); page.drawImage(image, { x: 20, y: 20, width: 100, height: 50 });
     if (scenario === 'crop') page.setCropBox(50, 0, 250, 320);
-    const source = await pdf.save(), before = hash(source), item = content(source).items.find(item => item.kind === 'image'); assert(item && !item.editable); assert.throws(() => remove(source, item), /recortada|máscara/); assert.equal(hash(source), before);
+    const source = await pdf.save(), before = hash(source), item = content(source).items.find(item => item.kind === 'image');
+    // A PNG's own alpha is transparency, not an effect: it can be removed like any image.
+    if (scenario === 'mask') { assert(item?.editable && item.transparent); assert.notEqual(hash(remove(source, item)), before); continue; }
+    assert(item && !item.editable); assert.throws(() => remove(source, item), /recortada|máscara/); assert.equal(hash(source), before);
   }
-  return { softMasksRejected: true, partialCropRejected: true, originalUnchanged: true };
+  return { transparentImagesRemovable: true, partialCropRejected: true, originalUnchanged: true };
 });
 
 await check('native-crop-and-all-quarter-turns-remove-or-duplicate-the-intended-image', async () => {

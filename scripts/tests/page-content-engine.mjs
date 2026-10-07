@@ -160,7 +160,10 @@ await check('ambiguous-images-clipping-masks-skew-and-reflection-are-explained-a
       const doc = new mupdf.PDFDocument(source), object = doc.findPage(0), contents = object.get('Contents'), list = doc.newArray();
       list.push(doc.addStream('q 80 150 60 60 re W n\n', {})); for (let i = 0; i < contents.length; i++) list.push(contents.get(i)); list.push(doc.addStream('Q\n', {})); object.put('Contents', list); source = saveDoc(doc); doc.destroy();
     }
-    const info = content(source), found = info.items.filter(item => item.kind === 'image'); assert(found.length); assert(found.every(item => !item.editable && item.reason));
+    const info = content(source), found = info.items.filter(item => item.kind === 'image'); assert(found.length);
+    // A PNG's own alpha is transparency: editable in place, but not exported for the touch editor.
+    if (scenario === 'mask') { assert(found.every(item => item.editable && item.transparent)); found.forEach(item => assert.throws(() => pageImage(source, 1, item.id), /transparencia/)); cases.push(scenario); continue; }
+    assert(found.every(item => !item.editable && item.reason));
     found.forEach(item => assert.throws(() => pageImage(source, 1, item.id), new RegExp(item.reason.split(':')[0]))); assert(info.warnings.length); cases.push(scenario);
   }
   return { cases, originalImageExtractionCannotBypassReadOnlyState: true };

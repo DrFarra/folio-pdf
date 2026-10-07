@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { androidTablet, desktopDocumentAction, openTabletEditor } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -27,14 +28,37 @@ const server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/v
 let browser, log = '', frontendEntry;
 const results = [], errors = [];
 server.stdout.on('data', value => { log += value; }); server.stderr.on('data', value => { log += value; });
-const tab = (page, source) => page.getByRole('tab', { name: source.name, exact: true });
-const pageNumber = page => page.getByRole('textbox', { name: 'Número de página', exact: true });
-const zoom = page => page.getByRole('combobox', { name: 'Nivel de zoom', exact: true });
+// Touch layouts keep this editor (the desktop edits inside the reader, see
+// edit-mode-ui.mjs). A tablet switches documents from the header's switcher,
+// shows the page in the header and sets the zoom in Vista del documento.
+const switcher = page => page.getByRole('button', { name: 'Documentos abiertos y recientes', exact: true });
+const pageNumber = async page => (await page.locator('.app-header .tablet-page-jump').innerText()).split('/')[0].trim();
+const pageIs = (page, number) => page.waitForFunction(number => document.querySelector('.app-header .tablet-page-jump')?.textContent.split('/')[0].trim() === number, number);
+async function switchTo(page, source) {
+  await switcher(page).click();
+  const list = page.getByRole('dialog', { name: 'Documentos abiertos y recientes', exact: true });
+  await list.getByRole('button', { name: `Cambiar a ${source.name}`, exact: true }).click();
+  await active(page, source);
+}
+async function jumpTo(page, number) {
+  await page.getByRole('button', { name: 'Ir a página', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Ir a página', exact: true });
+  await dialog.locator('#jump-page-number').fill(number); await dialog.locator('#jump-page-number').press('Enter');
+  await dialog.waitFor({ state: 'detached' }); await pageIs(page, number);
+}
+async function viewZoom(page, value) {
+  await desktopDocumentAction(page, 'Vista del documento');
+  const dialog = page.getByRole('dialog', { name: 'Vista del documento', exact: true }), select = dialog.getByRole('combobox', { name: 'Nivel de zoom', exact: true });
+  if (value) await select.selectOption(value);
+  const current = await select.inputValue();
+  await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+  return current;
+}
 const picker = (page, number = 1) => page.locator(`.pdf-content-picker[data-page="${number}"][data-picker-state="ready"]`).waitFor({ timeout: 60000 });
 const settle = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
 async function active(page, source) {
-  await page.waitForFunction(name => [...document.querySelectorAll('[role="tab"]')].some(node => node.getAttribute('aria-label') === name && node.getAttribute('aria-selected') === 'true'), source.name);
+  await page.waitForFunction(name => document.querySelector('.app-header .tablet-document-selector > span')?.textContent === name, source.name);
   await page.getByRole('heading', { name: source.name, exact: true }).waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
 }
@@ -42,11 +66,11 @@ async function open(page, source) {
   await page.locator('.app-header input[type="file"]').setInputFiles(source.file); await active(page, source);
 }
 async function edit(page, number = 1) {
-  await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
-  await page.getByRole('button', { name: 'Editar PDF', exact: true }).click(); await picker(page, number);
+  await openTabletEditor(page); await picker(page, number);
   assert.equal(await page.locator('dialog[open]').count(), 0);
   assert.equal(await page.locator('main.reader>.workspace-editor').count(), 1);
-  assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true);
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.layout), 'tablet');
+  assert.equal(await page.locator('.app-header .tablet-document-selector').isVisible(), true);
 }
 async function closeEditor(page) {
   await page.getByRole('button', { name: 'Listo', exact: true }).click();
@@ -60,12 +84,12 @@ async function disabledPointerClick(page, control) {
 }
 async function assertDraft(page, value) {
   await active(page, a);
-  assert.equal(await page.locator('.document-tab [role="tab"]').count(), 2);
+  assert.equal(await page.locator('.app-header .tablet-document-selector small').innerText(), '2');
   assert.equal(await page.getByRole('textbox', { name: 'Texto', exact: true }).inputValue(), value);
   assert.equal(await page.locator('dialog[open]').count(), 0);
 }
 async function check(id, run) {
-  const context = await browser.newContext({ viewport: { width: 1360, height: 720 }, acceptDownloads: true });
+  const context = await browser.newContext({ ...androidTablet(), acceptDownloads: true });
   const page = await context.newPage(); page.setDefaultTimeout(25000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
   try {
@@ -86,11 +110,11 @@ try {
   assert(started, `Preview did not start: ${log}`); assert(frontendEntry?.startsWith('/assets/'), 'The integration suite must exercise the built frontend.');
   browser = await chromium.launch({ executablePath, headless: true });
   await check('inline-draft-guards-tabs-shortcuts-and-document-actions', async page => {
-    await open(page, b); await tab(page, a).click(); await active(page, a);
+    await open(page, b); await switchTo(page, a);
     // A real history entry makes Ctrl+Z meaningful: an unguarded reader undo
     // would remove this bookmark while the selected text draft remains visible.
     await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click();
-    await page.getByRole('button', { name: 'Editar marcador de esta página', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Quitar marcador de esta página', exact: true }).waitFor();
     await edit(page);
     await page.getByRole('button', { name: 'Párrafo: INLINE A PAGE 1', exact: true }).click();
     await page.locator('.content-editor').waitFor();
@@ -101,9 +125,8 @@ try {
     for (const key of ['Control+Tab', 'Control+w', 'Control+z', 'Control+Shift+z', 'Control+y', 'Control+s', 'Control+p', 'Control+o']) {
       await page.keyboard.press(key); await settle(page); await assertDraft(page, draft);
     }
-    await disabledPointerClick(page, tab(page, b)); await assertDraft(page, draft);
-    await disabledPointerClick(page, page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true })); await assertDraft(page, draft);
-    for (const name of ['Abrir PDF', 'Listo']) {
+    // The header's switcher, library and action sheet are the tablet's ways to change or close documents.
+    for (const name of ['Documentos abiertos y recientes', 'Volver a la biblioteca', 'Más acciones del documento', 'Listo']) {
       await disabledPointerClick(page, page.getByRole('button', { name, exact: true })); await assertDraft(page, draft);
     }
     // A supplied file reaches openFiles directly, bypassing the disabled +
@@ -111,25 +134,26 @@ try {
     await page.locator('.app-header input[type="file"]').setInputFiles(b.file); await settle(page); await assertDraft(page, draft);
     await page.screenshot({ path: path.join(output, 'inline-editor-draft-guards.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page);
-    assert.equal(await tab(page, b).isDisabled(), false);
     assert.equal(await page.getByRole('button', { name: 'Listo', exact: true }).isDisabled(), false);
     await closeEditor(page);
-    assert.equal(await page.getByRole('button', { name: 'Editar marcador de esta página', exact: true }).isVisible(), true, 'Global undo must not remove the reader history entry behind a draft.');
-    await edit(page); await tab(page, b).click(); await active(page, b);
+    assert.equal(await switcher(page).isDisabled(), false);
+    assert.equal(await page.getByRole('button', { name: 'Quitar marcador de esta página', exact: true }).isVisible(), true, 'Global undo must not remove the reader history entry behind a draft.');
+    // Without a draft, the keyboard's document switch leaves the editor.
+    await edit(page); await page.keyboard.press('Control+Tab'); await active(page, b);
     assert.equal(await page.locator('.workspace-editor').count(), 0);
-    await tab(page, a).click(); await active(page, a);
-    assert.equal(await page.getByRole('button', { name: 'Editar marcador de esta página', exact: true }).isVisible(), true);
-    return { tabsVisible: true, draftPreserved: true, guardedShortcuts: 8, guardedPointerActions: 5, guardedFileCallback: true, undoHistoryUnchanged: true, discardEnablesTabSwitch: true };
+    await switchTo(page, a);
+    assert.equal(await page.getByRole('button', { name: 'Quitar marcador de esta página', exact: true }).isVisible(), true);
+    return { headerVisible: true, draftPreserved: true, guardedShortcuts: 8, guardedPointerActions: 4, guardedFileCallback: true, undoHistoryUnchanged: true, discardEnablesDocumentSwitch: true };
   });
   await check('inline-page-navigation-and-reader-zoom-scroll-restoration', async page => {
-    await open(page, b); await tab(page, a).click(); await active(page, a);
+    await open(page, b); await switchTo(page, a);
     await edit(page);
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
     await closeEditor(page);
-    await page.waitForFunction(() => document.querySelector('input[aria-label="Número de página"]')?.value === '2');
+    await pageIs(page, '2');
     await page.locator('.pdf-page-wrap[data-page-number="2"] .page-loading').waitFor({ state: 'detached' });
     await page.waitForTimeout(200);
-    assert.equal(await pageNumber(page).inputValue(), '2', 'Leaving the editor without applying must keep the intentionally selected page.');
+    assert.equal(await pageNumber(page), '2', 'Leaving the editor without applying must keep the intentionally selected page.');
     const page2 = await page.locator('.reading-area').evaluate(reader => {
       const sheet = reader.querySelector('.pdf-page-wrap[data-page-number="2"]'), bounds = reader.getBoundingClientRect(), box = sheet.getBoundingClientRect();
       return { readerTop: bounds.top, pageTop: box.top, readerBottom: bounds.bottom, pageBottom: box.bottom, scrollTop: reader.scrollTop };
@@ -142,13 +166,13 @@ try {
     const organizer = page.getByRole('dialog', { name: 'Organizar páginas', exact: true }); await organizer.waitFor();
     await organizer.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
     await organizer.waitFor({ state: 'detached' }); await settle(page); await page.waitForTimeout(200);
-    assert.equal(await pageNumber(page).inputValue(), '2', 'Opening another tool from the inline editor must restore the selected reading page.');
+    assert.equal(await pageNumber(page), '2', 'Opening another tool from the inline editor must restore the selected reading page.');
     await edit(page, 2);
     await page.getByRole('button', { name: 'Volver a Herramientas', exact: true }).click();
     // Adding text lives in Editar PDF; an area tool of the catalog draws on the reader.
     await page.getByRole('button', { name: 'Censurar', exact: true }).click();
     await page.locator('.workspace-editor').waitFor({ state: 'detached' }); await settle(page); await page.waitForTimeout(200);
-    assert.equal(await pageNumber(page).inputValue(), '2');
+    assert.equal(await pageNumber(page), '2');
     const area = await page.locator('.pdf-page-wrap[data-page-number="2"] .page-content').boundingBox(); assert(area);
     await page.mouse.move(area.x + area.width * .3, area.y + area.height * .4); await page.mouse.down();
     await page.mouse.move(area.x + area.width * .65, area.y + area.height * .6, { steps: 8 }); await page.mouse.up();
@@ -157,28 +181,27 @@ try {
     assert.equal(await review.getByText('Página 2 · Área 1', { exact: true }).count(), 1, 'Area selection must operate on the restored visible page.');
     await review.getByRole('button', { name: 'Cerrar diálogo', exact: true }).click(); await review.waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Terminar herramienta', exact: true }).click(); await settle(page);
-    assert.equal(await pageNumber(page).inputValue(), '2');
-    await pageNumber(page).fill('1'); await pageNumber(page).press('Enter');
-    await page.waitForFunction(() => document.querySelector('input[aria-label="Número de página"]')?.value === '1');
+    assert.equal(await pageNumber(page), '2');
+    await jumpTo(page, '1');
     const positions = [];
     for (const setting of ['150', 'width']) {
-      await zoom(page).selectOption(setting); await settle(page);
+      await viewZoom(page, setting); await settle(page);
       await page.locator('.pdf-page-wrap[data-page-number="1"] .page-loading').waitFor({ state: 'detached' });
       await page.locator('.reading-area').evaluate(reader => { reader.scrollTop = 143; reader.scrollLeft = 0; });
       await page.waitForTimeout(200);
-      assert.equal(await pageNumber(page).inputValue(), '1');
+      assert.equal(await pageNumber(page), '1');
       const before = await page.locator('.reading-area').evaluate(reader => ({ top: reader.scrollTop, left: reader.scrollLeft }));
       assert(before.top > 100);
       await edit(page); await closeEditor(page);
       await page.waitForTimeout(250);
       const after = await page.locator('.reading-area').evaluate(reader => ({ top: reader.scrollTop, left: reader.scrollLeft }));
-      assert.equal(await zoom(page).inputValue(), setting); assert.equal(await pageNumber(page).inputValue(), '1');
+      assert.equal(await viewZoom(page), setting); assert.equal(await pageNumber(page), '1');
       assert(Math.abs(after.top - before.top) <= 2, `${setting}: opening and leaving editing changed vertical position ${before.top} → ${after.top}.`);
       assert(Math.abs(after.left - before.left) <= 2);
-      await edit(page); await tab(page, b).click(); await active(page, b);
-      await tab(page, a).click(); await active(page, a); await page.waitForTimeout(250);
+      await edit(page); await page.keyboard.press('Control+Tab'); await active(page, b);
+      await switchTo(page, a); await page.waitForTimeout(250);
       const afterTabs = await page.locator('.reading-area').evaluate(reader => ({ top: reader.scrollTop, left: reader.scrollLeft }));
-      assert.equal(await zoom(page).inputValue(), setting); assert.equal(await pageNumber(page).inputValue(), '1');
+      assert.equal(await viewZoom(page), setting); assert.equal(await pageNumber(page), '1');
       assert(Math.abs(afterTabs.top - before.top) <= 2, `${setting}: switching tabs from the selector changed vertical position ${before.top} → ${afterTabs.top}.`);
       assert(Math.abs(afterTabs.left - before.left) <= 2);
       positions.push({ zoom: setting, before, after, afterTabs });

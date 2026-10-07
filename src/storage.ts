@@ -27,7 +27,9 @@ function parseSession(raw: Partial<Session> | null): Session {
       documentRevision: typeof raw.documentRevision === 'string' ? raw.documentRevision : undefined,
       annotations: raw.annotations.filter(a => !!a && typeof a === 'object' &&
         typeof a.id === 'string' && Number.isInteger(a.page) && Number(a.page) > 0 &&
-        (a.kind === 'note' || a.kind === 'highlight' || a.kind === 'ink' && Array.isArray(a.inkPaths) && a.inkPaths.length > 0 && a.inkPaths.every(path => Array.isArray(path) && path.length >= 4 && path.length <= 20000 && path.length % 2 === 0 && path.every(Number.isFinite)) && Number.isFinite(a.strokeWidth) && a.strokeWidth! > 0 && a.strokeWidth! <= 50) && typeof a.text === 'string' &&
+        (a.kind === 'note' || a.kind === 'highlight' || a.kind === 'ink' && Array.isArray(a.inkPaths) && a.inkPaths.length > 0 && a.inkPaths.every(path => Array.isArray(path) && path.length >= 4 && path.length <= 20000 && path.length % 2 === 0 && path.every(Number.isFinite)) && Number.isFinite(a.strokeWidth) && a.strokeWidth! > 0 && a.strokeWidth! <= 50 ||
+          a.kind === 'shape' && ['rect', 'ellipse', 'line', 'arrow'].includes(a.shape!) && Number.isFinite(a.strokeWidth) && a.strokeWidth! >= 0 && a.strokeWidth! <= 50 &&
+          (a.fill == null || /^#[0-9a-f]{6}$/i.test(a.fill)) && (a.line === undefined || Array.isArray(a.line) && a.line.length === 4 && a.line.every(Number.isFinite))) && typeof a.text === 'string' &&
         Array.isArray(a.rect) && a.rect.length === 4 && a.rect.every(Number.isFinite) &&
         typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color)),
       bookmarks: normalizeBookmarks(raw.bookmarks),

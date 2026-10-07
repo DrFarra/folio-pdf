@@ -35,6 +35,10 @@ import { readReadingPreferences } from './reading-preferences';
 import { addPageBookmark, deleteBookmark, hasBookmarkPage, normalizeBookmarks, remapBookmarks } from './bookmarks';
 import { commentSelection, highlightSelection } from './text-selection';
 import type { AnnotationDraft } from './text-selection';
+import { invoke } from '@tauri-apps/api/core';
+import { EditStore } from './edit/store';
+import EditToolbar, { readImage } from './edit/EditToolbar';
+import { editKey } from './edit/keys';
 import './tabs.css';
 import './mac-platform.css';
 import './mobile.css';
@@ -69,7 +73,7 @@ const SAMPLE_NAME = 'Guía de Folio.pdf';
 const fingerprints = new WeakMap<Annotation[], string>();
 const annotationFingerprint = (items: Annotation[]) => {
   let fingerprint = fingerprints.get(items);
-  if (fingerprint === undefined) fingerprints.set(items, fingerprint = JSON.stringify(items.map(a => [a.id, a.page, a.kind, a.rect, a.text, a.color, a.quads, a.inkPaths, a.strokeWidth])));
+  if (fingerprint === undefined) fingerprints.set(items, fingerprint = JSON.stringify(items.map(a => [a.id, a.page, a.kind, a.rect, a.text, a.color, a.quads, a.inkPaths, a.strokeWidth, a.opacity, a.shape, a.fill, a.line])));
   return fingerprint;
 };
 const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -96,7 +100,7 @@ const nativeReadingThreshold = 32 * 1024 * 1024;
 // Small print stays readable: the visible part of the page is repainted at screen density.
 const MAX_ZOOM = 8;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
-type OpenContext = { drive?: DriveBinding; savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[] };
+type OpenContext = { drive?: DriveBinding; savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[]; quiet?: boolean };
 type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[] };
 type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single' | 'spread'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[] | null; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
 type DocumentTab = TabView & { key: string; doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[]; undo: History[]; redo: History[]; scrollTop: number; scrollLeft: number };
@@ -110,6 +114,10 @@ export default function App() {
   const [mobileActions, setMobileActions] = useState(false);
   const [mobileTabs, setMobileTabs] = useState(false);
   const [mobileAnnotating, setMobileAnnotating] = useState(false);
+  // Editar inside the reader (desktop): the pages stay, with an edit layer and toolbar.
+  const [editing, setEditing] = useState(false);
+  const editingRef = useRef(editing); editingRef.current = editing;
+  const editStore = useMemo(() => new EditStore(), []);
   const [readerChromeHidden, setReaderChromeHidden] = useState(false);
   const [doc, setDoc] = useState<LoadedDocument | null>(null);
   const [loading, setLoading] = useState(true);
@@ -322,6 +330,7 @@ export default function App() {
   function publishTabs() { setTabs([...tabsRef.current]); }
   function activateTab(tab: DocumentTab, focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab') {
     pageInputDirty.current = false;
+    if (tab.key !== activeTabRef.current) setEditing(false);
     activeTabRef.current = tab.key; setActiveTabKey(tab.key);
     docRef.current = tab.doc; annotationRef.current = tab.annotations; readingState.current = { page: tab.page, bookmarks: tab.bookmarks };
     undoStack.current = tab.undo; redoStack.current = tab.redo;
@@ -467,7 +476,8 @@ export default function App() {
     passwordCancelled.current = false;
     setPassword(null);
     loadingRef.current = true;
-    setLoading(true);
+    // An edit reopens the document in place, without covering the reader.
+    if (!context?.quiet) setLoading(true);
     try {
       const priorDocument = docRef.current;
       if (priorDocument && !context?.preserveHistory && !context?.savedCopy) {
@@ -575,7 +585,7 @@ export default function App() {
         : await readSession(id).catch(() => { sessionUnread = true; notify('No se pudieron cargar las anotaciones guardadas de este PDF. Ciérralo y vuelve a abrirlo antes de hacer cambios, o se reemplazarán.', 'error'); return { annotations: [], bookmarks: [], lastPage: 1 }; });
       if (!context && !readingPreferencesRef.current.restorePage) session.lastPage = 1;
       if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
-      const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isNative), name, size, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
+      const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), bytesAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isNative), name, size, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
       const replacing = !!context?.preserveHistory || !!context?.savedCopy;
       // Opening a document again after deleting its local copy starts a new record.
       if (!replacing) forgottenIds.current.delete(id);
@@ -588,6 +598,8 @@ export default function App() {
       const key = replacing && activeTabRef.current ? activeTabRef.current : uid();
       activeTabRef.current = key; setActiveTabKey(key);
       pageInputDirty.current = false;
+      if (context?.quiet && viewer.current) restoreScroll.current = { key, top: viewer.current.scrollTop, left: viewer.current.scrollLeft };
+      if (!replacing) setEditing(false);
       docRef.current = loaded;
       setDoc(loaded);
       setReaderChromeHidden(false);
@@ -663,6 +675,23 @@ export default function App() {
         setDraftFailed(true); notify(/supera 1 GB/.test(message) ? message : `No se pudieron guardar tus cambios en ${here}. ${saveAdvice}`, 'error');
       });
   }, [doc, notify]);
+
+  // Each document starts Editar afresh; leaving it drops the selection and any pending image.
+  useEffect(() => { editStore.reset(); }, [doc?.id, editStore]);
+  useEffect(() => { if (!editing) editStore.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, editStore]);
+  // A pasted screenshot or image is placed where the next click lands.
+  useEffect(() => {
+    if (!editing) return;
+    const paste = (event: ClipboardEvent) => {
+      if ((event.target as HTMLElement | null)?.closest?.('input,textarea,[contenteditable]')) return;
+      const file = [...(event.clipboardData?.files || [])].find(item => /^image\/(png|jpeg)$/.test(item.type));
+      if (!file) return;
+      event.preventDefault();
+      void readImage(file).then(image => editStore.set({ image: { ...image, name: 'la imagen pegada' }, tool: 'image', selection: null, notice: '' })).catch(error => notify(errorMessage(error), 'error'));
+    };
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  }, [editing, editStore, notify]);
 
   // Builds without Google's OAuth client cannot connect to Drive.
   useEffect(() => { if (isNative) void readDriveStatus().then(status => setDriveAvailable(status.available !== false)).catch(() => {}); }, []);
@@ -795,6 +824,14 @@ export default function App() {
       if (payload.type === 'enter') setDragOver(payload.paths.some(isPdf));
       else if (payload.type !== 'over') setDragOver(false);
       if (payload.type !== 'drop') return;
+      const images = payload.paths.filter(path => /\.(png|jpe?g)$/i.test(path));
+      if (editingRef.current && images.length) {
+        // Rust keeps the dropped images; the page under the pointer places the first one.
+        const x = payload.position.x / (window.devicePixelRatio || 1), y = payload.position.y / (window.devicePixelRatio || 1);
+        void invoke<ArrayBuffer>('dropped_image', { index: 0 }).then(data => readImage(new File([data], images[0].split(/[\/]/).pop() || 'imagen', { type: /\.png$/i.test(images[0]) ? 'image/png' : 'image/jpeg' })))
+          .then(image => window.dispatchEvent(new CustomEvent('folio:edit-place-image', { detail: { image, clientX: x, clientY: y } }))).catch(error => notify(errorMessage(error), 'error'));
+        return;
+      }
       const rejected = payload.paths.filter(path => !isPdf(path)).length;
       if (rejected) notify('Solo se pueden abrir archivos PDF.', rejected === payload.paths.length ? 'error' : 'info');
     })).catch(() => null);
@@ -1415,6 +1452,7 @@ export default function App() {
       if (isMac && e.metaKey && e.ctrlKey && e.key.toLowerCase() === 'f') return;
       const editing = (e.target as HTMLElement).closest('input,textarea,select,[contenteditable]');
       const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
+      if (editingRef.current && !editing && !modal && editKey(editStore, e, () => setEditing(false))) return;
       if (modal) {
         const key = (e.ctrlKey || e.metaKey) && e.key.toLowerCase();
         if (!key || !['s', 'p', 'w', 'o', 'f'].includes(key)) return;
@@ -1601,11 +1639,11 @@ export default function App() {
   }
   async function restoreHistory(value: History, from: History[], to: History[]) {
     const current = docRef.current; if (!current || !value.bytes) return;
-    const keepEditing = workbenchRef.current === 'edit-pdf';
+    const keepEditing = workbenchRef.current === 'edit-pdf', quiet = editingRef.current;
     setBusy('edit');
     try {
       if (!await openDocument(value.bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password: value.password,
-        modified: true, useSession: false, preserveHistory: true, page: value.page, bookmarks: value.bookmarks })) {
+        modified: true, useSession: false, preserveHistory: true, page: quiet ? readingState.current.page : value.page, bookmarks: value.bookmarks, quiet })) {
         // The current revision stays open, so the step remains available.
         to.pop(); from.push(value); notify(from === redoStack.current ? 'No se pudo rehacer el cambio.' : 'No se pudo deshacer el cambio.', 'error'); return;
       }
@@ -1613,12 +1651,14 @@ export default function App() {
       if (keepEditing) setWorkbench('edit-pdf');
     } finally { setBusy(null); setHistoryTick(v => v + 1); }
   }
-  async function applyOperation(operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) {
+  async function applyOperation(operation: Operation, signal?: AbortSignal, context?: { keepEditing?: boolean; page?: number; quiet?: boolean }) {
     const current = docRef.current; if (!current) return;
     if (isNativePdfDocument(current.pdf)) throw new Error('Esta herramienta no está disponible para PDF tan grandes.');
     const before = snapshot(); setBusy('edit');
     try {
-      const source = current.canAnnotate ? await exportAnnotated(current.bytes, annotationRef.current, current.password) : current.bytes;
+      // The bytes already hold the annotations they were opened with; only changes need writing.
+      const unchanged = annotationFingerprint(annotationRef.current) === current.bytesAnnotations;
+      const source = current.canAnnotate && !unchanged ? await exportAnnotated(current.bytes, annotationRef.current, current.password) : current.bytes;
       signal?.throwIfAborted();
       const output = await processPdf(source, operation, current.password, signal);
       signal?.throwIfAborted();
@@ -1627,11 +1667,12 @@ export default function App() {
       const bookmarkPages = operation.operation === 'pages' ? remapBookmarks(before.bookmarks || [], operation.plan) : before.bookmarks;
       const password = operation.operation === 'protect' ? operation.ownerPassword : operation.operation === 'unprotect' ? '' : current.password;
       const opened = await openDocument(output, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password, modified: true,
-        useSession: false, preserveHistory: true, page: context?.keepEditing ? context.page : before.page, bookmarks: bookmarkPages });
+        useSession: false, preserveHistory: true, page: context?.quiet ? readingState.current.page : context?.keepEditing ? context.page : before.page, bookmarks: bookmarkPages, quiet: context?.quiet });
       if (!opened) throw new Error('No se pudo cargar el resultado de la operación.');
       undoStack.current.push(before); trimHistory(undoStack.current);
       if (undoStack.current.at(-1) !== before) notify('Este cambio no se podrá deshacer porque el documento es demasiado grande.');
-      redoStack.current = []; setHistoryTick(v => v + 1); setWorkbench(context?.keepEditing ? 'edit-pdf' : null); setTool('select');
+      redoStack.current = []; setHistoryTick(v => v + 1);
+      if (!context?.quiet) { setWorkbench(context?.keepEditing ? 'edit-pdf' : null); setTool('select'); }
       if (operation.operation === 'compress') notify(`PDF reducido de ${formatSize(source.length)} a ${formatSize(output.length)}.`, 'success');
     } finally { setBusy(null); }
   }
@@ -1900,6 +1941,7 @@ export default function App() {
   }
   function startAnnotating() {
     if (!doc?.canAnnotate) { setCapabilityNotice(true); return; }
+    setEditing(false);
     if (touchRef.current) closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(true); setTool('select');
   }
   function editNote(annotation: Annotation, origin: 'document' | 'list') { noteOrigin.current = origin; setNoteDraft(annotation); setNoteText(annotation.text); }
@@ -1916,6 +1958,7 @@ export default function App() {
   function openTools() { if (!doc || isNativePdfDocument(doc.pdf)) { setCapabilityNotice(true); return; } setMobileAnnotating(false); setTool('select'); setWorkbench('home'); }
   function openEditor() {
     if (!doc || isNativePdfDocument(doc.pdf) || busyRef.current) return;
+    if (!touchLayout) { setMobileAnnotating(false); setTool('select'); setWorkbench(null); setReaderChromeHidden(false); setEditing(true); return; }
     editorReadingLocation.current = { revision: String(doc.revision), page, top: viewer.current?.scrollTop || 0, left: viewer.current?.scrollLeft || 0 };
     setSidebar(false); setSearchOpen(false); setNotesOpen(false); setMobileAnnotating(false); setReaderChromeHidden(false); setTool('select'); setWorkbench('edit-pdf');
   }
@@ -2096,6 +2139,19 @@ export default function App() {
   ];
   // Stable handlers let memoized pages skip renders that change nothing on them.
   const pageEvents = useRef({ onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: (_id: string) => {} });
+  // Editar writes content edits to the PDF in place and keeps shapes as Folio annotations.
+  editStore.doc = doc;
+  editStore.actions = {
+    commit: async operation => { try { await applyOperation(operation, undefined, { quiet: true }); return null; } catch (error) { return errorMessage(error, 'No se pudo aplicar el cambio.'); } },
+    shapes: () => annotationRef.current.filter(annotation => annotation.kind === 'shape'),
+    addShape: shape => {
+      if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current) { notify('Los permisos de este PDF no permiten añadir formas.'); return undefined; }
+      const id = uid(); commitAnnotations([...annotationRef.current, { ...shape, id, created: Date.now(), text: '' } as Annotation]); return id;
+    },
+    updateShape: (id, patch) => { if (docRef.current?.canAnnotate && !busyRef.current && !loadingRef.current) commitAnnotations(annotationRef.current.map(item => item.id === id ? { ...item, ...patch } : item)); },
+    removeShape: id => removeAnnotation(id),
+    notify,
+  };
   pageEvents.current = { onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: id => {
     const annotation = annotationRef.current.find(item => item.id === id);
     if (annotation && docRef.current?.canAnnotate) editNote(annotation, 'document'); else { setNotesOpen(true); setActiveNote(id); }
@@ -2107,7 +2163,8 @@ export default function App() {
   // depend on it (except in single-page mode), so a long book's thousands of
   // pages are not re-rendered on every page change.
   const stackPage = readingMode === 'single' ? page : 0;
-  const pageStack = useMemo(() => doc && <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div>, [doc, spread, readingPreferences.pageGap, readingMode, stackPage, pages, pageLabels, scale, rotation, dimensions, annotationPages, tool, color, inkStyle, eraserSize, penOnly, searchOpen, searchQuery, touchLayout, sidebar, results, resultIndex, busy, loading, removeAnnotation, updateAnnotation, redactions, pageHandlers]);
+  const editEnvironment = useMemo(() => editing && doc && !touchLayout ? { store: editStore, doc } : undefined, [editing, doc, touchLayout, editStore]);
+  const pageStack = useMemo(() => doc && <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.id} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={number} pdf={doc.pdf} edit={editEnvironment} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div>, [doc, spread, readingPreferences.pageGap, readingMode, stackPage, pages, pageLabels, scale, rotation, dimensions, annotationPages, tool, color, inkStyle, eraserSize, penOnly, searchOpen, searchQuery, touchLayout, sidebar, results, resultIndex, busy, loading, removeAnnotation, updateAnnotation, redactions, pageHandlers, editEnvironment]);
   const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} kind={inkKind} style={inkStyle} recentColors={inkRecentColors} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onKind={setInkKind} onStyle={change => setInkStyles(styles => ({ ...styles, [inkKind]: { ...styles[inkKind], ...change } }))} onCustomColor={value => setInkRecentColors(colors => [value, ...colors.filter(item => item !== value)].slice(0, 5))} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
   // On touch, tools without options keep their slot so no button moves under the finger.
   const annotationSlot = annotationSettings || <span className="drawing-settings-trigger" aria-hidden="true" style={{ visibility: 'hidden' }} />;
@@ -2115,7 +2172,12 @@ export default function App() {
   // Swiping in from the left edge goes back: from a document to the library, out of Google Drive.
   useEdgeSwipeBack(touchLayout && !!doc && !library && !inlineEditing && !workbench && !(mobileAnnotating && (tool === 'draw' || tool === 'eraser')), () => void returnToLibrary(), '.app-shell');
   useEdgeSwipeBack(touchLayout && library && driveLibrary, () => setDriveLibrary(false), '.drive-browser');
-  return <div className={`app-shell page-tone-${readingPreferences.pageTone}${isDesktop && isMac ? ' native-mac' : ''}${isDesktop && isMac && windowState.fullscreen ? ' mac-fullscreen' : ''}${phone ? ' phone-layout' : tablet ? ' tablet-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); if (!isDesktop) void openFiles(Array.from(e.dataTransfer.files)); }}>
+  return <div className={`app-shell page-tone-${readingPreferences.pageTone}${isDesktop && isMac ? ' native-mac' : ''}${isDesktop && isMac && windowState.fullscreen ? ' mac-fullscreen' : ''}${phone ? ' phone-layout' : tablet ? ' tablet-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`} onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDragOver(true); } }} onDragLeave={e => { e.preventDefault(); if (--dragCounter.current <= 0) { dragCounter.current = 0; setDragOver(false); } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => {
+      e.preventDefault(); dragCounter.current = 0; setDragOver(false);
+      const image = editing ? Array.from(e.dataTransfer.files).find(file => /^image\/(png|jpeg)$/.test(file.type)) : undefined, point = { clientX: e.clientX, clientY: e.clientY };
+      if (image) { void readImage(image).then(value => window.dispatchEvent(new CustomEvent('folio:edit-place-image', { detail: { image: value, ...point } }))).catch(error => notify(errorMessage(error), 'error')); return; }
+      if (!isDesktop) void openFiles(Array.from(e.dataTransfer.files));
+    }}>
     {closeBlocked && <Modal title="No se pudieron guardar tus cambios" onClose={() => setCloseBlocked(null)}><p className="modal-description">{savesInPlace ? 'Guarda' : isNative ? 'Guarda una copia de' : 'Descarga'} «{doc?.name}» antes de {closeBlocked === 'window' ? 'salir' : 'cerrarlo'} o perderás los cambios.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setCloseBlocked(null)}>Volver</button><button className="secondary-button" onClick={() => { setCloseBlocked(null); void download({ copy: !savesInPlace }); }}>{savesInPlace ? saveLabel : fileSaveLabel}</button><button className="primary-button" onClick={() => {
       const key = closeBlocked; setCloseBlocked(null);
       if (key === 'window') void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().destroy());
@@ -2199,9 +2261,9 @@ export default function App() {
         {!touchLayout && !inlineEditing && <div className="reader-toolbar">
           <div className="toolbar-left">
             <div className="desktop-mode-switch" role="group" aria-label="Modo del documento">
-              <button aria-label="Modo lectura" aria-pressed={!mobileAnnotating} disabled={!doc || !!busy || loading} onClick={() => { setMobileAnnotating(false); setTool('select'); }}><BookOpen size={17} /><span>Lectura</span></button>
-              <button aria-label="Anotar documento" aria-pressed={mobileAnnotating} disabled={!doc || !!busy || loading} onClick={startAnnotating}><Highlighter size={17} /><span>Anotar</span></button>
-              <button aria-label="Editar contenido del PDF" aria-pressed={false} disabled={!doc?.canEdit || !doc?.canCopy || !!busy || loading || !!doc && isNativePdfDocument(doc.pdf)} onClick={openEditor}><FileText size={17} /><span>Editar</span></button>
+              <button aria-label="Modo lectura" aria-pressed={!mobileAnnotating && !editing} disabled={!doc || !!busy || loading} onClick={() => { setEditing(false); setMobileAnnotating(false); setTool('select'); }}><BookOpen size={17} /><span>Lectura</span></button>
+              <button aria-label="Anotar documento" aria-pressed={mobileAnnotating && !editing} disabled={!doc || !!busy || loading} onClick={startAnnotating}><Highlighter size={17} /><span>Anotar</span></button>
+              <button aria-label="Editar contenido del PDF" aria-pressed={editing} disabled={!doc?.canEdit || !doc?.canCopy || !!busy || loading || !!doc && isNativePdfDocument(doc.pdf)} onClick={openEditor}><FileText size={17} /><span>Editar</span></button>
             </div>
             <button className="tools-button" aria-label="Herramientas" disabled={!doc || !!busy || loading} onClick={openTools}><Wrench size={17} /><span>Herramientas</span></button>
             <div className="undo-group"><span className="toolbar-divider" /><IconButton label={`Deshacer (${shortcutLabel('Z')})`} onClick={undo} disabled={!!busy || !undoStack.current.length}><Undo2 size={17} /></IconButton><IconButton label={`Rehacer (${redoShortcut})`} onClick={redo} disabled={!!busy || !redoStack.current.length}><Redo2 size={17} /></IconButton></div>
@@ -2214,7 +2276,8 @@ export default function App() {
             <IconButton label="Más acciones del documento" disabled={!doc || !!busy || loading} onClick={() => setMobileActions(true)}><MoreHorizontal size={20} /></IconButton>
           </div>
         </div>}
-        {!touchLayout && !inlineEditing && doc && mobileAnnotating && <div className="desktop-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
+        {!touchLayout && !inlineEditing && doc && editing && <EditToolbar store={editStore} doc={doc} onDone={() => setEditing(false)} />}
+        {!touchLayout && !inlineEditing && doc && mobileAnnotating && !editing && <div className="desktop-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
           <div className="tool-group"><IconButton label="Seleccionar texto (V)" toggle active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={18} /></IconButton><IconButton label="Resaltador (H)" toggle active={tool === 'highlight'} disabled={!doc.canAnnotate || !doc.canCopy || !!busy || loading} onMouseDown={e => e.preventDefault()} onClick={activateHighlight}><Highlighter size={19} /></IconButton><IconButton label="Nota (N)" toggle active={tool === 'note'} disabled={!doc.canAnnotate || !!busy || loading} onClick={() => setTool(tool === 'note' ? 'select' : 'note')}><StickyNote size={18} /></IconButton><IconButton label="Lápiz (D)" toggle active={tool === 'draw'} disabled={!doc.canAnnotate || !!busy || loading} onClick={() => setTool('draw')}><PenLine size={21} /></IconButton><IconButton label="Goma" toggle active={tool === 'eraser'} disabled={!doc.canAnnotate || !!busy || loading} onClick={() => setTool('eraser')}><Eraser size={21} /></IconButton>{annotationSettings}</div>
           <span className="desktop-tool-description">{tool === 'draw' ? 'Dibuja sobre la página' : tool === 'eraser' ? 'Pasa la goma sobre un trazo para borrarlo' : tool === 'highlight' ? 'Selecciona el texto para resaltarlo' : tool === 'note' ? 'Haz clic en la página para añadir una nota' : 'Selecciona texto para copiar, resaltar o comentar'}</span>
           <button className="text-button" onClick={() => { setMobileAnnotating(false); setTool('select'); }}><Check size={16} />Listo</button>
@@ -2303,7 +2366,7 @@ export default function App() {
 
     {viewSettings && <ViewSettings touch={touchLayout} phone={phone} mode={readingMode} onMode={setReadingMode} zoom={zoomMode} scale={scale} onZoom={value => { if (['width', 'page'].includes(value)) setZoomMode(value); else { setCustomScale(Number(value) / 100); setZoomMode('custom'); } }} rotation={rotation} onRotate={() => setRotation(value => (value + 90) % 360)} pageTone={readingPreferences.pageTone} onPageTone={pageTone => setReadingPreferences(current => ({ ...current, pageTone }))} keepAwake={readingPreferences.keepAwake} onKeepAwake={isNative && isMobile ? keepAwake => setReadingPreferences(current => ({ ...current, keepAwake })) : undefined} onClose={() => setViewSettings(false)} />}
     {capabilityNotice && <Modal title="Herramientas disponibles" onClose={() => setCapabilityNotice(false)}><p className="modal-description">{capabilitySummary}</p><div className="modal-actions"><button className="primary-button" onClick={() => setCapabilityNotice(false)}>Entendido</button></div></Modal>}
-    <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && !mobileActions && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked && !pageJump && !viewSettings && !annotationOptions && !capabilityNotice && !deleteTarget && !(touchLayout && (sidebar || notesOpen || mobileActions || mobileTabs))} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={(message, error) => notify(message, error ? 'error' : 'success')} />
+    <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && !editing && !mobileActions && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked && !pageJump && !viewSettings && !annotationOptions && !capabilityNotice && !deleteTarget && !(touchLayout && (sidebar || notesOpen || mobileActions || mobileTabs))} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={(message, error) => notify(message, error ? 'error' : 'success')} />
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     <ActivityPill working={activity} done={activityDone} />

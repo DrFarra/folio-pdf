@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium, webkit } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { androidTablet, openTabletEditor } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -56,12 +57,15 @@ function pixel(bytes, x, y) {
 const green = value => value[1] > value[0] + 100 && value[1] > value[2] + 80;
 async function picker(page, number = 1) { await page.locator(`.pdf-content-picker[data-page="${number}"][data-picker-state="ready"]`).waitFor({ timeout: 60000 }); }
 async function ready(page, intent = 'edit') { await page.locator(`.content-editor[data-intent="${intent}"][data-preview-state="ready"]`).waitFor({ timeout: 60000 }); }
+// Touch layouts keep this editor; the desktop edits inside the reader (edit-mode-ui.mjs).
+const documentHeader = page => page.locator('.app-header .tablet-document-selector');
 async function workspace(page) {
   await page.locator('main.reader .workspace-editor').waitFor();
   assert.equal(await page.locator('dialog[open]').count(), 0);
-  assert.equal(await page.locator('.app-header .document-tab-strip').isVisible(), true);
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.layout), 'tablet');
+  assert.equal(await documentHeader(page).isVisible(), true);
 }
-async function enter(page) { await page.getByRole('button', { name: 'Editar contenido del PDF', exact: true }).click(); await picker(page); await workspace(page); }
+async function enter(page) { await openTabletEditor(page); await picker(page); await workspace(page); }
 async function selectText(page, number = 1, last = false) {
   const matches = page.getByRole('button', { name: 'Párrafo: ORIGINAL ' + number, exact: true });
   if (last) {
@@ -99,12 +103,13 @@ async function history(page, direction, number = 1) {
   await picker(page, number);
 }
 async function nativeBridge(context) {
-  await context.addInitScript(({ bytes, name, mac }) => {
-    Object.defineProperty(navigator, 'platform', { configurable: true, value: mac ? 'MacIntel' : 'Win32' });
-    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: mac ? 'macOS' : 'Windows' } });
+  // The Android app: the tablet keeps this editor, and Android reserves every output, the original included.
+  await context.addInitScript(({ bytes, name }) => {
     globalThis.isTauri = true;
     const callbacks = new Map(), listeners = new Map(); let id = 0;
-    const state = globalThis.__contentActionsNative = { source: bytes, outputs: [null, 'output-copy-token'], chosen: [], writes: [], originals: [], remembered: [], sessions: [], drafts: [] };
+    const state = globalThis.__contentActionsNative = { source: bytes, outputs: ['output-original-token', null, 'output-copy-token'], chosen: [], writes: [], originals: [], remembered: [], sessions: [], drafts: [] };
+    // Android sends PDFs as base64 (src/binary.ts).
+    const payload = args => args?.base64 ? [...atob(args.base64)].map(char => char.charCodeAt(0)) : [...new Uint8Array(args)];
     window.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
       transformCallback: callback => { callbacks.set(++id, callback); return id; }, unregisterCallback: callback => callbacks.delete(callback),
@@ -117,12 +122,14 @@ async function nativeBridge(context) {
         if (command === 'plugin:window|is_fullscreen') return false;
         if (command === 'startup_documents') return [{ token: 'source-token', name, size: bytes.length }];
         if (command === 'read_document') return new Uint8Array(state.source).buffer;
+        if (command === 'read_document_range') return new Uint8Array(state.source.slice(args.offset, args.offset + args.length)).buffer;
+        if (command === 'android_safe_area') return { bottom: 0 };
         if (['recent_documents', 'list_library', 'pick_documents'].includes(command)) return [];
         if (command === 'load_session') return null;
         if (command === 'load_draft') return new ArrayBuffer(0);
         if (command === 'choose_output') { state.chosen.push(args); return state.outputs.shift() ?? null; }
-        if (command === 'write_pdf_copy') { const data = [...new Uint8Array(args)]; state.writes.push({ bytes: data, headers: options?.headers }); return { token: 'output-copy-token', name: 'content-actions-source — copia.pdf', size: data.length }; }
-        if (command === 'write_pdf_original') { const data = [...new Uint8Array(args)]; state.originals.push({ bytes: data, headers: options?.headers }); return { token: 'saved-token', name, size: data.length }; }
+        if (command === 'write_pdf_copy') { const data = payload(args); state.writes.push({ bytes: data, headers: options?.headers }); return { token: 'output-copy-token', name: 'content-actions-source — copia.pdf', size: data.length }; }
+        if (command === 'write_pdf_original') { const data = payload(args); state.originals.push({ bytes: data, headers: options?.headers }); return { token: 'saved-token', name, size: data.length }; }
         if (command === 'remember_document') state.remembered.push(args);
         if (command === 'store_session') state.sessions.push(args);
         if (command === 'store_draft') state.drafts.push({ size: args.length, headers: options?.headers });
@@ -130,15 +137,11 @@ async function nativeBridge(context) {
       },
     };
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event, eventId) => { const item = listeners.get(eventId); if (item) callbacks.delete(item.handler); } };
-  }, { bytes: [...original], name: path.basename(source), mac: useWebKit });
+  }, { bytes: [...original], name: path.basename(source) });
 }
 async function check(id, run, native = false) {
   if (process.env.FOLIO_CONTENT_ACTIONS_TEST && !new RegExp(process.env.FOLIO_CONTENT_ACTIONS_TEST).test(id)) return;
-  const context = await browser.newContext({ viewport: { width: 1360, height: 720 }, acceptDownloads: true });
-  if (useWebKit) await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
-    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'macOS' } });
-  });
+  const context = await browser.newContext({ ...androidTablet(), acceptDownloads: true });
   if (native) await nativeBridge(context);
   const page = await context.newPage(); page.setDefaultTimeout(30000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
@@ -205,11 +208,11 @@ try {
     return { shortcutBlocksUnappliedDraft: true, resetReturnsToOriginalEdit: true, cancelledDeletionChangesNothing: true, noHistoryStep: true };
   });
   await check('inline-save-shortcut-page-history-library', async page => {
-    const tabKey = await page.locator('.document-tab.selected').getAttribute('data-tab-key');
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
     await selectText(page, 2); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('SAVED 2'); await commit(page, 'edit', 2);
     const saved = await save(page, 'content-actions-inline-save.pdf', false, 2); assert.equal(textCount(saved, 'SAVED 2', 2), 1); preserved(saved);
-    assert.equal(await page.locator('.document-tab.selected').getAttribute('data-tab-key'), tabKey); assert.equal(await page.locator('.document-tab').count(), 1);
+    // The same single document stays open: the header names it without an open-documents count.
+    assert((await documentHeader(page).innerText()).includes(path.basename(source))); assert.equal(await documentHeader(page).locator('small').count(), 0);
     // The download replaces the library entry instead of adding a second one.
     const savedId = createHash('sha256').update(saved).digest('hex');
     await page.waitForFunction(id => new Promise(resolve => { const request = indexedDB.open('folio-library'); request.onsuccess = () => { const db = request.result, tx = db.transaction('documents', 'readonly'), rows = tx.objectStore('documents').getAll(); rows.onsuccess = () => resolve(rows.result.length === 1 && rows.result[0].id === id); tx.oncomplete = () => db.close(); }; request.onerror = () => resolve(false); }), savedId);
@@ -218,36 +221,35 @@ try {
     await history(page, 'Rehacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: SAVED 2', exact: true }).count(), 1);
     const redone = await save(page, 'content-actions-inline-redo.pdf', true, 2); assert.equal(textCount(redone, 'SAVED 2', 2), 1); preserved(redone);
     await page.screenshot({ path: path.join(output, 'content-actions-inline-save.png') });
-    return { [useWebKit ? 'buttonAndCmdSDownloadRealPdf' : 'buttonAndCtrlSDownloadRealPdf']: true, remainsInlineOnPage2: true, tabIdentityPreserved: true, downloadReplacesLibraryEntry: true, historySurvivesEverySave: true, annotationsExported: true };
+    return { [useWebKit ? 'buttonAndCmdSDownloadRealPdf' : 'buttonAndCtrlSDownloadRealPdf']: true, remainsInlineOnPage2: true, documentIdentityPreserved: true, downloadReplacesLibraryEntry: true, historySurvivesEverySave: true, annotationsExported: true };
   });
   await check('native-save-cancel-and-success-contract', async page => {
     await page.getByRole('button', { name: 'Página siguiente del editor', exact: true }).click(); await picker(page, 2);
     await selectText(page, 2); await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('NATIVE 2'); await commit(page, 'edit', 2);
-    const key = await page.locator('.document-tab.selected').getAttribute('data-tab-key');
-    // Guardar replaces the opened file without asking; Guardar una copia asks where to write.
+    // Guardar replaces the opened file through the provider; Guardar una copia asks where to write.
     await page.keyboard.press(saveShortcut);
     await page.waitForFunction(() => globalThis.__contentActionsNative.originals.length === 1); await savedIdle(page, 2);
     await page.locator('.toast, .activity-pill').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     let state = await page.evaluate(() => globalThis.__contentActionsNative);
-    assert.equal(state.originals[0].headers['x-folio-source-token'], 'source-token'); assert.equal(state.chosen.length, 0); assert.equal(state.writes.length, 0);
+    assert.equal(state.originals[0].headers['x-folio-source-token'], 'source-token'); assert.equal(state.originals[0].headers['x-folio-output-token'], 'output-original-token');
+    assert.equal(state.chosen.length, 1); assert.equal(state.chosen[0].source, 'source-token'); assert.equal(state.writes.length, 0);
     const replaced = new Uint8Array(state.originals[0].bytes); assert.equal(textCount(replaced, 'NATIVE 2', 2), 1); preserved(replaced);
-    assert.equal(await page.locator('.document-tab.selected').getAttribute('data-tab-key'), key);
-    assert.equal(await page.getByRole('tab', { name: 'content-actions-source.pdf', exact: true }).getAttribute('aria-selected'), 'true');
+    assert((await documentHeader(page).innerText()).includes('content-actions-source.pdf')); assert.equal(await documentHeader(page).locator('small').count(), 0);
     await page.keyboard.press(saveCopyShortcut); await savedIdle(page, 2);
     assert.equal(await page.evaluate(() => globalThis.__contentActionsNative.writes.length), 0, 'Cancelling output selection writes no PDF.');
     await page.keyboard.press(saveCopyShortcut);
     await page.waitForFunction(() => globalThis.__contentActionsNative.writes.length === 1); await savedIdle(page, 2);
     state = await page.evaluate(() => globalThis.__contentActionsNative);
-    assert.equal(state.chosen.length, 2); assert.equal(state.chosen[0].source, 'saved-token'); assert.equal(state.originals.length, 1);
+    assert.equal(state.chosen.length, 3); assert.equal(state.chosen[1].source, 'saved-token'); assert.equal(state.chosen[2].source, 'saved-token'); assert.equal(state.originals.length, 1);
     assert.equal(state.writes[0].headers['x-folio-output-token'], 'output-copy-token');
     const bytes = new Uint8Array(state.writes[0].bytes); assert.equal(textCount(bytes, 'NATIVE 2', 2), 1); preserved(bytes);
     assert.equal(createHash('sha256').update(new Uint8Array(state.source)).digest('hex'), sourceHash);
     assert(state.remembered.some(row => row.token === 'output-copy-token'), 'The saved copy is registered in the native library.');
-    assert.equal(await page.locator('.document-tab.selected').getAttribute('data-tab-key'), key);
-    assert.equal(await page.getByRole('tab', { name: 'content-actions-source — copia.pdf', exact: true }).getAttribute('aria-selected'), 'true');
+    // The copy replaces the open document in place: one document, now named as the copy.
+    assert((await documentHeader(page).innerText()).includes('content-actions-source — copia.pdf')); assert.equal(await documentHeader(page).locator('small').count(), 0);
     await history(page, 'Deshacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: ORIGINAL 2', exact: true }).count(), 1);
     await history(page, 'Rehacer', 2); assert.equal(await page.getByRole('button', { name: 'Párrafo: NATIVE 2', exact: true }).count(), 1);
-    return { bridgeMockOnly: true, saveReplacesOriginalWithoutDialog: true, cancelledOutputWritesNothing: true, realAnnotatedPdfPayload: true, outputTokenAndSourcePreserved: true, copiedNameAndLibraryEntry: true, inlinePageAndHistoryPreserved: true };
+    return { bridgeMockOnly: true, saveReplacesOriginalThroughProvider: true, cancelledOutputWritesNothing: true, realAnnotatedPdfPayload: true, outputTokenAndSourcePreserved: true, copiedNameAndLibraryEntry: true, inlinePageAndHistoryPreserved: true };
   }, true);
 } finally {
   await browser?.close();

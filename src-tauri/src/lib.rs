@@ -31,6 +31,8 @@ struct Files {
     startup: Vec<DocumentInfo>,
     pending: SystemOpen,
     frontend_ready: bool,
+    /// PNG and JPEG files from the last drop, which Editar can place on a page.
+    dropped: Vec<PathBuf>,
 }
 impl Files {
     fn queue_system_open(&mut self, opened: SystemOpen) -> Option<SystemOpen> {
@@ -215,6 +217,78 @@ async fn choose_export(source: Option<String>, name: String, format: String, app
     desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.insert(token.clone(), Output { path, fingerprint: expected, source: original, format });
     Ok(Some(token))
 }
+/// Fonts installed on this computer that may be embedded, for writing text in Editar.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn system_fonts() -> &'static Vec<(PathBuf, folio_core::FontFace)> {
+    static FONTS: std::sync::OnceLock<Vec<(PathBuf, folio_core::FontFace)>> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut folders = Vec::new();
+        #[cfg(windows)]
+        {
+            if let Some(windows) = std::env::var_os("WINDIR") { folders.push(PathBuf::from(windows).join("Fonts")); }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") { folders.push(PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts")); }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            folders.extend(["/System/Library/Fonts", "/Library/Fonts"].map(PathBuf::from));
+            if let Some(home) = std::env::var_os("HOME") { folders.push(PathBuf::from(home).join("Library").join("Fonts")); }
+        }
+        let mut faces = Vec::new();
+        let mut pending: Vec<(PathBuf, u8)> = folders.into_iter().map(|folder| (folder, 0)).collect();
+        while let Some((folder, depth)) = pending.pop() {
+            let Ok(entries) = fs::read_dir(&folder) else { continue; };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() { if depth < 3 { pending.push((path, depth + 1)); } continue; }
+                let font = path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["ttf", "otf", "ttc", "otc"].iter().any(|kind| e.eq_ignore_ascii_case(kind)));
+                if !font || faces.len() > 20_000 { continue; }
+                let Ok(mut file) = fs::File::open(&path) else { continue; };
+                for face in folio_core::font_faces(&mut file) { if face.embeddable && !face.family.starts_with('.') { faces.push((path.clone(), face)); } }
+            }
+        }
+        faces
+    })
+}
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command(async)]
+fn system_font_families() -> Vec<String> {
+    let mut families: Vec<String> = system_fonts().iter().map(|(_, face)| face.family.clone()).collect();
+    families.sort_by_key(|family| family.to_lowercase()); families.dedup();
+    families
+}
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemFace { id: usize, family: String, index: u32, post_script_name: String }
+/// The installed face for a PDF font name ("Arial-BoldMT") or a family, closest in style.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command(async)]
+fn system_font_match(name: String, bold: bool, italic: bool) -> Option<SystemFace> {
+    let fonts = system_fonts();
+    let compact = |value: &str| value.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let wanted = compact(&name);
+    let found = fonts.iter().position(|(_, face)| !face.post_script_name.is_empty() && face.post_script_name.eq_ignore_ascii_case(&name))
+        .or_else(|| fonts.iter().enumerate().filter(|(_, (_, face))| compact(&face.family) == wanted)
+            .max_by_key(|(_, (_, face))| (face.bold == bold) as u8 * 2 + (face.italic == italic) as u8).map(|(i, _)| i))?;
+    let face = &fonts[found].1;
+    Some(SystemFace { id: found, family: face.family.clone(), index: face.index, post_script_name: face.post_script_name.clone() })
+}
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command(async)]
+fn system_font_data(id: usize) -> Result<tauri::ipc::Response, String> {
+    let (path, _) = system_fonts().get(id).ok_or("La fuente ya no está disponible.")?;
+    if fs::metadata(path).map_err(|_| "No se pudo leer la fuente.")?.len() > 64 * 1024 * 1024 { return Err("La fuente es demasiado grande.".into()); }
+    fs::read(path).map(tauri::ipc::Response::new).map_err(|_| "No se pudo leer la fuente.".into())
+}
+/// An image from the last drop on the window, by its position among the dropped images.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command(async)]
+fn dropped_image(index: usize, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
+    let path = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.dropped.get(index).cloned().ok_or("Vuelve a soltar la imagen.")?;
+    if fs::metadata(&path).map_err(|_| "No se pudo leer la imagen.")?.len() > 50 * 1024 * 1024 { return Err("La imagen supera 50 MB.".into()); }
+    fs::read(&path).map(tauri::ipc::Response::new).map_err(|_| "No se pudo leer la imagen.".into())
+}
+
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[derive(Serialize)]
 struct ChosenFolder { folder: String, tokens: Vec<String> }
@@ -695,7 +769,7 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
     let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
@@ -736,7 +810,14 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event { open_paths(window.app_handle(), paths.clone(), true); }
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                if let Some(desktop) = window.app_handle().try_state::<Desktop>() {
+                    let image = |path: &PathBuf| path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["png", "jpg", "jpeg"].iter().any(|kind| e.eq_ignore_ascii_case(kind)));
+                    if let Ok(mut files) = desktop.files.lock() { files.dropped = paths.iter().filter(|&path| image(path)).cloned().collect(); }
+                }
+                open_paths(window.app_handle(), paths.clone(), true);
+            }
         })
         .build(tauri::generate_context!())
         .unwrap_or_else(|_| startup_failed())

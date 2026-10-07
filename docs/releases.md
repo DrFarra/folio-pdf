@@ -10,6 +10,17 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.4
+
+- En Windows y macOS, «Editar» ya no abre otra pantalla: se edita sobre las propias páginas, con el mismo zoom (también con el touchpad) y una barra de herramientas debajo de la principal.
+- Pasar el ratón resalta un texto, una imagen o una forma; un clic la selecciona con sus tiradores. Se mueve arrastrando y el cambio se guarda al soltar, con su paso de deshacer.
+- Mover un texto conserva exactamente su fuente, sus negritas y cursivas. Doble clic en un párrafo para escribir directamente en la página, con fuente, tamaño, negrita, cursiva, color, alineación e interlineado.
+- El texto reescrito usa la fuente original del PDF cuando tiene todas las letras; si no, la misma familia instalada en el equipo o la más parecida.
+- Las imágenes se mueven, se amplían conservando su proporción, giran, cambian de opacidad, se duplican o se reemplazan sin perder calidad. Para añadir una: el botón Imagen, arrastrar un archivo a la página o pegar con Ctrl+V.
+- Nuevas formas: rectángulo, elipse, línea y flecha, con color de borde, relleno, grosor y opacidad. Se pueden seguir editando después.
+- Atajos: Supr elimina, Ctrl+D duplica, las flechas desplazan (Mayús: 10 puntos), V T I R O L A eligen herramienta y Esc deselecciona.
+- En tablet y teléfono, «Editar PDF» sigue como hasta ahora.
+
 ## Cambios en 0.9.3
 
 - En Windows, pellizcar con el touchpad vuelve a ampliar el PDF.

@@ -1,7 +1,9 @@
 import * as mupdf from 'mupdf';
 import { DEFAULT_HIGHLIGHT_OPACITY } from './highlight-style.mjs';
 
-const supported = new Set(['Highlight', 'Text', 'Ink']);
+const supported = new Set(['Highlight', 'Text', 'Ink', 'Square', 'Circle', 'Line']);
+// Shapes keep styles Folio does not draw (clouds, dashes, captions), so only its own are managed.
+const shapes = { Square: 'rect', Circle: 'ellipse', Line: 'line' };
 const LOCKED = mupdf.PDFAnnotation.IS_READ_ONLY | mupdf.PDFAnnotation.IS_LOCKED | mupdf.PDFAnnotation.IS_LOCKED_CONTENTS;
 const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
 const colorHex = color => {
@@ -52,7 +54,8 @@ export function hasSignature(doc) {
 }
 
 function editable(annotation) {
-  return supported.has(annotation.getType()) && !(annotation.getFlags() & LOCKED);
+  const type = annotation.getType();
+  return supported.has(type) && !(annotation.getFlags() & LOCKED) && (!shapes[type] || annotation.getObject().get('NM').asString().startsWith('Folio:'));
 }
 
 function identity(annotation, page) {
@@ -60,9 +63,16 @@ function identity(annotation, page) {
   return name.startsWith('Folio:') ? name.slice(6) : `pdf-${page}-${annotation.getObject().asIndirect()}`;
 }
 
+function shapeData(annotation, type, inverse) {
+  const fill = annotation.hasInteriorColor() ? annotation.getInteriorColor() : [];
+  const line = type === 'Line' ? annotation.getLine().flatMap(p => point(p[0], p[1], inverse)) : undefined;
+  const arrow = type === 'Line' && annotation.getLineEndingStyles().end !== 'None';
+  return { shape: arrow ? 'arrow' : shapes[type], fill: fill.length ? colorHex(fill) : null, strokeWidth: annotation.getBorderWidth(), ...(line ? { line } : {}) };
+}
+
 function read(annotation, page, transform) {
   const inverse = mupdf.Matrix.invert(transform);
-  const kind = annotation.getType() === 'Text' ? 'note' : annotation.getType() === 'Ink' ? 'ink' : 'highlight';
+  const type = annotation.getType(), kind = type === 'Text' ? 'note' : type === 'Ink' ? 'ink' : shapes[type] ? 'shape' : 'highlight';
   const quads = kind === 'highlight' ? annotation.getQuadPoints() : [];
   const xs = quads.flatMap(q => [q[0], q[2], q[4], q[6]]);
   const ys = quads.flatMap(q => [q[1], q[3], q[5], q[7]]);
@@ -80,6 +90,7 @@ function read(annotation, page, transform) {
     author: annotation.getAuthor(), opacity: annotation.getOpacity(),
     sourceRef: annotation.getObject().asIndirect(),
     originalName: annotation.getObject().get('NM').asString(),
+    ...(kind === 'shape' ? shapeData(annotation, type, inverse) : {}),
     ...(kind === 'ink' ? { inkPaths: annotation.getInkList().map(path => path.flatMap(p => point(p[0], p[1], inverse))), strokeWidth: annotation.getBorderWidth() || 1 } : {}),
     ...(kind === 'highlight' ? { quads: quads.map(q => {
       const result = [];
@@ -140,16 +151,31 @@ function validate(annotations, pages) {
   const ids = new Set();
   for (const a of annotations) {
     if (!a.id || ids.has(a.id) || !Number.isInteger(a.page) || a.page < 1 || a.page > pages ||
-      !['note', 'highlight', 'ink'].includes(a.kind) || !Array.isArray(a.rect) || a.rect.length !== 4 ||
+      !['note', 'highlight', 'ink', 'shape'].includes(a.kind) || !Array.isArray(a.rect) || a.rect.length !== 4 ||
       !a.rect.every(Number.isFinite) || !/^#[\da-f]{6}$/i.test(a.color) || typeof a.text !== 'string' || a.text.length > 5000)
       throw new Error('Una anotación contiene datos inválidos. No se modificó el original.');
     if (a.quads && (!Array.isArray(a.quads) || a.quads.length > 5000 || a.quads.some(q => !Array.isArray(q) || q.length !== 8 || !q.every(Number.isFinite))))
       throw new Error('Las coordenadas del resaltado no son válidas.');
     if (a.opacity !== undefined && (!Number.isFinite(a.opacity) || a.opacity < 0 || a.opacity > 1))
       throw new Error('La opacidad del resaltado no es válida.');
+    if (a.kind === 'shape' && (!['rect', 'ellipse', 'line', 'arrow'].includes(a.shape) || !Number.isFinite(a.strokeWidth) || a.strokeWidth < 0 || a.strokeWidth > 50 ||
+      !(a.fill === null || a.fill === undefined || /^#[\da-f]{6}$/i.test(a.fill)) || (['line', 'arrow'].includes(a.shape) ? !Array.isArray(a.line) || a.line.length !== 4 || !a.line.every(Number.isFinite) : a.line !== undefined)))
+      throw new Error('La forma contiene datos inválidos.');
     if (a.kind === 'ink' && (!Number.isFinite(a.strokeWidth) || a.strokeWidth <= 0 || a.strokeWidth > 50 || !Array.isArray(a.inkPaths) || !a.inkPaths.length || a.inkPaths.length > 500 || a.inkPaths.some(p => !Array.isArray(p) || p.length < 4 || p.length > 20000 || p.length % 2 || !p.every(Number.isFinite)))) throw new Error('El dibujo contiene coordenadas o un grosor inválidos.');
     ids.add(a.id);
   }
+}
+
+const sameRect = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < .01);
+function writeShape(annotation, value, transform) {
+  const a = point(value.rect[0], value.rect[1], transform), b = point(value.rect[2], value.rect[3], transform);
+  if (value.line) {
+    annotation.setLine(point(value.line[0], value.line[1], transform), point(value.line[2], value.line[3], transform));
+    annotation.setLineEndingStyles('None', value.shape === 'arrow' ? 'OpenArrow' : 'None');
+  } else annotation.setRect([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]);
+  if (value.shape !== 'line' && value.shape !== 'arrow') annotation.setInteriorColor(value.fill ? colorRgb(value.fill) : []);
+  annotation.setBorderWidth(value.strokeWidth);
+  annotation.setOpacity(value.opacity ?? 1);
 }
 
 /** Save ISO PDF Text/Highlight annotations with Unicode contents and AP streams. */
@@ -179,11 +205,14 @@ export function writeAnnotations(bytes, annotations, password = '', incremental 
           if (existing.getContents() !== value.text) { existing.setContents(value.text); changed = true; }
           if (colorHex(existing.getColor()) !== value.color.toLowerCase()) { existing.setColor(colorRgb(value.color)); changed = true; }
           if (value.opacity !== undefined && Math.abs(existing.getOpacity() - value.opacity) > .001) { existing.setOpacity(value.opacity); changed = true; }
+          // Shapes move and change style; rewrite their geometry when anything differs.
+          if (value.kind === 'shape' && JSON.stringify(shapeData(existing, existing.getType(), mupdf.Matrix.invert(page.getTransform()))) !== JSON.stringify({ shape: value.shape, fill: value.fill ?? null, strokeWidth: value.strokeWidth, ...(value.line ? { line: value.line } : {}) })
+            || value.kind === 'shape' && !sameRect(read(existing, index + 1, page.getTransform()).rect, value.rect)) { writeShape(existing, value, page.getTransform()); changed = true; }
           if (changed) { existing.setModificationDate(new Date()); existing.update(); }
         }
         const transform = page.getTransform();
         for (const value of pending.values()) {
-          const annotation = page.createAnnotation(value.kind === 'note' ? 'Text' : value.kind === 'ink' ? 'Ink' : 'Highlight');
+          const annotation = page.createAnnotation(value.kind === 'note' ? 'Text' : value.kind === 'ink' ? 'Ink' : value.kind === 'shape' ? { rect: 'Square', ellipse: 'Circle' }[value.shape] || 'Line' : 'Highlight');
           annotation.setContents(value.text);
           annotation.setName('Folio:' + value.id);
           annotation.setAuthor(value.author || 'Folio');
@@ -195,6 +224,8 @@ export function writeAnnotations(bytes, annotations, password = '', incremental 
             const p = point(value.rect[0], value.rect[1], transform);
             annotation.setRect([p[0], p[1], p[0] + 20, p[1] + 20]);
             annotation.setIcon('Note');
+          } else if (value.kind === 'shape') {
+            writeShape(annotation, value, transform);
           } else if (value.kind === 'ink') {
             annotation.setInkList(value.inkPaths.map(path => { const points = []; for (let i = 0; i < path.length; i += 2) points.push(point(path[i], path[i + 1], transform)); return points; }));
             annotation.setBorderWidth(value.strokeWidth);

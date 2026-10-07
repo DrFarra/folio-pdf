@@ -192,6 +192,37 @@ function pruneFields(doc) {
   const acro = doc.getTrailer().get('Root', 'AcroForm'); if (!acro.isNull()) acro.put('Fields', filter(acro.get('Fields')));
 }
 
+// The PostScript name (name table ID 6) of a TrueType/OpenType font or of the
+// first face of a collection: embedded fonts keep their real name.
+function postScriptName(bytes, index = 0) {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let start = 0;
+    if (view.getUint32(0) === 0x74746366) start = view.getUint32(12 + 4 * index);
+    const tables = view.getUint16(start + 4);
+    for (let i = 0; i < tables; i++) {
+      const entry = start + 12 + 16 * i;
+      if (view.getUint32(entry) !== 0x6e616d65) continue;
+      const table = view.getUint32(entry + 8), count = view.getUint16(table + 2), strings = table + view.getUint16(table + 4);
+      for (let j = 0; j < count; j++) {
+        const record = table + 6 + 12 * j, platform = view.getUint16(record);
+        if (view.getUint16(record + 6) !== 6) continue;
+        const length = view.getUint16(record + 8), offset = strings + view.getUint16(record + 10);
+        const raw = bytes.subarray(offset, offset + length);
+        const name = platform === 1 ? String.fromCharCode(...raw) : String.fromCharCode(...Array.from({ length: length >> 1 }, (_, k) => view.getUint16(offset + 2 * k)));
+        if (/^[\x21-\x7e]{1,63}$/.test(name)) return name;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+const folioDrawing = object => {
+  let buffer;
+  try { buffer = object.readStream(); return /^q [-\d.e ]+ cm \/Folio\d+ Do Q\n$/.test(buffer.asString()); }
+  catch { return false; } finally { buffer?.destroy(); }
+};
+
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 function appendDrawing(doc, page, draw) {
   const bounds = page.getBounds();
@@ -201,6 +232,8 @@ function appendDrawing(doc, page, draw) {
     const device = writer.beginPage(bounds);
     try { draw(device); } finally { try { writer.endPage(); } finally { device.destroy(); } }
     writer.close(); closed = true; generated = new mupdf.PDFDocument(buffer);
+    // A system or CJK font would otherwise be embedded whole on every edit.
+    generated.subsetFonts();
     const object = generated.findPage(0);
     const content = object.get('Contents').readStream();
     let form;
@@ -217,7 +250,11 @@ function appendDrawing(doc, page, draw) {
     const transform = mupdf.Matrix.concat(generatedPage.getTransform(), mupdf.Matrix.invert(page.getTransform())); generatedPage.destroy();
     const stream = doc.addStream(`q ${transform.join(' ')} cm /${name} Do Q\n`, {});
     const contents = target.get('Contents'), list = doc.newArray();
-    if (!contents.isNull()) {
+    if (contents.isArray() && contents.length > 2 && folioDrawing(contents.get(contents.length - 1))) {
+      // The original content is already wrapped by an earlier drawing, and each
+      // drawing restores its own state: wrapping again would nest q/Q per edit.
+      for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
+    } else if (!contents.isNull()) {
       // Contents streams share graphics and text state. Restore the page defaults
       // after the original content, which may leave invisible OCR text (3 Tr),
       // transforms, clipping or transparency active for a subsequently added Form.
@@ -252,13 +289,23 @@ function textDrawing(device, box, options) {
   if (!Number.isFinite(lineHeight) || lineHeight < .8 || lineHeight > 3) fail('Interlineado inválido.');
   if (typeof wrap !== 'boolean') fail('Ajuste de líneas inválido.');
   if (options.baselineOffset !== undefined && (!Number.isFinite(options.baselineOffset) || options.baselineOffset < 0 || options.baselineOffset > 2000)) fail('Posición de la línea de base inválida.');
+  if (options.fontFamily !== undefined && (typeof options.fontFamily !== 'string' || !options.fontFamily.trim() || options.fontFamily.length > 100)) fail('Nombre de fuente inválido.');
+  if (options.fontIndex !== undefined && (!Number.isInteger(options.fontIndex) || options.fontIndex < 0 || options.fontIndex > 255)) fail('Fuente de texto no disponible.');
   const standardFonts = ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique', 'Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic', 'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'];
   if (options.fontName !== undefined && !standardFonts.includes(options.fontName)) fail('Fuente de texto no disponible.');
-  const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font(options.fontName ?? 'Helvetica');
+  // `glyphFont` is the document's own font with the glyphs it actually painted:
+  // a subset font's cmap cannot be trusted for the rest.
+  const glyphFont = options.glyphFont;
+  if (glyphFont && !(glyphFont.font instanceof mupdf.Font && glyphFont.glyphs instanceof Map)) fail('Fuente de texto no disponible.');
+  const font = glyphFont ? glyphFont.font : options.font ? new mupdf.Font(options.fontFamily || postScriptName(options.font, options.fontIndex) || 'Folio Sans', options.font, options.fontIndex ?? 0) : new mupdf.Font(options.fontName ?? 'Helvetica');
+  const encode = glyphFont ? c => glyphFont.glyphs.get(c.codePointAt(0)) || (glyphFont.complete ? font.encodeCharacter(c) : 0) : c => font.encodeCharacter(c);
+  // Subset fonts often have no space glyph: their gaps advance like a space.
+  const spaceGlyph = encode(' '), space = spaceGlyph ? font.advanceGlyph(spaceGlyph) : .25;
+  const advance = c => { const gid = encode(c); return gid ? font.advanceGlyph(gid) : /\s/.test(c) ? space : 0; };
   const text = new mupdf.Text();
   try {
-    for (const c of options.text) if (c !== '\n' && c !== '\r' && c !== '\t' && !font.encodeCharacter(c)) fail(`La fuente elegida no incluye el carácter «${c}».`);
-    const limit = box[2] - box[0], measure = line => [...line].reduce((n, c) => n + font.advanceGlyph(font.encodeCharacter(c)) * size, 0);
+    for (const c of options.text) if (!/\s/.test(c) && !encode(c)) fail(glyphFont ? `La fuente original no incluye «${c}».` : `La fuente elegida no incluye el carácter «${c}».`);
+    const limit = box[2] - box[0], measure = line => [...line].reduce((n, c) => n + advance(c) * size, 0);
     const lines = [];
     for (const paragraph of options.text.replace(/\r/g, '').split('\n')) {
       if (!wrap || measure(paragraph) <= limit + .5) { lines.push(paragraph); continue; }
@@ -282,18 +329,20 @@ function textDrawing(device, box, options) {
     for (const line of lines) {
       const width = measure(line);
       if (width > limit + .5 || y > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
-      const x = box[0] + (align === 'center' ? (limit - width) / 2 : align === 'right' ? limit - width : 0);
-      text.showString(font, [size, 0, 0, -size, x, y], line);
+      let x = box[0] + (align === 'center' ? (limit - width) / 2 : align === 'right' ? limit - width : 0);
+      for (const c of line) { const gid = encode(c); if (gid) text.showGlyph(font, [size, 0, 0, -size, x, y], gid, c.codePointAt(0)); x += advance(c) * size; }
       y += size * lineHeight;
     }
     // Wrapped text must fit its actual glyph ink, including descenders below the baseline.
     // Legacy calls retain their original baseline-based fitting behavior.
-    if (wrap && options.text.trim()) {
+    // A document's own font may report its whole font box for every glyph, so
+    // its text keeps the baseline fitting the original lines had.
+    if (wrap && options.text.trim() && !glyphFont) {
       const ink = text.getBounds(null, mupdf.Matrix.identity);
       if (ink[3] > box[3] + .5 || (options.baselineOffset !== undefined && ink[1] < box[1] - .5)) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
     }
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, rgb(options.color || '#202020'), 1);
-  } finally { text.destroy(); font.destroy(); }
+  } finally { text.destroy(); if (!glyphFont) font.destroy(); }
 }
 
 function imagePlacement(image, box, options, orientation = 1) {
@@ -376,7 +425,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
   const guard = callback => (...args) => { try { callback(...args); } catch (error) { deviceError ??= error; } };
   const currentClip = () => clips.at(-1);
   const complexGroup = () => groups.some(Boolean);
-  const pushClip = (box, complex) => { if (reserve()) clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex }); };
+  const pushClip = (box, complex, maskMatrix) => { if (reserve()) clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex, maskMatrix }); };
   const isRectangle = (path, matrix) => {
     let count = 0, curve = false, closed = false; const points = [];
     path.walk({ moveTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, lineTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, curveTo: () => { curve = true; }, closePath: () => { closed = true; } });
@@ -389,14 +438,19 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     textPaint.push({ box, hidden: hidden || alpha <= 0, complex: complexGroup() || currentClip().complex || alpha < .999, clip: currentClip().box, order: order++ });
   };
   const paintImage = (image, matrix, alpha, mask = false) => {
-    if (!reserve()) return; const box = mupdf.Rect.transform([0, 0, 1, 1], matrix), clip = currentClip(), visible = intersection(box, clip.box);
+    if (!reserve()) return; const box = mupdf.Rect.transform([0, 0, 1, 1], matrix);
     let softMask;
     try {
       softMask = image.getMask();
-      const info = { box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask() || !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() };
+      // An image's own soft mask (a PNG's alpha) is painted as a mask clip with the
+      // image's matrix just before it: that is transparency, not an effect.
+      const own = softMask && clips.length > 1 && currentClip().maskMatrix?.every((v, i) => Math.abs(v - matrix[i]) < .01);
+      const clip = own ? clips.at(-2) : currentClip(), visible = intersection(box, clip.box);
+      // A soft mask is ordinary transparency (a PNG's alpha); stencil masks are effects.
+      const info = { box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask(), transparent: !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() };
       if (selectedContent) imagePaint.push(info);
       if (usable(visible)) {
-        if (`image-${images.length}` === requestedImage) selectedImage = new mupdf.Image(image.pointer);
+        if (`image-${images.length}` === (requestedImage ?? (selectedContent?.kind === 'image' ? selectedContent.id : undefined))) selectedImage = new mupdf.Image(image.pointer);
         images.push(info);
       }
     } finally { softMask?.destroy(); }
@@ -415,7 +469,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       clipStrokePath: (path, stroke, matrix) => { try { pushClip(path.getBounds(stroke, matrix), true); } finally { path.destroy(); stroke.destroy(); } },
       clipText: (text, matrix) => { try { pushClip(text.getBounds(null, matrix), true); } finally { text.destroy(); } },
       clipStrokeText: (text, stroke, matrix) => { try { pushClip(text.getBounds(stroke, matrix), true); } finally { text.destroy(); stroke.destroy(); } },
-      clipImageMask: (image, matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true); } finally { image.destroy(); } },
+      clipImageMask: (image, matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true, [...matrix]); } finally { image.destroy(); } },
       popClip: () => { if (clips.length > 1) clips.pop(); },
       beginGroup: (_box, cs, _isolated, knockout, blend, alpha) => { try { if (reserve()) groups.push(knockout || blend !== 'Normal' || alpha < .999); } finally { cs.destroy(); } },
       endGroup: () => { groups.pop(); },
@@ -430,7 +484,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     // Unicode strings preserve them; only strings are used, not its rounded boxes.
     const jsonLines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
     if (jsonLines.reduce((n, line) => n + line.length, 0) > 200000) fail('La página tiene demasiado texto para detectarlo automáticamente.');
-    const blocks = []; let block, line, index = 0, rune = 0, jsonRunes;
+    const blocks = [], fontChars = new Map(); let block, line, index = 0, rune = 0, jsonRunes;
     structured.walk({
       beginTextBlock: box => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
       beginLine: (box, mode, direction) => { line = { box, mode, direction, text: '', styles: new Map(), glyphs: [] }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
@@ -439,6 +493,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
           if (++characters > 100000) fail('Hay demasiado texto para la selección automática.');
           const c = jsonRunes[rune++] ?? character; line.text += c; line.origin ??= origin;
           const fontName = font.getName();
+          if (c.trim()) { const chars = fontChars.get(fontName) || new Set(); if (chars.size < 4000) chars.add(c); fontChars.set(fontName, chars); }
           if (selectedContent) { const glyph = { c, origin: [...origin], quad: [..._quad], fontName, size, color: [...color] }; line.glyphs.push(glyph); glyphs.push(glyph); }
           if (!c.trim()) return;
           const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
@@ -463,7 +518,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
         const advances = !rotated ? rows.slice(1).map((row, i) => (row.origin?.[1] - rows[i].origin?.[1]) / style.size).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b) : [];
         const lineHeight = advances.length ? advances[Math.floor(advances.length / 2)] : undefined;
         if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor.';
-        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}) };
+        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}), fontGlyphs: /^[A-Z]{6}\+/.test(style.fontName) ? [...(fontChars.get(style.fontName) || [])].join('') : '*' };
         candidates.push({ item, box, block: bi, rows });
       };
       rows.forEach((row, li) => addText(`text-line-b${bi}-l${li}`, 'line', row.box, [row]));
@@ -483,7 +538,8 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box)) && overlap(image.box, candidate.box)) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
       const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos.' : a * d - b * c <= 0 ? 'Imagen reflejada.' : !orthogonal ? 'Imagen inclinada.' : overlaps ? 'Imagen con contenido superpuesto.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
       if (reason) warnings.add(reason);
-      return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, ...(reason ? { reason } : {}), ...(reason && image.alpha > 0 ? { areaReplaceable: true } : {}) };
+      const rotation = ((Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
+      return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, opacity: image.alpha, rotation, ...(image.transparent ? { transparent: true } : {}), ...(reason ? { reason } : {}), ...(reason && image.alpha > 0 ? { areaReplaceable: true } : {}) };
     });
     const items = [...candidates.map(candidate => candidate.item), ...imageItems];
     if (hasSignature(doc) || !doc.hasPermission('edit')) {
@@ -501,7 +557,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
         // by alpha or clipping. The picker deliberately tolerates tiny overlaps;
         // deletion must not use that tolerance or remove a second instance.
         if (imagePaint.some(other => other !== image && intersects(image.fullBox, other.fullBox))) fail('Otra imagen toca el área seleccionada; no se puede eliminar solo esta instancia con seguridad.');
-        return { boxes: [image.fullBox], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()) };
+        return { boxes: [image.fullBox], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()), info: image, image: selectedImage && new mupdf.Image(selectedImage.pointer) };
       }
       const candidate = candidates.find(candidate => candidate.item === item), selected = new Set(candidate.rows.flatMap(row => row.glyphs));
       if (selected.size > 5000) fail('Hay demasiados caracteres para modificar esta selección automáticamente. Selecciona menos líneas.');
@@ -512,6 +568,7 @@ function pageContent(doc, page, requestedImage, selectedContent) {
       const item = imageItems.find(item => item.id === requestedImage);
       if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
       if (!item.editable) fail(item.reason);
+      if (images[Number(requestedImage.slice(6))].transparent) fail('Esta imagen tiene transparencia: muévela o sustitúyela desde el editor de escritorio.');
       return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))], jpegSource(doc, page, selectedImage));
     }
     return { items, warnings: [...warnings] };
@@ -533,6 +590,60 @@ function contentGlyphs(page, whitespace = false) {
     });
     return result;
   } finally { structured?.destroy(); display?.destroy(); }
+}
+
+// Every filled glyph on the page in device space, with the font that painted it
+// kept alive, so text can be drawn again with its own fonts and colours.
+function captureGlyphs(page) {
+  const glyphs = [], fonts = new Map(); let device, failure;
+  const release = () => { for (const font of fonts.values()) font.destroy(); fonts.clear(); };
+  try {
+    device = new mupdf.Device({
+      fillText: (text, matrix, cs, color, alpha) => {
+        try {
+          if (failure) return;
+          const space = cs.isGray() ? 'gray' : cs.isRGB() ? 'rgb' : cs.isCMYK() ? 'cmyk' : null;
+          text.walk({ showGlyph: (font, trm, gid, unicode, wmode) => {
+            if (failure) return;
+            if (glyphs.length >= 100000) { failure = new Error('Hay demasiado texto en la página para moverlo automáticamente.'); return; }
+            if (!fonts.has(font.pointer)) fonts.set(font.pointer, new mupdf.Font(font.pointer));
+            const m = mupdf.Matrix.concat(trm, matrix);
+            glyphs.push({ font: fonts.get(font.pointer), fontName: font.getName(), matrix: m, origin: [m[4], m[5]], gid, unicode, wmode, space, color: [...color], alpha });
+          } });
+        } catch (error) { failure ??= error; } finally { text.destroy(); cs.destroy(); }
+      },
+    });
+    page.runPageContents(device, mupdf.Matrix.identity); device.close();
+  } catch (error) { failure ??= error; } finally { device?.destroy(); }
+  if (failure) { release(); throw failure; }
+  return { glyphs, release };
+}
+
+// The characters a font has actually painted on this page and their glyphs.
+function fontCensus(glyphs, fontName) {
+  const map = new Map();
+  for (const glyph of glyphs) if (glyph.fontName === fontName && glyph.gid && glyph.unicode > 0 && !map.has(glyph.unicode)) map.set(glyph.unicode, glyph.gid);
+  return map;
+}
+
+// Draw captured glyphs again, moved by (dx, dy) in device space.
+// Spot and indexed colours are drawn with their RGB equivalent.
+function glyphDrawing(device, glyphs, dx, dy) {
+  const paint = glyph => glyph.space ? [glyph.space, ...glyph.color, glyph.alpha] : ['rgb', ...glyph.rgb, glyph.alpha];
+  for (let start = 0; start < glyphs.length;) {
+    const key = JSON.stringify(paint(glyphs[start])); let end = start;
+    const text = new mupdf.Text();
+    try {
+      while (end < glyphs.length && JSON.stringify(paint(glyphs[end])) === key) {
+        const { font, matrix: m, gid, unicode, wmode } = glyphs[end++];
+        text.showGlyph(font, [m[0], m[1], m[2], m[3], m[4] + dx, m[5] + dy], gid, unicode, wmode);
+      }
+      const [space, ...rest] = paint(glyphs[start]), alpha = rest.pop();
+      const cs = space === 'gray' ? mupdf.ColorSpace.DeviceGray : space === 'cmyk' ? mupdf.ColorSpace.DeviceCMYK : mupdf.ColorSpace.DeviceRGB;
+      device.fillText(text, mupdf.Matrix.identity, cs, rest, alpha);
+    } finally { text.destroy(); }
+    start = end;
+  }
 }
 
 // Redaction removes every glyph whose font box touches a mark, and with ordinary
@@ -560,7 +671,7 @@ function textRemoval(selected, retainedGlyphs, conflict) {
   }
   if (boxes.length > 500) fail('La selección tiene demasiados fragmentos para modificarla con seguridad. Selecciona menos texto.');
   if (retainedGlyphs.some(glyph => boxes.some(box => intersects(quadBounds(glyph.quad), box)))) fail(conflict);
-  return { boxes, retainedGlyphs };
+  return { boxes, retainedGlyphs, selected };
 }
 
 // A drawn area takes the glyphs whose centre lies inside it, so a generous
@@ -646,6 +757,73 @@ function redactPage(doc, page, boxes, { black = true, images = true, imageMethod
   } finally {
     if (preserveAnnotations) { if (restored) object.put('Annots', restored); else object.delete('Annots'); }
   }
+}
+
+// Move, resize, turn or duplicate a text block or an image without rewriting it:
+// text keeps its own glyphs, fonts and mixed styles, and an image keeps its
+// compressed data and transparency. The original is removed like remove-content.
+function moveContent(doc, page, index, target, options, password) {
+  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+  if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
+  const source = rect(options.sourceRect), sourceBox = mupdf.Rect.transform(source, page.getTransform());
+  const text = options.operation === 'move-text';
+  if (typeof options.sourceId !== 'string' || !(text ? /^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/ : /^image-\d{1,5}$/).test(options.sourceId)) fail('La selección de contenido no es válida.');
+  const selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: text ? 'text' : 'image', rect: source });
+  let captured, draw, expected = [];
+  try {
+    if (text) {
+      // Text is moved, not scaled: a new size means retyping it.
+      if (Math.abs((target[2] - target[0]) - (sourceBox[2] - sourceBox[0])) > .5 || Math.abs((target[3] - target[1]) - (sourceBox[3] - sourceBox[1])) > .5) fail('Para cambiar el tamaño del texto, edítalo.');
+      captured = captureGlyphs(page);
+      const dx = target[0] - sourceBox[0], dy = target[1] - sourceBox[1], used = new Set(), moved = [];
+      const near = (a, b) => Math.abs(a[0] - b[0]) < .02 && Math.abs(a[1] - b[1]) < .02;
+      for (const glyph of selection.selected) {
+        const matches = captured.glyphs.filter(g => !used.has(g) && near(g.origin, glyph.origin));
+        // Re-emitted glyphs carry the character text extraction reported, so copying and searching stay the same.
+        const unicode = [...glyph.c].length === 1 ? glyph.c.codePointAt(0) : undefined;
+        for (const match of matches) { used.add(match); match.rgb = glyph.color; if (unicode && glyph.c.trim()) match.unicode = unicode; moved.push(match); }
+        // A ligature paints one glyph for several characters, placed within its advance.
+        const ligature = !matches.length && moved.some(g => Math.abs(g.origin[1] - glyph.origin[1]) < .5 && g.origin[0] < glyph.origin[0] && glyph.origin[0] - g.origin[0] < 2 * glyph.size);
+        if (!matches.length && glyph.c.trim() && !ligature) fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
+        if (matches.length && glyph.c.trim()) expected.push({ c: glyph.c, origin: [glyph.origin[0] + dx, glyph.origin[1] + dy] });
+      }
+      draw = device => glyphDrawing(device, moved, dx, dy);
+    } else {
+      const { image, info } = selection;
+      if (!image) fail('La imagen seleccionada ya no existe en esta página.');
+      captured = { release: () => image.destroy() };
+      const turn = options.rotation ?? 0, alpha = options.opacity ?? info.alpha;
+      if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
+      if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
+      // Fit the painted box to the target, then turn it clockwise about the target's centre.
+      const from = info.fullBox, turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
+      const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
+      const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
+      const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
+      const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(turn)), mupdf.Matrix.translate(cx, cy));
+      const matrix = mupdf.Matrix.concat(mupdf.Matrix.concat(info.matrix, fit), spin);
+      draw = device => device.fillImage(image, matrix, alpha);
+    }
+    if (!options.copy) redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
+    const removed = save(doc);
+    if (!options.copy) verifyRetainedGlyphs(removed, index, selection.retainedGlyphs, password, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
+    const next = open(removed, password); let output;
+    try {
+      const nextPage = next.loadPage(index);
+      try { appendDrawing(next, nextPage, draw); } finally { nextPage.destroy(); }
+      output = saveDrawnDocument(next, password);
+    } finally { next.destroy(); }
+    if (expected.length) {
+      // Every glyph must appear where it was moved. A rewritten font may name an
+      // odd glyph differently (a bullet as a middle dot, a TeX brace as a letter), so almost all must read the same.
+      const verification = open(output, password); let found;
+      try { const moved = verification.loadPage(index); try { found = contentGlyphs(moved); } finally { moved.destroy(); } } finally { verification.destroy(); }
+      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .05 && Math.abs(other.origin[1] - glyph.origin[1]) < .05);
+      if (expected.some(glyph => !at(glyph).length) || expected.filter(glyph => !at(glyph).some(other => other.c === glyph.c)).length > Math.max(3, expected.length * .05))
+        fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
+    }
+    return output;
+  } finally { captured?.release(); if (!captured) selection.image?.destroy(); }
 }
 
 export function operateDocument(bytes, options, password = '', onPart) {
@@ -870,7 +1048,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
           } finally { page.destroy(); }
         }
       } finally { font.destroy(); }
-    } else if (['add-text', 'replace-text', 'add-image', 'replace-image', 'remove-image', 'redact', 'crop'].includes(operation)) {
+    } else if (['add-text', 'replace-text', 'move-text', 'move-image', 'add-image', 'replace-image', 'remove-image', 'redact', 'crop'].includes(operation)) {
       allowed(doc, 'edit');
       if (operation === 'redact') {
         if (!Array.isArray(options.areas) || !options.areas.length) fail('Selecciona al menos un área.');
@@ -903,25 +1081,45 @@ export function operateDocument(bytes, options, password = '', onPart) {
               } else appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
             } finally { image.destroy(); }
             if (replacement) return operateDocument(replacement, { ...options, operation: 'add-image' }, password);
+          } else if (operation === 'move-text' || operation === 'move-image') {
+            return moveContent(doc, page, pageIndex(doc, options.page), box, options, password);
           } else if (operation === 'remove-image') {
             redactPage(doc, page, [box], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
           } else {
             // Fit validation happens before redaction; errors never return a modified PDF.
             if (operation === 'replace-text') {
-              textDrawing({ fillText() {} }, box, options);
+              if (options.originalFont !== undefined && typeof options.originalFont !== 'boolean') fail('Opción de fuente inválida.');
+              if (!options.originalFont) textDrawing({ fillText() {} }, box, options);
               const source = rect(options.sourceRect ?? options.rect), index = pageIndex(doc, options.page);
               // A selected line or paragraph removes exactly its glyphs, like remove-content.
-              let selection;
+              let selection, glyphFont;
               if (options.sourceId !== undefined) {
                 if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
                 if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
                 selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
-              } else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
-              if (selection.boxes.length) redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
-              const output = save(doc);
-              if (selection.boxes.length) verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
-              // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
-              return operateDocument(output, { ...options, operation: 'add-text' }, password);
+              } else if (options.originalFont) fail('La fuente original necesita un texto seleccionado.');
+              else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
+              try {
+                if (options.originalFont) {
+                  // The predominant font of the selection, with every glyph it painted on this page.
+                  const counts = new Map();
+                  for (const glyph of selection.selected) if (glyph.c.trim()) counts.set(glyph.fontName, (counts.get(glyph.fontName) || 0) + 1);
+                  const fontName = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0], captured = captureGlyphs(page);
+                  try {
+                    const painted = captured.glyphs.find(glyph => glyph.fontName === fontName);
+                    if (!painted) fail('La fuente original no está disponible.');
+                    // A subset font has only what it painted; a whole or standard font has its full map.
+                    glyphFont = { font: new mupdf.Font(painted.font.pointer), glyphs: fontCensus(captured.glyphs, fontName), complete: !/^[A-Z]{6}\+/.test(fontName) };
+                  } finally { captured.release(); }
+                  textDrawing({ fillText() {} }, box, { ...options, glyphFont });
+                }
+                if (selection.boxes.length) redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
+                const output = save(doc);
+                if (selection.boxes.length) verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
+                // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
+                try { return operateDocument(output, { ...options, operation: 'add-text', glyphFont }, password); }
+                catch (error) { throw glyphFont && !/no incluye|no cabe/.test(error?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
+              } finally { glyphFont?.font.destroy(); }
             }
             appendDrawing(doc, page, device => textDrawing(device, box, options));
           }

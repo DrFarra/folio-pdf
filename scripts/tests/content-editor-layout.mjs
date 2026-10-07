@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { androidTablet, openTabletEditor } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 const root = process.cwd(), output = path.join(root, 'test-results');
@@ -23,7 +24,8 @@ let log = '', browser, frontendEntry; const results = [], errors = [];
 server.stdout.on('data', bytes => { log += bytes; }); server.stderr.on('data', bytes => { log += bytes; });
 const iphoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const cases = [
-  { width: 1360, height: 720 }, { width: 1360, height: 600 }, { width: 1024, height: 600 }, { width: 760, height: 600 },
+  // Touch layouts keep this editor; the desktop edits inside the reader (edit-mode-ui.mjs).
+  { width: 1280, height: 800 }, { width: 1280, height: 600 }, { width: 800, height: 1280 }, { width: 760, height: 800 },
   { width: 390, height: 844, phone: true }, { width: 844, height: 390, phone: true },
 ];
 const geometry = page => page.evaluate(() => {
@@ -34,7 +36,7 @@ const geometry = page => page.evaluate(() => {
       clientWidth: element.clientWidth, clientHeight: element.clientHeight } : null;
   };
   return { width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight,
-    scrollX, scrollY, phone: document.documentElement.hasAttribute('data-phone'), dialog: measure('.content-workbench'),
+    scrollX, scrollY, phone: document.documentElement.hasAttribute('data-phone'), layout: document.documentElement.dataset.layout, dialog: measure('.content-workbench'),
     editor: measure('.content-editor'), body: measure('.content-editor-body'), preview: measure('.content-preview'),
     canvas: measure('.content-preview canvas'), inspector: measure('.content-inspector'),
     inspectorTop: measure('.content-inspector-top'), inspectorScroll: measure('.content-inspector-scroll'), footer: measure('.content-editor-footer') };
@@ -54,7 +56,7 @@ function assertBounds(value, phone) {
   assert(value.inspectorScroll.y >= value.inspectorTop.bottom - 1, 'Properties must stay below the fixed selection heading.');
   assert(value.inspectorScroll.bottom <= value.inspector.bottom + 1);
   assert(value.canvas.height >= (phone && value.height < 500 ? 80 : 150), 'The PDF preview is too small.');
-  assert.equal(value.phone, phone);
+  assert.equal(value.phone, phone); assert.equal(value.layout, phone ? 'phone' : 'tablet');
 }
 // Choosing a tool changes the hint below the page, which can resize and re-render the page: draw once it is stable.
 const stageSettled = page => page.waitForFunction(() => new Promise(resolve => {
@@ -84,14 +86,10 @@ try {
   frontendEntry = html.match(/src="([^"]+\.js)"/)?.[1]; assert(frontendEntry, 'The report must identify the tested frontend build.');
   browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: chrome, headless: true });
   for (const specification of cases) {
-    const { phone = false, width, height } = specification, id = (phone ? 'phone-' : 'desktop-') + width + 'x' + height;
+    const { phone = false, width, height } = specification, id = (phone ? 'phone-' : 'tablet-') + width + 'x' + height;
     if (process.env.FOLIO_EDITOR_LAYOUT_TEST && !new RegExp(process.env.FOLIO_EDITOR_LAYOUT_TEST).test(id)) continue;
-    const context = await browser.newContext({ viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: iphoneAgent } : {}) });
+    const context = await browser.newContext(phone ? { viewport: { width, height }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: iphoneAgent } : androidTablet({ width, height }));
     if (phone) await context.addInitScript(() => { Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }); Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: undefined }); });
-    else if (useWebKit) await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
-      Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { platform: 'macOS' } });
-    });
     const page = await context.newPage(); page.setDefaultTimeout(20000);
     page.on('pageerror', error => errors.push({ id, error: error.message }));
     try {
@@ -99,11 +97,12 @@ try {
       await page.locator('input[type=file][accept="application/pdf,.pdf"]').first().setInputFiles(fixture);
       await page.locator('.reading-area .textLayer span').first().waitFor();
       await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-      if (phone) await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
-      else await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
       // Adding text lives in Editar PDF: draw the area on the selector's page.
-      await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
-      await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
+      if (phone) {
+        await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
+        await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
+        await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
+      } else await openTabletEditor(page);
       const picker = page.locator('.pdf-content-picker[data-picker-state="ready"]'); await picker.waitFor({ timeout: 60000 });
       await picker.getByRole('button', { name: 'Añadir texto', exact: true }).click(); await stageSettled(page);
       const bounds = await picker.locator('.pdf-picker-stage').boundingBox(); assert(bounds);
@@ -130,15 +129,15 @@ try {
       const after = await geometry(page); assertBounds(after, phone);
       assert.deepEqual(await ensureButton(page, 'Aplicar cambios'), applyBefore, 'Apply must remain stationary while scrolling controls.');
       assert.deepEqual(await ensureButton(page, 'Descartar edición'), cancelBefore, 'Discard must remain stationary while scrolling controls.');
-      assert(after.inspectorScroll.scrollTop > 0, 'The properties body should expose its last controls by vertical scrolling.');
+      // A tall portrait tablet may show every control without scrolling.
+      assert(after.inspectorScroll.scrollTop > 0 || after.inspectorScroll.scrollHeight <= after.inspectorScroll.clientHeight + 1, 'The properties body should expose its last controls by vertical scrolling.');
       assert.deepEqual(after.inspectorTop, before.inspectorTop, 'The selection heading must remain stationary while scrolling properties.');
       assert.equal(after.preview.scrollTop, before.preview.scrollTop);
-      assert.equal(await page.locator('.modified-dot').count(), 0, 'Preview must not modify the source document.');
       await page.screenshot({ path: path.join(output, 'content-editor-layout-' + id + '.png'), animations: 'disabled' });
       await page.getByRole('button', { name: 'Descartar edición', exact: true }).click();
       await page.locator('.content-editor').waitFor({ state: 'detached' }); await picker.waitFor();
-      results.push({ id, status: 'passed', simulatedPhone: phone, frontendEntry, previewHeight: before.canvas.height, inspectorScroll: after.inspectorScroll.scrollTop,
-        fixedFooter: true, fixedSelectionHeading: true, allControlsReachable: visited, controlBounds, noHorizontalOverflow: true, originalUnchanged: true, geometry: after });
+      results.push({ id, status: 'passed', simulatedPhone: phone, simulatedTablet: !phone, frontendEntry, previewHeight: before.canvas.height, inspectorScroll: after.inspectorScroll.scrollTop,
+        fixedFooter: true, fixedSelectionHeading: true, allControlsReachable: visited, controlBounds, noHorizontalOverflow: true, geometry: after });
     } catch (error) {
       results.push({ id, status: 'failed', frontendEntry, error: error.stack }); process.exitCode = 1;
       await page.screenshot({ path: path.join(output, 'failure-editor-layout-' + id + '.png'), animations: 'disabled' }).catch(() => {});

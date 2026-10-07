@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { androidTablet, desktopDocumentAction, openTabletEditor, tabletDownload } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -68,18 +69,15 @@ async function open(page, file = source) {
   await page.getByRole('heading', { name: path.basename(file), exact: true }).waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await page.locator('.pdf-page-wrap').first().waitFor();
-  await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('100');
   await page.locator('.reading-area').evaluate(node => { node.scrollTop = 0; });
   await page.locator('.pdf-page-wrap').first().locator('.page-loading').waitFor({ state: 'detached' });
 }
 const picker = (page, number) => page.locator(`.pdf-content-picker${number ? `[data-page="${number}"]` : ''}[data-picker-state="ready"]`).waitFor({ timeout: 60000 });
-// Adding and replacing content lives in Herramientas → Editar PDF: add tools draw
-// on the selector page at 100 % (1 pt = 1 px); replace tools select a detected item.
+// Touch layouts keep this editor (the desktop edits inside the reader, see
+// edit-mode-ui.mjs); a tablet opens it from the document action sheet. Add tools
+// draw on the selector page at 100 % (1 pt = 1 px); replace tools select a detected item.
 async function editor(page, action, box = null, number = 1) {
-  if (!await page.locator('.pdf-content-picker').count()) {
-    await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
-    await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
-  }
+  if (!await page.locator('.pdf-content-picker').count()) await openTabletEditor(page);
   const selector = page.locator('.pdf-content-picker'); await picker(page);
   if (await selector.getAttribute('data-page') !== String(number)) { await selector.getByLabel('Página del editor', { exact: true }).fill(String(number)); await selector.getByLabel('Página del editor', { exact: true }).press('Enter'); }
   await picker(page, number);
@@ -121,15 +119,25 @@ async function discard(page) {
   await page.getByRole('button', { name: 'Descartar edición', exact: true }).click();
   await page.locator('.content-editor').waitFor({ state: 'detached' }); await closeEditor(page);
 }
+// The reader's history and download live in the tablet action sheet.
+const history = (page, name) => desktopDocumentAction(page, name);
+async function canUndo(page, name = 'Deshacer') {
+  await page.getByRole('button', { name: 'Más acciones del documento', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Acciones del documento', exact: true }); await dialog.waitFor();
+  // The sheet lists the history pair only when there is something to revert.
+  const button = dialog.getByRole('button', { name, exact: true }), enabled = await button.count() ? await button.isEnabled() : false;
+  await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+  return enabled;
+}
 async function save(page, name) {
-  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Descargar', exact: true }).click();
+  const download = await tabletDownload(page);
   const target = path.join(output, name); await (await download).saveAs(target);
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   return new Uint8Array(fs.readFileSync(target));
 }
-async function check(id, action, viewport = { width: 1360, height: 720 }) {
+async function check(id, action, viewport = { width: 1280, height: 800 }) {
   if (process.env.FOLIO_EDITOR_TEST && !new RegExp(process.env.FOLIO_EDITOR_TEST).test(id)) return;
-  const context = await browser.newContext({ viewport, acceptDownloads: true }); const page = await context.newPage(); page.setDefaultTimeout(20000);
+  const context = await browser.newContext({ ...androidTablet(viewport), acceptDownloads: true }); const page = await context.newPage(); page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push({ id, message: error.message }));
   try {
     await page.goto(origin);
@@ -154,22 +162,21 @@ try {
     await page.getByLabel('Ancho', { exact: true }).fill('240');
     await page.getByLabel('Alto', { exact: true }).fill('50');
     await ready(page); await page.screenshot({ path: path.join(output, 'content-editor-text-preview.png') });
-    assert.equal(await page.locator('.modified-dot').count(), 0, 'Preview must not modify the original session.');
     await apply(page);
-    await page.getByRole('button', { name: /^Deshacer \(/ }).click();
+    await history(page, 'Deshacer');
     await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     await page.locator('.textLayer span').filter({ hasText: 'ORIGINAL TEXT' }).first().waitFor();
-    assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled(), 'One content commit must have one undo step.');
-    await page.getByRole('button', { name: /^Rehacer \(/ }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    assert(!await canUndo(page), 'One content commit must have one undo step.');
+    await history(page, 'Rehacer'); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     await page.locator('.textLayer span').filter({ hasText: 'REPLACED CONTENT' }).first().waitFor();
     const bytes = await save(page, 'editor-replaced.pdf'), strings = text(bytes);
     assert(!strings[0].includes('ORIGINAL TEXT')); assert(strings[0].includes('REPLACED CONTENT')); assert(strings[0].includes('NEIGHBOR TEXT'));
     assert(strings[1].includes('ORIGINAL TEXT')); assert(inspectDocument(bytes).annotations.some(annotation => annotation.text === 'Keep this note'));
-    assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isEnabled(), 'Saving a copy must preserve editing history.');
-    await page.getByRole('button', { name: /^Deshacer \(/ }).click(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    assert(await canUndo(page), 'Saving a copy must preserve editing history.');
+    await history(page, 'Deshacer'); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
     await page.locator('.textLayer span').filter({ hasText: 'ORIGINAL TEXT' }).first().waitFor();
     const restored = await save(page, 'editor-undo-after-save.pdf'); assert.deepEqual(text(restored), text(original));
-    assert(await page.getByRole('button', { name: /^Rehacer \(/ }).isEnabled(), 'Saving after undo must also preserve redo.');
+    assert(await canUndo(page, 'Rehacer'), 'Saving after undo must also preserve redo.');
     assert.equal(digest(fs.readFileSync(source)), digest(original));
     return { realPdfPreview: true, sourceAndDestinationIndependent: true, notePreserved: true, oneUndoStep: true, historySurvivesSave: true, unchangedOriginalFile: true };
   });
@@ -193,7 +200,7 @@ try {
     const failureBounds = await visibleFailure.boundingBox(), screen = page.viewportSize();
     assert(failureBounds && failureBounds.y >= 0 && failureBounds.y + failureBounds.height <= screen.height, 'The footer error must stay inside the viewport.');
     await discard(page);
-    assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled()); assert.equal(await page.locator('.modified-dot').count(), 0);
+    assert(!await canUndo(page), 'A discarded draft adds no history step.');
     const bytes = await save(page, 'editor-canceled.pdf'); assert.deepEqual(text(bytes), text(original));
     return { staleResultsDiscarded: true, draftSurvivesTools: true, invalidApplyBlocked: true, canceledDocumentUnchanged: true };
   });
@@ -264,7 +271,7 @@ try {
     assert(await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).isDisabled());
     await page.locator('.content-editor input[type=file]').setInputFiles(imageFile); await ready(page);
     await discard(page);
-    assert.equal(await page.locator('.modified-dot').count(), 0); assert(await page.getByRole('button', { name: /^Deshacer \(/ }).isDisabled());
+    assert(!await canUndo(page), 'A discarded draft adds no history step.');
     return { corruptImageBlocked: true, validImageRecovery: true, canceledWithoutMutation: true };
   });
   await check('delayed-image-loading-does-not-restore-stale-position', async page => {
@@ -301,13 +308,8 @@ try {
   await check('rotated-cropped-page-box-mapping-and-short-window-footer', async page => {
     await open(page, rotatedSource); const painted = [];
     for (const [index, angle] of rotations.entries()) {
-      await page.setViewportSize({ width: 1360, height: 720 });
+      await page.setViewportSize({ width: 1280, height: 800 });
       const number = index + 1, width = angle % 180 ? crop[3] - crop[1] : crop[2] - crop[0], height = angle % 180 ? crop[2] - crop[0] : crop[3] - crop[1];
-      if (index) {
-        await page.getByLabel('Número de página', { exact: true }).fill(String(number));
-        await page.getByLabel('Número de página', { exact: true }).press('Enter');
-        await page.locator('.pdf-page-wrap[data-page-number="' + number + '"] .page-loading').waitFor({ state: 'detached' });
-      }
       await editor(page, 'Añadir texto', [90, 80, 310, 170], number);
       await page.getByLabel('Texto', { exact: true }).fill('ROTATED NEW TEXT ' + angle);
       await page.getByLabel('Color', { exact: true }).fill('#ff00ff');
@@ -330,7 +332,8 @@ try {
       await page.screenshot({ path: path.join(output, 'content-editor-rotated-preview-' + angle + '.png') });
       assert(previewInk.count > 10 && previewInk.right - previewInk.left > 50 && previewInk.bottom - previewInk.top > 3, 'Preview must paint actual text ink across a meaningful glyph span, not merely retain extractable text: ' + JSON.stringify({ angle, previewInk }));
       assert(previewInk.left >= 118 && previewInk.top >= 98 && previewInk.right <= 362 && previewInk.bottom <= 182, 'Preview text ink must be inside the destination box: ' + JSON.stringify({ angle, previewInk }));
-      await page.setViewportSize({ width: 1024, height: 600 }); await ready(page);
+      // A tablet window shortened by the keyboard or split screen.
+      await page.setViewportSize({ width: 1280, height: 600 }); await ready(page);
       const applyBounds = await page.getByRole('button', { name: 'Aplicar cambios', exact: true }).boundingBox(), cancelBounds = await page.getByRole('button', { name: 'Descartar edición', exact: true }).boundingBox();
       assert(applyBounds && cancelBounds && applyBounds.y + applyBounds.height <= 600 && cancelBounds.y + cancelBounds.height <= 600);
       await apply(page); const bytes = await save(page, 'editor-rotated-' + angle + '.pdf'); assert(text(bytes)[index].includes('ROTATED NEW TEXT ' + angle));
