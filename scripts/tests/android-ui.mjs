@@ -54,7 +54,7 @@ await page.getByRole('button',{name:phone?'Anotar':'Anotar documento',exact:true
 if(!phone&&mobile){
   const dock=await page.locator('.tablet-annotation-dock').boundingBox();assert.ok(dock.height<=60&&dock.x>=0&&dock.x+dock.width<=width);
   await page.getByRole('button',{name:'Opciones del lápiz',exact:true}).click();
-  await page.getByRole('dialog',{name:'Lápiz',exact:true}).getByRole('button',{name:'3 puntos',exact:true}).click();
+  await page.getByRole('dialog',{name:'Lápiz',exact:true}).getByRole('button',{name:'4 pt',exact:true}).click();
   await page.keyboard.press('Escape');
 }
 const layer=page.locator('.ink-interactive').first();const b=await layer.boundingBox();const x=b.x+b.width*.2,y=Math.max(b.y+30,Math.min(b.y+b.height*.35,height-150));

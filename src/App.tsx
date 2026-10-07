@@ -29,7 +29,7 @@ import CreatePDF from './components/CreatePDF';
 import BookmarkTree from './components/BookmarkTree';
 import TextSelectionMenu from './components/TextSelectionMenu';
 import HighlightColorPicker from './components/HighlightColorPicker';
-import DrawingSettings from './components/DrawingSettings';
+import DrawingSettings, { INK_DEFAULTS, inkRange, type InkKind, type InkStyle } from './components/DrawingSettings';
 import ReadingSettings from './components/ReadingSettings';
 import { readReadingPreferences } from './reading-preferences';
 import { addPageBookmark, deleteBookmark, hasBookmarkPage, normalizeBookmarks, remapBookmarks } from './bookmarks';
@@ -118,8 +118,21 @@ export default function App() {
   const [rotation, setRotation] = useState(0);
   const [readingMode, setReadingMode] = useState<'continuous' | 'single'>(() => readReadingPreferences().mode);
   const [tool, setTool] = useState<Tool>('select');
-  const [inkColor, setInkColor] = useState(() => preference('folio.ink.color', '#2455b5'));
-  const [inkWidth, setInkWidth] = useState(() => Number(preference('folio.ink.width', '2')) || 2);
+  const [inkKind, setInkKind] = useState<InkKind>(() => preference('folio.ink.kind', 'pen') === 'marker' ? 'marker' : 'pen');
+  const [inkStyles, setInkStyles] = useState<Record<InkKind, InkStyle>>(() => {
+    // Older versions kept one pen color and width; they become the pen's style.
+    const legacy = { ...INK_DEFAULTS.pen, color: preference('folio.ink.color', INK_DEFAULTS.pen.color), width: Number(preference('folio.ink.width', '2')) || 2 };
+    let saved: Partial<Record<InkKind, Partial<InkStyle>>> = {};
+    try { saved = JSON.parse(preference('folio.ink.styles', '{}')) || {}; } catch {}
+    const valid = (kind: InkKind, style: Partial<InkStyle> | undefined, fallback: InkStyle): InkStyle => {
+      const range = inkRange(kind), width = Number(style?.width), opacity = Number(style?.opacity);
+      return { color: typeof style?.color === 'string' && /^#[0-9a-f]{6}$/i.test(style.color) ? style.color.toLowerCase() : fallback.color,
+        width: Number.isFinite(width) ? Math.min(range.max, Math.max(range.min, width)) : fallback.width, opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(.1, opacity)) : fallback.opacity };
+    };
+    return { pen: valid('pen', saved.pen, legacy), marker: valid('marker', saved.marker, INK_DEFAULTS.marker) };
+  });
+  const [inkRecentColors, setInkRecentColors] = useState<string[]>(() => { try { const value = JSON.parse(preference('folio.ink.recentColors', '[]')); return Array.isArray(value) ? value.filter(item => typeof item === 'string' && /^#[0-9a-f]{6}$/.test(item)).slice(0, 5) : []; } catch { return []; } });
+  const inkStyle = inkStyles[inkKind];
   const [eraserSize, setEraserSize] = useState(() => Number(preference('folio.ink.eraserSize', '16')) || 16);
   const [penOnly, setPenOnly] = useState(() => penMode() === 'pen');
   const choosePenOnly = useCallback((value: boolean) => { setPenOnly(value); try { localStorage.setItem('folio.ink.penMode', value ? 'pen' : 'finger'); } catch {} }, []);
@@ -130,7 +143,7 @@ export default function App() {
     window.addEventListener('pointerdown', detect, { passive: true, capture: true });
     return () => { window.removeEventListener('pointerover', detect, true); window.removeEventListener('pointerdown', detect, true); };
   }, [choosePenOnly]);
-  useEffect(() => { try { localStorage.setItem('folio.ink.color', inkColor); localStorage.setItem('folio.ink.width', String(inkWidth)); localStorage.setItem('folio.ink.eraserSize', String(eraserSize)); } catch {} }, [inkColor, inkWidth, eraserSize]);
+  useEffect(() => { try { localStorage.setItem('folio.ink.kind', inkKind); localStorage.setItem('folio.ink.styles', JSON.stringify(inkStyles)); localStorage.setItem('folio.ink.recentColors', JSON.stringify(inkRecentColors)); localStorage.setItem('folio.ink.eraserSize', String(eraserSize)); } catch {} }, [inkKind, inkStyles, inkRecentColors, eraserSize]);
   const [color, setColor] = useState(() => { const saved = preference('folio.highlightColor', DEFAULT_HIGHLIGHT_COLOR); return /^#[0-9a-f]{6}$/i.test(saved) ? saved : DEFAULT_HIGHLIGHT_COLOR; });
   const [sidebar, setSidebar] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>('pages');
@@ -1911,7 +1924,7 @@ export default function App() {
   const pageHandlers = useMemo(() => ({ onAnnotate: (annotation: AnnotationDraft | AnnotationDraft[]) => pageEvents.current.onAnnotate(annotation), onArea: (area: Area) => pageEvents.current.onArea(area),
     onNavigate: (destination: PDFNavigationTarget) => pageEvents.current.navigatePDF(destination), onCommentHighlight: (annotation: Annotation) => void pageEvents.current.commentHighlight(annotation), onNoteClick: (id: string) => pageEvents.current.openNote(id) }), []);
   const thumbnailClicks = useMemo(() => pages.map(number => () => pageEvents.current.mobilePage(number)), [pages]);
-  const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onColor={setInkColor} onWidth={setInkWidth} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
+  const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} kind={inkKind} style={inkStyle} recentColors={inkRecentColors} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onKind={setInkKind} onStyle={change => setInkStyles(styles => ({ ...styles, [inkKind]: { ...styles[inkKind], ...change } }))} onCustomColor={value => setInkRecentColors(colors => [value, ...colors.filter(item => item !== value)].slice(0, 5))} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
   // On touch, tools without options keep their slot so no button moves under the finger.
   const annotationSlot = annotationSettings || <span className="drawing-settings-trigger" aria-hidden="true" style={{ visibility: 'hidden' }} />;
 
@@ -2023,7 +2036,7 @@ export default function App() {
         {tablet && doc && searchOpen && !sidebar && !inlineEditing && <div className="tablet-search-controls" role="toolbar" aria-label="Resultados de búsqueda"><IconButton label="Ver resultados" onClick={() => setSidebar(true)}><Search size={20} /></IconButton><span>{results.length ? `${resultIndex + 1} / ${results.length}` : 'Sin resultados'}</span><IconButton label="Resultado anterior" disabled={!results.length} onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={21} /></IconButton><IconButton label="Resultado siguiente" disabled={!results.length} onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={21} /></IconButton><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={21} /></IconButton></div>}
         {inlineEditing && workbenchPanel}
         <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
-          {doc ? <div className="pdf-stack" key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkColor} inkWidth={inkWidth} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
+          {doc ? <div className="pdf-stack" key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
           {loading && <div className="loading-overlay" role="status"><LoaderCircle size={28} className="spin" /><span>Abriendo PDF…</span></div>}
         </div>
 

@@ -58,7 +58,7 @@ type Props = {
   tool: Tool;
   color: string;
   inkColor?: string;
-  inkWidth?: number; eraserSize?: number;
+  inkWidth?: number; inkOpacity?: number; eraserSize?: number;
   penOnly?: boolean;
   query: string;
   activeSearch?: SearchResult | null;
@@ -98,7 +98,7 @@ export default memo(function PDFPage(props: Props) {
   </div>;
 });
 
-function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
+function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, inkOpacity = 1, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number }: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detailRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -518,7 +518,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
       })}
     </div>
-    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
+    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} opacity={inkOpacity} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
     <div className="annotation-layer">
       {redactions.filter(area => area.page === number).map((area, index) => {
         const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);

@@ -6,7 +6,7 @@ import './InkLayer.css';
 
 type Props = {
   viewport: PageViewport; page: number; annotations: Annotation[]; tool: Tool;
-  color: string; width: number; eraserSize?: number; penOnly: boolean; enabled: boolean;
+  color: string; width: number; opacity?: number; eraserSize?: number; penOnly: boolean; enabled: boolean;
   onAdd: (draft: AnnotationDraft) => void; onRemove: (id: string, gesture?: string) => void;
 };
 
@@ -25,7 +25,7 @@ function pathData(path: number[], viewport: PageViewport) {
   return points.join(' ');
 }
 
-export default function InkLayer({ viewport, page, annotations, tool, color, width, eraserSize = 16, penOnly, enabled, onAdd, onRemove }: Props) {
+export default function InkLayer({ viewport, page, annotations, tool, color, width, opacity = 1, eraserSize = 16, penOnly, enabled, onAdd, onRemove }: Props) {
   const [preview, setPreview] = useState<number[]>([]);
   const active = useRef<{ id: number; points: number[]; erase: boolean; erased: Set<string>; group: string } | null>(null);
   const pan = useRef<{ id: number; x: number; y: number; at: number; vx: number; vy: number } | null>(null);
@@ -82,7 +82,7 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
     if (!frame.current) frame.current = requestAnimationFrame(() => { frame.current = 0; if (active.current && !active.current.erase) setPreview([...active.current.points]); });
   }
   // Saved strokes do not change while a new one is previewed every frame.
-  const strokes = useMemo(() => annotations.filter(a => a.kind === 'ink').map(a => <g key={a.id} data-ink-id={a.id} stroke={a.color} strokeWidth={(a.strokeWidth || 2) * viewport.scale} opacity={a.opacity ?? 1}>{a.inkPaths?.map((path, index) => <polyline key={index} points={pathData(path, viewport)} />)}</g>), [annotations, viewport]);
+  const strokes = useMemo(() => annotations.filter(a => a.kind === 'ink').map(a => <g key={a.id} data-ink-id={a.id} className={(a.opacity ?? 1) < 1 ? 'ink-translucent' : undefined} stroke={a.color} strokeWidth={(a.strokeWidth || 2) * viewport.scale} opacity={a.opacity ?? 1}>{a.inkPaths?.map((path, index) => <polyline key={index} points={pathData(path, viewport)} />)}</g>), [annotations, viewport]);
   function release(reader: Element, vx: number, vy: number) {
     // Finger scrolling in pen-only mode keeps its momentum like native scrolling.
     stopGlide?.();
@@ -134,11 +134,11 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
         const points = stroke.points;
         if (points.length === 2) points.push(points[0] + .01, points[1]);
         const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1);
-        onAdd({ page, kind: 'ink', rect: [Math.min(...xs) - width, Math.min(...ys) - width, Math.max(...xs) + width, Math.max(...ys) + width], inkPaths: [[...points]], strokeWidth: width, color, opacity: 1, text: '' });
+        onAdd({ page, kind: 'ink', rect: [Math.min(...xs) - width, Math.min(...ys) - width, Math.max(...xs) + width, Math.max(...ys) + width], inkPaths: [[...points]], strokeWidth: width, color, opacity, text: '' });
       }
       clear(); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     }} onPointerCancel={event => { if (active.current?.id === event.pointerId || pan.current?.id === event.pointerId) clear(); }} onLostPointerCapture={event => { if (active.current?.id === event.pointerId) clear(); }} onClick={event => event.stopPropagation()} onContextMenu={event => event.preventDefault()}>
     {strokes}
-    {preview.length > 0 && <polyline className="ink-preview" points={pathData(preview.length === 2 ? [...preview, preview[0] + .01, preview[1]] : preview, viewport)} stroke={color} strokeWidth={width * viewport.scale} />}
+    {preview.length > 0 && <polyline className="ink-preview" points={pathData(preview.length === 2 ? [...preview, preview[0] + .01, preview[1]] : preview, viewport)} stroke={color} strokeWidth={width * viewport.scale} opacity={opacity} />}
   </svg>;
 }

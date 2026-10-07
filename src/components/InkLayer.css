@@ -1,3 +1,5 @@
 .ink-layer{position:absolute;inset:0;width:100%;height:100%;z-index:6;pointer-events:none;overflow:hidden;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .ink-layer.ink-interactive{pointer-events:auto;touch-action:none;cursor:crosshair;-webkit-user-select:none;user-select:none}
 .tool-draw .textLayer,.tool-eraser .textLayer{pointer-events:none;-webkit-user-select:none;user-select:none}
+/* A marker tints the paper like a highlighter and keeps the text under it readable. */
+.ink-layer .ink-translucent,.ink-layer .ink-preview[opacity]:not([opacity="1"]){mix-blend-mode:multiply}

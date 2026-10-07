@@ -40,7 +40,7 @@ try {
       let popup = page.getByRole('dialog', { name: 'Lápiz', exact: true });
       await popup.waitFor();
       assert.equal(await popup.getByLabel('Usar el dedo').count(), mobile ? 1 : 0, 'PC must hide finger settings until a pen is detected, even on a touch capable browser.');
-      await popup.getByRole('button', { name: '3 puntos', exact: true }).click();
+      await popup.getByRole('button', { name: '4 pt', exact: true }).click();
       await page.screenshot({ path: `${out}/${layout}-pencil.png` });
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('.ink-settings').count(), 0);
@@ -53,7 +53,7 @@ try {
       await inkCount(3);
       await page.getByRole('button', { name: 'Opciones del lápiz', exact: true }).click();
       popup = page.getByRole('dialog', { name: 'Lápiz', exact: true }); await popup.getByLabel('Usar el dedo').waitFor();
-      assert.equal(await popup.getByRole('button', { name: '3 puntos', exact: true }).getAttribute('aria-pressed'), 'true');
+      assert.equal(await popup.getByRole('button', { name: '4 pt', exact: true }).getAttribute('aria-pressed'), 'true');
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: 'Goma', exact: true }).click();
       await page.getByRole('button', { name: 'Opciones de la goma', exact: true }).click();
