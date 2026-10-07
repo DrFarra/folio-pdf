@@ -60,7 +60,11 @@ async function reachable(locator) {
   }), 'A visible control must receive pointer input.');
   return box;
 }
-async function tools(page, title) { await page.getByRole('button', { name: 'Herramientas', exact: true }).click(); await page.getByRole('button', { name: title, exact: true }).click(); }
+// The dialog pops in (scale .96 → 1); geometry is compared only once it has settled.
+async function tools(page, title) {
+  await page.getByRole('button', { name: 'Herramientas', exact: true }).click(); await page.getByRole('button', { name: title, exact: true }).click();
+  await page.locator('dialog[open]').evaluate(dialog => Promise.allSettled(dialog.getAnimations({ subtree: true }).map(animation => animation.finished)));
+}
 async function check(page, id, action) {
   try { results.push({ id, status: 'passed', ...await action() }); }
   catch (error) { results.push({ id, status: 'failed', error: error.stack }); process.exitCode = 1; await page.screenshot({ path: path.join(output, 'failure-' + id + '.png') }).catch(() => {}); }

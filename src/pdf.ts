@@ -8,6 +8,15 @@ import type { OutlineEntry, SearchResult, PDFNavigationTarget } from './types';
 GlobalWorkerOptions.workerSrc = workerUrl;
 export { getDocument, TextLayer };
 
+/** Leaves out of PDF.js's rendering the annotations Folio draws itself, by their
+ * PDF.js ids. PDF.js skips the ids its editors report as modified; Folio reports
+ * these instead of rewriting a large PDF to remove them. */
+export function hideAnnotations(pdf: PDFDocumentProxy, ids: string[]) {
+  if (!ids.length) return;
+  const modified = { ids: new Set(ids), hash: `folio:${ids.join(',')}` };
+  Object.defineProperty(pdf.annotationStorage, 'modifiedIds', { configurable: true, get: () => modified });
+}
+
 export function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toLocaleString('es', { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
@@ -44,16 +53,6 @@ export function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
     request.catch(() => { if (outlineRequests.get(pdf) === request) outlineRequests.delete(pdf); });
   }
   return request;
-}
-
-export async function buildTextIndex(pdf: PDFDocumentProxy, alive: () => boolean): Promise<string[]> {
-  const texts: string[] = [];
-  for (let p = 1; p <= pdf.numPages && alive(); p++) {
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    texts.push(pageText(content));
-  }
-  return texts;
 }
 
 export const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');

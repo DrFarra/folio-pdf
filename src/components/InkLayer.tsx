@@ -31,7 +31,7 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
   const pan = useRef<{ id: number; x: number; y: number; at: number; vx: number; vy: number } | null>(null);
   const frame = useRef(0);
   const glide = useRef<(() => void) | null>(null);
-  const stylus = useRef(0);
+  const stylus = useRef(-Infinity); // No stylus yet: no touch is taken for a resting palm.
   const interactive = enabled && (tool === 'draw' || tool === 'eraser');
   // Stops only a glide this page started: a page mounting mid-glide must not end it.
   const clear = () => { active.current = null; pan.current = null; cancelAnimationFrame(frame.current); frame.current = 0; glide.current?.(); setPreview([]); };

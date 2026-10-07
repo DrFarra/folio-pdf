@@ -63,6 +63,11 @@ const importedSource = path.join(output, 'highlighting-imported-opacity.pdf');
 fs.writeFileSync(importedSource, writeAnnotations(fragmentedBytes, [{ id: 'imported-opacity', page: 1, kind: 'highlight',
   rect: [60, 660, wordX - 5, 675], quads: [[60, 675, wordX - 5, 675, 60, 660, wordX - 5, 660]],
   color: '#f5d164', text: words.join(' '), opacity: .25, created: Date.now() }]));
+// Above 32 MB the engine does not rewrite the PDF to take its highlights out; the
+// reader hides them by reference so each is drawn once, by Folio.
+const largeImportedSource = path.join(output, 'highlighting-imported-large.pdf');
+{ const padded = new mupdf.PDFDocument(fs.readFileSync(importedSource)); padded.getTrailer().get('Root').put('FolioPadding', padded.addStream(new Uint8Array(33 * 1024 * 1024).fill(7), {}));
+  fs.writeFileSync(largeImportedSource, padded.saveToBuffer('').asUint8Array()); padded.destroy(); }
 
 const chrome = findChrome();
 assert(chrome, 'CHROME_PATH must identify an installed Chrome or Edge.');
@@ -278,6 +283,22 @@ try {
     assert.equal(annotations[0].opacity, .25);
     return { viewedOpacity: .25, exportedOpacity: .25 };
   }, importedSource);
+
+  await check('large-imported-highlight-drawn-once', async page => {
+    const overlay = page.locator('.pdf-page-wrap[data-page-number="1"] .highlight-annotation');
+    assert.equal(await overlay.count(), 1);
+    // Under Folio's translucent highlight the canvas holds only paper and text: on
+    // average as blue as it is red. A yellow highlight drawn by PDF.js is not.
+    const tint = await overlay.evaluate(node => {
+      const canvas = node.closest('.page-content').querySelector('canvas'), frame = canvas.getBoundingClientRect(), box = node.getBoundingClientRect();
+      const ratio = canvas.width / frame.width, x = Math.round((box.left - frame.left) * ratio), y = Math.round((box.top - frame.top) * ratio);
+      const { data } = canvas.getContext('2d').getImageData(x, y, Math.max(1, Math.round(box.width * ratio)), Math.max(1, Math.round(box.height * ratio)));
+      let red = 0, blue = 0; for (let i = 0; i < data.length; i += 4) { red += data[i]; blue += data[i + 2]; }
+      return (red - blue) / (data.length / 4);
+    });
+    assert(tint < 6, `PDF.js must not draw the highlight that Folio already shows (red exceeds blue by ${tint.toFixed(1)}).`);
+    return { folioHighlights: 1, pdfJsCopyHidden: true, tint: Math.round(tint * 10) / 10 };
+  }, largeImportedSource);
 
   await check('single-line-partial-word-selection', async page => {
     await highlight(page);

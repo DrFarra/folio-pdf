@@ -8,7 +8,7 @@ import {
   Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, FilePlus2, Moon, Sun, Keyboard, Hash, Share2, Pencil, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
-import PDFPage, { Thumbnail } from './components/PDFPage';
+import PDFPage, { Thumbnail, inView } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
 import DocumentLibrary from './components/DocumentLibrary';
 import { DriveBrowser, TransferCard, advance, type Transfer } from './components/DriveBrowser';
@@ -16,13 +16,13 @@ import { driveLookup, driveOpen, driveStage, driveStageNative, driveStatus as re
 import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentOutline from './components/DocumentOutline';
 import ViewSettings from './components/ViewSettings';
-import { buildTextIndex, exportAnnotated, formatSize, getDocument, plural, readOutline, searchText, pageText, readPageLabels, readPageLabel } from './pdf';
+import { exportAnnotated, formatSize, getDocument, hideAnnotations, plural, readOutline, searchText, pageText, readPageLabels, readPageLabel } from './pdf';
 import { errorMessage } from './errors';
 import { openNativePdf, isNativePdfDocument, isNativePdfPasswordError, nativePdfPageAnnotations, subscribeNativePdfAnnotations } from './nativePdf';
 import { migrateLegacyNativePage } from './native-session';
 import type { Inspection } from './engine/mupdf-engine.mjs';
 import type { NativeDocument } from './platform';
-import { inspectPdf, processPdf } from './engine/client';
+import { inspectOwnedPdf, inspectPdf, processPdf } from './engine/client';
 import type { Area, Operation, PageEntry } from './engine/operations.mjs';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
@@ -175,7 +175,8 @@ export default function App() {
   const [query, setQuery] = useState('');
   // The searched text follows typing after a pause and needs two characters.
   const [searchQuery, setSearchQuery] = useState('');
-  const nativeSearchRequested = searchOpen && !!searchQuery;
+  // PDFKit text crosses IPC, so a native document waits for a query.
+  const searchRequested = searchOpen && (!!searchQuery || !(doc && isNativePdfDocument(doc.pdf)));
   const [resultIndex, setResultIndex] = useState(0);
   const [resultLimit, setResultLimit] = useState(200);
   const visitedSearch = useRef<string | null>(null);
@@ -219,6 +220,12 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; kind: ToastKind; id: number; action?: { label: string; run: () => void } } | null>(null);
   // Drawers and notices stay mounted while they animate out.
   const sidebarLeaving = useExit(touchLayout && sidebar), notesLeaving = useExit(touchLayout && notesOpen), toastLeaving = useExit(!!toast, 150);
+  const [drawerSwap, setDrawerSwap] = useState(false);
+  // Only the drawer open last slides away; one replaced by a tab switch is already gone.
+  const lastDrawer = useRef<'sidebar' | 'notes'>('sidebar');
+  if (sidebar) lastDrawer.current = 'sidebar'; else if (notesOpen) lastDrawer.current = 'notes';
+  const sidebarShown = sidebar || sidebarLeaving && lastDrawer.current === 'sidebar', notesShown = notesOpen || notesLeaving && lastDrawer.current === 'notes';
+  useEffect(() => { if (!sidebar && !notesOpen) setDrawerSwap(false); }, [sidebar, notesOpen]);
   const lastToast = useRef(toast); if (toast) lastToast.current = toast;
   const shownToast = toast || (toastLeaving ? lastToast.current : null);
   const toastRef = useRef<HTMLDivElement>(null);
@@ -475,7 +482,7 @@ export default function App() {
         if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
       }
       const fileBacked = isNative && isIOS && !!nativeFile && nativeFile.size > nativeReadingThreshold;
-      const digest = async (data: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(data).buffer))].map(n => n.toString(16).padStart(2, '0')).join('');
+      const digest = async (data: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', data as Uint8Array<ArrayBuffer>))].map(n => n.toString(16).padStart(2, '0')).join('');
       // Identical PDFs in different Drive files/accounts must never share drafts
       // or annotations. Distinct remote bases also retain separate recovery data.
       const driveId = drive ? await digest(new TextEncoder().encode(`${drive.account}:${drive.fileId}:${drive.baseChecksum}`)) : undefined;
@@ -517,7 +524,9 @@ export default function App() {
         else bytes = source instanceof Uint8Array ? source : new Uint8Array(await (source as Blob).arrayBuffer());
         if (request !== loadRequest.current) return;
         // A native file's id is already the SHA-256 of its bytes.
-        originalBytes = bytes; id = context?.id || driveId || nativeInput?.id || await digest(bytes);
+        originalBytes = bytes;
+        const contentId = context?.id || driveId || nativeInput?.id ? undefined : await digest(bytes);
+        id = context?.id || driveId || nativeInput?.id || contentId!;
         if (!context) {
           const existing = tabsRef.current.find(tab => tab.doc.id === id);
           if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
@@ -526,18 +535,27 @@ export default function App() {
           const draft = await readDraft(id);
           if (draft) { bytes = draft; modified = true; notify('Se recuperaron tus cambios sin guardar.'); }
         }
-        revision = bytes === originalBytes && nativeInput?.id ? nativeInput.id : await digest(bytes); size = bytes.length;
+        revision = bytes === originalBytes && (nativeInput?.id || contentId) || await digest(bytes); size = bytes.length;
         const task = getDocument({ data: new Uint8Array(bytes), password: documentPassword, ...pdfAssetSettings() });
         taskRef.current = task;
         task.onPassword = (submit: (value: string) => void, reason: number) => { if (request === loadRequest.current) { setPassword({ name, retry: reason === 2, submit: value => { documentPassword = value; submit(value); } }); setPasswordText(''); } };
         pdf = await task.promise;
-        try { inspection = await inspectPdf(bytes, documentPassword, controller.signal); }
+        try {
+          // Bytes read here belong to this load and are lent to the engine; a caller's array is copied.
+          if (bytes === source) inspection = await inspectPdf(bytes, documentPassword, controller.signal);
+          else {
+            const { bytes: returned, ...inspected } = await inspectOwnedPdf(bytes, documentPassword, controller.signal);
+            if (originalBytes === bytes) originalBytes = returned;
+            bytes = returned; inspection = inspected;
+          }
+        }
         catch (error) { await pdf.loadingTask.destroy(); throw error; }
         if (inspection.previewBytes) {
           await pdf.loadingTask.destroy();
           const preview = getDocument({ data: inspection.previewBytes, password: documentPassword, ...pdfAssetSettings() });
           taskRef.current = preview; pdf = await preview.promise;
         }
+        hideAnnotations(pdf, inspection.hidden || []);
       }
       if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
       if (!context) {
@@ -612,7 +630,7 @@ export default function App() {
         // With the library preference off, opened PDFs leave no copy behind; PDFs created in Folio are still kept.
         if ((preferencesRef.current.rememberRecent || context?.modified) && !context?.preserveHistory && !(context?.modified && nativeSource)) librarySave.current = librarySave.current.catch(() => {}).then(async () => {
           if (forgottenIds.current.has(id)) return;
-          await rememberDocument({ id, name, size, pages: pdf.numPages, openedAt: Date.now(), nativeSource: nativeInput?.token || nativeSource, data: nativeSource ? undefined : new Blob([new Uint8Array(originalBytes).buffer], { type: 'application/pdf' }) });
+          await rememberDocument({ id, name, size, pages: pdf.numPages, openedAt: Date.now(), nativeSource: nativeInput?.token || nativeSource, data: nativeSource ? undefined : new Blob([originalBytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }) });
         }).catch(() => notify('No se pudo guardar este PDF en la biblioteca.', 'error'));
         if (inspection.signed) notify('PDF firmado: modo lectura.');
         else if (!inspection.canAnnotate) notify('PDF abierto en modo lectura según sus permisos.');
@@ -831,15 +849,14 @@ export default function App() {
     if (!doc) return;
     let alive = true;
     readOutline(doc.pdf).then(data => { if (alive) setOutline(data); }).catch(() => { if (alive) setOutline([]); });
-    // A restored tab keeps its complete index; only a new or interrupted one is built.
-    if (isNativePdfDocument(doc.pdf) || activeView.current.textIndex.length === doc.pdf.numPages) { setIndexing(false); return () => { alive = false; }; }
-    setIndexing(true);
-    buildTextIndex(doc.pdf, () => alive).then(data => { if (alive) { setTextIndex(data); setIndexing(false); } }).catch(error => { if (alive) { console.error('Folio: no se pudo indexar el PDF.', error); setIndexing(false); notify('Algunas páginas no se pudieron indexar para la búsqueda.', 'error'); } });
     return () => { alive = false; };
-  }, [doc, notify]);
+  }, [doc]);
   useEffect(() => {
-    if (!doc || !isNativePdfDocument(doc.pdf)) return;
-    if (!nativeSearchRequested || activeView.current.textIndex.length === doc.pdf.numPages) { setIndexing(false); return; }
+    // The text index is built when search is opened, not on every open: a
+    // 4000-page book would otherwise keep the PDF worker busy for minutes
+    // while the reader waits for the pages on screen. Results appear as it runs.
+    if (!doc) return;
+    if (!searchRequested || activeView.current.textIndex.length === doc.pdf.numPages) { setIndexing(false); return; }
     let alive = true;
     setIndexing(true);
     void (async () => {
@@ -847,12 +864,12 @@ export default function App() {
       for (let number = text.length + 1; alive && number <= doc.pdf.numPages; number++) {
         const content = await (await doc.pdf.getPage(number)).getTextContent();
         text.push(pageText(content));
-        if (alive && (number % 10 === 0 || number === doc.pdf.numPages)) setTextIndex([...text]);
+        if (alive && (number % 25 === 0 || number === doc.pdf.numPages)) setTextIndex([...text]);
       }
       if (alive) setIndexing(false);
-    })().catch(error => { if (alive) { setIndexing(false); notify(errorMessage(error), 'error'); } });
+    })().catch(error => { if (alive) { console.error('Folio: no se pudo indexar el PDF.', error); setIndexing(false); notify(errorMessage(error, 'Algunas páginas no se pudieron indexar para la búsqueda.'), 'error'); } });
     return () => { alive = false; };
-  }, [doc, nativeSearchRequested, notify]);
+  }, [doc, searchRequested, notify]);
   useEffect(() => {
     if (!doc || !isNativePdfDocument(doc.pdf)) return;
     return subscribeNativePdfAnnotations(doc.pdf, (number, originals) => {
@@ -1061,12 +1078,14 @@ export default function App() {
   useEffect(() => {
     if (!doc || !viewer.current || !phone && workbench === 'edit-pdf') return;
     const root = viewer.current;
-    const visible = new Set<Element>();
+    // Found by a binary search over the pages rather than observed: a 4000-page
+    // book would otherwise have the browser recompute every page on each frame.
+    const wraps = [...root.querySelectorAll('.pdf-page-wrap')];
     let frame = 0;
     const update = () => {
       frame = 0;
       if (editorRestorePending.current || smoothJump.current) return;
-      const bounds = root.getBoundingClientRect();
+      const bounds = root.getBoundingClientRect(), visible = inView(wraps, node => node, bounds.top, bounds.bottom);
       const candidates = [...visible].map(node => {
         const box = node.getBoundingClientRect();
         return { node, height: Math.max(0, Math.min(bounds.bottom, box.bottom) - Math.max(bounds.top, box.top)), distance: Math.abs(box.top - bounds.top) };
@@ -1083,11 +1102,9 @@ export default function App() {
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     trackPage.current = schedule;
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) { if (entry.isIntersecting) visible.add(entry.target); else visible.delete(entry.target); }
-      schedule();
-    }, { root, threshold: [0, .25, .5, .75, 1] });
-    root.querySelectorAll('.pdf-page-wrap').forEach(node => observer.observe(node));
+    // Zoom and pages taking their real size move pages without scrolling.
+    const observer = new ResizeObserver(schedule);
+    observer.observe(root); const stack = root.querySelector('.pdf-stack'); if (stack) observer.observe(stack);
     root.addEventListener('scroll', schedule, { passive: true });
     return () => { observer.disconnect(); root.removeEventListener('scroll', schedule); if (frame) cancelAnimationFrame(frame); if (trackPage.current === schedule) trackPage.current = () => {}; };
   }, [doc, readingMode, readingMode === 'single' ? page : null, workbench, phone]);
@@ -2013,6 +2030,9 @@ export default function App() {
   }
   const explorerIds = ['pages', 'outline', 'bookmarks', 'annotations'] as const;
   function showExplorerTab(id: typeof explorerIds[number], focus = false) {
+    // Annotations and the other tabs are separate drawers in the same place:
+    // switching between them swaps the content instead of closing and reopening.
+    if (id === 'annotations' ? sidebar : notesOpen) setDrawerSwap(true);
     setSearchOpen(false); setQuery(''); setNotesOpen(id === 'annotations'); setSidebar(id !== 'annotations'); if (id !== 'annotations') setSideTab(id);
     // Annotations live in their own drawer, so the tab is focused once it renders.
     if (focus) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.mobile-panel-tabs [data-explorer-tab="${id}"]`)?.focus({ preventScroll: true }));
@@ -2021,7 +2041,7 @@ export default function App() {
     const Symbol = id === 'pages' ? Layers : id === 'outline' ? ListTree : id === 'bookmarks' ? Bookmark : MessageSquare;
     const label = id === 'pages' ? 'Páginas' : id === 'outline' ? 'Índice' : id === 'bookmarks' ? 'Marcadores' : 'Anotaciones';
     // A drawer sliding away keeps showing the tab it was on.
-    const selected = id === 'annotations' ? notesOpen || notesLeaving : (sidebar || sidebarLeaving) && !searchOpen && sideTab === id;
+    const selected = id === 'annotations' ? notesShown : sidebarShown && !searchOpen && sideTab === id;
     return <button key={id} role="tab" data-explorer-tab={id} aria-selected={selected} aria-controls={selected ? 'explorer-panel' : undefined} tabIndex={selected ? 0 : -1} onClick={() => showExplorerTab(id)} onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault(); showExplorerTab(explorerIds[event.key === 'Home' ? 0 : event.key === 'End' ? explorerIds.length - 1 : (index + (event.key === 'ArrowLeft' ? explorerIds.length - 1 : 1)) % explorerIds.length], true);
@@ -2080,6 +2100,11 @@ export default function App() {
   const pageHandlers = useMemo(() => ({ onAnnotate: (annotation: AnnotationDraft | AnnotationDraft[]) => pageEvents.current.onAnnotate(annotation), onArea: (area: Area) => pageEvents.current.onArea(area),
     onNavigate: (destination: PDFNavigationTarget) => pageEvents.current.navigatePDF(destination), onCommentHighlight: (annotation: Annotation) => void pageEvents.current.commentHighlight(annotation), onNoteClick: (id: string) => pageEvents.current.openNote(id) }), []);
   const thumbnailClicks = useMemo(() => pages.map(number => () => pageEvents.current.mobilePage(number)), [pages]);
+  // Scrolling changes the current page many times a second. The stack does not
+  // depend on it (except in single-page mode), so a long book's thousands of
+  // pages are not re-rendered on every page change.
+  const stackPage = readingMode === 'single' ? page : 0;
+  const pageStack = useMemo(() => doc && <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div>, [doc, spread, readingPreferences.pageGap, readingMode, stackPage, pages, pageLabels, scale, rotation, dimensions, annotationPages, tool, color, inkStyle, eraserSize, penOnly, searchOpen, searchQuery, touchLayout, sidebar, results, resultIndex, busy, loading, removeAnnotation, updateAnnotation, redactions, pageHandlers]);
   const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} kind={inkKind} style={inkStyle} recentColors={inkRecentColors} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onKind={setInkKind} onStyle={change => setInkStyles(styles => ({ ...styles, [inkKind]: { ...styles[inkKind], ...change } }))} onCustomColor={value => setInkRecentColors(colors => [value, ...colors.filter(item => item !== value)].slice(0, 5))} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
   // On touch, tools without options keep their slot so no button moves under the finger.
   const annotationSlot = annotationSettings || <span className="drawing-settings-trigger" aria-hidden="true" style={{ visibility: 'hidden' }} />;
@@ -2148,13 +2173,13 @@ export default function App() {
         </div>
       </nav>}
       {touchLayout && (sidebar || notesOpen || sidebarLeaving || notesLeaving) && <button className={`mobile-panel-backdrop${sidebar || notesOpen ? '' : ' closing'}`} aria-label="Cerrar panel lateral" tabIndex={-1} onClick={closeMobilePanel} />}
-      {(sidebar || sidebarLeaving) && <aside className={`sidebar${touchLayout ? ' mobile-drawer' : ''}${sidebarLeaving ? ' closing' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? searchOpen ? 'Buscar en el PDF' : 'Explorar documento' : undefined} style={touchLayout ? undefined : { width: readingPreferences.panelWidth, minWidth: readingPreferences.panelWidth }}>
+      {sidebarShown && <aside className={`sidebar${touchLayout ? ' mobile-drawer' : ''}${sidebarLeaving ? ' closing' : ''}${drawerSwap ? ' drawer-swap' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? searchOpen ? 'Buscar en el PDF' : 'Explorar documento' : undefined} style={touchLayout ? undefined : { width: readingPreferences.panelWidth, minWidth: readingPreferences.panelWidth }}>
         {touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>{searchOpen ? 'Buscar' : 'Explorar'}</h2><IconButton label={searchOpen ? 'Cerrar búsqueda' : 'Cerrar panel'} onClick={closeMobilePanel}><X size={20} /></IconButton></div>{!searchOpen && explorerTabs}</>}
         {searchOpen ? <>
           {!touchLayout && <div className="sidebar-title"><span>Buscar</span><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={16} /></IconButton></div>}
           <form className="search-field" onSubmit={e => { e.preventDefault(); submitSearch(phone ? 0 : 1); }}><Search size={16} /><input ref={searchInput} placeholder="Palabra o frase…" value={query} onChange={e => { visitedSearch.current = null; setQuery(e.target.value); setResultIndex(0); }} onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); closeSearch(); } else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); submitSearch(-1); } }} aria-label="Buscar texto en el PDF" />{query && <button type="button" onClick={() => setQuery('')} aria-label="Borrar búsqueda"><X size={14} /></button>}</form>
           {!query.trim() && searchHistory.length > 0 && <div className="search-recent"><div><span>Búsquedas recientes</span><button type="button" className="text-button" onClick={() => { clearRecentSearches(); setSearchHistory([]); }}>Borrar</button></div><div role="list">{searchHistory.map(term => <button key={term} type="button" role="listitem" onClick={() => { visitedSearch.current = null; setQuery(term); setResultIndex(0); searchInput.current?.focus({ preventScroll: true }); }}><Search size={13} aria-hidden="true" />{term}</button>)}</div></div>}
-          <div className="search-summary"><span aria-live="polite">{indexing ? 'Preparando búsqueda…' : query.trim().length === 1 ? 'Escribe al menos dos caracteres' : searchQuery ? plural(occurrences, 'coincidencia', 'coincidencias') : ''}</span>{results.length > 0 && <div><IconButton label="Resultado anterior" onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={15} /></IconButton><IconButton label="Siguiente resultado" onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={15} /></IconButton></div>}</div>
+          <div className="search-summary"><span aria-live="polite">{indexing ? (searchQuery && textIndex.length ? `${plural(occurrences, 'coincidencia', 'coincidencias')} · buscando (${textIndex.length} de ${doc?.pdf.numPages} págs.)…` : 'Preparando búsqueda…') : query.trim().length === 1 ? 'Escribe al menos dos caracteres' : searchQuery ? plural(occurrences, 'coincidencia', 'coincidencias') : ''}</span>{results.length > 0 && <div><IconButton label="Resultado anterior" onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={15} /></IconButton><IconButton label="Siguiente resultado" onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={15} /></IconButton></div>}</div>
           <div className="sidebar-scroll search-results">{results.slice(0, listedResults).map((result, i) => <button key={`${result.page}-${result.offset}`} className={`search-result ${i === resultIndex ? 'selected' : ''}`} onClick={() => goToResult(i)}><span className="result-heading"><span className="result-page">Página {pageName(result.page)}{outlineSection(result.page) && <em>{outlineSection(result.page)}</em>}</span><span>{i + 1} / {results.length}</span></span><span className="result-snippet"><MarkedSnippet text={result.text} query={searchQuery} /></span></button>)}{results.length > listedResults ? <button className="text-button" onClick={() => setResultLimit(listedResults + 200)}>Mostrar más resultados</button> : occurrences > results.length && <div className="search-hint"><span>Se muestran las primeras {results.length} coincidencias. Escribe una frase más concreta para afinar.</span></div>}{searchQuery && !indexing && !results.length && (textIndex.every(t => !t.trim()) ? <div className="empty-panel"><Search size={26} /><p>Este PDF no tiene texto que se pueda buscar.</p>{doc?.canEdit && !isNativePdfDocument(doc.pdf) && <button className="text-button" onClick={() => { closeSearch(); void openWorkbenchSection('ocr'); }}>Reconocer texto (OCR)</button>}</div> : <div className="empty-panel"><Search size={26} /><p>Sin resultados para «{searchQuery.trim()}».</p><span>Prueba con otra palabra o una frase más corta.</span></div>)}{!searchQuery && <div className="search-hint"><span>No distingue mayúsculas ni acentos.</span></div>}</div>
         </> : <>
           {!touchLayout && <div className="sidebar-title"><span>{sideTab === 'pages' ? 'Páginas' : sideTab === 'outline' ? 'Índice' : 'Marcadores'}</span>{!!sideCount && <span className="page-total">{sideCount}</span>}<IconButton label="Cerrar panel" onClick={() => { setSidebar(false); focusRail(sideTab === 'pages' ? 'Páginas' : sideTab === 'outline' ? 'Índice' : 'Marcadores'); }}><X size={16} /></IconButton></div>}
@@ -2196,7 +2221,7 @@ export default function App() {
         {tablet && doc && searchOpen && !sidebar && !inlineEditing && <div className="tablet-search-controls" role="toolbar" aria-label="Resultados de búsqueda"><IconButton label="Ver resultados" onClick={() => setSidebar(true)}><Search size={20} /></IconButton><span>{results.length ? `${resultIndex + 1} / ${results.length}` : 'Sin resultados'}</span><IconButton label="Resultado anterior" disabled={!results.length} onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={21} /></IconButton><IconButton label="Resultado siguiente" disabled={!results.length} onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={21} /></IconButton><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={21} /></IconButton></div>}
         {inlineEditing && workbenchPanel}
         <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
-          {doc ? <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
+          {doc ? pageStack : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
           {loading && <div className="loading-overlay" role="status"><svg className="activity-ring large" viewBox="0 0 24 24" aria-hidden="true"><circle className="activity-ring-track" cx="12" cy="12" r="9" /><circle className="activity-ring-arc" cx="12" cy="12" r="9" /></svg><span>Abriendo PDF…</span></div>}
         </div>
         {touchLayout && doc && !inlineEditing && !loading && !(mobileAnnotating && (tool === 'draw' || tool === 'eraser')) && <PageScrubber pdf={doc.pdf} page={page} pages={doc.pdf.numPages} viewer={viewer.current} continuous={readingMode !== 'single'} label={pageName} section={outlineSection} onJump={target => { if (!returnLocation) rememberLocation(); goToPage(target, false); }} />}
@@ -2230,7 +2255,7 @@ export default function App() {
 
       </main>
 
-      {(notesOpen || notesLeaving) && <aside className={`notes-panel${touchLayout ? ' mobile-drawer' : ''}${notesLeaving ? ' closing' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? 'Anotaciones' : undefined}>{touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>Explorar</h2><IconButton label="Cerrar panel" onClick={closeMobilePanel}><X size={20} /></IconButton></div>{explorerTabs}</>}{!touchLayout && <div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => { setNotesOpen(false); focusRail('Anotaciones'); }}><X size={16} /></IconButton></div>}<div className="notes-scroll" id={touchLayout ? 'explorer-panel' : undefined} role={touchLayout ? 'tabpanel' : undefined}>{doc && <AnnotationsPanel annotations={annotations} documentName={doc.name} activeId={activeNote} editable={!!doc.canAnnotate && !busy && !loading} pageName={pageName}
+      {notesShown && <aside className={`notes-panel${touchLayout ? ' mobile-drawer' : ''}${notesLeaving ? ' closing' : ''}${drawerSwap ? ' drawer-swap' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? 'Anotaciones' : undefined}>{touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>Explorar</h2><IconButton label="Cerrar panel" onClick={closeMobilePanel}><X size={20} /></IconButton></div>{explorerTabs}</>}{!touchLayout && <div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => { setNotesOpen(false); focusRail('Anotaciones'); }}><X size={16} /></IconButton></div>}<div className="notes-scroll" id={touchLayout ? 'explorer-panel' : undefined} role={touchLayout ? 'tabpanel' : undefined}>{doc && <AnnotationsPanel annotations={annotations} documentName={doc.name} activeId={activeNote} editable={!!doc.canAnnotate && !busy && !loading} pageName={pageName}
           onSelect={item => { mobilePage(item.page); setActiveNote(item.id); }} onDelete={item => { removeAnnotation(item.id); notify(item.kind === 'note' ? 'Nota eliminada.' : item.kind === 'ink' ? 'Dibujo eliminado.' : 'Resaltado eliminado.', 'info', { label: 'Deshacer', run: undo }); }} onEditNote={item => editNote(item, 'list')}
           onCopy={async text => { if (isNative && isIOS) await copyNativeText(text); else await navigator.clipboard.writeText(text); }}
           onSave={(text, name) => saveExport(new TextEncoder().encode(text), name, 'txt', doc.nativeSource)} />}</div></aside>}

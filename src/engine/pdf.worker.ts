@@ -2,7 +2,7 @@ import type { Annotation } from '../types';
 import type { Operation } from './operations.mjs';
 
 const engine = import('./mupdf-engine.mjs');
-self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' | 'operate'; bytes: Uint8Array; password?: string; annotations?: Annotation[]; options?: Operation; incremental?: boolean }>) => {
+self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' | 'operate'; bytes: Uint8Array; password?: string; annotations?: Annotation[]; options?: Operation; incremental?: boolean; lend?: boolean }>) => {
   try {
     const { inspectDocument, writeAnnotations } = await engine;
     const request = event.data;
@@ -12,7 +12,9 @@ self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' 
       ? inspectDocument(request.bytes, request.password)
       : writeAnnotations(request.bytes, request.annotations || [], request.password, request.incremental);
     const buffer = result instanceof Uint8Array ? result.buffer : !Array.isArray(result) && 'previewBytes' in result ? result.previewBytes?.buffer : undefined;
-    self.postMessage({ result }, { transfer: buffer ? [buffer] : [] });
+    // A lent source goes back to its owner; MuPDF no longer reads it once the document is destroyed.
+    const lent = request.lend ? request.bytes : undefined;
+    self.postMessage({ result, bytes: lent }, { transfer: [...(buffer ? [buffer] : []), ...(lent ? [lent.buffer] : [])] });
   } catch (error) {
     // The client discards a worker after any error, including an engine that failed to load.
     self.postMessage({ error: error instanceof Error && error.message || 'No se pudo completar la operación.' });

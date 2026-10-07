@@ -10,8 +10,17 @@ const colorHex = color => {
 };
 const colorRgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
 
+// A large PDF is read from its bytes on demand instead of being copied into
+// the WASM heap, so a 1 GB book does not need another gigabyte to open.
+const LARGE_SOURCE = 32 * 1024 * 1024;
+const source = bytes => bytes.length < LARGE_SOURCE ? bytes : new mupdf.Stream({
+  fileSize: () => bytes.length,
+  read(memory, offset, length, position) { const count = Math.max(0, Math.min(length, bytes.length - position)); memory.set(bytes.subarray(position, position + count), offset); return count; },
+  close() {},
+});
+
 export function open(bytes, password = '') {
-  const doc = new mupdf.PDFDocument(bytes);
+  const doc = new mupdf.PDFDocument(source(bytes));
   try {
     if (doc.needsPassword()) { if (!doc.authenticatePassword(password)) throw new Error('Este PDF está protegido. Escribe su contraseña.'); }
     // A PDF with only an owner password opens without one; that password still grants its owner permissions.
@@ -81,7 +90,10 @@ function read(annotation, page, transform) {
 }
 
 export function save(doc, options = 'garbage=4,compress=yes,encrypt=keep') {
-  const buffer = doc.saveToBuffer(options);
+  let buffer;
+  // The whole output must fit in the engine's memory (about 1.8 GB), which a book near 1 GB exceeds.
+  try { buffer = doc.saveToBuffer(options); }
+  catch (error) { throw /alloc \(\d+ bytes\) failed/.test(error?.message) ? new Error('Este PDF es demasiado grande para que Folio lo guarde modificado. El documento no cambió y tus anotaciones siguen guardadas en Folio.') : error; }
   try { return new Uint8Array(buffer.asUint8Array()); }
   finally { buffer.destroy(); }
 }
@@ -93,20 +105,34 @@ export function inspectDocument(bytes, password = '') {
   try {
     const signed = hasSignature(doc);
     const canAnnotate = doc.hasPermission('annotate') && !signed;
-    const annotations = [];
+    const annotations = [], hidden = [];
     if (canAnnotate) for (let index = 0; index < doc.countPages(); index++) {
+      // Loading a page is the slow part. A book's pages often carry only links,
+      // so read the annotation types first and load just the pages that matter.
+      const annots = doc.findPage(index).get('Annots');
+      let relevant = false;
+      for (let i = 0; i < annots.length && !relevant; i++) relevant = supported.has(annots.get(i).get('Subtype').asName());
+      if (!relevant) continue;
+      // PDF.js names an annotation by its reference, generation included when not 0.
+      const generations = new Map();
+      for (let i = 0; i < annots.length; i++) { const [num, gen] = annots.get(i).toString().split(' '); generations.set(Number(num), gen); }
       const page = doc.loadPage(index);
       try {
         for (const annotation of [...page.getAnnotations()]) if (editable(annotation)) {
-          annotations.push(read(annotation, index + 1, page.getTransform()));
+          const value = read(annotation, index + 1, page.getTransform()), gen = generations.get(value.sourceRef) || '0';
+          annotations.push(value); hidden.push(gen === '0' ? `${value.sourceRef}R` : `${value.sourceRef}R${gen}`);
           page.deleteAnnotation(annotation);
         }
       } finally { page.destroy(); }
     }
+    // Folio draws these annotations itself. A small PDF is rewritten without them;
+    // rewriting a large book would exceed the engine's memory, so the reader hides
+    // them by reference instead.
+    const large = bytes.length >= LARGE_SOURCE;
     return { annotations, canAnnotate, signed, canEdit: doc.hasPermission('edit') && !signed,
       canAssemble: doc.hasPermission('assemble') && !signed, canFill: doc.hasPermission('form') && !signed,
       canCopy: doc.hasPermission('copy'), canPrint: doc.hasPermission('print'), pages: doc.countPages(),
-      previewBytes: annotations.length ? save(doc) : undefined };
+      previewBytes: annotations.length && !large ? save(doc) : undefined, hidden: large ? hidden : [] };
   } finally { doc.destroy(); mupdf.emptyStore(); }
 }
 

@@ -30,20 +30,87 @@ function watch(node: Element, root: Element | null, rootMargin: string, listener
   listeners.set(node, listener); observer.observe(node);
   return () => { listeners.delete(node); observer.unobserve(node); };
 }
+/** The items of a vertical stack or grid, in document order, that overlap the
+ * band between two viewport coordinates: a binary search, then the band itself. */
+export function inView<T>(items: T[], node: (item: T) => Element, top: number, bottom: number): T[] {
+  let low = 0, high = items.length;
+  while (low < high) { const mid = (low + high) >> 1; if (node(items[mid]).getBoundingClientRect().bottom < top) low = mid + 1; else high = mid; }
+  const found: T[] = [];
+  // Items in a grid row share a top but not a bottom, so start a row early.
+  for (let index = Math.max(0, low - 4); index < items.length; index++) {
+    const rect = node(items[index]).getBoundingClientRect();
+    if (rect.top > bottom) break;
+    if (rect.bottom >= top) found.push(items[index]);
+  }
+  return found;
+}
+// The reader's pages and the sidebar's thumbnails are stacked in document order,
+// so the nearby ones are found by a binary search on scroll. Observers would make
+// the browser recompute every page of a 4000-page book on each frame.
+type Tracked = { node: Element; listener: (near: boolean) => void };
+type Stack = { items: Tracked[]; near: Set<Tracked>; sorted: boolean; schedule: () => void; observe: (node: Element) => void; release: () => void };
+const stacks = new WeakMap<Element, Stack>();
+function stackFor(root: Element): Stack {
+  const existing = stacks.get(root);
+  if (existing) return existing;
+  let frame = 0;
+  const update = () => {
+    frame = 0;
+    const { items, near } = stack;
+    if (!stack.sorted) { items.sort((a, b) => a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1); stack.sorted = true; }
+    const box = root.getBoundingClientRect(), screen = box.height;
+    for (const item of inView(items, item => item.node, box.top - screen, box.bottom + screen)) if (!near.has(item)) { near.add(item); item.listener(true); }
+    for (const item of near) {
+      const rect = item.node.getBoundingClientRect();
+      if (rect.bottom < box.top - 2 * screen || rect.top > box.bottom + 2 * screen) { near.delete(item); item.listener(false); }
+    }
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+  // Zoom, rotation and pages taking their real size move pages without scrolling.
+  const resized = new ResizeObserver(schedule);
+  resized.observe(root); root.addEventListener('scroll', schedule, { passive: true });
+  const stack: Stack = { items: [], near: new Set(), sorted: true, schedule, observe: node => resized.observe(node), release: () => {
+    cancelAnimationFrame(frame); resized.disconnect(); root.removeEventListener('scroll', schedule); stacks.delete(root);
+  } };
+  stacks.set(root, stack);
+  return stack;
+}
+function track(root: Element, node: Element, content: Element | null, near: boolean, listener: (near: boolean) => void) {
+  const stack = stackFor(root), item = { node, listener };
+  if (content) stack.observe(content);
+  stack.items.push(item); stack.sorted = false;
+  if (near) stack.near.add(item);
+  stack.schedule();
+  return () => {
+    stack.items.splice(stack.items.indexOf(item), 1); stack.near.delete(item);
+    if (!stack.items.length) stack.release();
+  };
+}
 // Mount within one screen of the visible area and release beyond two, so a
 // page is ready before it scrolls in and short scrolls back do not repaint it.
-function useNearby(ref: React.RefObject<HTMLDivElement | null>, scroller: string, first = false) {
+function useNearby(ref: React.RefObject<HTMLDivElement | null>, scroller: string, first = false, content?: string) {
   const [nearby, setNearby] = useState(first);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
     const root = node.closest(scroller);
+    if (root) return track(root, node, content ? node.closest(content) : null, first, setNearby);
     const near = watch(node, root, '100% 50%', inside => { if (inside) setNearby(true); });
     const far = watch(node, root, '200% 100%', inside => { if (!inside) setNearby(false); });
     return () => { near(); far(); };
-  }, [ref, scroller]);
+    // `first` only seeds the initial state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ref, scroller, content]);
   return nearby;
 }
+// Text layers wait until scrolling pauses: a fling through a long book would
+// otherwise lay out thousands of text spans on the main thread mid-scroll.
+let lastScroll = 0;
+document.addEventListener('scroll', event => { if ((event.target as Element).classList?.contains('reading-area')) lastScroll = performance.now(); }, { capture: true, passive: true });
+const scrollSettled = () => new Promise<void>(resolve => {
+  const check = () => { const wait = lastScroll + 150 - performance.now(); if (wait > 0) setTimeout(check, wait); else resolve(); };
+  check();
+});
 const pixelBudget = isMobile ? 4_000_000 : 16_000_000;
 const density = () => Math.min(window.devicePixelRatio || 1, 3);
 const outputRatio = (view: { width: number; height: number }) => Math.min(density(), Math.sqrt(pixelBudget / (view.width * view.height)));
@@ -77,7 +144,7 @@ type Props = {
 
 export default memo(function PDFPage(props: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const nearby = useNearby(ref, '.reading-area', props.number === 1);
+  const nearby = useNearby(ref, '.reading-area', props.number === 1, '.pdf-stack');
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -162,15 +229,26 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const start = () => {
       const view = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
       const ratio = outputRatio(view);
-      // The visible bitmap survives zoom and canceled renders. Prepare pixels and
-      // text separately, then publish both in one task before the next paint.
+      // The visible bitmap survives zoom and canceled renders: pixels are drawn
+      // off screen and copied in only once complete.
       const surface = document.createElement('canvas');
       surface.width = Math.ceil(view.width * ratio);
       surface.height = Math.ceil(view.height * ratio);
       const nextText = container.cloneNode(false) as HTMLDivElement;
       renderTask = page.render({ canvas: surface, viewport: view, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined });
-      const textReady = keepText ? Promise.resolve(true) : page.getTextContent().then(async source => {
-        if (!alive) return false;
+      // Pixels are shown as soon as they exist; the text layer follows once scrolling pauses.
+      const pixels = renderTask.promise.then(() => {
+        if (!alive) return;
+        canvas.width = surface.width; canvas.height = surface.height;
+        canvas.getContext('2d')?.drawImage(surface, 0, 0);
+        // A text layer laid out for another rotation must not linger over the new pixels.
+        if (!keepText) container.replaceChildren();
+        canvas.dataset.renderScale = String(scale);
+        canvas.dataset.renderRotation = String(rotation);
+        setRendered(true);
+      }).finally(() => { surface.width = 0; surface.height = 0; });
+      const textReady = keepText ? Promise.resolve(true) : scrollSettled().then(() => alive ? page.getTextContent() : null).then(async source => {
+        if (!source || !alive) return false;
         textLayer = new TextLayer({ textContentSource: source, container: nextText, viewport: view });
         if (isNativePdfDocument(pdf)) sizeNativeTextLayer(nextText, view);
         await textLayer.render();
@@ -182,10 +260,8 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         });
         return true;
       }).catch(error => { if (alive && error?.name !== 'AbortException') console.error('No se pudo preparar la selección de texto.', error); return false; });
-      void Promise.all([renderTask.promise, textReady]).then(([, textAvailable]) => {
+      void Promise.all([pixels, textReady]).then(([, textAvailable]) => {
         if (!alive) return;
-        canvas.width = surface.width; canvas.height = surface.height;
-        canvas.getContext('2d')?.drawImage(surface, 0, 0);
         if (!textAvailable) container.replaceChildren();
         else if (!keepText) {
           container.style.cssText = nextText.style.cssText;
@@ -196,15 +272,12 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
           markSearch(container, queryRef.current, activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined);
           revealActiveSearch();
         }
-        canvas.dataset.renderScale = String(scale);
-        canvas.dataset.renderRotation = String(rotation);
         canvas.dataset.rendering = 'false'; rendering.current = false;
-        setRendered(true);
       }).catch(err => {
         if (alive && err?.name !== 'RenderingCancelledException') {
           setFailed(true); rendering.current = false; canvas.dataset.rendering = 'false';
         }
-      }).finally(() => { surface.width = 0; surface.height = 0; });
+      });
     };
     const timer = keepText && canvas.width ? setTimeout(start, 120) : undefined;
     if (!timer) start();
@@ -545,7 +618,7 @@ export function markSearch(container: HTMLElement, query: string, activeOffset?:
     const fragments = matches.filter(match => match.start < end && match.end > base);
     const existing = span.querySelectorAll<HTMLElement>('mark');
     // Changing only the active occurrence preserves an existing DOM Selection.
-    if (span.dataset.searchQuery === query) { for (const mark of existing) mark.dataset.searchActive = String(Number(mark.dataset.searchOffset) === activeOffset); continue; }
+    if ((span.dataset.searchQuery ?? '') === query) { for (const mark of existing) mark.dataset.searchActive = String(Number(mark.dataset.searchOffset) === activeOffset); continue; }
     span.dataset.searchQuery = query;
     span.replaceChildren();
     let start = 0;
@@ -584,8 +657,9 @@ export const Thumbnail = memo(function Thumbnail({ pdf, number, rotation = 0, se
     if (!nearby) return;
     let alive = true;
     let renderTask: RenderTask | null = null, page: PDFPageProxy | null = null, canvas: HTMLCanvasElement | null = null;
-    pdf.getPage(number).then(loaded => {
-      if (!alive || !canvasRef.current) return;
+    // Thumbnails are secondary: they wait for the reader to stop scrolling.
+    scrollSettled().then(() => alive ? pdf.getPage(number) : null).then(loaded => {
+      if (!loaded || !alive || !canvasRef.current) return;
       page = loaded; canvas = canvasRef.current;
       setNativeLabel((page as PDFPageProxy & { label?: string }).label);
       // Match the reader's view rotation and the frame's real width on this screen.

@@ -53,12 +53,13 @@ export async function pickNativeDocuments(): Promise<NativeDocument[]> {
   return invoke<NativeDocument[]>('pick_documents');
 }
 export async function readNativeDocument(document: NativeDocument): Promise<Uint8Array> {
-  if (isAndroid) {
-    // Android's JSON response bridge must never materialize the entire PDF as
-    // millions of numbers at once. Yield between bounded reads on that bridge.
+  // Android's JSON response bridge must never materialize the entire PDF as
+  // millions of numbers at once. On desktop, one response holding a large book is
+  // buffered again by the webview; bounded reads keep it to the one copy filled here.
+  if (isAndroid || document.size > 64 * 1024 * 1024) {
     const bytes = new Uint8Array(document.size);
     for (let offset = 0; offset < bytes.length;) {
-      const length = Math.min(256 * 1024, bytes.length - offset);
+      const length = Math.min(isAndroid ? 256 * 1024 : 4 * 1024 * 1024, bytes.length - offset);
       const chunk = new Uint8Array(await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }));
       if (chunk.length !== length) throw new Error('El PDF cambió durante la lectura. Vuelve a abrirlo.');
       bytes.set(chunk, offset); offset += length;

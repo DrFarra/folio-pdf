@@ -66,6 +66,8 @@ html[data-phone] dialog.modal.mobile-sheet.closing::backdrop{animation-duration:
 @keyframes motion-side-out{to{translate:-100% 0}}
 html[data-tablet] .app-shell .mobile-drawer{animation:motion-side-in 320ms var(--ease-drawer)}
 html[data-tablet] .app-shell .mobile-drawer.closing{animation:motion-side-out var(--motion-exit) var(--ease-in) forwards;pointer-events:none}
+/* Switching between the explorer's drawers replaces one with the other in place. */
+.app-shell .mobile-drawer.drawer-swap:not(.closing){animation:none}
 @media(prefers-reduced-motion:reduce){html[data-tablet] .app-shell .mobile-drawer{animation:motion-fade-in 150ms linear}html[data-tablet] .app-shell .mobile-drawer.closing{animation:motion-fade-out 120ms linear forwards}}
 
 /* A notice's single action, such as Deshacer. */

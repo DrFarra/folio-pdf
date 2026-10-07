@@ -104,4 +104,20 @@ check('recolored-existing-highlight-and-note-persist-after-reopen',()=>{
   assert.equal(result.find(a=>a.kind==='note').color,'#e53935');assert.equal(result.find(a=>a.kind==='note').text,annotations[1].text);
   return {highlightColorAndOpacityPersisted:true,noteColorPersisted:true};
 });
+check('large-pdf-is-read-on-demand-and-keeps-annotations',()=>{
+  // Above 32 MB MuPDF reads the bytes through a stream instead of copying them.
+  const padded=new mupdf.PDFDocument(writeAnnotations(bytes('tracemonkey.pdf'),annotations));
+  padded.getTrailer().get('Root').put('FolioPadding',padded.addStream(new Uint8Array(33*1024*1024).fill(7),{}));
+  const large=padded.saveToBuffer('').asUint8Array().slice();padded.destroy();
+  assert(large.length>32*1024*1024);
+  const inspected=inspectDocument(large);
+  assert.equal(inspected.pages,14);assert.equal(inspected.annotations.length,2);
+  // A large PDF is not rewritten to remove them: the reader hides them by PDF.js id.
+  assert.equal(inspected.previewBytes,undefined);assert.deepEqual(inspected.hidden,inspected.annotations.map(a=>`${a.sourceRef}R`));
+  const recolored=inspected.annotations.map(a=>({...a,color:'#4caf50'}));
+  const incremental=writeAnnotations(large,recolored,'',true);
+  assert(incremental.length>=large.length);assert(inspectDocument(incremental).annotations.every(a=>a.color==='#4caf50'));
+  assert.equal(inspectDocument(writeAnnotations(large,[recolored[0]])).annotations.length,1);
+  return {bytes:large.length,annotationsRead:2,hiddenByReference:true,incrementalSave:true,fullSave:true};
+});
 fs.writeFileSync(path.join(output,'engine-results.json'),JSON.stringify({platform:'Node + actual MuPDF WASM engine',results},null,2));
