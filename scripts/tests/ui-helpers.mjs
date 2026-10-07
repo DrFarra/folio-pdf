@@ -13,3 +13,9 @@ export async function desktopDocumentAction(page, name) {
   await dialog.getByRole('button', { name, exact: true }).click();
   await dialog.waitFor({ state: 'detached' });
 }
+
+/** Waits until finite animations (sheets sliding, menus growing) have finished,
+ * so geometry checks measure the settled layout. Looping spinners are ignored. */
+export async function settled(page) {
+  await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== 'running' || animation.effect?.getComputedTiming().iterations === Infinity));
+}

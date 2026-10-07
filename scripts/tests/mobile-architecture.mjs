@@ -6,6 +6,7 @@ import { chromium, webkit } from 'playwright-core';
 import { findChrome } from './browser.mjs';
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
 import { storedSession, waitForSession } from './session-helpers.mjs';
+import { settled } from './ui-helpers.mjs';
 
 // Real PDF and DOM acceptance checks for the library/reader transitions. Native
 // large-file IPC is explicitly mocked only in the capability-explanation case.
@@ -214,7 +215,7 @@ try {
     // The handle is a gesture aid: focus and screen readers start at the close button.
     await dialog.locator('.sheet-handle').waitFor(); assert.equal(await dialog.getByRole('button', { name: 'Cerrar hoja' }).count(), 0);
     assert.equal(await dialog.getByRole('button', { name: 'Cerrar diálogo', exact: true }).evaluate(button => document.activeElement === button), true);
-    const box = await dialog.boundingBox(); assert(box && box.y + box.height <= 845, 'The sheet must fit the visible viewport.');
+    await settled(page); const box = await dialog.boundingBox(); assert(box && box.y + box.height <= 845, 'The sheet must fit the visible viewport.');
     const grid = await dialog.evaluate(sheet => {
       const save = sheet.querySelector('.mobile-file-actions').getBoundingClientRect(), tiles = [...sheet.querySelectorAll('.mobile-action-grid>button')].map(tile => tile.getBoundingClientRect());
       return { gap: tiles[0].top - save.bottom, emptyCell: sheet.querySelector('.mobile-action-grid').getBoundingClientRect().right - tiles.at(-2).right };
@@ -297,8 +298,11 @@ try {
   await check('desktop-library-is-root-and-resumes-position', async page => {
     await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
     assert.equal(await page.locator('dialog[open]').count(), 0, 'The desktop library is a workspace, not a blocking startup dialog.');
+    // An empty library has nothing to search and shows no search field; with documents, Ctrl+F focuses it.
+    const librarySearch = page.getByRole('searchbox', { name: 'Buscar documentos por nombre', exact: true });
     await page.keyboard.press('Control+f');
-    assert.equal(await page.getByRole('searchbox', { name: 'Buscar documentos por nombre', exact: true }).evaluate(input => document.activeElement === input), true, 'Ctrl+F in the library searches documents.');
+    if (await librarySearch.count()) assert.equal(await librarySearch.evaluate(input => document.activeElement === input), true, 'Ctrl+F in the library searches documents.');
+    else assert.equal(await page.getByText('Tu biblioteca está vacía').count(), 1, 'Only an empty library omits the search field.');
     await open(page);
     const position = await page.locator('.reading-area').evaluate(async reader => {
       const chapter = reader.querySelector('[data-page-number="3"]');

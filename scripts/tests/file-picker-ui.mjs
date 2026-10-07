@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { preview } from 'vite';
 import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { settled } from './ui-helpers.mjs';
 import { PDFDocument } from 'pdf-lib';
 
 const output = 'test-results/file-picker';
@@ -14,6 +15,7 @@ const reports = [];
 let server, browser;
 
 async function fits(page, id) {
+  await settled(page);
   const dimensions = await page.locator('dialog[open]').evaluate(dialog => {
     const box = dialog.getBoundingClientRect();
     return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: box.width,
