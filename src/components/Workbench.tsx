@@ -301,6 +301,14 @@ export default function Workbench(props: Props) {
     ['compress', 'Comprimir PDF', FileArchive, doc.canEdit], ['security', 'Proteger PDF', LockKeyhole, doc.canEdit || encrypted && !doc.signed],
     ['sanitize', 'Eliminar datos ocultos', ShieldCheck, doc.canEdit],
   ] as const;
+  // One line on what each tool does, under its name.
+  const descriptions: Record<string, string> = {
+    'edit-pdf': 'Cambia textos e imágenes', pages: 'Reordena, gira, extrae o elimina', crop: 'Quita márgenes de una página',
+    forms: 'Escribe en los campos del PDF', 'create-field': 'Añade un campo para rellenar', 'remove-image': 'Borra una imagen de la página',
+    redact: 'Oculta datos de forma definitiva', ocr: 'Haz buscable un PDF escaneado', convert: 'A Word, texto o imágenes',
+    compare: 'Encuentra cambios entre versiones', signatures: 'Firma o verifica firmas', compress: 'Reduce el tamaño del archivo',
+    security: 'Contraseña y permisos', sanitize: 'Quita metadatos y contenido oculto',
+  };
   const categories = [
     { id: 'pages', title: 'Páginas', actions: ['pages', 'crop'] },
     { id: 'content', title: 'Contenido', actions: ['edit-pdf', 'remove-image'] },
@@ -347,7 +355,7 @@ export default function Workbench(props: Props) {
     {section === 'home' && <div className="tool-categories">{categories.map(category => <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}><h3 className="tool-category-heading" id={`tool-category-${category.id}`}>{category.title}</h3><div className="operation-grid">{category.actions.map(key => {
       const action = actions.find(action => action[0] === key)!;
       const [, label, Icon, enabled] = action;
-      return <button type="button" key={key} data-tool-key={key} disabled={!enabled || busy || compareBusy || props.inline && editDraft && key !== 'edit-pdf'} onClick={() => chooseAction(key)}><Icon size={24} aria-hidden="true" /><span>{label}</span></button>;
+      return <button type="button" key={key} data-tool-key={key} disabled={!enabled || busy || compareBusy || props.inline && editDraft && key !== 'edit-pdf'} onClick={() => chooseAction(key)} aria-label={label}><span className="tool-icon" aria-hidden="true"><Icon size={22} /></span><span className="tool-text"><span>{label}</span>{descriptions[key] && <small aria-hidden="true">{descriptions[key]}</small>}</span></button>;
     })}</div></section>)}</div>}
     {section === 'pages' && <>
       <div className="page-plan-actions">
