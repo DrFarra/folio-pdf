@@ -155,3 +155,17 @@ html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:a
 html[data-tablet] .app-shell .library-screen .library-grid .document-library-list{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
 html[data-tablet] .app-shell .library-screen .document-library-more{min-height:44px;width:44px}
 @media(prefers-reduced-motion:reduce){.document-library *{transition:none!important;animation:none!important}}
+
+/* En curso: other started documents, a horizontal shelf under the resume card. */
+.library-shelf{margin:-2px 0 16px}
+.library-shelf h2{margin:0 2px 8px;font-size:.8125rem;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.library-shelf-row{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;margin:0 -20px;padding:2px 20px 6px}
+.library-shelf-row::-webkit-scrollbar{display:none}
+.library-shelf-row>button{display:flex;flex-direction:column;gap:7px;flex:0 0 96px;scroll-snap-align:start;text-align:left;border-radius:10px;transition:scale .12s}
+.library-shelf-row>button:active:not(:disabled){scale:.97}
+.library-shelf-title{font-size:.75rem;font-weight:600;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.library-shelf-progress{display:flex;align-items:center;gap:6px;font-size:.6875rem;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.library-shelf-progress .library-progress{flex:1;height:3px}
+html:not([data-phone]) .app-shell .library-screen .library-shelf-row{margin:0;padding:2px 0 6px}
+html:not([data-phone]) .app-shell .library-screen .library-shelf-row>button{flex-basis:112px}
+html[data-phone] .library-shelf-row>button{flex-basis:84px}

@@ -92,6 +92,8 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
   // The document being read, or else the one read most recently.
   const resume = active ? props.documents.find(document => document.id === active.id) : [...props.documents].sort((a, b) => b.openedAt - a.openedAt)[0];
   const resumePage = resume ? pageOf(resume) : active?.page, resumePages = resume?.pages || active?.pages || 0;
+  // Other documents started and not finished, most recent first.
+  const started = props.documents.filter(document => document.id !== resume?.id && progress(pageOf(document), document.pages) > 0 && progress(pageOf(document), document.pages) < .98).sort((a, b) => b.openedAt - a.openedAt).slice(0, 12);
 
   useEffect(() => {
     if (!openMenu && !sortOpen) return;
@@ -144,6 +146,14 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
         </span>
         <ChevronRight size={22} aria-hidden="true" />
       </button>}
+      {started.length > 0 && <section className="library-shelf" aria-label="En curso">
+        <h2>En curso</h2>
+        <div className="library-shelf-row">{started.map(document => { const value = progress(pageOf(document), document.pages); return <button key={document.id} type="button" disabled={props.busy} aria-label={`Abrir ${document.name}, ${Math.round(value * 100)} % leído`} onClick={() => props.onOpen(document)}>
+          <Cover name={document.name} image={details[document.id]?.cover} size="card" />
+          <span className="library-shelf-title">{title(document.name)}</span>
+          <span className="library-shelf-progress"><Progress value={value} /><small>{Math.round(value * 100)} %</small></span>
+        </button>; })}</div>
+      </section>}
       <div className="document-library-create-actions">
         <button type="button" className="document-library-import" disabled={props.busy} onClick={props.onImport}><Upload size={20} aria-hidden="true" /><span>Abrir PDF</span></button>
         {props.onDrive && <button type="button" className="document-library-create" disabled={props.busy} onClick={props.onDrive}><Cloud size={20} aria-hidden="true" /><span>Google Drive</span></button>}
