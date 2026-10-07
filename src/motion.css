@@ -81,3 +81,14 @@ html[data-touch] .toast .toast-action{min-height:40px}
 :is(.settings-toggle,.drawing-finger-toggle) input[type=checkbox]:active::before{width:26px}
 :is(.settings-toggle,.drawing-finger-toggle) input[type=checkbox]:checked:active::before{translate:14px 0}
 @media(prefers-reduced-motion:reduce){:is(.settings-toggle,.drawing-finger-toggle) input[type=checkbox],:is(.settings-toggle,.drawing-finger-toggle) input[type=checkbox]::before{transition:none}}
+
+/* Novedades */
+.whats-new-modal{width:min(520px,calc(100vw - 28px))}
+.whats-new-hero{display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:14px;border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--surface)),var(--surface));color:var(--text)}
+.whats-new-hero svg{color:var(--accent);flex-shrink:0}
+.whats-new-hero p{margin:0;font-size:14px;line-height:1.45}
+.whats-new-list{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:14px}
+.whats-new-list li{display:flex;gap:14px;align-items:flex-start}
+.whats-new-list li>span{display:grid;place-items:center;flex-shrink:0;width:40px;height:40px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}
+.whats-new-list strong{display:block;font-size:14px;font-weight:650;margin-bottom:2px}
+.whats-new-list p{margin:0;font-size:13px;line-height:1.45;color:var(--muted)}
