@@ -16,7 +16,7 @@
 .pdf-picker-viewport{position:relative;flex:1;min-height:0;min-width:0;display:flex;align-items:safe center;justify-content:safe center;overflow:auto;padding:16px;background:var(--canvas);border:1px solid var(--line);border-radius:7px;overscroll-behavior:contain;scrollbar-gutter:stable}
 .pdf-picker-stage{position:relative;flex:none;background:white;box-shadow:0 2px 12px #0002}
 .pdf-picker-stage>canvas{display:block;max-width:none}
-.pdf-picker-stage[data-drawing=true]{touch-action:none;cursor:crosshair;user-select:none}
+.pdf-picker-stage[data-drawing=true]{touch-action:none;cursor:crosshair;-webkit-user-select:none;user-select:none}
 .pdf-content-item{position:absolute;margin:0;padding:0;border:1px solid transparent;border-radius:0;background:transparent;cursor:pointer;box-sizing:border-box;min-width:0;min-height:0}
 .pdf-content-item[data-kind=image]{z-index:1;border-color:#3978b840}
 .pdf-content-item[data-kind=text]{z-index:2}

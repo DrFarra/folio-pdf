@@ -28,7 +28,10 @@
 .bookmark-drop-hint{font-size:10px;line-height:16px;color:var(--muted);margin:7px 4px 0}
 .bookmark-drag-preview{position:fixed;z-index:10010;pointer-events:none;display:flex;align-items:center;gap:7px;width:175px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);box-shadow:0 5px 15px #0003;font-size:11px}
 .bookmark-drag-preview svg{color:var(--bookmark-color);flex-shrink:0}.bookmark-drag-preview span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-body.bookmark-drag-active,body.bookmark-drag-active *{cursor:grabbing!important;user-select:none!important}
+/* Rows are dragged, never text-selected: iOS WebKit otherwise extends a selection under the finger. It ignores unprefixed user-select. */
+.bookmark-tree,.bookmark-root-drop{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.bookmark-tree .bookmark-name-input{-webkit-user-select:text;user-select:text}
+body.bookmark-drag-active,body.bookmark-drag-active *{cursor:grabbing!important;-webkit-user-select:none!important;user-select:none!important}
 body.bookmark-drag-active .bookmark-entry.drop-blocked{cursor:not-allowed!important}
 .bookmark-menu{position:fixed;z-index:10000;width:236px;max-height:calc(100vh - 16px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px;box-shadow:0 8px 28px #0003;color:var(--text);font-size:11px}
 .bookmark-menu>button{display:flex;align-items:center;gap:9px;text-align:left;width:100%;padding:8px;border-radius:4px;color:var(--text);line-height:16px;font-size:11px}

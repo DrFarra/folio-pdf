@@ -1,7 +1,7 @@
 .drawing-settings-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex-shrink:0;width:44px;height:36px;border-radius:8px;color:var(--muted)}
 .drawing-settings-trigger>span{width:15px;height:15px;border-radius:50%;border:1px solid color-mix(in srgb,var(--text) 30%,transparent)}
 .drawing-settings-trigger[aria-expanded=true]{background:var(--hover)}@media(hover:hover){.drawing-settings-trigger:hover{background:var(--hover)}}
-.drawing-settings-popup{position:fixed;z-index:85;width:244px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;padding:14px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px #15223524;user-select:none}
+.drawing-settings-popup{position:fixed;z-index:85;width:244px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;padding:14px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px #15223524;-webkit-user-select:none;user-select:none}
 .drawing-settings-popup>strong{display:block;font-size:13px;font-weight:600;margin:0 4px 8px}
 .drawing-colors{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
 .drawing-colors>button,.drawing-custom-color{height:44px;min-width:44px;display:grid;place-items:center;border-radius:10px}

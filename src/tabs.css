@@ -2,8 +2,8 @@
 .document-tab-strip::-webkit-scrollbar{display:none}
 /* Whole tabs only: a half-hidden tab would show just its close button. Dragging autoscrolls freely. */
 .document-tab-strip{scroll-snap-type:x mandatory}.document-tab-strip.is-dragging{scroll-snap-type:none}.document-tab{scroll-snap-align:start}
-.document-tab-strip.drag-enabled .document-tab>[role=tab]{cursor:grab;user-select:none}
-.document-tab-strip.is-dragging,.document-tab-strip.is-dragging .document-tab>[role=tab]{cursor:grabbing;user-select:none}
+.document-tab-strip.drag-enabled .document-tab>[role=tab]{cursor:grab;-webkit-user-select:none;user-select:none}
+.document-tab-strip.is-dragging,.document-tab-strip.is-dragging .document-tab>[role=tab]{cursor:grabbing;-webkit-user-select:none;user-select:none}
 .document-tab.plan-tab-dragging{opacity:.5}
 .document-tab{position:relative}
 .document-tab.tab-drop-before::before,.document-tab.tab-drop-after::after{content:'';position:absolute;top:1px;bottom:1px;width:3px;border-radius:2px;background:var(--accent);pointer-events:none;z-index:2}

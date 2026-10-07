@@ -1,7 +1,7 @@
 .page-plan-drag-help{font-size:11px;color:var(--muted);line-height:1.5;margin:0 0 10px;min-height:17px}
 .page-plan.drag-enabled>article{position:relative;cursor:grab}
 .page-plan.drag-enabled>article .thumbnail-item{cursor:grab}
-.page-plan.is-dragging{user-select:none;cursor:grabbing}
+.page-plan.is-dragging{-webkit-user-select:none;user-select:none;cursor:grabbing}
 .page-plan.is-dragging>article,.page-plan.is-dragging>article .thumbnail-item{cursor:grabbing}
 .page-plan>article.plan-dragging{opacity:.35}
 .page-plan>article.plan-drop-before::before,.page-plan>article.plan-drop-after::after{content:"";position:absolute;top:3px;bottom:3px;width:4px;background:var(--accent);border-radius:3px;z-index:2;pointer-events:none}
