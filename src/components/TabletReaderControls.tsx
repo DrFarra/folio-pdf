@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2 } from 'lucide-react';
+import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2 } from 'lucide-react';
 import type { MouseEventHandler, ReactNode } from 'react';
 import type { Tool } from '../types';
 
@@ -6,9 +6,9 @@ function Button({ label, children, onClick, onMouseDown, disabled, active }: { l
   return <button type="button" className={`tablet-icon-button${active ? ' active' : ''}`} aria-label={label} title={label} disabled={disabled} aria-pressed={active} onClick={onClick} onMouseDown={onMouseDown}>{children}</button>;
 }
 
-export function TabletReaderHeader({ name, nameAdornment, count, page, pageStep, documentsOpen, annotating, disabled, draft, canUndo, canRedo, onLibrary, onDocuments, onPage, onPages, onSearch, onAnnotate, onDone, onUndo, onRedo, onMore }: {
-  name: string; nameAdornment?: ReactNode; count: number; page?: string; pageStep?: { previous?: () => void; next?: () => void }; documentsOpen: boolean; annotating: boolean; disabled: boolean; draft: boolean; canUndo: boolean; canRedo: boolean;
-  onLibrary: () => void; onDocuments: () => void; onPage: () => void; onPages: () => void; onSearch: () => void; onAnnotate: () => void; onDone: () => void; onUndo: () => void; onRedo: () => void; onMore: () => void;
+export function TabletReaderHeader({ name, nameAdornment, count, page, pageStep, documentsOpen, annotating, disabled, draft, canUndo, canRedo, bookmarked, onLibrary, onDocuments, onPage, onPages, onSearch, onBookmark, onAnnotate, onDone, onUndo, onRedo, onMore }: {
+  name: string; nameAdornment?: ReactNode; count: number; page?: string; pageStep?: { previous?: () => void; next?: () => void }; documentsOpen: boolean; annotating: boolean; disabled: boolean; draft: boolean; canUndo: boolean; canRedo: boolean; bookmarked: boolean;
+  onBookmark: () => void; onLibrary: () => void; onDocuments: () => void; onPage: () => void; onPages: () => void; onSearch: () => void; onAnnotate: () => void; onDone: () => void; onUndo: () => void; onRedo: () => void; onMore: () => void;
 }) {
   return <>
     <Button label="Volver a la biblioteca" disabled={disabled || draft} onClick={onLibrary}><ChevronLeft size={23} /></Button>
@@ -23,6 +23,8 @@ export function TabletReaderHeader({ name, nameAdornment, count, page, pageStep,
     </> : <>
       <Button label="Páginas" disabled={disabled || draft || !page} onClick={onPages}><Layers size={21} /></Button>
       <Button label="Buscar en el PDF" disabled={disabled || draft || !page} onClick={onSearch}><Search size={21} /></Button>
+      {/* Same action as the phone toolbar's bookmark button. */}
+      <Button label={bookmarked ? 'Quitar marcador de esta página' : 'Guardar marcador de esta página'} active={bookmarked} disabled={disabled || draft || !page} onClick={onBookmark}><Bookmark size={21} fill={bookmarked ? 'currentColor' : 'none'} /></Button>
       <Button label="Anotar documento" disabled={disabled || draft || !page} onClick={onAnnotate}><Highlighter size={21} /></Button>
     </>}
     <Button label="Más acciones del documento" disabled={disabled || draft || !page} onClick={onMore}><MoreHorizontal size={23} /></Button>
