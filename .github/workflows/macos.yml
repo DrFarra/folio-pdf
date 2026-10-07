@@ -64,6 +64,7 @@ jobs:
           npm run test:page-content:engine
           npm run test:content-editor:engine
           npm run test:content-actions:engine
+          npm run test:fixtures
           npm run test:edit-engine
       - name: Native Mac unit tests
         run: |
