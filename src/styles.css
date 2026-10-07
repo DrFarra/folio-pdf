@@ -136,3 +136,8 @@ html:not([data-phone]) .workbench .modal-heading{position:sticky;top:0;z-index:3
 
 /* Touch screens show the focus ring only while a hardware keyboard navigates (see main.tsx). */
 html[data-touch]:not([data-keyboard]) :focus-visible:not(.highlight-annotation[data-selected=true]){outline:none!important}
+/* Column-kept selections paint only the kept lines (ColumnSelectionPreview). */
+html.selection-clipped .textLayer ::selection{background:transparent!important}
+.column-selection-preview{position:fixed;inset:0;z-index:15;pointer-events:none}
+.column-selection-preview>span{position:fixed;border-radius:2px;background:#70a9d966}
+.column-selection-preview.highlight>span{background:rgba(245,209,100,.45)}

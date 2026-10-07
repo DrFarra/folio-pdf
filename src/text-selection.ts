@@ -102,8 +102,11 @@ export function commentSelection(): boolean {
   return request.applied;
 }
 
-/** Clip a selection to this page and measure text nodes, excluding search-mark wrappers. */
-export function selectedTextRects(container: HTMLElement, original: Range): { text: string; rects: DOMRect[]; angles: number[] } | null {
+type Part = { rects: DOMRect[]; text: string; vertical: boolean; angle: number };
+/** Clip a selection to this page and measure text nodes, excluding search-mark wrappers.
+ * A selection that starts and ends in the same column of a table or a
+ * multi-column page keeps only that column (see `columnOf`). */
+export function selectedTextRects(container: HTMLElement, original: Range): { text: string; rects: DOMRect[]; angles: number[]; clipped: boolean } | null {
   if (!original.intersectsNode(container)) return null;
   const boundary = document.createRange();
   boundary.selectNodeContents(container);
@@ -111,11 +114,12 @@ export function selectedTextRects(container: HTMLElement, original: Range): { te
   if (range.compareBoundaryPoints(Range.START_TO_START, boundary) < 0) range.setStart(boundary.startContainer, boundary.startOffset);
   if (range.compareBoundaryPoints(Range.END_TO_END, boundary) > 0) range.setEnd(boundary.endContainer, boundary.endOffset);
   if (range.collapsed || !range.toString().trim()) return null;
-  const fragments: { rect: DOMRect; vertical: boolean; angle: number }[] = [];
+  const parts: Part[] = [];
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const mainRotation = Number(container.dataset.mainRotation || 0);
   const angles = new Map<Element, number>();
-  while (walker.nextNode() && fragments.length < 5000) {
+  let count = 0;
+  while (walker.nextNode() && count < 5000) {
     const node = walker.currentNode;
     if (!range.intersectsNode(node)) continue;
     const part = document.createRange();
@@ -126,10 +130,67 @@ export function selectedTextRects(container: HTMLElement, original: Range): { te
     const span = node.parentElement?.closest('span');
     if (span && !angles.has(span)) angles.set(span, ((mainRotation + parseFloat(getComputedStyle(span).getPropertyValue('--rotate') || '0')) % 360 + 360) % 360);
     const angle = span ? angles.get(span)! : mainRotation;
-    for (const rect of part.getClientRects()) if (rect.width > .5 && rect.height > .5) fragments.push({ rect, vertical: angle % 180 > 45 && angle % 180 < 135, angle });
+    const rects = [...part.getClientRects()].filter(rect => rect.width > .5 && rect.height > .5);
+    if (!rects.length) continue;
+    count += rects.length;
+    parts.push({ rects, text: part.toString(), vertical: angle % 180 > 45 && angle % 180 < 135, angle });
   }
-  const runs = mergeTextLineRects(fragments);
-  return runs.length ? { text: range.toString().slice(0, 5000), rects: runs.map(run => run.rect), angles: runs.map(run => run.angle) } : null;
+  const column = columnOf(container, parts);
+  const kept = column ? parts.filter(part => { const box = bounds(part.rects), center = (box.left + box.right) / 2; return center >= column.left && center <= column.right; }) : parts;
+  const runs = mergeTextLineRects(kept.flatMap(part => part.rects.map(rect => ({ rect, vertical: part.vertical, angle: part.angle }))));
+  if (!runs.length) return null;
+  const text = column ? joinLines(kept) : range.toString();
+  return { text: text.slice(0, 5000), rects: runs.map(run => run.rect), angles: runs.map(run => run.angle), clipped: !!column };
+}
+
+const bounds = (rects: DOMRect[]) => rects.reduce((box, rect) => new DOMRect(Math.min(box.left, rect.left), Math.min(box.top, rect.top), Math.max(box.right, rect.right) - Math.min(box.left, rect.left), Math.max(box.bottom, rect.bottom) - Math.min(box.top, rect.top)));
+// The kept parts of a column read line by line.
+function joinLines(parts: Part[]) {
+  let text = '', last: DOMRect | null = null;
+  for (const part of parts) {
+    const box = bounds(part.rects);
+    const newLine = !!last && Math.abs((box.top + box.bottom) / 2 - (last.top + last.bottom) / 2) > Math.min(box.height, last.height) / 2;
+    if (newLine) text = text.trimEnd();
+    if (last) text += newLine ? '\n' : /\s$/.test(text) || /^\s/.test(part.text) ? '' : ' ';
+    text += part.text; last = box;
+  }
+  return text;
+}
+
+/** The column a multi-line selection stays in, or null when it is free text.
+ * PDF.js orders text as the file does, so dragging down a table's left column
+ * passes through the right column's line in between. Gutters are the vertical
+ * gaps that no text crosses within the selected lines; if the selection starts
+ * and ends between the same gutters, only that column is kept. */
+function columnOf(container: HTMLElement, parts: Part[]): { left: number; right: number } | null {
+  if (parts.length < 2 || parts.some(part => part.vertical || Math.abs(part.angle - Math.round(part.angle / 90) * 90) > 1 || part.angle % 180 !== 0)) return null;
+  const first = parts[0].rects[0], last = parts.at(-1)!.rects.at(-1)!;
+  const line = Math.min(first.height, last.height);
+  // One line: nothing in between to leave out.
+  if (Math.abs((first.top + first.bottom) / 2 - (last.top + last.bottom) / 2) < line * .6) return null;
+  const top = Math.min(first.top, last.top), bottom = Math.max(first.bottom, last.bottom);
+  const spans: DOMRect[] = [], heights: number[] = [];
+  for (const span of container.querySelectorAll<HTMLElement>('span')) {
+    if (span.firstElementChild?.tagName === 'SPAN' || !span.textContent?.trim()) continue;
+    const box = span.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1 || Math.min(box.bottom, bottom) - Math.max(box.top, top) < box.height * .3) continue;
+    spans.push(box); heights.push(box.height);
+  }
+  if (spans.length < 3) return null;
+  heights.sort((a, b) => a - b);
+  // A gutter is wider than the space between words: about a text height.
+  const gap = Math.max(4, heights[Math.floor(heights.length / 2)] * .8);
+  spans.sort((a, b) => a.left - b.left);
+  const blocks: { left: number; right: number }[] = [];
+  for (const box of spans) {
+    const block = blocks.at(-1);
+    if (block && box.left <= block.right + gap) block.right = Math.max(block.right, box.right);
+    else blocks.push({ left: box.left, right: box.right });
+  }
+  if (blocks.length < 2) return null;
+  const find = (x: number) => blocks.findIndex(block => x >= block.left - gap / 2 && x <= block.right + gap / 2);
+  const start = find((first.left + first.right) / 2), end = find((last.left + last.right) / 2);
+  return start >= 0 && start === end ? { left: blocks[start].left - gap / 2, right: blocks[start].right + gap / 2 } : null;
 }
 
 /** Close word/search-wrapper gaps on one line, leaving columns and line spacing clear. */

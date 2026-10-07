@@ -35,7 +35,8 @@ function selectionDetails(): SelectedText | null {
       // PDF.js inserts line breaks independently from its text items. Preserve
       // those breaks without including page captions or the annotation limit.
       for (const br of content.querySelectorAll('br')) br.replaceWith('\n');
-      return { ...geometry, text: content.textContent || '' };
+      // A selection kept to one column copies only that column's text.
+      return { ...geometry, text: geometry.clipped ? geometry.text : content.textContent || '' };
     }).filter(item => !!item);
   const text = selected.map(item => item!.text).join('\n');
   const rects = selected.flatMap(item => item!.rects).filter(rect => rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth);
