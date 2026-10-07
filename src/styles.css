@@ -154,3 +154,26 @@ html.selection-clipped .textLayer ::selection{background:transparent!important}
 .search-recent [role=list] button svg{color:var(--muted);flex-shrink:0}
 html[data-touch] .search-recent [role=list] button{min-height:40px;font-size:14px}
 .app-shell .result-heading>.result-page{font-size:inherit;font-weight:600;padding:0;background:none;border-radius:0;color:inherit}
+
+/* Page tones. Sepia warms the paper; Oscuro inverts the page for reading in
+   the dark, keeping hues (hue-rotate) so figures stay recognisable. Ink is
+   inverted with it and highlights glow (screen) instead of darkening. */
+.page-tone-sepia .page-content>canvas{filter:sepia(.55) saturate(1.15) brightness(.95) contrast(.95)}
+.page-tone-sepia .pdf-page{background:#f4ecd8}
+.page-tone-dark .page-content>canvas,.page-tone-dark .page-content>.ink-layer{filter:invert(.9) hue-rotate(180deg) brightness(1.04) contrast(.92)}
+.page-tone-dark .pdf-page{background:#1c1d21;border-color:#ffffff12}
+.page-tone-dark .highlight-annotation{mix-blend-mode:screen;opacity:.34}
+.page-tone-dark .textLayer mark{background:#f2d34d55}
+.page-tone-dark .page-content>.page-detail{filter:invert(.9) hue-rotate(180deg) brightness(1.04) contrast(.92)}
+
+/* Page tone choice in Vista del documento */
+.page-tones{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.page-tones>span{font-size:13px;font-weight:550}
+.page-tones>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.page-tone{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1.5px solid var(--line);border-radius:12px;background:var(--surface);font-size:12px;font-weight:550;color:var(--text);transition:border-color .15s,box-shadow .15s}
+.page-tone[aria-checked=true]{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+.page-tone>span{display:flex;flex-direction:column;gap:4px;width:44px;height:54px;padding:8px 7px;border-radius:4px;background:#fff;box-shadow:0 0 0 1px #0f172a1f,0 2px 6px #0f172a1f}
+.page-tone>span i{display:block;height:3px;border-radius:2px;background:#30364288}
+.page-tone>span i:nth-child(2){width:80%}.page-tone>span i:nth-child(3){width:60%}
+.page-tone.sepia>span{background:#f4ecd8}.page-tone.sepia>span i{background:#5b4a3388}
+.page-tone.dark>span{background:#1c1d21}.page-tone.dark>span i{background:#d8dbe388}

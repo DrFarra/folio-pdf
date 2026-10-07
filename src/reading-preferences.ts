@@ -6,11 +6,13 @@ export type ReadingPreferences = {
   smoothScroll: boolean;
   restorePage: boolean;
   wheelSpeed: number;
+  /** Page color while reading: as printed, warm paper, or inverted for the dark. */
+  pageTone: 'normal' | 'sepia' | 'dark';
 };
 
 export const defaultReadingPreferences: ReadingPreferences = {
   mode: 'continuous', initialPanel: 'closed', panelWidth: 220,
-  pageGap: 19, smoothScroll: true, restorePage: true, wheelSpeed: 100,
+  pageGap: 19, smoothScroll: true, restorePage: true, wheelSpeed: 100, pageTone: 'normal',
 };
 export function readReadingPreferences(): ReadingPreferences {
   try {
@@ -22,6 +24,7 @@ export function readReadingPreferences(): ReadingPreferences {
       panelWidth: clamp(raw.panelWidth, 220, 180, 360), pageGap: clamp(raw.pageGap, 19, 8, 40),
       smoothScroll: raw.smoothScroll !== false, restorePage: raw.restorePage !== false,
       wheelSpeed: clamp(raw.wheelSpeed, 100, 50, 150),
+      pageTone: raw.pageTone === 'sepia' || raw.pageTone === 'dark' ? raw.pageTone : 'normal',
     };
   } catch { return { ...defaultReadingPreferences }; }
 }
