@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import { haptic } from '../platform';
 import './PageScrubber.css';
 
 type Props = {
@@ -50,7 +51,7 @@ export function PageScrubber({ pdf, page, pages, viewer, continuous, label, sect
   return <div className={`page-scrubber${shown || drag ? ' shown' : ''}${drag ? ' dragging' : ''}`} aria-hidden="true">
     <div ref={track} className="page-scrubber-track"
       onPointerDown={event => { if (!event.isPrimary) return; event.preventDefault(); event.stopPropagation(); pointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); setDrag(at(event.clientY)); setShown(true); window.clearTimeout(hide.current); }}
-      onPointerMove={event => { if (pointer.current !== event.pointerId) return; event.preventDefault(); setDrag(at(event.clientY)); }}
+      onPointerMove={event => { if (pointer.current !== event.pointerId) return; event.preventDefault(); const next = at(event.clientY); if (next.target !== drag?.target) haptic('selection'); setDrag(next); }}
       onPointerUp={event => { if (pointer.current !== event.pointerId) return; pointer.current = null; const end = at(event.clientY); setDrag(null); reveal(1200); if (end.target !== page) onJump(end.target); }}
       onPointerCancel={() => { pointer.current = null; setDrag(null); reveal(800); }}>
       <span className="page-scrubber-handle" style={{ top: `${position * 100}%` }}>

@@ -9,6 +9,11 @@ export async function setReaderChrome(visible: boolean): Promise<void> {
 }
 
 export const isNative = isTauri();
+/** A short haptic on phones and tablets; elsewhere it does nothing. Fire and forget. */
+export function haptic(kind: 'selection' | 'light' | 'medium' | 'success'): void {
+  if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+  void invoke('haptic', { kind }).catch(() => {});
+}
 /** Keeps the screen on while reading on a phone or tablet; elsewhere it does nothing. */
 export async function setKeepAwake(on: boolean): Promise<void> {
   if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;

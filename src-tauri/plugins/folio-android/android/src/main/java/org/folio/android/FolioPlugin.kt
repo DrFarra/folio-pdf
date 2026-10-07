@@ -38,6 +38,7 @@ import java.util.concurrent.Executors
 @InvokeArg class ThemeArgs { var theme: String = "light"; var background: String? = null }
 @InvokeArg class ChromeArgs { var visible: Boolean = true }
 @InvokeArg class KeepAwakeArgs { var on: Boolean = false }
+@InvokeArg class HapticArgs { var kind: String = "light" }
 @InvokeArg class UrlArgs { lateinit var url: String }
 @InvokeArg class WatchDocumentsArgs { lateinit var channel: Channel }
 @InvokeArg class DriveArgs { var interactive: Boolean = false }
@@ -280,6 +281,20 @@ class FolioPlugin(private val launch: Activity) : Plugin(launch) {
         activity.runOnUiThread {
             if (on) activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             else activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            invoke.resolve()
+        }
+    }
+    /** System haptics, as native controls give them. */
+    @Command fun haptic(invoke: Invoke) {
+        val kind = invoke.parseArgs(HapticArgs::class.java).kind
+        activity.runOnUiThread {
+            val feedback = when (kind) {
+                "selection" -> android.view.HapticFeedbackConstants.CLOCK_TICK
+                "success" -> if (android.os.Build.VERSION.SDK_INT >= 30) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.VIRTUAL_KEY
+                "medium" -> android.view.HapticFeedbackConstants.LONG_PRESS
+                else -> android.view.HapticFeedbackConstants.VIRTUAL_KEY
+            }
+            activity.window.decorView.performHapticFeedback(feedback)
             invoke.resolve()
         }
     }

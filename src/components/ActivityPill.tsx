@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { haptic } from '../platform';
 import './ActivityPill.css';
 
 export type ActivityStep = { id: number; label: string };
@@ -12,7 +13,7 @@ export function ActivityPill({ working, done }: { working: ActivityStep | null; 
   const appeared = useRef(0), node = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (working) { setShown(current => { if (current?.step.id !== working.id) appeared.current = performance.now(); return { step: working, phase: 'working' }; }); return; }
-    if (done) { setShown({ step: done, phase: 'done' }); return; }
+    if (done) { setShown({ step: done, phase: 'done' }); haptic('success'); return; }
     // Ended without an outcome to show: quick work leaves no trace.
     setShown(current => !current || current.phase !== 'working' ? current : performance.now() - appeared.current < 260 ? null : { ...current, phase: 'leaving' });
   }, [working?.id, working?.label, done?.id]);

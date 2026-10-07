@@ -6,6 +6,7 @@ import { bookmarkChildren, bookmarkDescendants, bookmarkDropDestination, createB
 import type { BookmarkDropTarget } from '../bookmarks';
 import Modal from './Modal';
 import { visibleBounds } from '../mobile';
+import { haptic } from '../platform';
 import './BookmarkTree.css';
 
 type Props = {
@@ -207,7 +208,7 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
         active.scroller = container; active.scrollStart = container?.scrollTop || 0;
         measureRows();
         source.setPointerCapture?.(active.pointerId); document.getSelection()?.removeAllRanges();
-        document.body.classList.add('bookmark-drag-active'); setDraggingId(node.id); setMenu(null);
+        document.body.classList.add('bookmark-drag-active'); setDraggingId(node.id); setMenu(null); haptic('medium');
         scrollFrame = requestAnimationFrame(autoScroll);
       }
       pointer.preventDefault(); setDragLocation({ x: pointer.clientX, y: pointer.clientY }); updateDrop(pointer.clientX, pointer.clientY);
@@ -218,7 +219,7 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
         pointer.preventDefault(); updateDrop(pointer.clientX, pointer.clientY);
         const current = bookmarksRef.current;
         const next = !disabledRef.current && dropRef.current ? dropBookmark(current, active.id, dropRef.current) : current;
-        if (next !== current) changeRef.current(next);
+        if (next !== current) { changeRef.current(next); haptic('light'); }
         setTimeout(() => { suppressClick.current = false; }, 0);
       }
       cancelDrag(active.active);

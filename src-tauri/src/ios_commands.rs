@@ -118,6 +118,11 @@ pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(
 pub async fn set_keep_awake(on: bool, app: tauri::AppHandle) -> Result<(), String> {
     mobile_call(app, "setKeepAwake", serde_json::json!({"on":on})).await.map(|_| ())
 }
+/// A short system haptic: selection, light, medium or success.
+#[tauri::command]
+pub async fn haptic(kind: String, app: tauri::AppHandle) -> Result<(), String> {
+    mobile_call(app, "haptic", serde_json::json!({"kind":kind})).await.map(|_| ())
+}
 
 #[tauri::command]
 pub async fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String> {

@@ -8,6 +8,7 @@ private struct PathsArgs: Decodable { let paths: [String] }
 private struct FileArgs: Decodable { let path: String; let anchor: [Double]? }
 private struct ChromeArgs: Decodable { let visible: Bool }
 private struct KeepAwakeArgs: Decodable { let on: Bool }
+private struct HapticArgs: Decodable { let kind: String }
 private struct ThemeArgs: Decodable { let theme: String }
 private struct TextArgs: Decodable { let text: String }
 private struct URLArgs: Decodable { let url: String }
@@ -94,6 +95,19 @@ final class FolioPlugin: Plugin {
     @objc public func setKeepAwake(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(KeepAwakeArgs.self)
         DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = args.on; invoke.resolve() }
+    }
+    /// System haptics, as native controls give them.
+    @objc public func haptic(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(HapticArgs.self)
+        DispatchQueue.main.async {
+            switch args.kind {
+            case "selection": UISelectionFeedbackGenerator().selectionChanged()
+            case "success": UINotificationFeedbackGenerator().notificationOccurred(.success)
+            case "medium": UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            default: UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            invoke.resolve()
+        }
     }
     @objc public func setReaderChrome(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ChromeArgs.self)

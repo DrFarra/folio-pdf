@@ -54,7 +54,7 @@ import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletRea
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
 import { assetUrl, pdfAssetSettings } from './assets';
-import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, type Anchor } from './platform';
+import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
 import { clearSavedState, forgetDocument, listLibrary, readLibraryData, readLibrarySource, readSession, rememberDocument, touchDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigationTarget, RecentDocument, Session, SideTab, Tool } from './types';
 
@@ -1351,6 +1351,7 @@ export default function App() {
   const changeZoom = useCallback((delta: number) => { setCustomScale(Math.max(.25, Math.min(3, Math.round((scale + delta) * 100) / 100))); setZoomMode('custom'); }, [scale]);
   const toggleBookmark = useCallback(() => {
     if (!docRef.current || busyRef.current || loadingRef.current) return;
+    haptic('light');
     const current = readingState.current.bookmarks;
     // On touch the filled bookmark toggles; Deshacer restores a removed one.
     if (touchRef.current && hasBookmarkPage(current, page)) { commitBookmarks(current.filter(node => node.page === page).reduce((nodes, node) => deleteBookmark(nodes, node.id), current)); notify('Marcador eliminado.', 'success'); return; }
@@ -1539,10 +1540,12 @@ export default function App() {
       // A selection spanning several pages is one action in the document history.
       // Highlights over a highlight of the same color join it.
       commitAnnotations(addHighlights(annotationRef.current, annotation.map(item => ({ ...item, id: uid(), created: Date.now() }))));
+      if (annotation.some(item => item.kind === 'highlight')) haptic('light');
       return;
     }
     if (annotation.kind === 'note') { noteOrigin.current = 'document'; setNoteDraft(annotation); setNoteText(''); return; }
     commitAnnotations(addHighlights(annotationRef.current, [{ ...annotation, id: uid(), created: Date.now() }]));
+    if (annotation.kind === 'highlight') haptic('light');
   }
   const removeAnnotation = useCallback((id: string, gesture?: string) => {
     if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current || !annotationRef.current.some(annotation => annotation.id === id)) return;
