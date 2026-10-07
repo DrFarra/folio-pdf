@@ -5,7 +5,7 @@ import {
   PenLine, Eraser, Highlighter, Info, Layers, ListTree, LoaderCircle, LockKeyhole,
   Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, MousePointer2,
   Plus, Printer, Redo2, RotateCw, Search, ShieldCheck,
-  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, FilePlus2,
+  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, FilePlus2, Moon, Sun, Keyboard, Hash, Share2, Pencil, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail } from './components/PDFPage';
@@ -48,6 +48,7 @@ import { ActivityPill, type ActivityStep } from './components/ActivityPill';
 import { ColumnSelectionPreview } from './components/ColumnSelectionPreview';
 import { addHighlights } from './highlight-merge';
 import { AnnotationsPanel } from './components/AnnotationsPanel';
+import { CommandPalette, type Command } from './components/CommandPalette';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
@@ -197,6 +198,8 @@ export default function App() {
   const readingPreferencesRef = useRef(readingPreferences); readingPreferencesRef.current = readingPreferences;
   const [confirmClear, setConfirmClear] = useState(false);
   const [info, setInfo] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null);
   const noteOrigin = useRef<'document' | 'list'>('document');
   const [noteText, setNoteText] = useState('');
@@ -896,6 +899,58 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
+  // Everything the palette can do, built when it opens; unavailable actions are left out.
+  function paletteCommands(): Command[] {
+    const list: Command[] = [], add = (group: string, id: string, title: string, run: () => void, icon?: React.ReactNode, hint?: string, keywords?: string) => { list.push({ group, id, title, run, icon, hint, keywords }); };
+    const idle = !busy && !loading;
+    if (doc && idle) {
+      add('Documento', 'save', saveLabel, () => void download(), <ArrowDownToLine size={16} />, shortcutLabel('S'), 'guardar descargar exportar');
+      add('Documento', 'print', 'Imprimir', () => void printDocument(), <Printer size={16} />, shortcutLabel('P'));
+      if (isMobile) add('Documento', 'share', 'Compartir PDF', () => void shareDocument(), <Share2 size={16} />);
+      if (!isNativePdfDocument(doc.pdf)) { add('Documento', 'edit', 'Editar PDF', openEditor, <Pencil size={16} />, undefined, 'texto modificar'); add('Documento', 'tools', 'Herramientas', openTools, <Wrench size={16} />, undefined, 'organizar recortar formulario firmar convertir ocr comparar'); }
+      add('Documento', 'info', 'Información del documento', () => setInfo(true), <Info size={16} />, undefined, 'propiedades metadatos');
+      add('Documento', 'close', 'Cerrar documento', () => { if (activeTabRef.current) void closeTab(activeTabRef.current); }, <X size={16} />, shortcutLabel('W'));
+      add('Navegación', 'jump', 'Ir a página…', () => { setPageInput(String(page)); setPageJump(true); }, <Hash size={16} />, undefined, 'saltar numero');
+      add('Navegación', 'first', 'Primera página', () => goToPage(1), <ChevronLeft size={16} />, undefined, 'inicio principio');
+      add('Navegación', 'last', 'Última página', () => goToPage(doc.pdf.numPages), <ChevronRight size={16} />, undefined, 'final fin');
+      if (returnLocation?.key === activeTabKey && returnLocation.page !== page) add('Navegación', 'back', `Volver a p. ${pageName(returnLocation.page)}`, returnToLocation, <ChevronLeft size={16} />, undefined, 'regresar atras');
+      add('Navegación', 'bookmark', hasBookmarkPage(bookmarks, page) ? 'Quitar marcador de esta página' : 'Guardar marcador de esta página', toggleBookmark, <Bookmark size={16} />, undefined, 'marcar');
+      add('Paneles', 'search', 'Buscar en el PDF', openSearch, <Search size={16} />, shortcutLabel('F'), 'encontrar texto');
+      add('Paneles', 'pages', 'Páginas', () => openExplorer('pages'), <Layers size={16} />, undefined, 'miniaturas');
+      add('Paneles', 'outline', 'Índice', () => openExplorer('outline'), <ListTree size={16} />, undefined, 'capitulos contenido tabla');
+      add('Paneles', 'bookmarks', 'Marcadores', () => openExplorer('bookmarks'), <Bookmark size={16} />);
+      add('Paneles', 'annotations', 'Anotaciones', () => { if (touchLayout) showExplorerTab('annotations'); else setNotesOpen(true); }, <MessageSquare size={16} />, undefined, 'resaltados notas resumen exportar');
+      if (doc.canAnnotate) {
+        add('Anotar', 'highlight', 'Resaltador', () => { setMobileAnnotating(true); activateHighlight(); }, <Highlighter size={16} />, 'H', 'subrayar');
+        add('Anotar', 'note', 'Nota', () => { setMobileAnnotating(true); setTool('note'); }, <StickyNote size={16} />, 'N', 'comentario');
+        add('Anotar', 'draw', 'Lápiz', () => { setMobileAnnotating(true); setTool('draw'); }, <PenLine size={16} />, 'D', 'dibujar rotulador');
+        add('Anotar', 'eraser', 'Goma', () => { setMobileAnnotating(true); setTool('eraser'); }, <Eraser size={16} />, undefined, 'borrar');
+        add('Anotar', 'select', 'Seleccionar texto', () => setTool('select'), <MousePointer2 size={16} />, 'V');
+      }
+      if (undoStack.current.length) add('Anotar', 'undo', 'Deshacer', undo, <Undo2 size={16} />, shortcutLabel('Z'));
+      if (redoStack.current.length) add('Anotar', 'redo', 'Rehacer', redo, <Redo2 size={16} />, shortcutLabel('Z', true));
+      add('Ver', 'zoom-in', 'Acercar', () => changeZoom(.1), <ZoomIn size={16} />, shortcutLabel('+'), 'zoom ampliar');
+      add('Ver', 'zoom-out', 'Alejar', () => changeZoom(-.1), <ZoomOut size={16} />, shortcutLabel('-'), 'zoom reducir');
+      add('Ver', 'fit-page', 'Ajustar página', () => setZoomMode('page'), <Minimize size={16} />, undefined, 'zoom');
+      add('Ver', 'fit-width', 'Ajustar ancho', () => setZoomMode('width'), <Maximize size={16} />, undefined, 'zoom');
+      add('Ver', 'actual', 'Tamaño real', () => { setCustomScale(1); setZoomMode('custom'); }, <Search size={16} />, shortcutLabel('0'), 'zoom 100');
+      add('Ver', 'view', 'Vista del documento', () => setViewSettings(true), <Settings2 size={16} />, undefined, 'lectura continua pagina separacion');
+      for (const entry of (outline || []).filter(item => item.page !== null).slice(0, 400)) add('Capítulos', `outline-${entry.page}-${entry.title}`, entry.title, () => { if (!returnLocation) rememberLocation(); goToPage(entry.page!, false); }, <BookOpen size={16} />, `p. ${pageName(entry.page!)}`, 'indice seccion');
+    }
+    for (const tab of tabs) if (tab.key !== activeTabKey) add('Documentos abiertos', `tab-${tab.key}`, tab.doc.name, () => void switchTab(tab.key), <FileText size={16} />, undefined, 'pestaña cambiar');
+    const open = new Set(tabs.map(tab => tab.doc.id));
+    for (const recent of recents.filter(item => !open.has(item.id)).slice(0, 50)) add('Biblioteca', `recent-${recent.id}`, recent.name, () => void reopenRecent(recent), <BookOpen size={16} />, undefined, 'abrir reciente documento');
+    add('General', 'open', 'Abrir PDF…', () => void chooseFile(), <Upload size={16} />, shortcutLabel('O'), 'importar archivo');
+    add('General', 'create', 'Crear PDF', () => setCreating(true), <FilePlus2 size={16} />, undefined, 'nuevo combinar imagenes');
+    if (driveAvailable) add('General', 'drive', 'Google Drive', () => { setLibrary(true); setDriveLibrary(true); }, <Cloud size={16} />, undefined, 'nube');
+    if (doc) add('General', 'library', 'Biblioteca', () => void returnToLibrary(), <FolderOpen size={16} />, undefined, 'inicio documentos');
+    add('General', 'theme-dark', 'Tema oscuro', () => chooseTheme('dark'), <Moon size={16} />, undefined, 'noche apariencia');
+    add('General', 'theme-light', 'Tema claro', () => chooseTheme('light'), <Sun size={16} />, undefined, 'dia apariencia');
+    add('General', 'settings', 'Ajustes', () => setSettings(true), <Settings size={16} />, undefined, 'preferencias');
+    add('General', 'shortcuts', 'Atajos de teclado', () => setShortcutsOpen(true), <Keyboard size={16} />, '?');
+    add('General', 'help', 'Ayuda', () => setHelp(true), <CircleHelp size={16} />);
+    return list;
+  }
   // Saving, syncing, printing and applying edits show a capsule while they run.
   const [activity, setActivity] = useState<ActivityStep | null>(null);
   const [activityDone, setActivityDone] = useState<ActivityStep | null>(null);
@@ -1342,12 +1397,14 @@ export default function App() {
       }
       // Without a document, ⌘W is left to the window menu.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w' && activeTabRef.current) { e.preventDefault(); void closeTab(activeTabRef.current); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(value => !value); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); if (!busyRef.current) void chooseFile(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); if (library) document.querySelector<HTMLInputElement>('.document-library-search input')?.focus(); else if (docRef.current) openSearch(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') { e.preventDefault(); void printDocument(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void download({ copy: isNative && e.shiftKey }); return; }
       if (e.key === 'F3' && (!editing || e.target === searchInput.current) && !busyRef.current && !loadingRef.current && !library && searchOpen && results.length) { e.preventDefault(); const visited = visitedSearch.current === `${activeTabRef.current}\0${searchQuery}`; goToResult(visited ? resultIndex + (e.shiftKey ? -1 : 1) : resultIndex); return; }
       if (editing) return;
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); setShortcutsOpen(true); return; }
       if (busyRef.current || loadingRef.current) return;
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
@@ -1974,7 +2031,7 @@ export default function App() {
     : !doc?.canAnnotate ? 'El autor de este PDF no permite anotarlo. Puedes leerlo, buscar y añadir marcadores.'
     : 'PDF grande: puedes leer, buscar, resaltar, dibujar y añadir notas. No se pueden editar páginas ni formularios.';
   const shortcuts = [
-    ['Abrir PDF', shortcutLabel('O')], ['Buscar', shortcutLabel('F')], [fileSaveLabel, shortcutLabel('S')], ...isNative ? [['Guardar una copia…', shortcutLabel('S', true)]] : [], ['Imprimir', shortcutLabel('P')],
+    ['Paleta de comandos', shortcutLabel('K')], ['Abrir PDF', shortcutLabel('O')], ['Buscar', shortcutLabel('F')], [fileSaveLabel, shortcutLabel('S')], ...isNative ? [['Guardar una copia…', shortcutLabel('S', true)]] : [], ['Imprimir', shortcutLabel('P')],
     ['Deshacer', shortcutLabel('Z')], ['Rehacer', redoShortcut],
     // Browsers keep Ctrl+W and Ctrl+Tab for their own tabs.
     ...isDesktop ? [['Cambiar de pestaña', isMac ? '⌃Tab' : 'Ctrl+Tab'], ['Cerrar pestaña', shortcutLabel('W')]] : [],
@@ -2185,6 +2242,14 @@ export default function App() {
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     <ActivityPill working={activity} done={activityDone} />
+    {palette && <CommandPalette commands={paletteCommands()} onClose={() => setPalette(false)} pageCommand={number => doc && number >= 1 && number <= doc.pdf.numPages ? { id: 'page-number', group: 'Navegación', title: `Ir a la página ${number}`, icon: <Hash size={16} />, run: () => { if (!returnLocation) rememberLocation(); goToPage(number, false); } } : null} />}
+    {shortcutsOpen && <Modal title="Atajos de teclado" className="shortcuts-modal" onClose={() => setShortcutsOpen(false)}><div className="shortcuts-grid">
+      {([
+        ['General', [['Paleta de comandos', [shortcutLabel('K')]], ['Abrir PDF', [shortcutLabel('O')]], ['Guardar', [shortcutLabel('S')]], ['Imprimir', [shortcutLabel('P')]], ['Buscar en el PDF', [shortcutLabel('F')]], ['Cerrar documento', [shortcutLabel('W')]], ['Atajos de teclado', ['?']]]],
+        ['Lectura', [['Página siguiente', ['→', 'AvPág']], ['Página anterior', ['←', 'RePág']], ['Acercar', [shortcutLabel('+')]], ['Alejar', [shortcutLabel('-')]], ['Tamaño real', [shortcutLabel('0')]], ['Siguiente pestaña', ['Ctrl+Tab']]]],
+        ['Anotar', [['Seleccionar texto', ['V']], ['Resaltador', ['H']], ['Nota', ['N']], ['Lápiz', ['D']], ['Deshacer', [shortcutLabel('Z')]], ['Rehacer', [shortcutLabel('Z', true)]], ['Salir de la herramienta', ['Esc']]]],
+      ] as [string, [string, string[]][]][]).map(([group, items]) => <section key={group}><h3>{group}</h3><dl>{items.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl></section>)}
+    </div></Modal>}
     {doc && <ColumnSelectionPreview />}
     {shownToast && <div key={shownToast.id} ref={toastRef} popover="manual" className={`toast ${shownToast.kind === 'error' ? 'error' : ''}${toast ? '' : ' closing'}`}>{shownToast.kind === 'error' ? <CircleAlert size={18} /> : shownToast.kind === 'info' ? <Info size={18} /> : <Check size={18} />}<span>{shownToast.message}</span>{shownToast.action && <button type="button" className="toast-action" onClick={() => { const action = shownToast.action!; setToast(null); action.run(); }}>{shownToast.action.label}</button>}<button aria-label="Cerrar aviso" onClick={() => setToast(null)}><X size={15} /></button></div>}
     <div className="sr-only" role="status">{toast && toast.kind !== 'error' && <span key={toast.id}>{toast.message}</span>}</div>
