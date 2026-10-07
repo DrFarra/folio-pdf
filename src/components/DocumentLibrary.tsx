@@ -5,6 +5,7 @@ import { isDesktop } from '../platform';
 import { formatSize, plural } from '../pdf';
 import { readSession } from '../storage';
 import { driveIds, favoriteIds, libraryPreference, readCover, saveLibraryPreference, setFavorite, type LibrarySort, type LibraryView } from '../library-meta';
+import { haptic } from '../platform';
 import './DocumentLibrary.css';
 
 export type DocumentLibraryProps = {
@@ -62,6 +63,21 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
   const [drive] = useState(driveIds);
   const [details, setDetails] = useState<Record<string, Details>>({});
   const menuRef = useRef<HTMLDivElement>(null), sortRef = useRef<HTMLDivElement>(null);
+  // Holding a document on a touch screen opens its options instead of opening it.
+  const press = useRef<{ id: string; x: number; y: number; timer: number; fired: boolean } | null>(null);
+  const holdHandlers = (documentId: string) => ({
+    onPointerDown: (event: React.PointerEvent) => {
+      if (event.pointerType !== 'touch') return;
+      const current = { id: documentId, x: event.clientX, y: event.clientY, fired: false, timer: 0 };
+      current.timer = window.setTimeout(() => { current.fired = true; haptic('medium'); setOpenMenu(documentId); }, 480);
+      press.current = current;
+    },
+    onPointerMove: (event: React.PointerEvent) => { const current = press.current; if (current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 10) window.clearTimeout(current.timer); },
+    onPointerUp: () => { if (press.current) window.clearTimeout(press.current.timer); },
+    onPointerCancel: () => { if (press.current) window.clearTimeout(press.current.timer); },
+    onContextMenu: (event: React.MouseEvent) => { if (press.current?.id === documentId) event.preventDefault(); },
+  });
+  const held = (documentId: string) => { const current = press.current; if (current?.id === documentId && current.fired) { press.current = null; return true; } return false; };
   const id = useId();
 
   // Covers and reading positions load after the list, without delaying it.
@@ -187,7 +203,7 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
         {props.loading && !visible.length ? <div className="document-library-empty" role="status"><p>Cargando documentos…</p></div> : visible.length > 0 ? <ul className="document-library-list" aria-label="Documentos de la biblioteca">{visible.map(document => {
           const menuId = `${id}-menu-${document.id}`, favorite = favorites.has(document.id), value = progress(pageOf(document), document.pages);
           return <li className={`document-library-row${active?.id === document.id ? ' reading' : ''}${openMenu === document.id ? ' menu-open' : ''}`} key={document.id}>
-            <button type="button" className="document-library-open" disabled={props.busy} aria-label={`Abrir ${document.name}`} onClick={() => props.onOpen(document)}>
+            <button type="button" className="document-library-open" disabled={props.busy} aria-label={`Abrir ${document.name}`} {...holdHandlers(document.id)} onClick={() => { if (!held(document.id)) props.onOpen(document); }}>
               <span className="library-cover-frame">
                 <Cover name={document.name} image={details[document.id]?.cover} size={view === 'grid' ? 'card' : 'row'} />
                 {(favorite || drive.has(document.id) || document.draft) && <span className="library-badges">{document.draft && <span className="library-badge draft">Sin guardar</span>}{drive.has(document.id) && <span className="library-badge icon" title="Google Drive"><Cloud size={13} aria-hidden="true" /></span>}{favorite && <span className="library-badge icon favorite" title="Favorito"><Star size={13} aria-hidden="true" /></span>}</span>}

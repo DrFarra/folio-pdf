@@ -169,3 +169,7 @@ html[data-tablet] .app-shell .library-screen .document-library-more{min-height:4
 html:not([data-phone]) .app-shell .library-screen .library-shelf-row{margin:0;padding:2px 0 6px}
 html:not([data-phone]) .app-shell .library-screen .library-shelf-row>button{flex-basis:112px}
 html[data-phone] .library-shelf-row>button{flex-basis:84px}
+
+/* Covers are part of their button, not images to save or drag (iOS long-press menu). */
+.library-cover img,.document-switcher-file img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;pointer-events:none;-webkit-user-drag:none}
+.document-library-open,.library-shelf-row>button{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
