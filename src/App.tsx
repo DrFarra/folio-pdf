@@ -51,6 +51,7 @@ import { AnnotationsPanel } from './components/AnnotationsPanel';
 import { CommandPalette, type Command } from './components/CommandPalette';
 import { WhatsNew, shouldShowWhatsNew } from './components/WhatsNew';
 import { useEdgeSwipeBack } from './edge-swipe';
+import { PencilPalette, type PencilAction } from './components/PencilPalette';
 import { MarkedSnippet, clearRecentSearches, recentSearches, rememberSearch } from './search-snippet';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
@@ -2274,6 +2275,15 @@ export default function App() {
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     <ActivityPill working={activity} done={activityDone} />
+    <PencilPalette enabled={!!doc?.canAnnotate && !library && !busy && !loading && !workbench} inkColor={inkStyle.color} canUndo={undoStack.current.length > 0}
+      active={tool === 'draw' ? inkKind : tool === 'eraser' || tool === 'highlight' || tool === 'note' ? tool as PencilAction : undefined}
+      onAction={action => {
+        if (action === 'undo') { undo(); return; }
+        setMobileAnnotating(true);
+        if (action === 'pen' || action === 'marker') { setInkKind(action); setTool('draw'); }
+        else if (action === 'highlight') activateHighlight();
+        else setTool(action);
+      }} />
     {whatsNew && <WhatsNew touch={touchLayout} onClose={() => setWhatsNew(false)} />}
     {palette && <CommandPalette commands={paletteCommands()} onClose={() => setPalette(false)} pageCommand={number => doc && number >= 1 && number <= doc.pdf.numPages ? { id: 'page-number', group: 'Navegación', title: `Ir a la página ${number}`, icon: <Hash size={16} />, run: () => { if (!returnLocation) rememberLocation(); goToPage(number, false); } } : null} />}
     {shortcutsOpen && <Modal title="Atajos de teclado" className="shortcuts-modal" onClose={() => setShortcutsOpen(false)}><div className="shortcuts-grid">

@@ -1,0 +1,14 @@
+/* A ring of tools blooming from the pen tip: the core pulses in, then each
+   button springs out along its spoke, a few milliseconds after the previous. */
+.pencil-palette{position:fixed;z-index:120;width:0;height:0;pointer-events:none}
+.pencil-palette-core{position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 4px color-mix(in srgb,var(--surface) 85%,transparent),0 4px 14px #0f172a40;animation:pencil-core .34s cubic-bezier(.34,1.56,.64,1) both}
+.pencil-palette-core::after{content:'';position:absolute;inset:-10px;border-radius:50%;border:2px solid var(--ink);opacity:0;animation:pencil-ripple .6s ease-out .05s}
+.pencil-palette-item{position:absolute;left:-23px;top:-23px;width:46px;height:46px;display:grid;place-items:center;border-radius:50%;pointer-events:auto;color:var(--text);background:color-mix(in srgb,var(--surface) 90%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4);border:1px solid color-mix(in srgb,var(--line) 85%,transparent);box-shadow:0 10px 26px #0f172a3d,0 2px 6px #0f172a1f;translate:var(--dx) var(--dy);animation:pencil-bloom .42s cubic-bezier(.34,1.56,.64,1) var(--delay) both;transition:scale .15s cubic-bezier(.34,1.56,.64,1),background-color .15s,color .15s}
+.pencil-palette-item:hover,.pencil-palette-item:focus-visible{scale:1.14;color:var(--accent)}
+.pencil-palette-item.active{background:var(--accent);color:#fff;border-color:transparent}
+.pencil-palette-item:active{scale:.94}
+.pencil-palette-label{position:absolute;left:0;top:calc(66px + 36px);translate:-50% 0;padding:5px 11px;border-radius:999px;background:var(--text);color:var(--bg);font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;animation:motion-fade-in .15s ease-out}
+@keyframes pencil-core{from{scale:0;opacity:0}}
+@keyframes pencil-ripple{from{opacity:.55;scale:.6}to{opacity:0;scale:1.6}}
+@keyframes pencil-bloom{from{translate:0 0;scale:.3;opacity:0}}
+@media(prefers-reduced-motion:reduce){.pencil-palette-core,.pencil-palette-item{animation:motion-fade-in .15s linear both}.pencil-palette-core::after{display:none}}

@@ -60,6 +60,16 @@ final class FolioPlugin: Plugin {
         webview.scrollView.contentInsetAdjustmentBehavior = .never
         webview.isOpaque = false
         webview.backgroundColor = .systemBackground
+        // Apple Pencil double tap (Pencil 2) and squeeze (Pencil Pro) open the
+        // pen tools where the Pencil hovers.
+        let pencil = UIPencilInteraction()
+        pencil.delegate = self
+        webview.addInteraction(pencil)
+    }
+
+    fileprivate func showPencilTools(at point: CGPoint?) {
+        let detail = point.map { "{x:\($0.x),y:\($0.y)}" } ?? "{}"
+        DispatchQueue.main.async { self.webview?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('folio:pencil-palette',{detail:\(detail)}))") }
     }
 
     private func presenter() -> UIViewController? {
@@ -363,3 +373,13 @@ final class FolioPlugin: Plugin {
 
 @_cdecl("init_plugin_folio_ios")
 func initPlugin() -> Plugin { FolioPlugin() }
+
+extension FolioPlugin: UIPencilInteractionDelegate {
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) { showPencilTools(at: nil) }
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) { showPencilTools(at: tap.hoverPose?.location) }
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        if squeeze.phase == .ended { showPencilTools(at: squeeze.hoverPose?.location) }
+    }
+}
