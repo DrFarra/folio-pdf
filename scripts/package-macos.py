@@ -26,11 +26,12 @@ MAC_EVIDENCE = ['native-smoke-macos.json', 'native-smoke-macos-qa.json', 'mac-pl
                 'bookmark-drag-results.json', 'bookmark-drag-destination.png', 'bookmark-drag-restored.png',
                 'operations-results.json', 'page-content-engine-results.json', 'content-editor-engine-results.json',
                 'content-actions-engine-results.json', 'pdf-editing-ui-results.json',
-                'pdf-editing-low-height.png', 'pdf-editing-medium-800x600.png', 'pdf-editing-medium-900x600.png',
-                'pdf-editing-medium-1024x600.png', 'pdf-editing-wide-low-1360x600.png',
+                # The previous editor now runs on tablets; desktop edits in the reader (edit-mode-ui).
+                'pdf-editing-low-height.png', 'pdf-editing-tablet-1024x800.png', 'pdf-editing-tablet-800x1280.png',
+                'pdf-editing-tablet-1280x800.png', 'edit-mode-ui-results.json',
                 'content-actions-ui-results.json', 'content-actions-inline-save.png', 'content-editor-layout-results.json',
-                'content-editor-layout-desktop-1360x720.png', 'content-editor-layout-desktop-1360x600.png',
-                'content-editor-layout-desktop-1024x600.png', 'content-editor-layout-desktop-760x600.png',
+                'content-editor-layout-tablet-1280x800.png', 'content-editor-layout-tablet-1280x600.png',
+                'content-editor-layout-tablet-800x1280.png', 'content-editor-layout-tablet-760x800.png',
                 'content-editor-layout-phone-390x844.png', 'content-editor-layout-phone-844x390.png']
 ENGINE_REPORTS = {'operations-results.json': 19, 'page-content-engine-results.json': 11,
                   'content-editor-engine-results.json': 12, 'content-actions-engine-results.json': 15}

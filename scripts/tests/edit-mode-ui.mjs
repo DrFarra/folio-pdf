@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import * as mupdf from 'mupdf';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { findChrome } from './browser.mjs';
@@ -27,7 +27,9 @@ const fixture = path.join(output, 'edit-mode.pdf'); fs.writeFileSync(fixture, aw
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe' });
 for (let i = 0; i < 100; i++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
+// FOLIO_TEST_BROWSER=webkit runs it in the engine of the macOS app.
+const useWebKit = process.env.FOLIO_TEST_BROWSER === 'webkit';
+const browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ executablePath: findChrome(), headless: true });
 const results = [];
 const toasts = [];
 async function check(id, run) {
@@ -185,7 +187,8 @@ try {
   });
 
   await check('arrows-and-shape-styles', async () => {
-    await page.keyboard.press('Escape'); await page.keyboard.press('a');
+    // A tool key works whatever is selected (Esc would leave Editar with nothing selected).
+    await page.keyboard.press('a');
     const a = await toScreen(1, 300, 300), b = await toScreen(1, 450, 220);
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up();
     await page.locator('.shape-layer polyline').first().waitFor();
@@ -198,6 +201,7 @@ try {
   });
 } finally {
   for (const result of results) console.log(JSON.stringify(result));
+  fs.writeFileSync(path.join(output, 'edit-mode-ui-results.json'), JSON.stringify({ browser: useWebKit ? 'WebKit' : 'Chromium', results }, null, 2));
   await browser.close(); server.kill();
 }
 process.exitCode = results.length === 8 && results.every(result => result.status === 'passed') ? 0 : 1;

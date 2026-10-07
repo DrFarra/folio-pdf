@@ -64,6 +64,7 @@ jobs:
           npm run test:page-content:engine
           npm run test:content-editor:engine
           npm run test:content-actions:engine
+          npm run test:edit-engine
       - name: Native Mac unit tests
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --release --target aarch64-apple-darwin
@@ -81,6 +82,7 @@ jobs:
           FOLIO_TEST_BROWSER=webkit npm run test:pdf-editing:ui
           FOLIO_TEST_BROWSER=webkit npm run test:content-actions:ui
           FOLIO_TEST_BROWSER=webkit npm run test:content-editor:layout
+          FOLIO_TEST_BROWSER=webkit npm run test:edit-mode:ui
       - name: Build a separate Mac diagnostics variant
         run: |
           set -o pipefail
@@ -184,17 +186,18 @@ jobs:
             test-results/content-actions-engine-results.json
             test-results/pdf-editing-ui-results.json
             test-results/pdf-editing-low-height.png
-            test-results/pdf-editing-medium-800x600.png
-            test-results/pdf-editing-medium-900x600.png
-            test-results/pdf-editing-medium-1024x600.png
-            test-results/pdf-editing-wide-low-1360x600.png
+            test-results/pdf-editing-tablet-1024x800.png
+            test-results/pdf-editing-tablet-800x1280.png
+            test-results/pdf-editing-tablet-1280x800.png
+            test-results/edit-mode-ui-results.json
+            test-results/edit-mode-*.png
             test-results/content-actions-ui-results.json
             test-results/content-actions-inline-save.png
             test-results/content-editor-layout-results.json
-            test-results/content-editor-layout-desktop-1360x720.png
-            test-results/content-editor-layout-desktop-1360x600.png
-            test-results/content-editor-layout-desktop-1024x600.png
-            test-results/content-editor-layout-desktop-760x600.png
+            test-results/content-editor-layout-tablet-1280x800.png
+            test-results/content-editor-layout-tablet-1280x600.png
+            test-results/content-editor-layout-tablet-800x1280.png
+            test-results/content-editor-layout-tablet-760x800.png
             test-results/content-editor-layout-phone-390x844.png
             test-results/content-editor-layout-phone-844x390.png
           if-no-files-found: ignore
