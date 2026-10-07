@@ -216,6 +216,32 @@ async fn choose_export(source: Option<String>, name: String, format: String, app
     Ok(Some(token))
 }
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[derive(Serialize)]
+struct ChosenFolder { folder: String, tokens: Vec<String> }
+/// Dividir PDF on Windows and macOS: one write token per part, in a folder the user
+/// picks. Names that already exist get " (2)" and so on; nothing is replaced.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command]
+async fn choose_folder(source: Option<String>, names: Vec<String>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Option<ChosenFolder>, String> {
+    if names.is_empty() || names.len() > 5000 { return Err("Número de archivos inválido.".into()); }
+    let start = match source { Some(id) => desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.get(&id).and_then(|s| s.path.parent().map(Path::to_path_buf)), None => None };
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog().file().set_title("Elige la carpeta para los PDF");
+        match start { Some(folder) => dialog.set_directory(folder), None => dialog }.blocking_pick_folder()
+    }).await.map_err(|_| "No se pudo abrir el diálogo.")?;
+    let Some(chosen) = chosen else { return Ok(None); };
+    let folder = chosen.into_path().map_err(|_| "Elige una carpeta local.")?;
+    let paths = folio_core::unique_pdf_paths(&folder, &names)?;
+    let mut files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+    let tokens = paths.into_iter().map(|path| {
+        let token = uuid::Uuid::new_v4().to_string();
+        files.outputs.insert(token.clone(), Output { path, fingerprint: None, source: None, format: "pdf-part".into() });
+        token
+    }).collect();
+    let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.display().to_string());
+    Ok(Some(ChosenFolder { folder: name, tokens }))
+}
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command(async)]
 fn write_export(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -> Result<(), String> {
     let token = request.headers().get("x-folio-output-token").and_then(|s| s.to_str().ok()).ok_or("Destino ausente.")?;
@@ -223,6 +249,7 @@ fn write_export(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) -
     if bytes.is_empty() { return Err("El archivo exportado está vacío.".into()); }
     let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(token).ok_or("Destino vencido.")?;
     if output.format == "pdf" { return Err("Usa el guardado de PDF.".into()); }
+    if output.format == "pdf-part" { validate_pdf(&bytes)?; }
     if let Some(original) = &output.source { protect_original(original, &output.path)?; }
     atomic_write(&output.path, &bytes, output.fingerprint.as_deref())
 }
@@ -668,7 +695,7 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, write_export, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
     let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]

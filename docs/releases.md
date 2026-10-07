@@ -10,6 +10,12 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.2
+
+- Nueva herramienta «Dividir PDF» (Herramientas → Páginas): separa un documento en varios archivos por intervalos, cada N páginas, en partes iguales o por capítulos del índice, con vista previa y nombres editables.
+- En Windows y macOS los archivos se guardan en la carpeta que elijas, sin reemplazar ninguno; en iPhone, Android y la web se guardan en un ZIP.
+- Dividir un libro de 1 GB por capítulos tarda unos segundos y no duplica su memoria.
+
 ## Cambios en 0.9.1
 
 - Los PDF muy grandes (libros de 1 GB) se abren con un tercio de la memoria y ya no se cancelan por tiempo en equipos de 8 GB.

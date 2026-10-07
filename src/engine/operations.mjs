@@ -648,7 +648,16 @@ function redactPage(doc, page, boxes, { black = true, images = true, imageMethod
   }
 }
 
-export function operateDocument(bytes, options, password = '') {
+export function operateDocument(bytes, options, password = '', onPart) {
+  // Each part reopens the same bytes (streamed above 32 MB, so a large book is not
+  // copied per part) and reuses the page plan, which keeps outlines, links and forms.
+  // Parts go to `onPart` as soon as they are ready instead of piling up next to the book.
+  if (options.operation === 'split') {
+    if (!Array.isArray(options.parts) || !options.parts.length || options.parts.length > 5000) fail('La división no tiene partes o tiene demasiadas.');
+    if (typeof onPart !== 'function') fail('Falta el destino de las partes.');
+    options.parts.forEach((plan, index) => onPart(index, operateDocument(bytes, { operation: 'pages', plan }, password)));
+    return options.parts.length;
+  }
   const doc = open(bytes, password);
   try {
     const operation = options.operation;

@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-use std::{fs, io::{self, Read, Write, Seek, SeekFrom}, path::Path, time::SystemTime};
+use std::{fs, io::{self, Read, Write, Seek, SeekFrom}, path::{Path, PathBuf}, time::SystemTime};
 
 pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024 * 1024;
 pub const MAX_RANGE_BYTES: usize = 4 * 1024 * 1024;
@@ -75,6 +75,23 @@ pub fn protect_original(source: &Path, output: &Path) -> Result<(), String> {
         && same_file::is_same_file(source, output).map_err(|_| "No se pudo comprobar el destino. Elige otra ubicación.")?);
     if same { return Err("Para reemplazar este PDF, usa Guardar. Elige otro nombre para la copia.".into()); }
     Ok(())
+}
+
+/// Paths in `folder` for `names`: the file name only, ending in .pdf, and never an
+/// existing file or a name used earlier in the list ("Parte.pdf", "Parte (2).pdf"…).
+pub fn unique_pdf_paths(folder: &Path, names: &[String]) -> Result<Vec<PathBuf>, String> {
+    let mut used = std::collections::HashSet::new();
+    names.iter().map(|name| {
+        let file = Path::new(name).file_name().and_then(|n| n.to_str()).filter(|n| !n.trim().is_empty()).ok_or("Nombre de archivo inválido.")?;
+        let stem = if file.to_ascii_lowercase().ends_with(".pdf") { &file[..file.len() - 4] } else { file };
+        let mut n = 1;
+        loop {
+            let candidate = if n == 1 { format!("{stem}.pdf") } else { format!("{stem} ({n}).pdf") };
+            let path = folder.join(&candidate);
+            if used.insert(candidate.to_lowercase()) && !path.exists() { return Ok(path); }
+            n += 1;
+        }
+    }).collect()
 }
 
 pub fn fingerprint(path: &Path) -> Result<Option<String>, String> {
@@ -187,6 +204,16 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn split_parts_never_replace_a_file_or_each_other() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("Libro.pdf"), b"x").unwrap();
+        let names = ["Libro.pdf", "libro", "../Cap 1.PDF", "Cap. 2"].map(String::from);
+        let paths = unique_pdf_paths(folder.path(), &names).unwrap();
+        let files: Vec<_> = paths.iter().map(|p| { assert_eq!(p.parent().unwrap(), folder.path()); p.file_name().unwrap().to_str().unwrap().to_owned() }).collect();
+        assert_eq!(files, ["Libro (2).pdf", "libro (3).pdf", "Cap 1.pdf", "Cap. 2.pdf"]);
+        assert!(unique_pdf_paths(folder.path(), &["..".into()]).is_err());
+    }
     #[test]
     fn source_identity_is_streamed_and_trailing_provider_content_is_allowed() {
         let folder = tempfile::tempdir().unwrap(); let path = folder.path().join("provider.pdf");

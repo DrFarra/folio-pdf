@@ -116,6 +116,20 @@ export async function printPdf(bytes: Uint8Array, name: string, source?: string,
 export async function copyNativeText(text: string): Promise<void> {
   return invoke<void>('copy_text', { text });
 }
+/** Windows and macOS: the user picks a folder before splitting and each part is
+ * written there as soon as it is ready, under its own name; no file is replaced. */
+export async function choosePartsFolder(names: string[], source?: string): Promise<{ folder: string; write: (index: number, bytes: Uint8Array) => Promise<void> } | null> {
+  const chosen = await invoke<{ folder: string; tokens: string[] } | null>('choose_folder', { source: source || null, names });
+  return chosen && { folder: chosen.folder, write: async (index, bytes) => { await invokeBinary('write_export', bytes, { headers: { 'x-folio-output-token': chosen.tokens[index] } }); } };
+}
+/** Phones and the browser save the parts as one ZIP. Resolves with its name, or null if cancelled. */
+export async function savePartsZip(parts: Uint8Array[], names: string[], zipName: string, source?: string): Promise<string | null> {
+  const { zipSync } = await import('fflate');
+  // PDF streams are already compressed; storing them is as small and much faster.
+  const zip = zipSync(Object.fromEntries(names.map((name, index) => [name, [parts[index], { level: 0 }]])));
+  if (isNative && zip.length > 128 * 1024 * 1024) throw new Error('Las partes ocupan más de 128 MB, el máximo que Folio puede guardar en un ZIP en el móvil. Divide menos páginas a la vez.');
+  return await saveExport(zip, zipName, 'zip', source) ? zipName : null;
+}
 export async function saveExport(bytes: Uint8Array, name: string, format: 'txt' | 'zip' | 'docx', source?: string): Promise<boolean> {
   if (!isNative) {
     const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer]));

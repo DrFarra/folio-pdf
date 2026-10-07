@@ -14,6 +14,7 @@ export type Operation =
   | { operation: 'page-content'; page: number }
   | { operation: 'page-image'; page: number; id: string }
   | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
+  | { operation: 'split'; parts: PageEntry[][] }
   | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
   | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[] }[]; font?: Uint8Array }
   | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
@@ -23,4 +24,4 @@ export type Operation =
   | ({ operation: 'remove-image' | 'crop' } & Area)
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
-export function operateDocument(bytes: Uint8Array, options: Operation, password?: string): Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo;
+export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo;

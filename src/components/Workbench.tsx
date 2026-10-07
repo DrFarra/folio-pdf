@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Copy, Crop, EyeOff, FileArchive, FilePenLine, FileText, Files, FormInput, GripVertical, ImageMinus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, ShieldCheck, TextCursorInput, Trash2, FileOutput, Signature, GitCompareArrows, Undo2, Redo2, Save } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Copy, Crop, EyeOff, FileArchive, FilePenLine, FileText, Files, FormInput, GripVertical, ImageMinus, LoaderCircle, LockKeyhole, Plus, RotateCw, ScanText, ShieldCheck, TextCursorInput, Trash2, FileOutput, Signature, GitCompareArrows, Undo2, Redo2, Save, Scissors } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PageViewport, RenderTask } from 'pdfjs-dist';
 import Modal from './Modal';
 import FilePicker from './FilePicker';
 import { Thumbnail } from './PDFPage';
-import { inspectPdf, processPdf, readFields } from '../engine/client';
+import { inspectPdf, processPdf, readFields, splitPdf } from '../engine/client';
 import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.mjs';
 import type { LoadedDocument, Tool } from '../types';
 import { formatSize, getDocument, plural } from '../pdf';
@@ -12,17 +12,19 @@ import { errorMessage } from '../errors';
 import { pdfAssetSettings } from '../assets';
 import { recognizePdf } from '../ocr';
 import { convertPdf } from '../conversion';
-import { saveExport, isNative, isAndroid, isDesktop, isMac } from '../platform';
+import { saveExport, choosePartsFolder, savePartsZip, isNative, isAndroid, isDesktop, isMac } from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
 import ContentEditor, { NumberField, type ContentEditorKind } from './ContentEditor';
 import PdfContentPicker from './PdfContentPicker';
 import ConversionOptions from './ConversionOptions';
+import SplitPdf from './SplitPdf';
+import type { Part } from '../split';
 import { usePagePlanDrag } from './usePagePlanDrag';
 import './Workbench.css';
 
-type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; onAreaChange?: (area: Area) => void; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onSave?: () => void; canSave?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void> };
+type Props = { doc: LoadedDocument; section: string; page: number; inline?: boolean; documentBusy?: boolean; area: Area | null; onAreaChange?: (area: Area) => void; redactions: Area[]; onClose: () => void; onSelectTool: (tool: Tool) => void; onOpenEditor?: () => void; onOpenSection?: (section: string) => void; onDraftChange?: (active: boolean) => void; onEditPageChange?: (page: number) => void; onApply: (operation: Operation, signal?: AbortSignal, context?: { keepEditing: boolean; page: number }) => Promise<void>; getBytes: () => Promise<Uint8Array>; onHistory?: (direction: 'undo' | 'redo') => void; canUndo?: boolean; canRedo?: boolean; onSave?: () => void; canSave?: boolean; onReplace: (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => Promise<void>; onNotify?: (message: string) => void };
 type PlannedPage = PageEntry & { key: string; label: string };
 type EditSelection = { kind: ContentEditorKind; area: Area; item?: PageContentItem; reset?: number };
 const entry = (page: number): PlannedPage => ({ key: crypto.randomUUID(), page, label: `Página ${page}` });
@@ -241,6 +243,28 @@ export default function Workbench(props: Props) {
       if (!signal.aborted) await props.onReplace(bytes, { extraction: { name: `${doc.name.replace(/\.pdf$/i, '')} — páginas extraídas.pdf`, plan: selectedPlan } });
     });
   }
+  async function splitDocument(parts: Part[], names: string[], signal: AbortSignal) {
+    // Annotations are baked in first; a book too large for that is split without them.
+    let bytes: Uint8Array, withoutAnnotations = false;
+    try { bytes = await props.getBytes(); }
+    catch (err) { signal.throwIfAborted(); if (!/demasiado grande/.test(errorMessage(err))) throw err; bytes = doc.bytes; withoutAnnotations = true; }
+    const folder = isDesktop ? await choosePartsFolder(names, doc.nativeSource) : null;
+    if (isDesktop && !folder) return;
+    const outputs: Uint8Array[] = [];
+    let writing = Promise.resolve();
+    setProgress(parts.length === 1 ? 'Creando el archivo…' : `Creando 1 de ${parts.length} archivos…`);
+    await splitPdf(bytes, parts.map(part => Array.from({ length: part.last - part.first + 1 }, (_, i) => ({ page: part.first + i }))), (index, output) => {
+      if (index + 1 < parts.length) setProgress(`Creando ${index + 2} de ${parts.length} archivos…`);
+      // Desktop writes each part right away, so a large book's parts never pile up in memory.
+      if (folder) { writing = writing.then(() => { signal.throwIfAborted(); return folder.write(index, output); }); writing.catch(() => {}); }
+      else outputs.push(output);
+    }, doc.password, signal);
+    setProgress('Guardando…'); await writing; signal.throwIfAborted();
+    const saved = folder?.folder ?? await savePartsZip(outputs, names, `${doc.name.replace(/\.pdf$/i, '')} — dividido.zip`, doc.nativeSource);
+    if (!saved) return;
+    props.onNotify?.(`${plural(parts.length, 'PDF guardado', 'PDF guardados')} en «${saved}».${withoutAnnotations ? ' Sin las anotaciones de Folio: el PDF es demasiado grande para incluirlas.' : ''}`);
+    props.onClose();
+  }
   async function appendSource(bytes: Uint8Array, name: string, password = '') {
     setBusy(true); setError('');
     try {
@@ -287,11 +311,11 @@ export default function Workbench(props: Props) {
       setPfx(new Uint8Array(await file.arrayBuffer())); setPfxName(file.name); setError('');
     } catch (err) { setPfx(null); setPfxName(''); setError(errorMessage(err)); }
   }
-  const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'remove-image': 'Eliminar imagen', redact: 'Censurar', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
+  const titles: Record<string, string> = { home: 'Herramientas', pages: 'Organizar páginas', split: 'Dividir PDF', forms: 'Rellenar formulario', 'create-field': 'Crear campo de formulario', 'remove-image': 'Eliminar imagen', redact: 'Censurar', crop: 'Recortar página', compress: 'Comprimir PDF', security: 'Proteger PDF', sanitize: 'Eliminar datos ocultos', ocr: 'Reconocer texto (OCR)', convert: 'Convertir PDF', signatures: 'Firmas digitales', compare: 'Comparar documentos' };
   // Adding and replacing text or images happens in Editar PDF.
   const actions = [
     ['edit-pdf', 'Editar PDF', FilePenLine, doc.canEdit],
-    ['pages', 'Organizar páginas', Files, doc.canAssemble], ['forms', 'Rellenar formulario', FormInput, doc.canFill],
+    ['pages', 'Organizar páginas', Files, doc.canAssemble], ['split', 'Dividir PDF', Scissors, doc.canAssemble], ['forms', 'Rellenar formulario', FormInput, doc.canFill],
     ['remove-image', 'Eliminar imagen', ImageMinus, doc.canEdit],
     ['crop', 'Recortar página', Crop, doc.canEdit], ['redact', 'Censurar', EyeOff, doc.canEdit],
     ['create-field', 'Crear campo', TextCursorInput, doc.canEdit], ['ocr', 'Reconocer texto (OCR)', ScanText, doc.canEdit],
@@ -303,14 +327,14 @@ export default function Workbench(props: Props) {
   ] as const;
   // One line on what each tool does, under its name.
   const descriptions: Record<string, string> = {
-    'edit-pdf': 'Cambia textos e imágenes', pages: 'Reordena, gira, extrae o elimina', crop: 'Quita márgenes de una página',
+    'edit-pdf': 'Cambia textos e imágenes', pages: 'Reordena, gira, extrae o elimina', split: 'Separa en varios archivos', crop: 'Quita márgenes de una página',
     forms: 'Escribe en los campos del PDF', 'create-field': 'Añade un campo para rellenar', 'remove-image': 'Borra una imagen de la página',
     redact: 'Oculta datos de forma definitiva', ocr: 'Haz buscable un PDF escaneado', convert: 'A Word, texto o imágenes',
     compare: 'Encuentra cambios entre versiones', signatures: 'Firma o verifica firmas', compress: 'Reduce el tamaño del archivo',
     security: 'Contraseña y permisos', sanitize: 'Quita metadatos y contenido oculto',
   };
   const categories = [
-    { id: 'pages', title: 'Páginas', actions: ['pages', 'crop'] },
+    { id: 'pages', title: 'Páginas', actions: ['pages', 'split', 'crop'] },
     { id: 'content', title: 'Contenido', actions: ['edit-pdf', 'remove-image'] },
     { id: 'forms', title: 'Formularios', actions: ['forms', 'create-field'] },
     { id: 'review', title: 'Revisión y firmas', actions: ['compare', 'signatures'] },
@@ -338,7 +362,7 @@ export default function Workbench(props: Props) {
   };
   const planChanged = plan.length !== initialPlan.current.length || plan.some((page, index) => page.key !== initialPlan.current[index].key || (page.rotation || 0) !== (initialPlan.current[index].rotation || 0));
   const title = section === 'edit-pdf' ? 'Editar PDF' : titles[section] || 'Herramientas';
-  const className = `workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${section === 'forms' || section === 'convert' ? ' bounded-workbench' : ''}${section === 'edit-pdf' ? ' content-workbench' : ''}`;
+  const className = `workbench ${section === 'pages' ? 'pages-workbench' : ''}${section === 'compare' ? ' compare-workbench' : ''}${section === 'split' ? ' split-workbench' : ''}${section === 'forms' || section === 'convert' ? ' bounded-workbench' : ''}${section === 'edit-pdf' ? ' content-workbench' : ''}`;
   const formFields = fields?.filter(f => !['signature', 'button'].includes(f.type)) || [], labels = fieldLabels(formFields);
   const fieldChanges = formFields.filter(f => !f.readOnly && values[f.id] !== initialValue(f)), focused = formFields.find(f => f.id === focusedField);
   const content = <>
@@ -381,6 +405,7 @@ export default function Workbench(props: Props) {
       {!!pageDrag.draggingKeys.length && <div className="page-plan-drag-preview" aria-hidden="true" style={{ left: Math.max(8, Math.min(pageDrag.location.x + 16, window.innerWidth - 220)), top: Math.max(8, Math.min(pageDrag.location.y + 16, window.innerHeight - 54)) }}><Files size={17} /><span>{pageDrag.label}</span></div>}
       <div className="operation-actions page-plan-footer"><span>{plural(plan.length, 'página', 'páginas')} · {plural(selected.length, 'seleccionada', 'seleccionadas')}{planChanged ? ' · Cambios pendientes' : ''}</span><button className="secondary-button" disabled={!selected.length || busy} onClick={() => void extractSelection()}>Extraer selección</button><button className="primary-button" disabled={!planChanged || !plan.length || busy} onClick={() => void apply({ operation: 'pages', plan, sources })}>{busy ? <LoaderCircle size={16} className="spin" /> : null}Aplicar cambios</button></div>
     </>}
+    {section === 'split' && <SplitPdf doc={doc} busy={busy} actionLabel={isDesktop ? 'Elegir carpeta y dividir' : isNative ? 'Dividir y guardar ZIP' : 'Dividir y descargar ZIP'} onSplit={(parts, names) => void task(signal => splitDocument(parts, names, signal))} />}
     {section === 'forms' && <div className="forms-workbench-body">
       {fields === null && !error && <p className="operation-loading"><LoaderCircle size={18} className="spin" />Leyendo campos…</p>}
       {fields?.length === 0 && <p className="modal-description">Este PDF no tiene campos de formulario.</p>}

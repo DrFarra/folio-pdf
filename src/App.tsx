@@ -5,7 +5,7 @@ import {
   PenLine, Eraser, Highlighter, Info, Layers, ListTree, LoaderCircle, LockKeyhole,
   Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, MousePointer2,
   Plus, Printer, Redo2, RotateCw, Search, ShieldCheck,
-  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, FilePlus2, Moon, Sun, Keyboard, Hash, Share2, Pencil, ZoomIn, ZoomOut,
+  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, Scissors, FilePlus2, Moon, Sun, Keyboard, Hash, Share2, Pencil, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail, inView } from './components/PDFPage';
@@ -955,7 +955,7 @@ export default function App() {
       add('Documento', 'save', saveLabel, () => void download(), <ArrowDownToLine size={16} />, shortcutLabel('S'), 'guardar descargar exportar');
       add('Documento', 'print', 'Imprimir', () => void printDocument(), <Printer size={16} />, shortcutLabel('P'));
       if (isMobile) add('Documento', 'share', 'Compartir PDF', () => void shareDocument(), <Share2 size={16} />);
-      if (!isNativePdfDocument(doc.pdf)) { add('Documento', 'edit', 'Editar PDF', openEditor, <Pencil size={16} />, undefined, 'texto modificar'); add('Documento', 'tools', 'Herramientas', openTools, <Wrench size={16} />, undefined, 'organizar recortar formulario firmar convertir ocr comparar'); }
+      if (!isNativePdfDocument(doc.pdf)) { add('Documento', 'edit', 'Editar PDF', openEditor, <Pencil size={16} />, undefined, 'texto modificar'); add('Documento', 'tools', 'Herramientas', openTools, <Wrench size={16} />, undefined, 'organizar recortar formulario firmar convertir ocr comparar'); if (doc.canAssemble) add('Documento', 'split', 'Dividir PDF', () => { openTools(); setWorkbench('split'); }, <Scissors size={16} />, undefined, 'separar partes capitulos extraer'); }
       add('Documento', 'info', 'Información del documento', () => setInfo(true), <Info size={16} />, undefined, 'propiedades metadatos');
       add('Documento', 'close', 'Cerrar documento', () => { if (activeTabRef.current) void closeTab(activeTabRef.current); }, <X size={16} />, shortcutLabel('W'));
       add('Navegación', 'jump', 'Ir a página…', () => { setPageInput(String(page)); setPageJump(true); }, <Hash size={16} />, undefined, 'saltar numero');
@@ -2050,7 +2050,7 @@ export default function App() {
   const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc && !doc.sample ? { id: doc.id, name: doc.name, page, pages: doc.pdf.numPages } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
-  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
+  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onNotify={message => notify(message, 'success')} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
 
   const saveLabel = doc?.drive ? 'Guardar en Drive' : fileSaveLabel;
   // Only an opened file can be updated; otherwise Guardar already asks where to save.
