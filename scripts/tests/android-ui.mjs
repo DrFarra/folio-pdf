@@ -69,8 +69,8 @@ if(name==='tablet-landscape'){
   await page.getByRole('textbox',{name:/^Página \(1–/}).fill('2');
   await page.getByRole('dialog',{name:'Ir a página'}).getByRole('button',{name:'Ir a página',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.tablet-page-jump')?.textContent?.includes('2 /'));
-  await page.getByRole('button',{name:'Más acciones del documento',exact:true}).click();
-  await page.getByRole('button',{name:'Guardar marcador',exact:true}).click();
+  // The tablet header bookmarks the page; the actions sheet no longer repeats it.
+  await page.getByRole('button',{name:'Guardar marcador de esta página',exact:true}).click();
   await page.getByRole('button',{name:'Páginas',exact:true}).click();
   await page.getByRole('tab',{name:'Marcadores',exact:true}).click();
   await page.locator('.bookmark-entry').first().waitFor();
