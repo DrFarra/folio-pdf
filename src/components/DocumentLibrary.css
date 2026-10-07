@@ -1,90 +1,157 @@
+/* Library: a resume card, quick actions, then the documents as covers (grid)
+   or rows (list). One layout that widens from phone to desktop. */
 .document-library{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;background:var(--bg);color:var(--text);font-size:1rem;line-height:1.4;text-align:left}
-.document-library button,.document-library input{font:inherit}
+.document-library button,.document-library input{font:inherit;color:inherit}
 .document-library button{min-height:44px;min-width:44px}
 .document-library button:focus-visible,.document-library input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.document-library-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;flex-shrink:0;border-bottom:1px solid var(--line)}
-.document-library-brand{font-size:.875rem;font-weight:600;color:var(--muted)}
-.document-library-header h1{font-size:1.75rem;font-weight:650;line-height:1.2;letter-spacing:-.035em;margin:3px 0 0}
+.document-library-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px 8px;flex-shrink:0}
+.document-library-brand{font-size:.8125rem;font-weight:600;color:var(--muted);letter-spacing:.02em}
+.document-library-header h1{font-size:1.875rem;font-weight:700;line-height:1.15;letter-spacing:-.035em;margin:2px 0 0}
 .document-library-header-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
-.document-library-header-actions button{display:flex;align-items:center;justify-content:center;width:44px;padding:0;border-radius:10px;color:var(--muted)}
+.document-library-header-actions button{display:flex;align-items:center;justify-content:center;width:44px;padding:0;border-radius:12px;color:var(--muted);transition:background-color .15s,color .15s}
 @media(hover:hover){.document-library-header-actions button:hover{color:var(--text);background:var(--hover)}}
-.document-library-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px 20px calc(20px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)));flex:1}
-.document-library-continue{display:flex;align-items:center;gap:14px;width:100%;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);margin-bottom:18px;text-align:left}
-.document-library-continue>svg:first-child{color:var(--accent);flex-shrink:0}
+.document-library-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 20px calc(24px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)));flex:1}
+
+/* Covers: page one, or a tinted tile with the title until it is rendered. */
+.library-cover{position:relative;display:block;overflow:hidden;background:#fff;border-radius:6px;box-shadow:0 0 0 1px #0f172a14,0 2px 8px #0f172a1f}
+.library-cover img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.library-cover.placeholder{background:linear-gradient(160deg,hsl(var(--cover-hue) 42% 58%),hsl(calc(var(--cover-hue) + 28) 46% 40%));color:#fff}
+.library-cover.placeholder>span{position:absolute;inset:auto 10% 10% 10%;font-size:.75rem;font-weight:650;line-height:1.2;letter-spacing:-.01em;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;overflow-wrap:anywhere;text-shadow:0 1px 2px #0003}
+.library-cover.placeholder::before{content:'';position:absolute;left:10%;right:55%;top:12%;height:3px;border-radius:2px;background:#fff9}
+.library-cover.hero{width:64px;aspect-ratio:3/4;flex-shrink:0;border-radius:7px}
+.library-cover.hero.placeholder>span{font-size:.5625rem}
+.library-cover.row{width:46px;aspect-ratio:3/4;border-radius:5px}
+.library-cover.row.placeholder>span{display:none}
+.library-cover.card{width:100%;aspect-ratio:3/4;border-radius:8px}
+[data-theme=dark] .library-cover{box-shadow:0 0 0 1px #ffffff12,0 4px 14px #0006}
+
+.library-progress{display:block;height:4px;border-radius:999px;background:color-mix(in srgb,var(--text) 12%,transparent);overflow:hidden}
+.library-progress>span{display:block;height:100%;border-radius:inherit;background:var(--accent);transform-origin:left center}
+
+/* Resume card */
+.document-library-continue{display:flex;align-items:center;gap:16px;width:100%;padding:14px 14px 14px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 9%,var(--surface)),var(--surface) 60%);margin-bottom:14px;text-align:left;box-shadow:0 1px 2px #0f172a0d;transition:background-color .15s,border-color .15s}
 .document-library-continue>svg:last-child{margin-left:auto;flex-shrink:0;color:var(--muted)}
-.document-library-continue>span{display:flex;flex-direction:column;gap:4px;min-width:0}
-.document-library-continue strong{font-size:1rem;font-weight:600;overflow-wrap:anywhere}
-.document-library-eyebrow{font-size:.8125rem;color:var(--accent);font-weight:600}
+.library-resume-text{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.document-library-continue strong{font-size:1.0625rem;font-weight:650;line-height:1.3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.document-library-eyebrow{font-size:.75rem;color:var(--accent);font-weight:650;letter-spacing:.04em;text-transform:uppercase}
 .document-library-secondary{color:var(--muted);font-size:.875rem}
-.document-library-create-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
-.document-library-create-actions>button:last-child:nth-child(odd){grid-column:1/-1}
-.document-library-create-actions button{display:flex;align-items:center;justify-content:center;gap:9px;min-height:50px;border-radius:11px;padding:12px 10px;font-size:.9375rem;font-weight:600}
-.document-library-import{background:var(--accent);color:#fff}
+.library-resume-progress{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:.75rem;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.library-resume-progress .library-progress{flex:1;max-width:220px}
+
+/* Quick actions */
+.document-library-create-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:8px;margin-bottom:18px}
+.document-library-create-actions button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:13px;padding:10px 8px;font-size:.875rem;font-weight:600;transition:background-color .15s,border-color .15s,scale .12s}
+.document-library-create-actions button>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.document-library-import{background:var(--accent);color:#fff!important;box-shadow:0 1px 2px #7c342329}
 [data-theme=dark] .document-library-import{background:#b5503d}
 .document-library-create{border:1px solid var(--line);background:var(--surface)}
-@media(hover:hover){.document-library-create:hover,.document-library-continue:hover{background:var(--hover)}}
-.document-library-search{display:flex;align-items:center;gap:10px;min-height:48px;border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:0 12px;margin-bottom:16px;color:var(--muted)}
+.document-library-create>svg{color:var(--accent)}
+@media(hover:hover){.document-library-create:hover,.document-library-continue:hover{background:var(--hover)}.document-library-import:hover{filter:brightness(1.06)}}
+.document-library-create-actions button:active:not(:disabled),.document-library-continue:active:not(:disabled),.document-library-open:active:not(:disabled){scale:.98}
+
+/* Search, sort and view */
+.library-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.document-library-search{display:flex;align-items:center;gap:9px;flex:1;min-width:0;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0 12px;color:var(--muted);transition:border-color .15s,box-shadow .15s}
+.document-library-search:focus-within{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
 .document-library-search>svg{flex-shrink:0}
-.document-library-search input{min-width:0;width:100%;flex:1;min-height:46px;border:0;background:transparent;color:var(--text);font-size:1rem;padding:8px 0;outline-offset:0}
+.document-library-search input{min-width:0;width:100%;flex:1;min-height:42px;border:0;background:transparent;color:var(--text);font-size:1rem;padding:8px 0;outline:none!important}
 .document-library-search input::-webkit-search-cancel-button{-webkit-appearance:none}
 .document-library-search input::placeholder{color:var(--muted);opacity:1}
-.document-library-search button{display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;margin-right:-10px}
-.document-library-list{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
-.document-library-row{display:flex;align-items:center;gap:4px;position:relative;min-width:0;padding:4px 6px 4px 0;border-bottom:1px solid var(--line)}
-.document-library-row:last-child{border-bottom:0}
-.document-library-open{display:flex;align-items:center;gap:12px;flex:1;min-width:0;width:100%;padding:12px;text-align:left;border-radius:9px}
-@media(hover:hover){.document-library-open:hover{background:var(--hover)}}
-.document-library-file-icon{display:flex;align-items:center;justify-content:center;min-width:42px;min-height:48px;border-radius:9px;background:var(--accent-soft);color:var(--accent);flex-shrink:0}
-.document-library-file-text{display:flex;flex-direction:column;gap:3px;min-width:0}
-.document-library-file-text strong{font-size:1rem;font-weight:550;overflow-wrap:anywhere;line-height:1.35}
-.document-library-file-text>span{font-size:.8125rem;color:var(--muted)}
-.document-library-date{font-size:.75rem!important}
-.document-library-menu-container{flex-shrink:0;position:relative}
-.document-library-more{display:flex;align-items:center;justify-content:center;padding:0;width:44px;border-radius:9px;color:var(--muted)}
-.document-library-more[aria-expanded=true]{background:var(--hover);color:var(--text)}@media(hover:hover){.document-library-more:hover{background:var(--hover);color:var(--text)}}
-.document-library-menu{position:absolute;z-index:25;top:calc(100% + 3px);right:0;width:max-content;max-width:min(280px,calc(100vw - 42px));padding:5px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 8px 32px #00000024}
-.document-library-row:nth-last-child(-n+2) .document-library-menu{top:auto;bottom:calc(100% + 3px)}
-.document-library-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-radius:8px;font-size:.9375rem}
-@media(hover:hover){.document-library-menu button:hover{background:var(--hover)}}
-.document-library-delete{color:#b72c32}
-[data-theme=dark] .document-library-delete{color:#ff9b9b}
-.document-library-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:200px;gap:12px;padding:26px 16px;text-align:center;color:var(--muted)}
-.document-library-empty h2{font-size:1.0625rem;font-weight:600;color:var(--text)}
-.document-library-empty p{font-size:.9375rem;max-width:32ch}
-.document-library-demo{display:flex;align-items:center;gap:12px;width:100%;margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:13px 14px;text-align:left;background:var(--surface);font-size:.9375rem}
-.document-library-demo>svg:first-child{color:var(--accent)}
-.document-library-demo>svg:last-child{margin-left:auto;color:var(--muted)}
-@media(hover:hover){.document-library-demo:hover{background:var(--hover)}}
-@media(max-width:480px){.document-library-header{padding:14px 16px}.document-library-content{padding:16px 16px calc(20px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}.document-library-header h1{font-size:1.625rem}.document-library-header-actions{gap:0}.document-library-open{gap:10px;padding:12px 10px}.document-library-create-actions{gap:8px}.document-library-create-actions button{gap:7px}}
-@media(prefers-reduced-motion:reduce){.document-library button{transition:none}}
+.document-library-search button{display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;margin-right:-10px;border-radius:10px}
+.library-tool{display:grid;place-items:center;width:44px;padding:0;border-radius:12px;color:var(--muted);transition:background-color .15s,color .15s}
+.library-tool[aria-pressed=true],.library-tool[aria-expanded=true]{background:var(--surface);color:var(--text);box-shadow:inset 0 0 0 1px var(--line)}
+@media(hover:hover){.library-tool:hover{color:var(--text);background:var(--hover)}}
+.library-view-toggle{display:flex;gap:2px;padding:2px;border-radius:14px;background:color-mix(in srgb,var(--text) 6%,transparent)}
+.library-view-toggle .library-tool{min-height:40px;width:40px;border-radius:11px}
+.library-sort{position:relative}
+.library-sort-menu{top:calc(100% + 4px)!important;bottom:auto!important;right:0;min-width:180px}
+.library-sort-menu button{justify-content:space-between}
+.library-sort-menu svg{color:var(--accent)}
+.library-filters{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 -20px 14px;padding:0 20px}
+.library-filters::-webkit-scrollbar{display:none}
+.library-filters button{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:34px!important;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:.8125rem;font-weight:550;color:var(--muted);transition:background-color .15s,color .15s,border-color .15s}
+.library-filters button small{font-size:.6875rem;font-variant-numeric:tabular-nums;opacity:.75}
+.library-filters button[aria-pressed=true]{background:var(--text);border-color:var(--text);color:var(--bg)}
 
-/* A desktop library is a document list in the main window. The phone retains
- * its full-width rows, touch targets and safe-area spacing above. */
-html:not([data-phone]) .app-shell .library-screen .document-library{max-width:1048px;margin:0 auto;background:var(--bg)}
-html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:24px 24px 18px;border-bottom:0}
-html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:28px;letter-spacing:-.8px}
+/* Documents */
+.document-library-list{list-style:none;margin:0;padding:0}
+.document-library-row{position:relative;min-width:0}
+/* The row with an open menu sits above the rows after it. */
+.document-library-row.menu-open{z-index:5}
+.document-library-open{display:flex;min-width:0;width:100%;text-align:left;border-radius:14px;transition:background-color .15s,scale .12s}
+.library-cover-frame{position:relative;display:block;flex-shrink:0}
+.library-row-progress{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:.6875rem;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.library-row-progress .library-progress{flex:1;max-width:140px;height:3px}
+.library-badges{position:absolute;top:5px;right:5px;display:flex;gap:4px}
+.library-badge{display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#0f172acc;color:#fff;font-size:.625rem;font-weight:650;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.library-badge.icon{padding:0}
+.library-badge.favorite{color:#f6c344}
+.library-badge.draft{background:var(--accent)}
+.document-library-file-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.document-library-file-text strong{font-size:.9375rem;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.library-meta-line{display:flex;align-items:center;gap:3px;font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.library-meta-line svg{flex-shrink:0;margin-left:2px}
+.document-library-row.reading .document-library-file-text strong{color:var(--accent)}
+.document-library-menu-container{position:absolute}
+.document-library-more{display:flex;align-items:center;justify-content:center;padding:0;width:44px;border-radius:12px;color:var(--muted);transition:background-color .15s,color .15s}
+.document-library-more[aria-expanded=true]{background:var(--hover);color:var(--text)}@media(hover:hover){.document-library-more:hover{background:var(--hover);color:var(--text)}}
+.document-library-menu{position:absolute;z-index:25;top:calc(100% + 3px);right:0;width:max-content;min-width:220px;max-width:min(280px,calc(100vw - 42px));padding:5px;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:0 12px 36px #0f172a2e,0 2px 6px #0f172a14;animation:motion-pop-in 160ms var(--ease-out,ease-out);transform-origin:top right}
+.document-library-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;border-radius:9px;font-size:.9375rem}
+@media(hover:hover){.document-library-menu button:hover{background:var(--hover)}}
+.document-library-delete{color:#b72c32!important}
+[data-theme=dark] .document-library-delete{color:#ff9b9b!important}
+
+/* List: compact rows with a small cover and the menu at the end. */
+.library-list .document-library-list{display:flex;flex-direction:column;gap:2px}
+.library-list .document-library-open{align-items:center;gap:14px;padding:8px 52px 8px 8px}
+@media(hover:hover){.library-list .document-library-open:hover{background:var(--surface)}}
+.library-list .library-badges{display:none}
+.library-list .document-library-menu-container{top:50%;right:2px;translate:0 -50%}
+.library-list .document-library-row:nth-last-child(-n+2):not(:nth-child(-n+2)) .document-library-menu{top:auto;bottom:calc(100% + 3px)}
+
+/* Grid: covers in columns, title and progress under each. */
+.library-grid .document-library-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:18px 14px}
+.library-grid .document-library-open{flex-direction:column;gap:9px;padding:0 0 4px}
+.library-grid .document-library-file-text{padding:0 30px 0 2px}
+.library-grid .library-row-progress .library-progress{max-width:none}
+.library-grid .document-library-menu-container{bottom:0;right:-6px}
+.library-grid .document-library-more{min-height:36px;width:36px}
+@media(hover:hover){.library-grid .document-library-open:hover .library-cover{box-shadow:0 0 0 1px #0f172a1f,0 8px 22px #0f172a33}}
+.library-grid .library-cover{transition:box-shadow .2s}
+.library-grid .document-library-row.reading .library-cover{box-shadow:0 0 0 2px var(--accent),0 6px 18px #0f172a29}
+
+/* Empty and sample */
+.document-library-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:220px;gap:10px;padding:30px 16px;text-align:center;color:var(--muted);border:1.5px dashed var(--line);border-radius:18px}
+.library-empty-art{display:grid;place-items:center;width:64px;height:64px;border-radius:20px;background:var(--accent-soft);color:var(--accent);margin-bottom:4px}
+.document-library-empty h2{font-size:1.0625rem;font-weight:650;color:var(--text);margin:0}
+.document-library-empty p{font-size:.9375rem;max-width:34ch;margin:0}
+.library-reset{margin-top:6px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:.875rem;font-weight:550}
+.document-library-demo{display:flex;align-items:center;gap:12px;width:100%;margin-top:22px;border:0;border-radius:12px;padding:12px 14px;text-align:left;background:transparent;font-size:.875rem;color:var(--muted)!important}
+.document-library-demo>svg:first-child{color:var(--accent)}
+.document-library-demo>svg:last-child{margin-left:auto}
+@media(hover:hover){.document-library-demo:hover{background:var(--hover);color:var(--text)!important}}
+
+/* Phones: two columns of covers in grid view. */
+html[data-phone] .library-grid .document-library-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 14px}
+@media(max-width:360px){.document-library-create-actions button>svg{display:none}}
+
+/* Wider windows: the library is centred with more room for covers. */
+html:not([data-phone]) .app-shell .library-screen .document-library{max-width:1120px;margin:0 auto;width:100%}
+html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:26px 28px 10px}
 html:not([data-phone]) .app-shell .library-screen .document-library-brand{display:none}
-html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:0 24px calc(28px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}
-html:not([data-phone]) .app-shell .library-screen .document-library-continue{padding:16px 18px;border-radius:10px;margin-bottom:18px}
-html:not([data-phone]) .app-shell .library-screen .document-library-continue strong{font-size:15px}
-html:not([data-phone]) .app-shell .library-screen .document-library-secondary{font-size:13px}
-html:not([data-phone]) .app-shell .library-screen .document-library-create-actions{display:flex;gap:10px}
-html:not([data-phone]) .app-shell .library-screen .document-library-create-actions button{min-height:44px;padding:10px 16px;font-size:13px;border-radius:8px}
-html:not([data-phone]) .app-shell .library-screen .document-library-search{min-height:44px;border-radius:8px;margin-bottom:14px;max-width:480px}
-html:not([data-phone]) .app-shell .library-screen .document-library-search input{min-height:42px;font-size:14px}
-html:not([data-phone]) .app-shell .library-screen .document-library-list{border-radius:10px}
-html:not([data-phone]) .app-shell .library-screen .document-library-row{padding:4px 8px 4px 4px}
-html:not([data-phone]) .app-shell .library-screen .document-library-open{gap:14px;padding:9px 12px;min-height:66px}
-html:not([data-phone]) .app-shell .library-screen .document-library-file-icon{min-width:36px;min-height:42px;border-radius:7px}
-html:not([data-phone]) .app-shell .library-screen .document-library-file-text{display:grid;grid-template-columns:minmax(0,1fr) 150px 106px;align-items:center;gap:20px;width:100%}
-html:not([data-phone]) .app-shell .library-screen .document-library-file-text strong{font-size:14px;font-weight:550;line-height:1.4}
-html:not([data-phone]) .app-shell .library-screen .document-library-file-text>span{font-size:12px}
-html:not([data-phone]) .app-shell .library-screen .document-library-date{font-size:12px!important;text-align:right}
-html:not([data-phone]) .app-shell .library-screen .document-library-menu button{font-size:13px}
-html:not([data-phone]) .app-shell .library-screen .document-library-empty{min-height:240px;gap:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
-html:not([data-phone]) .app-shell .library-screen .document-library-empty h2{font-size:18px}
-html:not([data-phone]) .app-shell .library-screen .document-library-empty p{font-size:14px}
-html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:auto;min-width:260px;gap:12px;margin-top:18px;padding:10px 12px;font-size:13px;border-radius:8px}
-@media(max-width:800px){html:not([data-phone]) .app-shell .library-screen .document-library-file-text{display:flex;flex-direction:column;align-items:flex-start;gap:3px}html:not([data-phone]) .app-shell .library-screen .document-library-date{text-align:left}html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:20px 18px 16px}html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:0 18px calc(22px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}}
-@media(max-width:480px){html:not([data-phone]) .app-shell .library-screen .document-library-create-actions{display:grid;grid-template-columns:1fr 1fr}html:not([data-phone]) .app-shell .library-screen .document-library-create-actions button{padding:10px 8px}html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:24px}html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:100%;min-width:0}}
-@media(max-height:400px){html:not([data-phone]) .app-shell .library-screen .document-library-header{padding-top:12px;padding-bottom:12px}html:not([data-phone]) .app-shell .library-screen .document-library-header h1{font-size:24px}html:not([data-phone]) .app-shell .library-screen .document-library-empty{min-height:160px}}
+html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:10px 28px calc(28px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}
+html:not([data-phone]) .app-shell .library-screen .document-library-create-actions{display:flex;gap:8px}
+html:not([data-phone]) .app-shell .library-screen .document-library-create-actions button{flex:0 0 auto;padding:10px 16px;min-height:44px}
+html:not([data-phone]) .app-shell .library-screen .library-filters{margin:0 0 16px;padding:0}
+html:not([data-phone]) .app-shell .library-screen .document-library-search{max-width:440px}
+html:not([data-phone]) .app-shell .library-screen .library-toolbar{gap:8px}
+html:not([data-phone]) .app-shell .library-screen .library-toolbar .document-library-search{margin-right:auto}
+html:not([data-phone]) .app-shell .library-screen .library-grid .document-library-list{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:26px 22px}
+html:not([data-phone]) .app-shell .library-screen .library-list .document-library-list{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:4px}
+html:not([data-phone]) .app-shell .library-screen .library-list .document-library-open{padding:8px 56px 8px 10px}
+@media(hover:hover){html:not([data-phone]) .app-shell .library-screen .library-list .document-library-open:hover{background:var(--hover)}}
+html:not([data-phone]) .app-shell .library-screen .document-library-continue{max-width:640px}
+html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:auto;display:inline-flex}
+html[data-tablet] .app-shell .library-screen .library-grid .document-library-list{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+html[data-tablet] .app-shell .library-screen .document-library-more{min-height:44px;width:44px}
+@media(prefers-reduced-motion:reduce){.document-library *{transition:none!important;animation:none!important}}

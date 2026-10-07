@@ -42,6 +42,7 @@ import './desktop.css';
 import './tablet.css';
 import './motion.css';
 import { useExit } from './motion';
+import { markDrive, readCover, renderCover, saveCover } from './library-meta';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
@@ -886,6 +887,15 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
+  // The library shows page one as each document's cover; it is rendered once, when idle.
+  useEffect(() => {
+    if (!doc || doc.sample) return;
+    if (doc.drive) markDrive(doc.id);
+    let alive = true;
+    const pdf = doc.pdf, id = doc.id, idle = window.requestIdleCallback ?? ((run: () => void) => window.setTimeout(run, 600));
+    void readCover(id).then(cover => { if (!cover && alive) idle(() => { if (alive) void renderCover(pdf).then(image => { if (image) void saveCover(id, image); }); }); });
+    return () => { alive = false; };
+  }, [doc?.id]);
   useEffect(() => {
     if (!isNative || !isMobile) return;
     chromeUpdate.current = chromeUpdate.current.catch(() => {}).then(() => setReaderChrome(systemChromeVisible)).then(() => { window.dispatchEvent(new Event('folio:system-bars-changed')); }).catch(() => {});
@@ -1894,7 +1904,7 @@ export default function App() {
       event.preventDefault(); showExplorerTab(explorerIds[event.key === 'Home' ? 0 : event.key === 'End' ? explorerIds.length - 1 : (index + (event.key === 'ArrowLeft' ? explorerIds.length - 1 : 1)) % explorerIds.length], true);
     }}><Symbol size={19} /><span>{label}</span></button>;
   })}</div>;
-  const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc ? { name: doc.name, page } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
+  const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc && !doc.sample ? { id: doc.id, name: doc.name, page, pages: doc.pdf.numPages } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
   const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;

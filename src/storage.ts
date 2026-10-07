@@ -1,4 +1,5 @@
 import { invokeBinary } from './binary';
+import { clearLibraryMeta, forgetLibraryMeta } from './library-meta';
 import type { RecentDocument, Session } from './types';
 import { invoke } from '@tauri-apps/api/core';
 import { isNative } from './platform';
@@ -177,12 +178,14 @@ export async function touchDocument(doc: Pick<RecentDocument, 'id' | 'pages' | '
 }
 
 export async function forgetDocument(id: string): Promise<void> {
+  forgetLibraryMeta(id);
   if (isNative) { await invoke('forget_document', { id }); return; }
   await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).delete(id); });
   try { localStorage.removeItem(LEGACY_SESSION_PREFIX + id); } catch { /* Without storage access there is no legacy copy. */ }
   revisions.delete(id);
 }
 export async function clearSavedState(): Promise<void> {
+  clearLibraryMeta();
   if (isNative) { await invoke('clear_saved_state'); return; }
   await transact(STORES, 'readwrite', tx => { for (const name of STORES) tx.objectStore(name).clear(); });
   try { for (const key of Object.keys(localStorage)) if (key.startsWith(LEGACY_SESSION_PREFIX)) localStorage.removeItem(key); } catch { /* Without storage access there is no legacy copy. */ }

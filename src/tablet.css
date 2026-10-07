@@ -37,15 +37,6 @@ html[data-tablet] .app-shell .search-field input{height:48px;font-size:16px}
 html[data-tablet] .app-shell :is(.annotation-tool-hint,.toast){bottom:calc(84px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}
 html[data-tablet] .app-shell.library-visible>.app-header{display:none}
 html[data-tablet] .app-shell.library-visible>.library-screen{inset:0}
-/* A single list: filenames own the row width; metadata uses a second line.
-   Scope above the shared desktop rules so viewport breakpoints cannot turn a
-   tablet row into a three-column table inside a half-width card. */
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-list{display:block}
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;min-width:0;width:100%}
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text strong{grid-column:1/-1;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:15px;line-height:1.4}
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-file-text>span{min-width:0;font-size:12px}
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-date{text-align:right;white-space:nowrap}
-html[data-tablet] .app-shell.tablet-layout .library-screen .document-library-more{width:48px;min-height:48px}
 html[data-tablet] .modal{max-height:calc(var(--modal-visible-height,100dvh) - 32px);max-width:calc(100vw - 32px);font-size:14px}
 html[data-tablet] .modal :is(button,input:not([type=checkbox]),select){min-height:48px}
 html[data-tablet] .modal :is(input,textarea,select){font-size:16px}
