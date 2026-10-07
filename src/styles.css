@@ -133,3 +133,6 @@ html:not([data-phone]) .workbench .modal-heading{position:sticky;top:0;z-index:3
 .textLayer{--scale-round-x:1px;--scale-round-y:1px}
 .page-content:is(.tool-select,.tool-highlight) .textLayer[data-copy-allowed=true] :is(span,br){user-select:text;-webkit-user-select:text}
 .page-caption{-webkit-user-select:none;user-select:none}
+
+/* Touch screens show the focus ring only while a hardware keyboard navigates (see main.tsx). */
+html[data-touch]:not([data-keyboard]) :focus-visible:not(.highlight-annotation[data-selected=true]){outline:none!important}

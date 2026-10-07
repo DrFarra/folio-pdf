@@ -205,14 +205,15 @@ async function focusAppearance(page, expected = null) {
       className: element.className, focused: element === document.activeElement, focusVisible: element.matches(':focus-visible'),
       visible: box.width > 0 && box.height > 0 && style.visibility !== 'hidden', outline: outline(null),
       before: outline('::before'), after: outline('::after'), boxShadow: style.boxShadow,
-      selectedAnnotation: element.matches('.highlight-annotation[data-selected=true]') };
+      selectedAnnotation: element.matches('.highlight-annotation[data-selected=true]'), keyboard: document.documentElement.dataset.keyboard === 'true' };
   }));
   for (const sample of samples) {
     if (sample.selectedAnnotation) continue;
     const parts = [['element', sample.outline], ['before', sample.before], ['after', sample.after]], painted = ([, outline]) => outline.style !== 'none' && outline.width > 0;
-    // A tap never draws a focus ring and touch text fields rely on the caret; keyboard focus (:focus-visible) must stay visible.
+    // A tap never draws a focus ring (WebKit also reports focus moved by the app after a tap as :focus-visible) and touch
+    // text fields rely on the caret; focus reached with hardware-keyboard navigation must stay visible.
     const textField = sample.tag === 'TEXTAREA' || sample.tag === 'INPUT' && !['checkbox', 'radio', 'range', 'color', 'file'].includes(sample.type);
-    if (sample.focusVisible && sample.focused && !textField) assert(parts.some(painted) || sample.boxShadow !== 'none', `Keyboard focus must show an indicator: ${JSON.stringify(sample)}`);
+    if (sample.focusVisible && sample.focused && !textField && sample.keyboard) assert(parts.some(painted) || sample.boxShadow !== 'none', `Keyboard focus must show an indicator: ${JSON.stringify(sample)}`);
     else for (const [part, outline] of parts) {
       assert(!painted([part, outline]), `Touch focus must not paint an outline (${part}): ${JSON.stringify(sample)}`);
     }
