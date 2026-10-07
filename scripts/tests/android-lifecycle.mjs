@@ -106,7 +106,7 @@ try {
   for (let i = 0; i < 300 && !releaseStage; i++) await page.waitForTimeout(30);
   assert(releaseStage, 'Closing stages the Drive edit, reaching the deliberately delayed native write');
   await reopen(); await close(); await page.waitForTimeout(300); assert.equal(staged, 1, 'Closing again while the same edit is in flight reuses that write');
-  releaseStage(); await page.locator('.toast').getByText(/No se pudo preparar la edición/).first().waitFor();
+  releaseStage(); await page.locator('.toast, .activity-pill').getByText(/No se pudo preparar la edición/).first().waitFor();
   stageFail = false;
   await reopen(); await close();
   for (let i = 0; i < 300 && staged < 2; i++) await page.waitForTimeout(30);

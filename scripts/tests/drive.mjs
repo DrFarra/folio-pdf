@@ -94,7 +94,7 @@ try {
     await page.screenshot({path:`${out}/${name}-reading.png`});
     if(mobile)await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();
     await page.getByRole('button',{name:'Guardar en Drive',exact:true}).click();
-    await page.locator('.toast').getByText(/Puedes reintentarlo en Biblioteca/).waitFor();
+    await page.locator('.toast, .activity-pill').getByText(/Puedes reintentarlo en Biblioteca/).waitFor();
     const native=await page.evaluate(()=>window.__driveQA.calls.filter(c=>['write_pdf_original','write_pdf_copy'].includes(c.command)));
     assert.equal(native.length,0,'Drive must never save into the Android cache or use Android SAF overwrite');
     await page.getByRole('button',{name:/^Más acciones(?: del documento)?$/}).click();

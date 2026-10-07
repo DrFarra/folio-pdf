@@ -395,7 +395,7 @@ try {
     await open(page, b); await page.getByRole('button', { name: `Cerrar ${a.name}`, exact: true }).click(); await tab(page, a).waitFor({ state: 'detached' });
     // The next read of the 'sessions' store fails once, as a locked or lost database would.
     await page.evaluate(() => { const get = IDBObjectStore.prototype.get; let fail = true; IDBObjectStore.prototype.get = function (...args) { if (fail && this.name === 'sessions') { fail = false; throw new DOMException('Simulated read failure', 'UnknownError'); } return get.apply(this, args); }; });
-    await open(page, a); await page.locator('.toast').getByText(/No se pudieron cargar las anotaciones guardadas/).waitFor();
+    await open(page, a); await page.locator('.toast, .activity-pill').getByText(/No se pudieron cargar las anotaciones guardadas/).waitFor();
     await switchTo(page, b); await switchTo(page, a); await page.waitForTimeout(1800);
     assert.equal((await session(page, a))?.annotations.length, 1, 'A session that could not be read must not be rewritten automatically.');
     await page.getByRole('button', { name: 'Guardar marcador de esta página', exact: true }).click();

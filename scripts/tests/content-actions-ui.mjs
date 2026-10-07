@@ -187,7 +187,7 @@ try {
     // Only a changed element is a draft; saving waits until the editor reports it.
     await page.locator('.edit-pdf-save:disabled').waitFor();
     await page.keyboard.press(saveShortcut);
-    await page.locator('.toast').getByText('Aplica o descarta la edición antes de guardar el PDF.', { exact: true }).waitFor();
+    await page.locator('.toast, .activity-pill').getByText('Aplica o descarta la edición antes de guardar el PDF.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Descargar', exact: true }).isDisabled(), true); assert.equal(downloads, 0);
     await intent(page, 'duplicate'); await page.getByLabel('Posición X', { exact: true }).fill('220');
     await page.getByRole('button', { name: 'Restablecer', exact: true }).click(); await ready(page);
@@ -227,7 +227,7 @@ try {
     // Guardar replaces the opened file without asking; Guardar una copia asks where to write.
     await page.keyboard.press(saveShortcut);
     await page.waitForFunction(() => globalThis.__contentActionsNative.originals.length === 1); await savedIdle(page, 2);
-    await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    await page.locator('.toast, .activity-pill').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     let state = await page.evaluate(() => globalThis.__contentActionsNative);
     assert.equal(state.originals[0].headers['x-folio-source-token'], 'source-token'); assert.equal(state.chosen.length, 0); assert.equal(state.writes.length, 0);
     const replaced = new Uint8Array(state.originals[0].bytes); assert.equal(textCount(replaced, 'NATIVE 2', 2), 1); preserved(replaced);

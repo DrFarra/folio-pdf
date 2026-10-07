@@ -100,21 +100,21 @@ try {
     await draw(1);
     mode = 'cancel'; await save(); assert.deepEqual(fs.readFileSync(original), fixture);
     assert.equal(await page.locator('[data-ink-id]').count(), 1);
-    mode = 'error'; await save(); await page.locator('.toast').getByText(/El PDF cambió fuera de Folio/).waitFor(); assert.deepEqual(fs.readFileSync(original), fixture);
-    mode = 'save'; await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    mode = 'error'; await save(); await page.locator('.toast, .activity-pill').getByText(/El PDF cambió fuera de Folio/).waitFor(); assert.deepEqual(fs.readFileSync(original), fixture);
+    mode = 'save'; await save(); await page.locator('.toast, .activity-pill').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.equal(inspectDocument(fs.readFileSync(original)).annotations.filter(a => a.kind === 'ink').length, 1);
     assert.equal(catalog.size, 1); assert.equal(calls.filter(c => c === 'write_pdf_copy').length, 0);
     // A restart (Android ending the app in the background) reopens the saved document by itself.
     await page.reload(); await page.locator('[data-ink-id]').waitFor();
-    await draw(2); await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    await draw(2); await save(); await page.locator('.toast, .activity-pill').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.equal(inspectDocument(fs.readFileSync(original)).annotations.filter(a => a.kind === 'ink').length, 2);
     assert.equal(catalog.size, 1);
     const savedOriginal = fs.readFileSync(original);
-    await draw(3); await save(true); await page.locator('.toast').getByText(/^Copia guardada\. Ahora editas «.+»\.$/).waitFor();
+    await draw(3); await save(true); await page.locator('.toast, .activity-pill').getByText(/^Copia guardada\. Ahora editas «.+»\.$/).waitFor();
     assert.deepEqual(fs.readFileSync(original), savedOriginal);
     assert.equal(inspectDocument(fs.readFileSync(`${out}/${layout}-copy.pdf`)).annotations.filter(a => a.kind === 'ink').length, 3);
     assert.equal(catalog.size, 2); assert.deepEqual(errors, []);
-    await draw(4); await save(); await page.locator('.toast').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
+    await draw(4); await save(); await page.locator('.toast, .activity-pill').getByText('Cambios guardados en el PDF original.', { exact: true }).waitFor();
     assert.deepEqual(fs.readFileSync(original), savedOriginal);
     assert.equal(inspectDocument(fs.readFileSync(`${out}/${layout}-copy.pdf`)).annotations.filter(a => a.kind === 'ink').length, 4);
     assert.equal(catalog.size, 2); assert.deepEqual(errors, []);

@@ -44,6 +44,7 @@ import './motion.css';
 import { useExit } from './motion';
 import { markDrive, readCover, renderCover, saveCover } from './library-meta';
 import { PageScrubber } from './components/PageScrubber';
+import { ActivityPill, type ActivityStep } from './components/ActivityPill';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
@@ -425,7 +426,10 @@ export default function App() {
 
   // ✓ confirms a completed action and «i» explains a blocked one. Errors stay
   // until closed; screen readers hear every notice through the live regions.
+  // While a task runs its outcome waits for the activity capsule, which shows it in place.
+  const activityRun = useRef<{ started: number; result?: { message: string; kind: ToastKind } } | null>(null);
   const notify = useCallback((message: string, kind: ToastKind = 'info') => {
+    if (activityRun.current && kind !== 'error') { activityRun.current.result = { message, kind }; return; }
     setToast(previous => ({ message, kind, id: (previous?.id || 0) + 1 }));
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = kind === 'error' ? null : setTimeout(() => setToast(null), 3500);
@@ -888,6 +892,23 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
+  // Saving, syncing, printing and applying edits show a capsule while they run.
+  const [activity, setActivity] = useState<ActivityStep | null>(null);
+  const [activityDone, setActivityDone] = useState<ActivityStep | null>(null);
+  const activityLabel = busy === 'download' ? doc?.drive ? driveMessage || 'Guardando en Google Drive…' : savesInPlace ? 'Guardando el PDF…' : isNative ? 'Guardando una copia…' : 'Preparando el PDF…'
+    : busy === 'print' ? 'Preparando la impresión…' : busy === 'edit' ? 'Aplicando los cambios…' : '';
+  useEffect(() => {
+    if (activityLabel) {
+      if (!activityRun.current) { activityRun.current = { started: performance.now() }; setActivityDone(null); setActivity({ id: Date.now(), label: activityLabel }); }
+      else setActivity(current => current && { ...current, label: activityLabel });
+      return;
+    }
+    const run = activityRun.current; if (!run) return;
+    activityRun.current = null; setActivity(null);
+    // Quick work keeps its usual notice; longer work shows its outcome in the capsule.
+    if (run.result && performance.now() - run.started >= 260) setActivityDone({ id: Date.now(), label: run.result.message });
+    else if (run.result) notify(run.result.message, run.result.kind);
+  }, [activityLabel]);
   // The outline heading a page belongs to, shown while scrubbing.
   const outlineSection = useCallback((target: number) => {
     let best: { title: string; page: number } | undefined;
@@ -2077,7 +2098,7 @@ export default function App() {
         {inlineEditing && workbenchPanel}
         <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
           {doc ? <div className="pdf-stack" key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
-          {loading && <div className="loading-overlay" role="status"><LoaderCircle size={28} className="spin" /><span>Abriendo PDF…</span></div>}
+          {loading && <div className="loading-overlay" role="status"><svg className="activity-ring large" viewBox="0 0 24 24" aria-hidden="true"><circle className="activity-ring-track" cx="12" cy="12" r="9" /><circle className="activity-ring-arc" cx="12" cy="12" r="9" /></svg><span>Abriendo PDF…</span></div>}
         </div>
         {touchLayout && doc && !inlineEditing && !loading && !(mobileAnnotating && (tool === 'draw' || tool === 'eraser')) && <PageScrubber pdf={doc.pdf} page={page} pages={doc.pdf.numPages} viewer={viewer.current} continuous={readingMode !== 'single'} label={pageName} section={outlineSection} onJump={target => { if (!returnLocation) rememberLocation(); goToPage(target, false); }} />}
         {touchLayout && doc && returnLocation?.key === activeTabKey && returnLocation.page !== page && <button className="touch-return-location" onClick={returnToLocation}><ChevronLeft size={18} /><span>Volver a p. {pageName(returnLocation.page)}</span></button>}
@@ -2155,6 +2176,7 @@ export default function App() {
     <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && !mobileActions && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked && !pageJump && !viewSettings && !annotationOptions && !capabilityNotice && !deleteTarget && !(touchLayout && (sidebar || notesOpen || mobileActions || mobileTabs))} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={(message, error) => notify(message, error ? 'error' : 'success')} />
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
+    <ActivityPill working={activity} done={activityDone} />
     {shownToast && <div key={shownToast.id} ref={toastRef} popover="manual" className={`toast ${shownToast.kind === 'error' ? 'error' : ''}${toast ? '' : ' closing'}`}>{shownToast.kind === 'error' ? <CircleAlert size={18} /> : shownToast.kind === 'info' ? <Info size={18} /> : <Check size={18} />}<span>{shownToast.message}</span><button aria-label="Cerrar aviso" onClick={() => setToast(null)}><X size={15} /></button></div>}
     <div className="sr-only" role="status">{toast && toast.kind !== 'error' && <span key={toast.id}>{toast.message}</span>}</div>
     <div className="sr-only" role="alert">{toast?.kind === 'error' && <span key={toast.id}>{toast.message}</span>}</div>
