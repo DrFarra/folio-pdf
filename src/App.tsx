@@ -46,6 +46,7 @@ import { markDrive, readCover, renderCover, saveCover } from './library-meta';
 import { PageScrubber } from './components/PageScrubber';
 import { ActivityPill, type ActivityStep } from './components/ActivityPill';
 import { ColumnSelectionPreview } from './components/ColumnSelectionPreview';
+import { addHighlights } from './highlight-merge';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
@@ -1470,11 +1471,12 @@ export default function App() {
     if (!doc?.canAnnotate || busyRef.current || loadingRef.current) return;
     if (Array.isArray(annotation)) {
       // A selection spanning several pages is one action in the document history.
-      commitAnnotations([...annotationRef.current, ...annotation.map(item => ({ ...item, id: uid(), created: Date.now() }))]);
+      // Highlights over a highlight of the same color join it.
+      commitAnnotations(addHighlights(annotationRef.current, annotation.map(item => ({ ...item, id: uid(), created: Date.now() }))));
       return;
     }
     if (annotation.kind === 'note') { noteOrigin.current = 'document'; setNoteDraft(annotation); setNoteText(''); return; }
-    commitAnnotations([...annotationRef.current, { ...annotation, id: uid(), created: Date.now() }]);
+    commitAnnotations(addHighlights(annotationRef.current, [{ ...annotation, id: uid(), created: Date.now() }]));
   }
   const removeAnnotation = useCallback((id: string, gesture?: string) => {
     if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current || !annotationRef.current.some(annotation => annotation.id === id)) return;

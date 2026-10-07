@@ -21,6 +21,8 @@ const right = ['Derecha uno: furosemida', 'Derecha dos: enalapril', 'Derecha tre
 left.forEach((text, row) => { page1.drawText(text, { x: 50, y: 700 - row * 26, size: 13, font }); page1.drawText(right[row], { x: 330, y: 700 - row * 26, size: 13, font }); });
 const paragraph = ['Primera linea del parrafo que ocupa el ancho de la pagina entera sin columnas.', 'Segunda linea del parrafo que tambien ocupa todo el ancho de la pagina.', 'Tercera linea del parrafo para comprobar el resaltado normal.'];
 paragraph.forEach((text, row) => page1.drawText(text, { x: 50, y: 520 - row * 22, size: 12, font }));
+const isolated = 'Segunda prueba aislada para comprobar palabras completas y la fusion de resaltados.';
+page1.drawText(isolated, { x: 50, y: 400, size: 12, font });
 const bytes = await pdf.save(), hash = createHash('sha256').update(bytes).digest('hex');
 fs.writeFileSync(source, bytes);
 const chrome = findChrome(); assert(chrome, 'An installed Chrome or Edge is required.');
@@ -75,10 +77,30 @@ try {
   // Crossing from the left column into the right one is a deliberate choice and is kept.
   release = await drag(page, left[0], right[1]);
   await release();
-  await waitForSession(page, (session, id) => id === hash && session.annotations?.filter(item => item.kind === 'highlight').length === 3);
-  const crossing = (await highlights(page)).at(-1);
-  assert(crossing.text.includes('Derecha uno'), `A selection ending in the other column keeps it: ${crossing.text}`);
+  // It overlaps the left-column highlight in the same color, so the two join.
+  await waitForSession(page, (session, id) => id === hash && session.annotations?.some(item => item.kind === 'highlight' && item.text.includes('Derecha uno')));
+  const crossing = (await highlights(page)).find(item => item.text.includes('Derecha uno'));
+  assert(crossing.text.includes('Izquierda dos'), `Joined with the overlapping column highlight: ${crossing.text}`);
   results.push({ id: 'cross-column-kept', passed: true });
+  // Starting and ending inside words covers the whole words.
+  const line = await span(page, isolated).boundingBox(); assert(line);
+  const y = line.y + line.height / 2;
+  await page.mouse.move(line.x + line.width * .03, y); await page.mouse.down(); await page.mouse.move(line.x + line.width * .2, y, { steps: 10 }); await page.mouse.up();
+  const before = (await highlights(page)).length;
+  await waitForSession(page, (session, id) => id === hash && session.annotations?.filter(item => item.kind === 'highlight').length === before + 1);
+  const snapped = (await highlights(page)).find(item => item.text.startsWith('Segunda'));
+  assert.match(snapped.text, /^Segunda prueba(\s|$)/, `Whole words from the first letter: ${snapped.text}`);
+  assert(isolated.split(' ').some(word => snapped.text.trim().endsWith(word)), `Ends on a whole word: ${snapped.text}`);
+  results.push({ id: 'snap-to-words', passed: true, text: snapped.text });
+
+  // Extending that highlight on the same line, in the same color, joins it.
+  await page.mouse.move(line.x + line.width * .15, y); await page.mouse.down(); await page.mouse.move(line.x + line.width * .45, y, { steps: 10 }); await page.mouse.up();
+  await page.waitForTimeout(600);
+  const after = await highlights(page);
+  assert.equal(after.length, before + 1, `The overlapping highlight joined the existing one (${after.length}).`);
+  const joined = after.find(item => item.id === snapped.id);
+  assert(joined && joined.quads.length === 1 && joined.text.length > snapped.text.length, `One longer line: ${JSON.stringify(joined)}`);
+  results.push({ id: 'merge-same-color', passed: true, text: joined.text });
   assert.deepEqual(errors, []);
 } catch (error) { process.exitCode = 1; results.push({ passed: false, error: String(error?.stack || error).slice(0, 1200) }); }
 finally { await browser?.close(); preview.kill(); console.log(JSON.stringify({ passed: process.exitCode !== 1, results })); }

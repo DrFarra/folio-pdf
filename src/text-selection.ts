@@ -114,6 +114,7 @@ export function selectedTextRects(container: HTMLElement, original: Range): { te
   if (range.compareBoundaryPoints(Range.START_TO_START, boundary) < 0) range.setStart(boundary.startContainer, boundary.startOffset);
   if (range.compareBoundaryPoints(Range.END_TO_END, boundary) > 0) range.setEnd(boundary.endContainer, boundary.endOffset);
   if (range.collapsed || !range.toString().trim()) return null;
+  snapToWords(range);
   const parts: Part[] = [];
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const mainRotation = Number(container.dataset.mainRotation || 0);
@@ -143,6 +144,20 @@ export function selectedTextRects(container: HTMLElement, original: Range): { te
   return { text: text.slice(0, 5000), rects: runs.map(run => run.rect), angles: runs.map(run => run.angle), clipped: !!column };
 }
 
+// A selection that starts or ends inside a word covers the whole word, as
+// readers expect from a highlighter; punctuation and spaces are not extended.
+const letter = /[\p{L}\p{N}\p{M}'’-]/u;
+function snapToWords(range: Range) {
+  const start = range.startContainer, end = range.endContainer;
+  if (start.nodeType === Node.TEXT_NODE) {
+    const text = start.textContent || ''; let offset = range.startOffset;
+    if (offset > 0 && offset < text.length && letter.test(text[offset]) && letter.test(text[offset - 1])) { while (offset > 0 && letter.test(text[offset - 1])) offset--; range.setStart(start, offset); }
+  }
+  if (end.nodeType === Node.TEXT_NODE) {
+    const text = end.textContent || ''; let offset = range.endOffset;
+    if (offset > 0 && offset < text.length && letter.test(text[offset - 1]) && letter.test(text[offset])) { while (offset < text.length && letter.test(text[offset])) offset++; range.setEnd(end, offset); }
+  }
+}
 const bounds = (rects: DOMRect[]) => rects.reduce((box, rect) => new DOMRect(Math.min(box.left, rect.left), Math.min(box.top, rect.top), Math.max(box.right, rect.right) - Math.min(box.left, rect.left), Math.max(box.bottom, rect.bottom) - Math.min(box.top, rect.top)));
 // The kept parts of a column read line by line.
 function joinLines(parts: Part[]) {
