@@ -74,6 +74,8 @@ async function layout(page, specification) {
     if (element?.dataset.pickerState !== 'ready') return false;
     const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, right: bounds.right, bottom: bounds.bottom, overflowX: node.scrollWidth - node.clientWidth }; };
     const container = element.closest('.workspace-editor,dialog'), phone = document.documentElement.hasAttribute('data-phone');
+    // Measure the settled layout: a sheet still sliding in is offset by its animation.
+    if (container?.getAnimations().some(animation => animation.playState === 'running')) return false;
     const canvas = rect(element.querySelector('canvas'));
     if (!canvas.width || !canvas.height || getComputedStyle(element.querySelector('.pdf-picker-stage')).visibility === 'hidden') return false;
     if (element.querySelector('[aria-label="Ajustar página"]').getAttribute('aria-pressed') === 'true') {
