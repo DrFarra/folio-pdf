@@ -7,6 +7,7 @@ private struct PickArgs: Decodable { let multiple: Bool? }
 private struct PathsArgs: Decodable { let paths: [String] }
 private struct FileArgs: Decodable { let path: String; let anchor: [Double]? }
 private struct ChromeArgs: Decodable { let visible: Bool }
+private struct KeepAwakeArgs: Decodable { let on: Bool }
 private struct ThemeArgs: Decodable { let theme: String }
 private struct TextArgs: Decodable { let text: String }
 private struct URLArgs: Decodable { let url: String }
@@ -89,6 +90,11 @@ final class FolioPlugin: Plugin {
 
     /// Immersive reading hides the status bar. tao's root view controller owns
     /// prefersStatusBarHidden; its setter refreshes the status bar appearance.
+    /// Keeps the screen on while a document is read.
+    @objc public func setKeepAwake(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(KeepAwakeArgs.self)
+        DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = args.on; invoke.resolve() }
+    }
     @objc public func setReaderChrome(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ChromeArgs.self)
         DispatchQueue.main.async {

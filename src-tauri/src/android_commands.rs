@@ -203,6 +203,9 @@ pub async fn print_pdf_copy(request: tauri::ipc::Request<'_>, app: tauri::AppHan
 pub async fn set_mobile_theme(theme: String, background: Option<String>, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setTheme", serde_json::json!({"theme":theme,"background":background})).await.map(|_| ()) }
 #[tauri::command]
 pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setReaderChrome", serde_json::json!({"visible":visible})).await.map(|_| ()) }
+/// Keeps the screen on while a document is read.
+#[tauri::command]
+pub async fn set_keep_awake(on: bool, app: tauri::AppHandle) -> Result<(), String> { mobile_call(app, "setKeepAwake", serde_json::json!({"on":on})).await.map(|_| ()) }
 #[tauri::command]
 pub async fn android_safe_area(app: tauri::AppHandle) -> Result<Value, String> { mobile_call(app, "getSafeArea", serde_json::json!({})).await }
 #[tauri::command]

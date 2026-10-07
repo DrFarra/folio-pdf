@@ -113,6 +113,11 @@ pub async fn set_mobile_theme(theme: String, app: tauri::AppHandle) -> Result<()
 pub async fn set_mobile_chrome(visible: bool, app: tauri::AppHandle) -> Result<(), String> {
     mobile_call(app, "setReaderChrome", serde_json::json!({"visible":visible})).await.map(|_| ())
 }
+/// Keeps the screen on while a document is read.
+#[tauri::command]
+pub async fn set_keep_awake(on: bool, app: tauri::AppHandle) -> Result<(), String> {
+    mobile_call(app, "setKeepAwake", serde_json::json!({"on":on})).await.map(|_| ())
+}
 
 #[tauri::command]
 pub async fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String> {

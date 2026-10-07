@@ -37,6 +37,7 @@ import java.util.concurrent.Executors
 @InvokeArg class SaveOriginalArgs { lateinit var path: String; lateinit var source: String }
 @InvokeArg class ThemeArgs { var theme: String = "light"; var background: String? = null }
 @InvokeArg class ChromeArgs { var visible: Boolean = true }
+@InvokeArg class KeepAwakeArgs { var on: Boolean = false }
 @InvokeArg class UrlArgs { lateinit var url: String }
 @InvokeArg class WatchDocumentsArgs { lateinit var channel: Channel }
 @InvokeArg class DriveArgs { var interactive: Boolean = false }
@@ -270,6 +271,15 @@ class FolioPlugin(private val launch: Activity) : Plugin(launch) {
                 if (visible) show(WindowInsetsCompat.Type.systemBars()) else hide(WindowInsetsCompat.Type.systemBars())
             }
             ViewCompat.requestApplyInsets(activity.findViewById(android.R.id.content))
+            invoke.resolve()
+        }
+    }
+    /** Keeps the screen on while a document is read; the system restores it otherwise. */
+    @Command fun setKeepAwake(invoke: Invoke) {
+        val on = invoke.parseArgs(KeepAwakeArgs::class.java).on
+        activity.runOnUiThread {
+            if (on) activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             invoke.resolve()
         }
     }

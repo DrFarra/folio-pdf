@@ -9,6 +9,7 @@ type Props = {
   zoom: string; scale: number; onZoom: (value: string) => void;
   rotation: number; onRotate: () => void; onClose: () => void;
   pageTone: ReadingPreferences['pageTone']; onPageTone: (value: ReadingPreferences['pageTone']) => void;
+  keepAwake?: boolean; onKeepAwake?: (value: boolean) => void;
 };
 const TONES: [ReadingPreferences['pageTone'], string][] = [['normal', 'Normal'], ['sepia', 'Sepia'], ['dark', 'Oscuro']];
 export default function ViewSettings(props: Props) {
@@ -19,6 +20,7 @@ export default function ViewSettings(props: Props) {
     <div className="page-tones" role="radiogroup" aria-label="Color de las páginas"><span>Color de las páginas</span><div>{TONES.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={props.pageTone === value} className={`page-tone ${value}`} onClick={() => props.onPageTone(value)}><span aria-hidden="true"><i /><i /><i /></span>{label}</button>)}</div></div>
     <label className="reading-setting"><span>Desplazamiento</span><select aria-label="Modo de desplazamiento" value={props.mode} onChange={event => props.onMode(event.target.value as ReadingPreferences['mode'])}><option value="continuous">Continuo</option><option value="single">Una página</option></select></label>
     <label className="reading-setting"><span>Zoom</span><select aria-label="Nivel de zoom" value={zoom} onChange={event => props.onZoom(event.target.value)}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{values.map(value => <option key={value} value={String(value)}>{value} %</option>)}</select></label>
+    {props.onKeepAwake && <label className="settings-toggle"><span>Mantener la pantalla encendida</span><input type="checkbox" checked={!!props.keepAwake} onChange={event => props.onKeepAwake!(event.target.checked)} /></label>}
     <button className="secondary-button view-rotate" onClick={props.onRotate}><RotateCw size={18} />Girar vista · {props.rotation}°</button>
     {props.touch && props.mode === 'single' && <p className="modal-description">Desliza a los lados para cambiar de página.</p>}
     <div className="modal-actions"><button className="primary-button" onClick={props.onClose}><Check size={16} />Listo</button></div>

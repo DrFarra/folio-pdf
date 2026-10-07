@@ -9,6 +9,11 @@ export async function setReaderChrome(visible: boolean): Promise<void> {
 }
 
 export const isNative = isTauri();
+/** Keeps the screen on while reading on a phone or tablet; elsewhere it does nothing. */
+export async function setKeepAwake(on: boolean): Promise<void> {
+  if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+  await invoke('set_keep_awake', { on }).catch(() => {});
+}
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isAndroid = /Android/i.test(navigator.userAgent);

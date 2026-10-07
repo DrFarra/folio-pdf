@@ -8,11 +8,13 @@ export type ReadingPreferences = {
   wheelSpeed: number;
   /** Page color while reading: as printed, warm paper, or inverted for the dark. */
   pageTone: 'normal' | 'sepia' | 'dark';
+  /** Phones and tablets keep the screen on while a document is open. */
+  keepAwake: boolean;
 };
 
 export const defaultReadingPreferences: ReadingPreferences = {
   mode: 'continuous', initialPanel: 'closed', panelWidth: 220,
-  pageGap: 19, smoothScroll: true, restorePage: true, wheelSpeed: 100, pageTone: 'normal',
+  pageGap: 19, smoothScroll: true, restorePage: true, wheelSpeed: 100, pageTone: 'normal', keepAwake: true,
 };
 export function readReadingPreferences(): ReadingPreferences {
   try {
@@ -25,6 +27,7 @@ export function readReadingPreferences(): ReadingPreferences {
       smoothScroll: raw.smoothScroll !== false, restorePage: raw.restorePage !== false,
       wheelSpeed: clamp(raw.wheelSpeed, 100, 50, 150),
       pageTone: raw.pageTone === 'sepia' || raw.pageTone === 'dark' ? raw.pageTone : 'normal',
+      keepAwake: raw.keepAwake !== false,
     };
   } catch { return { ...defaultReadingPreferences }; }
 }

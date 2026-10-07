@@ -34,3 +34,4 @@ html:not([data-phone]) .app-shell .settings-modal .modal-actions{margin-top:18px
 html:not([data-phone]) .app-shell .license-modal{width:min(640px,calc(100vw - 28px))}
 /* Tablet fields are 48 px tall: rows leave room so stacked selects do not touch. */
 html[data-tablet] .app-shell .reading-setting{min-height:56px;font-size:14px}
+.view-settings-modal .settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px;margin:2px 0 10px;font-size:13px;cursor:pointer}
