@@ -325,10 +325,13 @@ pub async fn native_pdf_close(token: String, app: tauri::AppHandle) -> Result<()
 }
 
 #[tauri::command]
-pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32, rotation: u16, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
+pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32, rotation: u16, full_width: Option<u32>, full_height: Option<u32>, x: Option<u32>, y: Option<u32>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
     pdf_source(&desktop, &token)?;
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 4_000_000 { return Err("La página debe renderizarse en un máximo de 4 megapíxeles.".into()); }
-    let response = mobile_call(app.clone(), "pdfRender", serde_json::json!({"token":token,"page":page,"width":width,"height":height,"rotation":rotation})).await?;
+    // Optional window of a larger page raster (the visible part when zoomed in).
+    let (full_width, full_height, x, y) = (full_width.unwrap_or(width), full_height.unwrap_or(height), x.unwrap_or(0), y.unwrap_or(0));
+    if full_width > 65_536 || full_height > 65_536 || x >= full_width || y >= full_height { return Err("La zona de la página no es válida.".into()); }
+    let response = mobile_call(app.clone(), "pdfRender", serde_json::json!({"token":token,"page":page,"width":width,"height":height,"rotation":rotation,"fullWidth":full_width,"fullHeight":full_height,"x":x,"y":y})).await?;
     let path = PathBuf::from(response["path"].as_str().ok_or("No se pudo mostrar esta página.")?);
     let resolved = fs::canonicalize(&path).map_err(|_| "No se pudo leer la imagen de la página.")?;
     let temporary = app.path().temp_dir().map_err(|_| "No se pudo comprobar la carpeta temporal.")?.join("FolioPageRasters");

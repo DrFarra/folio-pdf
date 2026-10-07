@@ -492,7 +492,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     if (target?.dataset.annotationId) { event.preventDefault(); openHighlight(target.dataset.annotationId, event.clientX, event.clientY); }
   }} onPointerCancel={() => { dragRef.current = null; setDrag(null); pointerOrigin.current = null; }}>
     <canvas ref={canvasRef} aria-label={`Página ${number} del documento`} style={{ width: viewport.width, height: viewport.height }} />
-    {!isNativePdfDocument(pdf) && outputRatio(viewport) < density() && <canvas ref={detailRef} className="page-detail" aria-hidden="true" />}
+    {outputRatio(viewport) < density() && <canvas ref={detailRef} className="page-detail" aria-hidden="true" />}
     <div ref={textRef} className="textLayer" data-copy-allowed={canCopy} style={{ '--scale-factor': scale, '--total-scale-factor': scale, ...(canCopy ? {} : { userSelect: 'none', WebkitUserSelect: 'none' }) } as React.CSSProperties} />
     {tool === 'select' && onNavigate && <div className="pdf-link-layer">{links.map((link, index) => {
       const first = viewport.convertToViewportPoint(link.rect[0], link.rect[1]), second = viewport.convertToViewportPoint(link.rect[2], link.rect[3]);

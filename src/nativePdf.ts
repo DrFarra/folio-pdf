@@ -225,7 +225,11 @@ export async function openNativePdf(source: NativeDocument, password?: string, s
           if (!desiredWidth || !desiredHeight) throw new Error(UNAVAILABLE);
           const ratio = Math.min(1, 4096 / desiredWidth, 4096 / desiredHeight, Math.sqrt(4_000_000 / (desiredWidth * desiredHeight)));
           const width = Math.max(1, Math.floor(desiredWidth * ratio)), height = Math.max(1, Math.floor(desiredHeight * ratio));
-          const response = await bridge<ArrayBuffer | number[] | Uint8Array>('native_pdf_render', { token: source.token, page, width, height, rotation: rotationDegrees(parameters.viewport.rotation) });
+          // An offset transform asks for a window of a larger page raster: the zoomed, visible part.
+          const t = parameters.transform, fullWidth = t ? parameters.viewport.width * t[0] : desiredWidth, fullHeight = t ? parameters.viewport.height * t[3] : desiredHeight;
+          const crop = t && (t[4] || t[5] || Math.abs(fullWidth - desiredWidth) > 1 || Math.abs(fullHeight - desiredHeight) > 1)
+            ? { fullWidth: Math.round(fullWidth * ratio), fullHeight: Math.round(fullHeight * ratio), x: Math.max(0, Math.round(-t[4] * ratio)), y: Math.max(0, Math.round(-t[5] * ratio)) } : {};
+          const response = await bridge<ArrayBuffer | number[] | Uint8Array>('native_pdf_render', { token: source.token, page, width, height, rotation: rotationDegrees(parameters.viewport.rotation), ...crop });
           if (controller.signal.aborted || destroyed) throw renderCancelled();
           const bytes = response instanceof Uint8Array ? response : new Uint8Array(response);
           if (!bytes.byteLength || bytes.byteLength > 32 * 1024 * 1024) throw new Error(UNAVAILABLE);

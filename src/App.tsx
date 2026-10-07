@@ -93,6 +93,8 @@ const themeChoice = () => preference('folio.themeChoice', preference('folio.them
 type OpenSource = Blob | Uint8Array | 'sample' | NativeDocument;
 type ToastKind = 'success' | 'info' | 'error';
 const nativeReadingThreshold = 32 * 1024 * 1024;
+// Small print stays readable: the visible part of the page is repainted at screen density.
+const MAX_ZOOM = 8;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
 type OpenContext = { drive?: DriveBinding; savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[] };
 type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[] };
@@ -588,7 +590,7 @@ export default function App() {
       if (!context?.preserveHistory && !context?.savedCopy) { undoStack.current = []; redoStack.current = []; }
       setHistoryTick(v => v + 1); setRedactions([]); setEditArea(null);
       const initialZoom = preferencesRef.current.defaultZoom;
-      const initialScale = Number(initialZoom) ? Math.max(.25, Math.min(3, Number(initialZoom) / 100)) : 1;
+      const initialScale = Number(initialZoom) ? Math.max(.25, Math.min(MAX_ZOOM, Number(initialZoom) / 100)) : 1;
       const initialZoomMode = Number(initialZoom) ? 'custom' : initialZoom;
       const initialPanel = readingPreferencesRef.current.initialPanel;
       if (!replacing) setReadingMode(readingPreferencesRef.current.mode);
@@ -908,7 +910,7 @@ export default function App() {
   // Zooms keeping the point under the pointer or finger in place. The scale is
   // kept unrounded so many small trackpad steps add up.
   const zoomAt = (value: number, point: { clientX: number; clientY: number; target: EventTarget | null }) => {
-    const loaded = docRef.current, root = viewer.current, next = Math.max(.25, Math.min(3, value));
+    const loaded = docRef.current, root = viewer.current, next = Math.max(.25, Math.min(MAX_ZOOM, value));
     if (!loaded || !root || next === currentScale.current) return;
     const node = point.target instanceof Element ? point.target.closest<HTMLElement>('.pdf-page') : null;
     if (node) {
@@ -922,6 +924,8 @@ export default function App() {
     setCustomScale(next); setZoomMode('custom');
   };
   const zoomAtRef = useRef(zoomAt); zoomAtRef.current = zoomAt;
+  // The selection previewing a highlight takes the chosen colour.
+  useEffect(() => { document.documentElement.style.setProperty('--highlight-preview', color); }, [color]);
   // The screen stays on while a document is being read, never in the library.
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useEffect(() => { void setKeepAwake(reading); }, [reading]);
@@ -1186,7 +1190,7 @@ export default function App() {
       event.preventDefault(); const center = geometry(event), active = gesture;
       // Fingers drift while scrolling: only a clear change of spacing starts the zoom, which then follows the whole gesture.
       if (!active.pinched && Math.abs(center.distance - active.distance) > Math.max(6, active.distance * .08)) active.pinched = true;
-      if (active.pinched) active.next = Math.max(.25, Math.min(3, active.scale * center.distance / active.distance));
+      if (active.pinched) active.next = Math.max(.25, Math.min(MAX_ZOOM, active.scale * center.distance / active.distance));
       active.pointerX = center.x; active.pointerY = center.y;
       if (active.frame) cancelAnimationFrame(active.frame);
       active.frame = requestAnimationFrame(() => { active.stack.style.transform = `translate(${active.pointerX - active.centerX}px, ${active.pointerY - active.centerY}px) scale(${active.next / active.scale})`; });
@@ -1366,7 +1370,7 @@ export default function App() {
     if (docRef.current) unreadSessions.current.delete(docRef.current.id);
     readingState.current.bookmarks = next; setBookmarks(next); setHistoryTick(value => value + 1);
   }, []);
-  const changeZoom = useCallback((delta: number) => { setCustomScale(Math.max(.25, Math.min(3, Math.round((scale + delta) * 100) / 100))); setZoomMode('custom'); }, [scale]);
+  const changeZoom = useCallback((delta: number) => { setCustomScale(Math.max(.25, Math.min(MAX_ZOOM, Math.round((scale + delta) * 100) / 100))); setZoomMode('custom'); }, [scale]);
   const toggleBookmark = useCallback(() => {
     if (!docRef.current || busyRef.current || loadingRef.current) return;
     haptic('light');
@@ -2176,7 +2180,7 @@ export default function App() {
           </div>
           <div className="page-controls"><IconButton label="Página anterior" onClick={() => goToPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton><form onSubmit={e => { e.preventDefault(); commitPageInput(); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={pageInput} onChange={e => { pageInputDirty.current = true; setPageInput(e.target.value.replace(/\D/g, '')); }} onBlur={() => { if (pageInputDirty.current) commitPageInput(); }} /><span>/ {doc?.pdf.numPages || '—'}</span></form><IconButton label="Página siguiente" onClick={() => goToPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton></div>
           <div className="toolbar-right">
-            <div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} onChange={e => { if (['page', 'width'].includes(e.target.value)) setZoomMode(e.target.value); else { setCustomScale(Number(e.target.value) / 100); setZoomMode('custom'); } }} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300].map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= 3}><Plus size={16} /></IconButton></div>
+            <div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} onChange={e => { if (['page', 'width'].includes(e.target.value)) setZoomMode(e.target.value); else { setCustomScale(Number(e.target.value) / 100); setZoomMode('custom'); } }} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300, 400, 600, 800].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300, 400, 600, 800].map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= MAX_ZOOM}><Plus size={16} /></IconButton></div>
             <span className="toolbar-divider" /><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!doc || !!busy || loading} onClick={toggleBookmark} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={17} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton>
             <button className="download-button" aria-label={saveLabel} title={`${saveLabel} (${shortcutLabel('S')})`} onClick={() => void download()} disabled={!doc || !!busy || loading}><ArrowDownToLine size={16} /><span>{doc?.drive ? 'Guardar' : saveLabel}</span></button>
             <IconButton label="Más acciones del documento" disabled={!doc || !!busy || loading} onClick={() => setMobileActions(true)}><MoreHorizontal size={20} /></IconButton>

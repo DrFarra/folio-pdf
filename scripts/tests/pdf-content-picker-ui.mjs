@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
+import { settled } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { operateDocument } from '../../src/engine/operations.mjs';
@@ -196,6 +197,21 @@ try {
     assert.equal(await page.locator('.content-preview canvas').getAttribute('aria-label'), 'Vista previa de la página 3');
     await page.getByRole('button', { name: 'Descartar edición', exact: true }).click(); await picker(page, 3); return { imageSelected: true, sourceRegionExact: true, page: 3 };
   });
+  await check('pinch-zooms-the-page-not-the-interface', async page => {
+    // Two fingers zoom only the PDF; the toolbar keeps its size and position.
+    const canvasWidth = async () => (await page.locator('.pdf-content-picker canvas').boundingBox()).width;
+    await settled(page);
+    const before = await canvasWidth(), toolbar = await page.locator('.pdf-picker-toolbar').boundingBox(), area = await page.locator('.pdf-picker-viewport').boundingBox();
+    const cdp = await page.context().newCDPSession(page), cx = area.x + area.width / 2, cy = area.y + area.height / 2;
+    const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+    await touch('touchStart', [[cx - 30, cy], [cx + 30, cy]]);
+    for (let i = 1; i <= 10; i++) await touch('touchMove', [[cx - 30 - i * 8, cy], [cx + 30 + i * 8, cy]]);
+    await touch('touchEnd', []);
+    await page.waitForFunction(width => { const canvas = document.querySelector('.pdf-content-picker canvas'); return document.querySelector('.pdf-content-picker')?.dataset.pickerState === 'ready' && canvas.getBoundingClientRect().width > width * 1.8; }, before);
+    assert.deepEqual(await page.locator('.pdf-picker-toolbar').boundingBox(), toolbar, 'The interface must not zoom.');
+    assert.equal(await page.evaluate(() => visualViewport.scale), 1);
+    return { pinchZoom: Math.round(await canvasWidth() / before * 100) / 100 };
+  }, { phone: true, width: 390, height: 844 });
   await check('invisible-ocr-explains-unavailability-without-opening-editor', async page => {
     await navigate(page, 4); const item = oracle[3].items.find(item => item.level === 'paragraph' && item.text?.includes('INVISIBLE OCR SAMPLE')); assert(item && !item.editable && item.reason);
     const button = page.locator(`[data-content-id="${item.id}"]`), bounds = await button.boundingBox(); assert(bounds);

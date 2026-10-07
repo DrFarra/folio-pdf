@@ -7,7 +7,7 @@ import FolioMuPDF
 struct PDFOpenArgs: Decodable { let token: String; let path: String; let id: String; let revision: String; let size: UInt64; let password: String? }
 struct PDFPageArgs: Decodable { let token: String; let page: Int }
 struct PDFTokenArgs: Decodable { let token: String }
-struct PDFRenderArgs: Decodable { let token: String; let page: Int; let width: Int; let height: Int; let rotation: Int }
+struct PDFRenderArgs: Decodable { let token: String; let page: Int; let width: Int; let height: Int; let rotation: Int; let fullWidth: Int?; let fullHeight: Int?; let x: Int?; let y: Int? }
 struct PDFOverlay: Decodable {
     let id: String; let page: Int; let kind: String; let rect: [Double]; let color: String; let text: String
     let created: Double; let author: String?; let opacity: Double?; let nativeSourceRef: String?; let originalName: String?; let quads: [[Double]]?
@@ -204,7 +204,11 @@ final class NativePDFService {
         let box = page.bounds(for: .cropBox), turned = args.rotation % 180 != 0
         let size = CGSize(width: turned ? box.height : box.width, height: turned ? box.width : box.height)
         guard size.width > 0, size.height > 0 else { throw error("No se pudo mostrar esta página.") }
-        context.scaleBy(x: CGFloat(args.width) / size.width, y: CGFloat(args.height) / size.height)
+        // The bitmap may be a window (x, y from the top left) of a larger page raster.
+        let fullWidth = CGFloat(args.fullWidth ?? args.width), fullHeight = CGFloat(args.fullHeight ?? args.height)
+        guard fullWidth >= 1, fullHeight >= 1, fullWidth <= 65_536, fullHeight <= 65_536 else { throw error("La zona de la página no es válida.") }
+        context.translateBy(x: -CGFloat(args.x ?? 0), y: CGFloat(args.y ?? 0) + CGFloat(args.height) - fullHeight)
+        context.scaleBy(x: fullWidth / size.width, y: fullHeight / size.height)
         context.concatenate(cgPage.getDrawingTransform(.cropBox, rect: CGRect(origin: .zero, size: size), rotate: Int32(args.rotation - page.rotation), preserveAspectRatio: true))
         context.drawPDFPage(cgPage)
         // PDFPage's base CGPDFPage excludes annotations. Draw exactly those that

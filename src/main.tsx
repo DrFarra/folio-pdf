@@ -10,6 +10,8 @@ import { isDesktop, isNative } from './platform';
 const navigationKeys = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
 addEventListener('keydown', event => { if (navigationKeys.has(event.key)) document.documentElement.dataset.keyboard = 'true'; }, true);
 addEventListener('pointerdown', () => { delete document.documentElement.dataset.keyboard; }, true);
+// Pinching zooms the PDF, never the interface (Safari ignores user-scalable=no).
+addEventListener('gesturestart', event => event.preventDefault(), { passive: false });
 
 // A failed render must not leave a blank, frameless window: offer a reload and,
 // in the desktop app, a way to close it.

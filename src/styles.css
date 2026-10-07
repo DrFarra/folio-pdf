@@ -126,7 +126,7 @@ html:not([data-phone]) .workbench .modal-heading{position:sticky;top:0;z-index:3
 }
 
 /* A horizontal pen stroke selects the text to highlight; vertical drags scroll. */
-.page-content.tool-highlight{cursor:text;touch-action:pan-y}.page-content.tool-highlight .textLayer{pointer-events:auto;user-select:text}.page-content.tool-highlight .textLayer span{cursor:text}.page-content.tool-highlight ::selection{background:rgba(245,209,100,.45)}
+.page-content.tool-highlight{cursor:text;touch-action:pan-y}.page-content.tool-highlight .textLayer{pointer-events:auto;user-select:text}.page-content.tool-highlight .textLayer span{cursor:text}.page-content.tool-highlight ::selection{background:color-mix(in srgb,var(--highlight-preview,#f5d164) 45%,transparent)}
 .textLayer[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}
 .textLayer[data-main-rotation="180"]{transform:rotate(180deg) translate(-100%,-100%)}
 .textLayer[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}
@@ -140,7 +140,7 @@ html[data-touch]:not([data-keyboard]) :focus-visible:not(.highlight-annotation[d
 html.selection-clipped .textLayer ::selection{background:transparent!important}
 .column-selection-preview{position:fixed;inset:0;z-index:15;pointer-events:none}
 .column-selection-preview>span{position:fixed;border-radius:2px;background:#70a9d966}
-.column-selection-preview.highlight>span{background:rgba(245,209,100,.45)}
+.column-selection-preview.highlight>span{background:color-mix(in srgb,var(--highlight-preview,#f5d164) 45%,transparent)}
 /* Search: chapter under each result, marked words, recent searches. */
 .result-page{display:flex;flex-direction:column;gap:1px;min-width:0}
 .result-page em{font-style:normal;font-size:.85em;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}

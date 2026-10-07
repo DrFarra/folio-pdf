@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist';
 import { AlertCircle, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Minus, MousePointer2, Plus, Type } from 'lucide-react';
@@ -23,6 +23,7 @@ type Props = {
 type Mode = 'select' | 'add-text' | 'add-image';
 type Point = { x: number; y: number };
 type Draw = { pointer: number; start: Point; end: Point };
+const MAX_PICKER_ZOOM = 6;
 type View = { page: number; viewport: PageViewport; scale: number; key: string };
 const normalized = (rect: Area['rect']): Area['rect'] => [Math.min(rect[0], rect[2]), Math.min(rect[1], rect[3]), Math.max(rect[0], rect[2]), Math.max(rect[1], rect[3])];
 const pageNumber = (page: number, total: number) => Math.max(1, Math.min(total, Math.round(Number.isFinite(page) ? page : 1)));
@@ -66,6 +67,49 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
   const renderKey = `${doc.revision}:${currentPage}:${zoom}:${hostSize.width}:${hostSize.height}:${hostSize.insetX}:${hostSize.insetY}`;
 
   useEffect(() => { setCurrentPage(pageNumber(page, doc.pdf.numPages)); }, [page, doc.pdf.numPages]);
+  // Two fingers zoom the page, not the whole interface: the stage is scaled
+  // live, then re-rendered sharp at the new zoom with the same point under the fingers.
+  const viewRef = useRef(view); viewRef.current = view;
+  const pinchAnchor = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
+  useEffect(() => {
+    const root = host.current; if (!root) return;
+    let gesture: { distance: number; scale: number; next: number; x: number; y: number; centerX: number; centerY: number } | null = null;
+    const measure = (event: TouchEvent) => { const [a, b] = [event.touches[0], event.touches[1]]; return { distance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }; };
+    const start = (event: TouchEvent) => {
+      const node = stage.current, current = viewRef.current;
+      if (event.touches.length !== 2 || !node || !current) return;
+      event.preventDefault(); draw.current = null; setDrawing(null);
+      const center = measure(event), bounds = node.getBoundingClientRect();
+      gesture = { distance: center.distance, scale: current.scale, next: current.scale, x: (center.x - bounds.left) / bounds.width, y: (center.y - bounds.top) / bounds.height, centerX: center.x, centerY: center.y };
+      node.style.transformOrigin = `${gesture.x * 100}% ${gesture.y * 100}%`;
+    };
+    const move = (event: TouchEvent) => {
+      const node = stage.current; if (!gesture || !node || event.touches.length !== 2) return;
+      event.preventDefault(); const center = measure(event);
+      gesture.next = Math.max(.1, Math.min(MAX_PICKER_ZOOM, gesture.scale * center.distance / gesture.distance));
+      node.style.transform = `translate(${center.x - gesture.centerX}px, ${center.y - gesture.centerY}px) scale(${gesture.next / gesture.scale})`;
+      pinchAnchor.current = { x: gesture.x, y: gesture.y, clientX: center.x, clientY: center.y };
+    };
+    const end = (event: TouchEvent) => {
+      if (!gesture || event.touches.length >= 2) return;
+      const active = gesture; gesture = null;
+      if (Math.abs(active.next - active.scale) < .01) { stage.current?.style.removeProperty('transform'); pinchAnchor.current = null; return; }
+      setZoom(Math.round(active.next * 100) / 100);
+    };
+    root.addEventListener('touchstart', start, { passive: false }); root.addEventListener('touchmove', move, { passive: false });
+    root.addEventListener('touchend', end); root.addEventListener('touchcancel', end);
+    return () => { root.removeEventListener('touchstart', start); root.removeEventListener('touchmove', move); root.removeEventListener('touchend', end); root.removeEventListener('touchcancel', end); };
+  }, []);
+  useLayoutEffect(() => {
+    const root = host.current, node = stage.current, anchor = pinchAnchor.current;
+    if (!view || !node) return;
+    node.style.removeProperty('transform'); node.style.removeProperty('transform-origin');
+    if (!anchor || !root) return;
+    pinchAnchor.current = null;
+    const bounds = node.getBoundingClientRect();
+    root.scrollLeft += bounds.left + bounds.width * anchor.x - anchor.clientX;
+    root.scrollTop += bounds.top + bounds.height * anchor.y - anchor.clientY;
+  }, [view]);
   useEffect(() => {
     setPageInput(String(currentPage)); setSelected(null); setFeedback(''); setUnavailable(false); draw.current = null; setDrawing(null);
   }, [currentPage]);
@@ -115,7 +159,7 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
         const scale = zoom === 'fit' ? Math.max(.05, Math.min((hostSize.width - hostSize.insetX) / base.width, (hostSize.height - hostSize.insetY) / base.height, 3)) : zoom;
         const viewport = target.getViewport({ scale }), ratio = Math.min(2, window.devicePixelRatio || 1);
         // Keep exceptionally large pages within a bounded render allocation.
-        const pixelRatio = Math.min(ratio, Math.sqrt(24_000_000 / Math.max(1, viewport.width * viewport.height)), 16384 / viewport.width, 16384 / viewport.height);
+        const pixelRatio = Math.min(ratio, Math.sqrt(16_000_000 / Math.max(1, viewport.width * viewport.height)), 16384 / viewport.width, 16384 / viewport.height);
         surface.width = Math.ceil(viewport.width * pixelRatio); surface.height = Math.ceil(viewport.height * pixelRatio);
         task = target.render({ canvas: surface, viewport, transform: [pixelRatio, 0, 0, pixelRatio, 0, 0] });
         await task.promise;
@@ -201,7 +245,7 @@ export default function PdfContentPicker({ doc, page, getBytes, busy, onSelect, 
         <button type="button" aria-pressed={zoom === 1} disabled={busy} onClick={() => setZoom(1)}>100 %</button>
         <button type="button" aria-label="Alejar página del editor" disabled={busy || (view?.scale || .05) <= .1} onClick={() => setZoom(Math.max(.1, (view?.scale || 1) / 1.25))}><Minus size={16} aria-hidden="true" /></button>
         <span aria-label="Zoom actual">{Math.round((view?.scale || 1) * 100)} %</span>
-        <button type="button" aria-label="Acercar página del editor" disabled={busy || (view?.scale || 1) >= 4} onClick={() => setZoom(Math.min(4, (view?.scale || 1) * 1.25))}><Plus size={16} aria-hidden="true" /></button>
+        <button type="button" aria-label="Acercar página del editor" disabled={busy || (view?.scale || 1) >= MAX_PICKER_ZOOM} onClick={() => setZoom(Math.min(MAX_PICKER_ZOOM, (view?.scale || 1) * 1.25))}><Plus size={16} aria-hidden="true" /></button>
       </div>
       <form className="pdf-picker-pagination" onSubmit={event => { event.preventDefault(); navigate(Number(pageInput)); }}>
         <button type="button" aria-label="Página anterior del editor" disabled={busy || currentPage <= 1} onClick={() => navigate(currentPage - 1)}><ChevronLeft size={17} aria-hidden="true" /></button>
