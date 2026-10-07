@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Download, Highlighter, PenLine, Search, Share2, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, Copy, Download, GraduationCap, Highlighter, PenLine, Search, Share2, StickyNote, Trash2, X } from 'lucide-react';
 import type { Annotation } from '../types';
 import { normalize, plural } from '../pdf';
 import { HIGHLIGHT_PRESETS } from './HighlightColorPicker';
@@ -54,6 +54,18 @@ export function AnnotationsPanel(props: Props) {
     }
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
   };
+  // Anki imports tab-separated notes: front (the quote or note), back (meaning, page and document), tags.
+  const cards = () => {
+    const title = props.documentName.replace(/\.pdf$/i, ''), clean = (text: string) => text.replace(/\s+/g, ' ').trim();
+    const tag = (text: string) => normalize(text).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const rows = visible.filter(item => item.kind !== 'ink' && clean(item.text)).map(item => {
+      const label = item.kind === 'highlight' ? highlightLabel(item.color) : 'Nota';
+      const back = [label, `Página ${props.pageName(item.page)}`, title].filter(Boolean).join(' · ');
+      return [clean(item.text), back, ['folio', tag(title), label ? tag(label) : ''].filter(Boolean).join(' ')].join('\t');
+    });
+    return ['#separator:tab', '#html:false', '#tags column:3', ...rows].join('\n') + '\n';
+  };
+  const saveCards = async () => { setMenu(false); await props.onSave(cards(), `${props.documentName.replace(/\.pdf$/i, '')} — tarjetas Anki.txt`); };
   const copy = async () => { setMenu(false); await props.onCopy(summary()); setCopied(true); window.setTimeout(() => setCopied(false), 1800); };
   const save = async () => { setMenu(false); await props.onSave(summary(), `${props.documentName.replace(/\.pdf$/i, '')} — anotaciones.txt`); };
   const counts = (id: Kind) => id === 'all' ? sorted.length : sorted.filter(item => item.kind === id).length;
@@ -73,6 +85,7 @@ export function AnnotationsPanel(props: Props) {
           <p>Resumen de {plural(visible.length, 'anotación', 'anotaciones')}{filtered ? ' filtradas' : ''}</p>
           <button type="button" role="menuitem" onClick={() => void copy()}><Copy size={17} /><span>Copiar resumen</span></button>
           <button type="button" role="menuitem" onClick={() => void save()}><Download size={17} /><span>Guardar como texto</span></button>
+          <button type="button" role="menuitem" disabled={!visible.some(item => item.kind !== 'ink' && item.text.trim())} onClick={() => void saveCards()}><GraduationCap size={17} /><span>Tarjetas para Anki</span></button>
         </div>}
       </div>
     </div>

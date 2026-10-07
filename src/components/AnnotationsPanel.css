@@ -59,3 +59,4 @@ html[data-touch] .annotations-export-menu button{font-size:15px;padding:12px}
 .annotation-text{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
 .annotation-label{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--annotation-color) 34%,transparent);color:color-mix(in srgb,var(--annotation-color) 35%,var(--text));font-size:10px;font-weight:650;letter-spacing:.02em}
 html[data-touch] .annotation-label{height:22px;font-size:12px;padding:0 9px}
+.annotations-export-menu button:disabled{opacity:.45}
