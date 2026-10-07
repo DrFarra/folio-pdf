@@ -177,3 +177,4 @@ html[data-touch] .search-recent [role=list] button{min-height:40px;font-size:14p
 .page-tone>span i:nth-child(2){width:80%}.page-tone>span i:nth-child(3){width:60%}
 .page-tone.sepia>span{background:#f4ecd8}.page-tone.sepia>span i{background:#5b4a3388}
 .page-tone.dark>span{background:#1c1d21}.page-tone.dark>span i{background:#d8dbe388}
+.note-shortcut{display:inline-grid;place-items:center;height:18px;padding:0 5px;border-radius:5px;border:1px solid var(--line);border-bottom-width:2px;background:var(--panel);font:600 10px/1 inherit;font-family:inherit;color:var(--muted)}
