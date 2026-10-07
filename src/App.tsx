@@ -5,7 +5,7 @@ import {
   PenLine, Eraser, Highlighter, Info, Layers, ListTree, LoaderCircle, LockKeyhole,
   Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, MousePointer2,
   Plus, Printer, Redo2, RotateCw, Search, ShieldCheck,
-  Settings, Settings2, StickyNote, Trash2, Undo2, Upload, X, Wrench, FilePlus2,
+  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, FilePlus2,
 } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail } from './components/PDFPage';
@@ -47,11 +47,12 @@ import { PageScrubber } from './components/PageScrubber';
 import { ActivityPill, type ActivityStep } from './components/ActivityPill';
 import { ColumnSelectionPreview } from './components/ColumnSelectionPreview';
 import { addHighlights } from './highlight-merge';
+import { AnnotationsPanel } from './components/AnnotationsPanel';
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
 import { assetUrl, pdfAssetSettings } from './assets';
-import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, type Anchor } from './platform';
+import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, type Anchor } from './platform';
 import { clearSavedState, forgetDocument, listLibrary, readLibraryData, readLibrarySource, readSession, rememberDocument, touchDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigationTarget, RecentDocument, Session, SideTab, Tool } from './types';
 
@@ -204,7 +205,7 @@ export default function App() {
   const passwordRef = useRef(password); passwordRef.current = password;
   const [passwordText, setPasswordText] = useState('');
   const [dragOver, setDragOver] = useState(false);
-  const [toast, setToast] = useState<{ message: string; kind: ToastKind; id: number } | null>(null);
+  const [toast, setToast] = useState<{ message: string; kind: ToastKind; id: number; action?: { label: string; run: () => void } } | null>(null);
   // Drawers and notices stay mounted while they animate out.
   const sidebarLeaving = useExit(touchLayout && sidebar), notesLeaving = useExit(touchLayout && notesOpen), toastLeaving = useExit(!!toast, 150);
   const lastToast = useRef(toast); if (toast) lastToast.current = toast;
@@ -430,11 +431,12 @@ export default function App() {
   // until closed; screen readers hear every notice through the live regions.
   // While a task runs its outcome waits for the activity capsule, which shows it in place.
   const activityRun = useRef<{ started: number; result?: { message: string; kind: ToastKind } } | null>(null);
-  const notify = useCallback((message: string, kind: ToastKind = 'info') => {
-    if (activityRun.current && kind !== 'error') { activityRun.current.result = { message, kind }; return; }
-    setToast(previous => ({ message, kind, id: (previous?.id || 0) + 1 }));
+  const notify = useCallback((message: string, kind: ToastKind = 'info', action?: { label: string; run: () => void }) => {
+    if (activityRun.current && kind !== 'error' && !action) { activityRun.current.result = { message, kind }; return; }
+    setToast(previous => ({ message, kind, id: (previous?.id || 0) + 1, action }));
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = kind === 'error' ? null : setTimeout(() => setToast(null), 3500);
+    // A notice with an action stays longer, so there is time to use it.
+    toastTimer.current = kind === 'error' ? null : setTimeout(() => setToast(null), action ? 6000 : 3500);
   }, []);
 
   const loadDocument = useCallback(async (source: OpenSource, name = SAMPLE_NAME, sample = false, nativeSource?: string, context?: OpenContext) => {
@@ -2134,7 +2136,10 @@ export default function App() {
 
       </main>
 
-      {(notesOpen || notesLeaving) && <aside className={`notes-panel${touchLayout ? ' mobile-drawer' : ''}${notesLeaving ? ' closing' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? 'Anotaciones' : undefined}>{touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>Explorar</h2><IconButton label="Cerrar panel" onClick={closeMobilePanel}><X size={20} /></IconButton></div>{explorerTabs}</>}{!touchLayout && <div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => { setNotesOpen(false); focusRail('Anotaciones'); }}><X size={16} /></IconButton></div>}<div className="notes-scroll" id={touchLayout ? 'explorer-panel' : undefined} role={touchLayout ? 'tabpanel' : undefined}>{annotations.length ? [...annotations].sort((a, b) => a.page - b.page || a.created - b.created).map(a => <article key={a.id} className={`annotation-card ${activeNote === a.id ? 'selected' : ''}`}><div className="annotation-card-heading"><button onClick={() => { mobilePage(a.page); setActiveNote(a.id); }}>{a.kind === 'note' ? <StickyNote size={14} /> : a.kind === 'ink' ? <PenLine size={14} /> : <Highlighter size={14} />}<span>Página {pageName(a.page)}</span></button><IconButton label={`Eliminar anotación de la página ${pageName(a.page)}`} disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => removeAnnotation(a.id)}><Trash2 size={14} /></IconButton></div>{a.kind === 'note' ? <><p>{a.text}</p><button className="note-edit" disabled={!doc?.canAnnotate || !!busy || loading} onClick={() => editNote(a, 'list')}>Editar nota</button></> : <span className="highlight-description"><span style={{ backgroundColor: a.color }} />{a.text || (a.kind === 'ink' ? 'Dibujo a mano' : 'Texto resaltado')}</span>}</article>) : <div className="empty-panel"><StickyNote size={26} /><p>Sin anotaciones</p><span>Resalta texto o añade una nota desde Anotar.</span></div>}</div></aside>}
+      {(notesOpen || notesLeaving) && <aside className={`notes-panel${touchLayout ? ' mobile-drawer' : ''}${notesLeaving ? ' closing' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? 'Anotaciones' : undefined}>{touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>Explorar</h2><IconButton label="Cerrar panel" onClick={closeMobilePanel}><X size={20} /></IconButton></div>{explorerTabs}</>}{!touchLayout && <div className="notes-heading"><div><MessageSquare size={17} /><h2>Anotaciones</h2><span>{annotations.length}</span></div><IconButton label="Cerrar anotaciones" onClick={() => { setNotesOpen(false); focusRail('Anotaciones'); }}><X size={16} /></IconButton></div>}<div className="notes-scroll" id={touchLayout ? 'explorer-panel' : undefined} role={touchLayout ? 'tabpanel' : undefined}>{doc && <AnnotationsPanel annotations={annotations} documentName={doc.name} activeId={activeNote} editable={!!doc.canAnnotate && !busy && !loading} pageName={pageName}
+          onSelect={item => { mobilePage(item.page); setActiveNote(item.id); }} onDelete={item => { removeAnnotation(item.id); notify(item.kind === 'note' ? 'Nota eliminada.' : item.kind === 'ink' ? 'Dibujo eliminado.' : 'Resaltado eliminado.', 'info', { label: 'Deshacer', run: undo }); }} onEditNote={item => editNote(item, 'list')}
+          onCopy={async text => { if (isNative && isIOS) await copyNativeText(text); else await navigator.clipboard.writeText(text); }}
+          onSave={(text, name) => saveExport(new TextEncoder().encode(text), name, 'txt', doc.nativeSource)} />}</div></aside>}
     </div>
 
     {touchLayout && <DocumentSwitcher open={mobileTabs && !library} documents={tabs.map(tab => ({ key: tab.key, id: tab.doc.id, name: tab.doc.name, page: tab.key === activeTabKey ? page : tab.page, pages: tab.doc.pdf.numPages }))} recents={recents} activeKey={activeTabKey} disabled={!!busy || loading || editorDraft} onDismiss={() => setMobileTabs(false)} onSelect={key => { setMobileTabs(false); requestAnimationFrame(() => { closeMobilePanel(); if (key === activeTabKey) setLibrary(false); else void switchTab(key); }); }} onRecent={recent => { setMobileTabs(false); requestAnimationFrame(() => { closeMobilePanel(); void reopenRecent(recent); }); }} onCloseDocument={key => { setMobileTabs(false); requestAnimationFrame(() => void closeTab(key)); }} onImport={() => { setMobileTabs(false); requestAnimationFrame(() => void chooseFile()); }} onLibrary={() => { setMobileTabs(false); void returnToLibrary(); }} />}
@@ -2181,7 +2186,7 @@ export default function App() {
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     <ActivityPill working={activity} done={activityDone} />
     {doc && <ColumnSelectionPreview />}
-    {shownToast && <div key={shownToast.id} ref={toastRef} popover="manual" className={`toast ${shownToast.kind === 'error' ? 'error' : ''}${toast ? '' : ' closing'}`}>{shownToast.kind === 'error' ? <CircleAlert size={18} /> : shownToast.kind === 'info' ? <Info size={18} /> : <Check size={18} />}<span>{shownToast.message}</span><button aria-label="Cerrar aviso" onClick={() => setToast(null)}><X size={15} /></button></div>}
+    {shownToast && <div key={shownToast.id} ref={toastRef} popover="manual" className={`toast ${shownToast.kind === 'error' ? 'error' : ''}${toast ? '' : ' closing'}`}>{shownToast.kind === 'error' ? <CircleAlert size={18} /> : shownToast.kind === 'info' ? <Info size={18} /> : <Check size={18} />}<span>{shownToast.message}</span>{shownToast.action && <button type="button" className="toast-action" onClick={() => { const action = shownToast.action!; setToast(null); action.run(); }}>{shownToast.action.label}</button>}<button aria-label="Cerrar aviso" onClick={() => setToast(null)}><X size={15} /></button></div>}
     <div className="sr-only" role="status">{toast && toast.kind !== 'error' && <span key={toast.id}>{toast.message}</span>}</div>
     <div className="sr-only" role="alert">{toast?.kind === 'error' && <span key={toast.id}>{toast.message}</span>}</div>
 

@@ -1,0 +1,58 @@
+/* Annotations as a study list: tools on top, then quotes and notes by page. */
+.annotations-panel{display:flex;flex-direction:column;gap:10px;min-width:0}
+.annotations-tools{position:sticky;top:-18px;z-index:2;display:flex;gap:6px;align-items:center;margin:-18px -14px 0;padding:12px 14px 8px;background:color-mix(in srgb,var(--panel) 92%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.annotations-search{display:flex;align-items:center;gap:7px;flex:1;min-width:0;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--muted);transition:border-color .15s,box-shadow .15s}
+.annotations-search:focus-within{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent)}
+.annotations-search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:12px;outline:none!important}
+.annotations-search input::-webkit-search-cancel-button{-webkit-appearance:none}
+.annotations-search button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--muted)}
+.annotations-export{position:relative}
+.annotations-export-trigger{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text);transition:background-color .15s,color .15s,border-color .15s}
+.annotations-export-trigger[aria-expanded=true]{background:var(--hover)}
+.annotations-export-trigger.done{color:#2f9e6b;border-color:#2f9e6b66}
+@media(hover:hover){.annotations-export-trigger:hover{background:var(--hover)}}
+.annotations-export-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:220px;padding:6px;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:0 12px 36px #0f172a2e,0 2px 6px #0f172a14;animation:motion-pop-in 160ms var(--ease-out,ease-out);transform-origin:top right}
+.annotations-export-menu p{margin:4px 8px 6px;font-size:11px;color:var(--muted)}
+.annotations-export-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:9px;font-size:12.5px;text-align:left;color:var(--text)}
+@media(hover:hover){.annotations-export-menu button:hover{background:var(--hover)}}
+.annotations-filters{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;margin:0 -14px;padding:0 14px}
+.annotations-filters::-webkit-scrollbar{display:none}
+.annotations-filters button{display:inline-flex;align-items:center;gap:5px;flex-shrink:0;height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:11px;font-weight:550;color:var(--muted);transition:background-color .15s,color .15s,border-color .15s}
+.annotations-filters button small{font-size:10px;opacity:.75;font-variant-numeric:tabular-nums}
+.annotations-filters button[aria-pressed=true]{background:var(--text);border-color:var(--text);color:var(--bg)}
+.annotations-colors{display:flex;flex-wrap:wrap;gap:6px}
+.annotations-colors button{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--swatch);color:#1f2328;box-shadow:inset 0 0 0 1px #0f172a1f;transition:transform .12s,box-shadow .15s}
+.annotations-colors button[aria-pressed=true]{box-shadow:0 0 0 2px var(--panel),0 0 0 3.5px color-mix(in srgb,var(--text) 60%,transparent)}
+.annotations-colors button:active{transform:scale(.92)}
+
+.annotations-group{display:flex;flex-direction:column;gap:6px}
+.annotations-group h3{display:flex;align-items:center;gap:6px;margin:6px 2px 0;font-size:10.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.annotations-group h3 span{font-size:10px;font-weight:550;letter-spacing:0;opacity:.7}
+.annotations-panel .annotation-card{position:relative;display:flex;align-items:flex-start;gap:4px;margin:0;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden;transition:border-color .15s,box-shadow .15s,background-color .15s}
+.annotations-panel .annotation-card.highlight::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--annotation-color)}
+.annotations-panel .annotation-card.selected{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+@media(hover:hover){.annotations-panel .annotation-card:hover{border-color:color-mix(in srgb,var(--text) 22%,var(--line))}}
+.annotation-open{display:flex;align-items:flex-start;gap:9px;flex:1;min-width:0;padding:11px 4px 11px 14px;text-align:left;color:var(--text)}
+.annotation-kind{display:grid;place-items:center;flex-shrink:0;width:22px;height:22px;margin-top:-1px;border-radius:7px;background:color-mix(in srgb,var(--annotation-color) 26%,transparent);color:color-mix(in srgb,var(--annotation-color) 55%,var(--text))}
+.annotation-body{font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden}
+.annotation-card.highlight .annotation-body{color:color-mix(in srgb,var(--text) 92%,transparent)}
+.annotation-card.ink .annotation-body{color:var(--muted);font-style:italic}
+.annotation-actions{display:flex;flex-direction:column;align-items:flex-end;gap:2px;padding:6px 6px 6px 0;flex-shrink:0}
+.annotation-delete{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--muted);opacity:.7;transition:opacity .15s,background-color .15s,color .15s}
+@media(hover:hover){.annotation-card .annotation-delete{opacity:0}.annotation-card:hover .annotation-delete,.annotation-delete:focus-visible{opacity:.8}.annotation-delete:hover{background:var(--hover);color:#c64b43;opacity:1}}
+.annotations-panel .note-edit{font-size:11px;font-weight:550;color:var(--accent);padding:4px 6px;border-radius:6px;white-space:nowrap}
+.annotations-reset{margin-top:6px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:11px;font-weight:550;color:var(--text)}
+.annotations-empty-art{display:grid;place-items:center;width:56px;height:56px;border-radius:18px;background:var(--accent-soft);color:var(--accent);margin-bottom:6px}
+.annotations-empty>span:last-child{max-width:30ch;line-height:1.5}
+
+/* Touch sizes */
+html[data-touch] .annotations-search{height:44px}
+html[data-touch] .annotations-search input{font-size:16px}
+html[data-touch] .annotations-export-trigger{width:44px;height:44px}
+html[data-touch] .annotations-filters button{height:34px;padding:0 12px;font-size:13px}
+html[data-touch] .annotations-colors button{width:30px;height:30px}
+html[data-touch] .annotation-body{font-size:14.5px}
+html[data-touch] .annotations-group h3{font-size:11.5px}
+html[data-touch] .annotation-delete{width:40px;height:40px;opacity:.75}
+html[data-touch] .annotations-panel .note-edit{font-size:13px;padding:8px}
+html[data-touch] .annotations-export-menu button{font-size:15px;padding:12px}

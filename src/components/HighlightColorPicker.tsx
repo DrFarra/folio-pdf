@@ -5,7 +5,7 @@ import { visibleBounds } from '../mobile';
 import './HighlightColorPicker.css';
 
 type Props = { color: string; onChange: (hex: string) => void; disabled?: boolean };
-const PRESETS = [
+export const HIGHLIGHT_PRESETS = [
   ['Amarillo', '#f5d164'], ['Verde', '#91c6a5'], ['Rosa', '#eea1b7'], ['Violeta', '#bea9e4'],
   ['Azul', '#8bbaf0'], ['Naranja', '#f2af74'], ['Rojo', '#eba08e'], ['Menta', '#82d0bf'],
   ['Cian', '#8bd7e7'], ['Índigo', '#9cabe8'], ['Lima', '#c7d67d'], ['Gris', '#c5c9d1'],
@@ -18,7 +18,7 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
   const trigger = useRef<HTMLButtonElement>(null), palette = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef(false), selection = useRef<Range | null>(null);
   const id = useId();
-  const chosen = validColor(color) ? color.toLowerCase() : PRESETS[0][1];
+  const chosen = validColor(color) ? color.toLowerCase() : HIGHLIGHT_PRESETS[0][1];
 
   function rememberSelection() {
     const current = window.getSelection();
@@ -85,7 +85,7 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
       const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -6 : 6) + buttons.length) % buttons.length;
       buttons[target]?.focus({ preventScroll: true });
     }}>
-      <strong>Resaltador</strong><div className="highlight-color-presets">{PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
+      <strong>Resaltador</strong><div className="highlight-color-presets">{HIGHLIGHT_PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
       <label className="highlight-color-custom"><span>Personalizado</span><input type="color" aria-label="Color personalizado del resaltador" value={chosen} onChange={event => choose(event.target.value, false)} /></label>
     </div>, document.body)}
   </>;
