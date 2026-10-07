@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { visibleBounds } from '../mobile';
+import { setHighlightLabel, useHighlightLabels } from '../highlight-labels';
 import './HighlightColorPicker.css';
 
 type Props = { color: string; onChange: (hex: string) => void; disabled?: boolean };
@@ -19,6 +20,7 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
   const restoreFocus = useRef(false), selection = useRef<Range | null>(null);
   const id = useId();
   const chosen = validColor(color) ? color.toLowerCase() : HIGHLIGHT_PRESETS[0][1];
+  const labels = useHighlightLabels(), presetName = HIGHLIGHT_PRESETS.find(([, hex]) => hex === chosen)?.[0] || 'Personalizado';
 
   function rememberSelection() {
     const current = window.getSelection();
@@ -85,7 +87,9 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
       const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -6 : 6) + buttons.length) % buttons.length;
       buttons[target]?.focus({ preventScroll: true });
     }}>
-      <strong>Resaltador</strong><div className="highlight-color-presets">{HIGHLIGHT_PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
+      <strong>Resaltador</strong><div className="highlight-color-presets">{HIGHLIGHT_PRESETS.map(([name, hex]) => <button key={name} aria-label={`Color ${name}`} title={labels[hex] ? `${name} · ${labels[hex]}` : name} aria-pressed={chosen === hex} onClick={() => choose(hex)}><span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span></button>)}</div>
+      {/* What the chosen color means; shown in the annotations list and the exported summary. */}
+      <label className="highlight-meaning" style={{ '--swatch': chosen } as React.CSSProperties}><span aria-hidden="true" /><input aria-label={`Significado del color ${presetName}`} placeholder={`Significado del ${presetName.toLowerCase()}`} maxLength={40} value={labels[chosen] || ''} onChange={event => setHighlightLabel(chosen, event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); dismiss(restoreFocus.current); } }} /></label>
       <label className="highlight-color-custom"><span>Personalizado</span><input type="color" aria-label="Color personalizado del resaltador" value={chosen} onChange={event => choose(event.target.value, false)} /></label>
     </div>, document.body)}
   </>;

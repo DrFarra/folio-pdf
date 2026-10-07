@@ -56,3 +56,6 @@ html[data-touch] .annotations-group h3{font-size:11.5px}
 html[data-touch] .annotation-delete{width:40px;height:40px;opacity:.75}
 html[data-touch] .annotations-panel .note-edit{font-size:13px;padding:8px}
 html[data-touch] .annotations-export-menu button{font-size:15px;padding:12px}
+.annotation-text{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+.annotation-label{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--annotation-color) 34%,transparent);color:color-mix(in srgb,var(--annotation-color) 35%,var(--text));font-size:10px;font-weight:650;letter-spacing:.02em}
+html[data-touch] .annotation-label{height:22px;font-size:12px;padding:0 9px}

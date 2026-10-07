@@ -3,6 +3,7 @@ import { Check, Copy, Download, Highlighter, PenLine, Search, Share2, StickyNote
 import type { Annotation } from '../types';
 import { normalize, plural } from '../pdf';
 import { HIGHLIGHT_PRESETS } from './HighlightColorPicker';
+import { highlightLabel, useHighlightLabels } from '../highlight-labels';
 import './AnnotationsPanel.css';
 
 type Kind = 'all' | Annotation['kind'];
@@ -13,6 +14,8 @@ type Props = {
 };
 const KINDS: { id: Kind; label: string }[] = [{ id: 'all', label: 'Todo' }, { id: 'highlight', label: 'Resaltados' }, { id: 'note', label: 'Notas' }, { id: 'ink', label: 'Dibujos' }];
 export const colorName = (hex: string) => HIGHLIGHT_PRESETS.find(([, value]) => value.toLowerCase() === hex.toLowerCase())?.[0] || 'Color personalizado';
+// The reader's meaning for a color when there is one, else its name.
+const meaning = (hex: string) => highlightLabel(hex) || colorName(hex);
 
 /** Annotations as a study list: filtered by type, color and text, grouped by
  * page, and exported as a Markdown summary of quotes and notes. */
@@ -23,6 +26,7 @@ export function AnnotationsPanel(props: Props) {
   const [menu, setMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  useHighlightLabels();
   const sorted = useMemo(() => [...props.annotations].sort((a, b) => a.page - b.page || (b.rect[3] - a.rect[3]) || a.created - b.created), [props.annotations]);
   const palette = useMemo(() => [...new Set(sorted.filter(item => item.kind === 'highlight').map(item => item.color.toLowerCase()))], [sorted]);
   const needle = normalize(query.trim());
@@ -43,7 +47,7 @@ export function AnnotationsPanel(props: Props) {
     for (const [page, items] of groups) {
       lines.push('', `## Página ${props.pageName(page)}`, '');
       for (const item of items) {
-        if (item.kind === 'highlight') lines.push(`> ${item.text.replace(/\s*\n\s*/g, ' ').trim() || 'Texto resaltado'}`, `> — *${colorName(item.color)}*`, '');
+        if (item.kind === 'highlight') lines.push(`> ${item.text.replace(/\s*\n\s*/g, ' ').trim() || 'Texto resaltado'}`, `> — *${meaning(item.color)}*`, '');
         else if (item.kind === 'note') lines.push(`- **Nota:** ${item.text.trim().replace(/\n/g, '\n  ')}`, '');
         else lines.push('- _Dibujo a mano_', '');
       }
@@ -76,14 +80,14 @@ export function AnnotationsPanel(props: Props) {
       {KINDS.filter(item => item.id === 'all' || counts(item.id) > 0).map(item => <button key={item.id} type="button" aria-pressed={kind === item.id} onClick={() => { setKind(item.id); if (item.id !== 'highlight' && item.id !== 'all') setColors([]); }}>{item.label}<small>{counts(item.id)}</small></button>)}
     </div>
     {palette.length > 1 && kind !== 'note' && kind !== 'ink' && <div className="annotations-colors" role="group" aria-label="Filtrar resaltados por color">
-      {palette.map(color => <button key={color} type="button" aria-label={colorName(color)} title={colorName(color)} aria-pressed={colors.includes(color)} style={{ '--swatch': color } as React.CSSProperties} onClick={() => setColors(current => current.includes(color) ? current.filter(item => item !== color) : [...current, color])}>{colors.includes(color) && <Check size={12} />}</button>)}
+      {palette.map(color => <button key={color} type="button" aria-label={meaning(color)} title={meaning(color)} aria-pressed={colors.includes(color)} style={{ '--swatch': color } as React.CSSProperties} onClick={() => setColors(current => current.includes(color) ? current.filter(item => item !== color) : [...current, color])}>{colors.includes(color) && <Check size={12} />}</button>)}
     </div>}
     {groups.length ? groups.map(([page, items]) => <section key={page} className="annotations-group" aria-label={`Página ${props.pageName(page)}`}>
       <h3>Página {props.pageName(page)}<span>{items.length}</span></h3>
       {items.map(item => <article key={item.id} className={`annotation-card ${item.kind}${props.activeId === item.id ? ' selected' : ''}`} style={{ '--annotation-color': item.color } as React.CSSProperties}>
         <button type="button" className="annotation-open" aria-label={`Ir a ${item.kind === 'note' ? 'la nota' : item.kind === 'ink' ? 'el dibujo' : 'el resaltado'} de la página ${props.pageName(page)}`} onClick={() => props.onSelect(item)}>
           <span className="annotation-kind" aria-hidden="true">{item.kind === 'note' ? <StickyNote size={14} /> : item.kind === 'ink' ? <PenLine size={14} /> : <Highlighter size={14} />}</span>
-          <span className="annotation-body">{item.kind === 'ink' ? 'Dibujo a mano' : item.text.trim() || (item.kind === 'note' ? 'Nota vacía' : 'Texto resaltado')}</span>
+          <span className="annotation-text">{item.kind === 'highlight' && highlightLabel(item.color) && <span className="annotation-label">{highlightLabel(item.color)}</span>}<span className="annotation-body">{item.kind === 'ink' ? 'Dibujo a mano' : item.text.trim() || (item.kind === 'note' ? 'Nota vacía' : 'Texto resaltado')}</span></span>
         </button>
         <div className="annotation-actions">
           {item.kind === 'note' && <button type="button" className="note-edit" disabled={!props.editable} onClick={() => props.onEditNote(item)}>Editar nota</button>}
