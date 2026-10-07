@@ -1,5 +1,5 @@
 import { invokeBinary } from './binary';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import type { NativeDocument } from './platform';
 import type { Annotation } from './types';
 export type DriveAccount = { id: string; email: string; name: string };
@@ -16,7 +16,13 @@ export const driveCancelConnect = () => invoke<void>('drive_cancel_connect');
 export const driveDisconnect = () => invoke<void>('drive_disconnect');
 export const driveList = (folder: string, search = '', pageToken?: string) => invoke<{ items?: DriveItem[]; nextPageToken?: string }>('drive_list', { folder, search, pageToken });
 export const driveCached = () => invoke<{ items: DriveItem[] }>('drive_cached');
-export const driveOpen = (fileId: string, offline = false) => invoke<DriveOpened>('drive_open', { fileId, offline });
+/** Reported while opening: bytes of the file downloaded so far, then its verification. */
+export type DriveProgress = { phase: 'connect' | 'download' | 'verify'; done: number; total: number };
+export const driveOpen = (fileId: string, offline = false, onProgress?: (progress: DriveProgress) => void) => {
+  const channel = new Channel<DriveProgress>();
+  if (onProgress) channel.onmessage = onProgress;
+  return invoke<DriveOpened>('drive_open', { fileId, offline, onProgress: channel });
+};
 export const driveLookup = (token: string) => invoke<DriveBinding | null>('drive_lookup', { token });
 export const driveStage = (binding: string, bytes: Uint8Array) => invokeBinary<DrivePending>('drive_stage', bytes, { headers: { 'x-folio-drive-binding': binding } });
 export const driveStageNative = (binding: string, token: string, annotations: Annotation[], removedSourceRefs: string[]) => invoke<DrivePending>('drive_stage_native', { binding, token, annotations, removedSourceRefs });

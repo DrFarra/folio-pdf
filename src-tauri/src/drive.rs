@@ -6,7 +6,7 @@ use reqwest::{blocking::{Client, Response, Body}, header, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{ffi::OsStr, fs, io::Read, path::{Path, PathBuf}, sync::Mutex, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
-use tauri::Manager;
+use tauri::{ipc::Channel, Manager};
 
 const API: &str = "https://www.googleapis.com/drive/v2";
 const UPLOAD: &str = "https://www.googleapis.com/upload/drive/v2";
@@ -180,7 +180,9 @@ pub fn clear_copies(app:&tauri::AppHandle,d:&Desktop)->Result<(),String> {
     let _guard=state.0.lock().map_err(|_|"Google Drive está ocupado.")?;
     prune(d,false);Ok(())
 }
-fn download(c:&Client,t:&str,d:&Desktop,a:&Account,remote:Remote,cache:Option<Binding>)->Result<Opened,String> {
+/// Download phases reported to the UI: bytes done of the file's total size.
+type Progress<'a>=&'a dyn Fn(&str,u64,u64);
+fn download(c:&Client,t:&str,d:&Desktop,a:&Account,remote:Remote,cache:Option<Binding>,progress:Progress)->Result<Opened,String> {
     remote.pdf()?;
     let valid=cache.filter(|b|b.account.id==a.id && b.remote.id==remote.id && checksum(&b.path).ok()==Some((b.remote.md5_checksum.clone(),b.remote.size())));
     if let Some(old)=&valid { if old.remote.md5_checksum==remote.md5_checksum {
@@ -204,7 +206,17 @@ fn download(c:&Client,t:&str,d:&Desktop,a:&Account,remote:Remote,cache:Option<Bi
             if r.headers().get(header::CONTENT_RANGE).and_then(|v|v.to_str().ok())!=Some(&expected) {return Err("Drive devolvió un rango diferente. Reintenta la descarga.".into());}
             std::io::copy(&mut fs::File::open(&old.path).map_err(readerr)?,&mut target).map_err(ioerr)?;
         } else if r.status()!=StatusCode::OK {return Err("Respuesta de descarga inválida.".into());} }
-        transferred=std::io::copy(&mut r,&mut target).map_err(|_|OFFLINE)?;target.sync_all().map_err(ioerr)?;drop(target);
+        // Copied in blocks so the UI sees real progress; a delta resumes from the cached prefix.
+        let base=match suffix { Some(old) if r.status()==StatusCode::PARTIAL_CONTENT=>old.remote.size(), _=>0 };
+        let total=remote.size();let mut buffer=vec![0u8;64*1024];let mut reported=Instant::now();
+        progress("download",base,total);
+        loop {
+            let n=match r.read(&mut buffer) { Ok(0)=>break, Ok(n)=>n, Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue, Err(_)=>return Err(OFFLINE.into()) };
+            std::io::Write::write_all(&mut target,&buffer[..n]).map_err(ioerr)?;transferred+=n as u64;
+            if reported.elapsed()>=Duration::from_millis(80) {reported=Instant::now();progress("download",base+transferred,total);}
+        }
+        progress("download",base+transferred,total);progress("verify",total,total);
+        target.sync_all().map_err(ioerr)?;drop(target);
         if checksum(&path)?!=(remote.md5_checksum.clone(),remote.size()) {return Err("La descarga cambió o quedó incompleta. Reintenta; la copia anterior está intacta.".into());}
         folio_core::inspect_pdf_file(&path)?;
         let b=Binding{id,account:a.clone(),remote,path:path.clone()};
@@ -258,11 +270,13 @@ pub async fn drive_list(app:tauri::AppHandle,folder:String,page_token:Option<Str
     }).await
 }
 #[tauri::command]
-pub async fn drive_open(app:tauri::AppHandle,file_id:String,offline:Option<bool>)->Result<Opened,String> {
+pub async fn drive_open(app:tauri::AppHandle,file_id:String,offline:Option<bool>,on_progress:Channel<Value>)->Result<Opened,String> {
+    let progress=move|phase:&str,done:u64,total:u64| {let _=on_progress.send(json!({"phase":phase,"done":done,"total":total}));};
+    progress("connect",0,0);
     work(app,move|app,d,c,g| {
         safe_id(&file_id)?;let a=account(d)?;let cached=read_binding(d,&cache_path(d,&a,&file_id)).ok();
         if offline==Some(true) {let b=cached.ok_or("Este PDF todavía no está descargado en el dispositivo.")?;if checksum(&b.path)?!=(b.remote.md5_checksum.clone(),b.remote.size()){return Err("La copia local está dañada. Descárgala de nuevo.".into());}return opened(d,&b,true,0);}
-        with_token(app,c,g,&a,|t| {let remote=metadata(c,t,&file_id,OFFLINE)?;download(c,t,d,&a,remote,cached.clone())})
+        with_token(app,c,g,&a,|t| {let remote=metadata(c,t,&file_id,OFFLINE)?;download(c,t,d,&a,remote,cached.clone(),&progress)})
     }).await
 }
 #[tauri::command]
@@ -491,20 +505,20 @@ mod tests {
             let base=include_bytes!("../../public/sample.pdf");
             response(c.put(format!("{UPLOAD}/files/{id}")).bearer_auth(token.trim()).query(&[("uploadType","media")]).header(header::CONTENT_TYPE,"application/pdf").body(base.to_vec()).send().unwrap()).unwrap();
             let remote=metadata(&c,token.trim(),&id,OFFLINE).unwrap();
-            let first=download(&c,token.trim(),&d,&a,remote.clone(),None).unwrap();assert_eq!(first.transferred,base.len() as u64);
+            let first=download(&c,token.trim(),&d,&a,remote.clone(),None,&|_,_,_|{}).unwrap();assert_eq!(first.transferred,base.len() as u64);
             let b:Binding=json_read(&binding_path(&d,&first.binding).unwrap()).unwrap();
             let edit=PathBuf::from(std::env::var("FOLIO_DRIVE_TEST_PDF").unwrap());let p=stage(&d,b.id.clone(),edit).unwrap();
             let uploaded=upload(&c,token.trim(),&p,&b,&remote,None).unwrap();assert_eq!(uploaded.id,id);assert_eq!(uploaded.md5_checksum,p.checksum);
             assert_eq!(upload(&c,token.trim(),&p,&b,&remote,None).unwrap_err(),"CONFLICT");
             let fresh=metadata(&c,token.trim(),&id,OFFLINE).unwrap();assert!(delta_base(&b.remote,&fresh));
-            let partial=download(&c,token.trim(),&d,&a,fresh.clone(),Some(b.clone())).unwrap();assert_eq!(partial.transferred,p.size-base.len() as u64);
+            let partial=download(&c,token.trim(),&d,&a,fresh.clone(),Some(b.clone()),&|_,_,_|{}).unwrap();assert_eq!(partial.transferred,p.size-base.len() as u64);
             let cached:Binding=json_read(&binding_path(&d,&partial.binding).unwrap()).unwrap();
-            let warm=download(&c,token.trim(),&d,&a,fresh.clone(),Some(cached.clone())).unwrap();assert_eq!(warm.transferred,0);
+            let warm=download(&c,token.trim(),&d,&a,fresh.clone(),Some(cached.clone()),&|_,_,_|{}).unwrap();assert_eq!(warm.transferred,0);
             // An external rewrite invalidates the ancestry, even if old custom
             // properties survive. It cannot be mistaken for a suffix update.
             response(c.put(format!("{UPLOAD}/files/{id}")).bearer_auth(token.trim()).query(&[("uploadType","media")]).header(header::CONTENT_TYPE,"application/pdf").body(base.to_vec()).send().unwrap()).unwrap();
             let external=metadata(&c,token.trim(),&id,OFFLINE).unwrap();assert!(!delta_base(&cached.remote,&external));
-            let full=download(&c,token.trim(),&d,&a,external.clone(),Some(cached)).unwrap();assert_eq!(full.transferred,base.len() as u64);
+            let full=download(&c,token.trim(),&d,&a,external.clone(),Some(cached),&|_,_,_|{}).unwrap();assert_eq!(full.transferred,base.len() as u64);
             assert!(pending_path(&d,&p.id).unwrap().exists(),"Rejected upload must preserve the journal");
             let second_path=p.path.with_file_name("concurrent.pdf");
             let (second_hash,second_size)=checksum(&second_path).unwrap();

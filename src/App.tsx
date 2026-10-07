@@ -11,8 +11,8 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
 import DocumentLibrary from './components/DocumentLibrary';
-import { DriveBrowser } from './components/DriveBrowser';
-import { driveLookup, driveStage, driveStageNative, driveStatus as readDriveStatus, driveSync, type DriveBinding, type DriveOpened } from './drive';
+import { DriveBrowser, TransferCard, advance, type Transfer } from './components/DriveBrowser';
+import { driveLookup, driveOpen, driveStage, driveStageNative, driveStatus as readDriveStatus, driveSync, type DriveBinding, type DriveOpened } from './drive';
 import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentOutline from './components/DocumentOutline';
 import ViewSettings from './components/ViewSettings';
@@ -188,6 +188,7 @@ export default function App() {
   const toastRef = useRef<HTMLDivElement>(null);
   const [windowState, setWindowState] = useState({ maximized: false, fullscreen: false });
   const [driveAvailable, setDriveAvailable] = useState(isNative);
+  const [driveRefresh, setDriveRefresh] = useState<Transfer | null>(null);
   const menuAction = useRef((_id: string) => {});
   const [sessionFailed, setSessionFailed] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false);
@@ -1340,10 +1341,39 @@ export default function App() {
     if (tab && tab.key !== activeTabRef.current) await switchTab(tab.key);
     if (showLibrary) setLibrary(true);
   }
+  // A Drive PDF in Recientes may have been saved from another device since this
+  // copy was downloaded. Without local work pending, ask Drive for its current
+  // revision; the download is skipped when this copy is still the latest.
+  async function latestDriveRevision(recent: RecentDocument) {
+    if (!isNative || !driveAvailable || recent.draft || !recent.nativeSource) return null;
+    const binding = await driveLookup(recent.nativeSource).catch(() => null);
+    if (!binding) return null;
+    const [session, status] = await Promise.all([readSession(recent.id).catch(() => null), readDriveStatus().catch(() => null)]);
+    const unsaved = !!session?.annotations.length && (session.nativeSavedAnnotations === undefined || annotationFingerprint(session.annotations) !== session.nativeSavedAnnotations);
+    if (!status?.account || status.account.id !== binding.account || unsaved || status.pending.some(item => item.binding === binding.binding)) return null;
+    setDriveRefresh({ name: recent.name, phase: 'connect', done: 0, total: recent.size, rate: 0, at: performance.now() });
+    try {
+      const file = await driveOpen(binding.fileId, false, progress => setDriveRefresh(current => current && advance(current, progress)));
+      setDriveRefresh(current => current && { ...current, phase: 'open' });
+      return { file, replaced: file.baseChecksum !== binding.baseChecksum };
+    } catch {
+      setDriveRefresh(null);
+      notify('No se pudo comprobar Google Drive. Se abrió la copia de este dispositivo, que puede no tener los últimos cambios.');
+      return null;
+    }
+  }
   async function reopenRecent(recent: RecentDocument) {
     try {
       const existing = tabsRef.current.find(tab => tab.doc.id === recent.id);
       if (existing) { setLibrary(false); if (existing.key !== activeTabRef.current) requestAnimationFrame(() => void switchTab(existing.key)); return; }
+      const latest = await latestDriveRevision(recent);
+      if (latest) {
+        try { await openDriveDocument(latest.file); } finally { setDriveRefresh(null); }
+        // The older revision had no local work; one entry per Drive file stays in Recientes.
+        const opened = tabsRef.current.some(tab => tab.doc.drive?.fileId === latest.file.fileId && tab.doc.drive.baseChecksum === latest.file.baseChecksum);
+        if (opened && latest.replaced) { await forgetDocument(recent.id).catch(() => {}); setRecents(items => items.filter(item => item.id !== recent.id)); notify('Se abrió la versión más reciente guardada en Google Drive.'); }
+        return;
+      }
       if (isNative) {
         let source: NativeDocument, recoveredDraft = false;
         try { source = recent.nativeSource ? { token: recent.nativeSource, name: recent.name, size: recent.size } : await readLibrarySource(recent.id); }
@@ -2075,6 +2105,7 @@ export default function App() {
     <div className="sr-only" role="alert">{toast?.kind === 'error' && <span key={toast.id}>{toast.message}</span>}</div>
 
     {library && <div className={`library-screen${phone ? '' : ' desktop-library-screen'}`}>{driveLibrary ? <DriveBrowser onClose={() => setDriveLibrary(false)} onOpen={openDriveDocument} onSynced={driveSynced} conflicts={driveConflicts} onConflicts={setDriveConflicts} /> : libraryContent}</div>}
+    {driveRefresh && <TransferCard transfer={driveRefresh} />}
     {deleteTarget && <Modal title={isDesktop ? 'Quitar de la biblioteca' : 'Eliminar de la biblioteca'} onClose={() => setDeleteTarget(null)}><p className="modal-description">{isDesktop ? `Se quitará «${deleteTarget.name}» de la biblioteca junto con sus anotaciones, marcadores y cambios guardados en este equipo.` : `Se eliminarán de ${here} la copia de «${deleteTarget.name}», sus anotaciones, marcadores y cambios guardados.`} El archivo original no se modifica.{tabs.some(tab => tab.doc.id === deleteTarget.id) && ' El documento abierto se cerrará y perderás los cambios que no hayas guardado en un PDF.'}</p><div className="modal-actions"><button className="secondary-button" onClick={() => setDeleteTarget(null)}>Cancelar</button><button className="primary-button destructive-button" disabled={!!busy || loading} onClick={() => void forgetRecent(deleteTarget)}>{isDesktop ? 'Quitar de la biblioteca' : 'Eliminar copia y cambios'}</button></div></Modal>}
     {!inlineEditing && workbenchPanel}
     {noteDraft && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {pageName(noteDraft.page)}</div><textarea autoFocus data-autofocus aria-label="Texto de la nota" placeholder="Escribe una nota…" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} /><div className="note-modal-footer"><span>{noteText.length} / 5000</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
