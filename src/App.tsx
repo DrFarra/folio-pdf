@@ -1363,14 +1363,11 @@ export default function App() {
   // A Drive PDF in Recientes may have been saved from another device since this
   // copy was downloaded. Without local work pending, ask Drive for its current
   // revision; the download is skipped when this copy is still the latest.
-  async function latestDriveRevision(recent: RecentDocument) {
-    if (!isNative || !driveAvailable || recent.draft || !recent.nativeSource) return null;
-    const binding = await driveLookup(recent.nativeSource).catch(() => null);
-    if (!binding) return null;
-    const [session, status] = await Promise.all([readSession(recent.id).catch(() => null), readDriveStatus().catch(() => null)]);
-    const unsaved = !!session?.annotations.length && (session.nativeSavedAnnotations === undefined || annotationFingerprint(session.annotations) !== session.nativeSavedAnnotations);
-    if (!status?.account || status.account.id !== binding.account || unsaved || status.pending.some(item => item.binding === binding.binding)) return null;
-    setDriveRefresh({ name: recent.name, phase: 'connect', done: 0, total: recent.size, rate: 0, at: performance.now() });
+  async function latestDriveRevision(item: { name: string; size: number }, binding: DriveBinding | null | undefined, unsaved: boolean) {
+    if (!isNative || !driveAvailable || !binding || unsaved) return null;
+    const status = await readDriveStatus().catch(() => null);
+    if (!status?.account || status.account.id !== binding.account || status.pending.some(pending => pending.binding === binding.binding)) return null;
+    setDriveRefresh({ name: item.name, phase: 'connect', done: 0, total: item.size, rate: 0, at: performance.now() });
     try {
       const file = await driveOpen(binding.fileId, false, progress => setDriveRefresh(current => current && advance(current, progress)));
       setDriveRefresh(current => current && { ...current, phase: 'open' });
@@ -1381,22 +1378,41 @@ export default function App() {
       return null;
     }
   }
+  const sessionUnsaved = async (id: string) => {
+    const session = await readSession(id).catch(() => null);
+    return !!session?.annotations.length && (session.nativeSavedAnnotations === undefined || annotationFingerprint(session.annotations) !== session.nativeSavedAnnotations);
+  };
+  // Opens Drive's newer revision in place of the older one, which had no local work.
+  async function openLatestRevision(latest: { file: DriveOpened; replaced: boolean }, previousId: string, previousTab?: string) {
+    try { await openDriveDocument(latest.file); } finally { setDriveRefresh(null); }
+    const opened = tabsRef.current.some(tab => tab.doc.drive?.fileId === latest.file.fileId && tab.doc.drive.baseChecksum === latest.file.baseChecksum);
+    if (!opened || !latest.replaced) return;
+    if (previousTab && tabsRef.current.some(tab => tab.key === previousTab)) await closeTab(previousTab);
+    await forgetDocument(previousId).catch(() => {}); setRecents(items => items.filter(item => item.id !== previousId));
+    notify('Se abrió la versión más reciente guardada en Google Drive.');
+  }
   async function reopenRecent(recent: RecentDocument) {
     try {
       const existing = tabsRef.current.find(tab => tab.doc.id === recent.id);
-      if (existing) { setLibrary(false); if (existing.key !== activeTabRef.current) requestAnimationFrame(() => void switchTab(existing.key)); return; }
-      const latest = await latestDriveRevision(recent);
-      if (latest) {
-        try { await openDriveDocument(latest.file); } finally { setDriveRefresh(null); }
-        // The older revision had no local work; one entry per Drive file stays in Recientes.
-        const opened = tabsRef.current.some(tab => tab.doc.drive?.fileId === latest.file.fileId && tab.doc.drive.baseChecksum === latest.file.baseChecksum);
-        if (opened && latest.replaced) { await forgetDocument(recent.id).catch(() => {}); setRecents(items => items.filter(item => item.id !== recent.id)); notify('Se abrió la versión más reciente guardada en Google Drive.'); }
-        return;
+      if (existing) {
+        // An open tab of a Drive PDF may also be behind another device's save.
+        retainCurrentTab();
+        const tab = tabsRef.current.find(item => item.key === existing.key) || existing;
+        const dirty = tab.doc.modified || annotationFingerprint(tab.annotations) !== tab.doc.savedAnnotations;
+        const latest = await latestDriveRevision(recent, tab.doc.drive, dirty);
+        if (latest?.replaced) { await openLatestRevision(latest, recent.id, existing.key); return; }
+        setDriveRefresh(null);
+        setLibrary(false); if (existing.key !== activeTabRef.current) requestAnimationFrame(() => void switchTab(existing.key)); return;
       }
       if (isNative) {
         let source: NativeDocument, recoveredDraft = false;
         try { source = recent.nativeSource ? { token: recent.nativeSource, name: recent.name, size: recent.size } : await readLibrarySource(recent.id); }
         catch (error) { const draft = await nativeDraftDocument(recent.id, recent.name); if (!draft) throw error; source = draft; recoveredDraft = true; }
+        // The native catalog has no source tokens: the opened copy tells whether it came from Drive.
+        if (!recent.draft && !recoveredDraft) {
+          const latest = await latestDriveRevision(recent, await driveLookup(source.token).catch(() => null), await sessionUnsaved(recent.id));
+          if (latest) { await openLatestRevision(latest, recent.id); return; }
+        }
         await openDocument(source, recent.name, false, source.token, recent.draft || recoveredDraft ? { id: recent.id, modified: true, draftSource: true } : undefined);
       }
       else if (recent.draft) {
