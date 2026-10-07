@@ -730,7 +730,7 @@ try {
     // alternative Mover dialog is also completed entirely with touch taps.
     await page.mouse.move(originBox.x + originBox.width / 2, originBox.y + originBox.height / 2); await page.mouse.down();
     await page.mouse.move(originBox.x + originBox.width / 2 + 10, originBox.y + originBox.height / 2, { steps: 3 });
-    await page.locator('.bookmark-drag-preview').waitFor();
+    await page.locator('.bookmark-entry.lifted').first().waitFor();
     await page.mouse.move(target.x + Math.min(target.width / 2, 130), target.y + target.height / 2, { steps: 12 });
     await row('Destination').locator('xpath=self::*[contains(@class,"drop-inside")]').waitFor();
     await page.screenshot({ path: path.join(output, 'iphone-bookmark-drag.png'), animations: 'disabled' }); await page.mouse.up();

@@ -21,7 +21,7 @@ type Props = {
   onEditingComplete?: () => void;
 };
 type Row = { node: BookmarkNode; depth: number };
-type DragGesture = { id: string; pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean; source: HTMLDivElement; cleanup: () => void };
+type DragGesture = { id: string; pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean; source: HTMLDivElement; scroller: HTMLElement | null; scrollStart: number; cleanup: () => void };
 const COLORS = [['Rojo', '#bd4b38'], ['Amarillo', '#c89728'], ['Verde', '#448764'], ['Azul', '#4579ba'], ['Violeta', '#8a64b4']] as const;
 
 function flatten(nodes: BookmarkNode[], includeCollapsed = false, expanded = new Set<string>()): Row[] {
@@ -48,12 +48,13 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [drop, setDrop] = useState<BookmarkDropTarget | null>(null);
   const [blockedId, setBlockedId] = useState<string | null>(null);
-  const [dragLocation, setDragLocation] = useState({ x: 0, y: 0 });
+  // Re-renders the lifted row as the finger moves; the gesture ref holds the position.
+  const [, setDragLocation] = useState({ x: 0, y: 0 });
   const [expandedWhileDragging, setExpandedWhileDragging] = useState(new Set<string>());
   const tree = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null), menuElement = useRef<HTMLDivElement>(null);
   const gesture = useRef<DragGesture | null>(null), dropRef = useRef<BookmarkDropTarget | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null), hoverId = useRef<string | null>(null);
-  const expandedRef = useRef(new Set<string>()), suppressClick = useRef(false);
+  const expandedRef = useRef(new Set<string>()), suppressClick = useRef(false), rowHeights = useRef(new Map<string, number>());
   const bookmarksRef = useRef(bookmarks), changeRef = useRef(onChange), disabledRef = useRef(disabled);
   bookmarksRef.current = bookmarks; changeRef.current = onChange; disabledRef.current = disabled;
   const editing = useRef<string | null>(null);
@@ -148,7 +149,9 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     if (element && tree.current.contains(element)) {
       const box = element.getBoundingClientRect(), fraction = (y - box.top) / box.height;
       target = { id: element.dataset.bookmarkId!, position: fraction < .23 ? 'before' : fraction > .77 ? 'after' : 'inside' };
-    } else if (hit && tree.current.contains(hit)) target = { id: null, position: 'inside' };
+    } else if (hit?.closest('.bookmark-root-drop')) target = { id: null, position: 'inside' };
+    // Between rows sliding aside: keep the current slot instead of flickering.
+    else if (hit && tree.current.contains(hit)) return;
     const valid = target && bookmarkDropDestination(bookmarksRef.current, active.id, target);
     setBlockedId(target && !valid && target.id !== active.id ? target.id : null);
     if (!valid) target = null;
@@ -179,17 +182,16 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
     let scrollFrame = 0;
     const source = event.currentTarget;
     const active: DragGesture = { id: node.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
-      x: event.clientX, y: event.clientY, active: false, source, cleanup: () => {} };
+      x: event.clientX, y: event.clientY, active: false, source, scroller: null, scrollStart: 0, cleanup: () => {} };
     gesture.current = active;
     const autoScroll = () => {
       if (gesture.current !== active || !active.active) return;
-      let container: HTMLElement | null = tree.current?.parentElement || null;
-      while (container && !(container.scrollHeight > container.clientHeight && /auto|scroll/.test(getComputedStyle(container).overflowY))) container = container.parentElement;
+      const container = active.scroller;
       if (container) {
         const box = container.getBoundingClientRect();
         if (active.x >= box.left && active.x <= box.right && active.y >= box.top && active.y <= box.bottom) {
           const speed = active.y < box.top + 32 ? -10 : active.y > box.bottom - 32 ? 10 : 0;
-          if (speed) { container.scrollTop += speed; updateDrop(active.x, active.y); }
+          if (speed) { container.scrollTop += speed; updateDrop(active.x, active.y); setDragLocation({ x: active.x, y: active.y }); }
         }
       }
       scrollFrame = requestAnimationFrame(autoScroll);
@@ -200,6 +202,10 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
       if (!active.active) {
         if (Math.hypot(pointer.clientX - active.startX, pointer.clientY - active.startY) < 5) return;
         active.active = true; suppressClick.current = true;
+        let container: HTMLElement | null = tree.current?.parentElement || null;
+        while (container && !(container.scrollHeight > container.clientHeight && /auto|scroll/.test(getComputedStyle(container).overflowY))) container = container.parentElement;
+        active.scroller = container; active.scrollStart = container?.scrollTop || 0;
+        measureRows();
         source.setPointerCapture?.(active.pointerId); document.getSelection()?.removeAllRanges();
         document.body.classList.add('bookmark-drag-active'); setDraggingId(node.id); setMenu(null);
         scrollFrame = requestAnimationFrame(autoScroll);
@@ -219,24 +225,58 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
       if (active.active) focusRow(active.id);
     };
     const cancel = (pointer: PointerEvent) => { if (pointer.pointerId === active.pointerId) { cancelDrag(); suppressClick.current = false; } };
-    const escape = (key: KeyboardEvent) => { if (key.key === 'Escape') { key.preventDefault(); cancelDrag(); suppressClick.current = false; focusRow(active.id); } };
+    const escape = (key: KeyboardEvent) => {
+      if (key.key !== 'Escape') return;
+      key.preventDefault();
+      // The release that follows a cancelled drag is not a click on the row under it.
+      const dragged = active.active; cancelDrag(dragged); focusRow(active.id);
+      if (dragged) window.addEventListener('pointerup', () => setTimeout(() => { suppressClick.current = false; }, 0), { once: true });
+    };
     active.cleanup = () => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', finish); window.removeEventListener('pointercancel', cancel); window.removeEventListener('keydown', escape);
       cancelAnimationFrame(scrollFrame); if (source.hasPointerCapture?.(active.pointerId)) source.releasePointerCapture(active.pointerId);
     };
     window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', finish); window.addEventListener('pointercancel', cancel); window.addEventListener('keydown', escape);
   };
-  const draggingNode = bookmarks.find(node => node.id === draggingId);
+  // Row slots are measured untransformed so the rows sliding aside never feed back into their size.
+  function measureRows() {
+    tree.current?.querySelectorAll<HTMLElement>('[data-bookmark-id]').forEach(row => rowHeights.current.set(row.dataset.bookmarkId!, row.offsetHeight + 2));
+  }
+  useLayoutEffect(() => { if (draggingId) measureRows(); }, [draggingId, rows]);
+  // While dragging, the row (with its open children) follows the finger and the
+  // rows between its old and new slot slide aside to open the gap where it lands.
+  const lifted = new Set<string>(), shifted = new Map<string, number>();
+  let liftedOffset = 0;
+  const dragged = draggingId && gesture.current?.active ? rows.findIndex(row => row.node.id === draggingId) : -1;
+  if (dragged >= 0) {
+    let last = dragged;
+    while (last + 1 < rows.length && rows[last + 1].depth > rows[dragged].depth) last++;
+    let block = 0;
+    for (let i = dragged; i <= last; i++) { lifted.add(rows[i].node.id); block += rowHeights.current.get(rows[i].node.id) ?? 37; }
+    let slot = -1;
+    if (drop?.id === null) slot = rows.length;
+    else if (drop && drop.position !== 'inside') {
+      const target = rows.findIndex(row => row.node.id === drop.id);
+      if (target >= 0) {
+        slot = target;
+        if (drop.position === 'after') { slot = target + 1; while (slot < rows.length && rows[slot].depth > rows[target].depth) slot++; }
+      }
+    }
+    if (slot > last + 1) for (let i = last + 1; i < slot; i++) shifted.set(rows[i].node.id, -block);
+    else if (slot >= 0 && slot < dragged) for (let i = slot; i < dragged; i++) shifted.set(rows[i].node.id, block);
+    const active = gesture.current!;
+    liftedOffset = active.y - active.startY + ((active.scroller?.scrollTop || 0) - active.scrollStart);
+  }
   const targetNode = bookmarks.find(node => node.id === drop?.id);
   const dropHint = blockedId ? 'No se puede mover un grupo dentro de sí mismo.' : drop?.id === null ? 'Al final del nivel principal' : targetNode ? `${drop?.position === 'inside' ? 'Dentro de' : drop?.position === 'before' ? 'Antes de' : 'Después de'} ${targetNode.title}` : 'Arrastra a un grupo o entre marcadores';
 
   return <div className={`bookmark-panel${draggingId ? ' is-dragging' : ''}`} onClickCapture={event => { if (suppressClick.current) { event.preventDefault(); event.stopPropagation(); } }} onDragStart={event => event.preventDefault()} onDragEnter={event => { if (!event.dataTransfer.types.includes('Files')) event.stopPropagation(); }} onDragLeave={event => { if (!event.dataTransfer.types.includes('Files')) event.stopPropagation(); }}>
     <div className="bookmark-panel-actions"><button className="bookmark-new-group" aria-label="Crear grupo de marcadores" onClick={() => add(null, true)} disabled={disabled}><FolderPlus size={15} /><span>Nuevo grupo</span></button></div>
     {!bookmarks.length && <div className="empty-panel"><Bookmark size={26} /><p>Sin marcadores.</p><span>{document.documentElement.dataset.layout === 'phone' ? 'Toca el marcador junto al número de página para guardar esta página.' : document.documentElement.dataset.layout === 'tablet' ? 'Usa Guardar marcador en Más acciones para guardar esta página.' : 'Guarda la página actual con el marcador de la barra de herramientas.'}</span></div>}
-    <div className="bookmark-tree" role="tree" aria-label="Árbol de marcadores" ref={tree}>
+    <div className={`bookmark-tree${dragged >= 0 ? ' is-sorting' : ''}`} role="tree" aria-label="Árbol de marcadores" ref={tree}>
       {rows.map((row, index) => {
         const { node, depth } = row, hasChildren = bookmarks.some(item => item.parentId === node.id);
-        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-label={node.page === null ? node.title : `${node.title}, página ${node.page}`} aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, top: event.clientY, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
+        return <div key={node.id} className={`bookmark-entry ${node.page === page ? 'selected' : ''} ${drop?.id === node.id ? `drop-${drop.position}` : ''} ${blockedId === node.id ? 'drop-blocked' : ''} ${draggingId === node.id ? 'dragging' : ''} ${lifted.has(node.id) ? 'lifted' : ''}`} data-bookmark-id={node.id} role="treeitem" aria-label={node.page === null ? node.title : `${node.title}, página ${node.page}`} aria-level={depth + 1} aria-expanded={hasChildren ? !node.collapsed || expandedWhileDragging.has(node.id) : undefined} aria-selected={node.page === page} tabIndex={disabled ? -1 : node.id === tabId ? 0 : -1} style={{ '--bookmark-depth': Math.min(depth, 10), '--bookmark-color': node.color, transform: lifted.has(node.id) ? `translate3d(0, ${liftedOffset}px, 0)${node.id === draggingId ? ' scale(1.02)' : ''}` : shifted.has(node.id) ? `translate3d(0, ${shifted.get(node.id)}px, 0)` : undefined } as React.CSSProperties} onFocus={() => setFocusedId(node.id)} onKeyDown={event => keyDown(event, row, index)} onContextMenu={event => { event.preventDefault(); showMenu(node.id, { left: event.clientX, top: event.clientY, bottom: event.clientY }); }} draggable={false} onPointerDown={event => beginDrag(event, node)}>
           {hasChildren ? <button className="bookmark-fold" tabIndex={-1} aria-label={`${node.collapsed && !expandedWhileDragging.has(node.id) ? 'Expandir' : 'Contraer'} ${node.title}`} onClick={() => toggle(node)} disabled={disabled}>{node.collapsed && !expandedWhileDragging.has(node.id) ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button> : <span className="bookmark-fold-space" />}
           {node.page === null ? <Folder size={14} className="bookmark-symbol" /> : <Bookmark size={13} className="bookmark-symbol" fill="currentColor" />}
           {editingId === node.id ? <input ref={input} className="bookmark-name-input" aria-label="Nombre del marcador" value={name} maxLength={200} onChange={event => setName(event.target.value)} onBlur={() => finishEdit(true, false)} onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishEdit(event.key === 'Enter'); } }} disabled={disabled} /> : <button className="bookmark-label" tabIndex={-1} title={node.page === null ? node.title : `${node.title} · Página ${node.page}`} onDoubleClick={() => beginEdit(node.id)} onClick={() => { setFocusedId(node.id); if (node.page !== null) onGoToPage(node.page); else if (hasChildren) toggle(node); }} disabled={disabled}>{node.title}</button>}
@@ -248,7 +288,6 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
       {draggingId && <div className={`bookmark-root-drop${drop?.id === null ? ' active' : ''}`} aria-label="Soltar en nivel principal">Nivel principal</div>}
     </div>
     {draggingId && <div className="bookmark-drop-hint" role="status" aria-live="polite">{dropHint}</div>}
-    {draggingNode && createPortal(<div className="bookmark-drag-preview" style={{ left: Math.min(dragLocation.x + 14, window.innerWidth - 190), top: Math.min(dragLocation.y + 14, window.innerHeight - 45), '--bookmark-color': draggingNode.color } as React.CSSProperties}>{draggingNode.page === null ? <Folder size={14} /> : <Bookmark size={13} fill="currentColor" />}<span>{draggingNode.title}</span></div>, document.body)}
     {menu && menuNode && createPortal(<div className="bookmark-menu" ref={menuElement} role="menu" aria-label={`Opciones de ${menuNode.title}`} style={menuPlace?.menu === menu ? { left: menuPlace.left, top: menuPlace.top } : { left: menu.left, top: menu.bottom + 4 }} onKeyDown={event => {
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
       event.preventDefault(); const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')], index = buttons.indexOf(document.activeElement as HTMLButtonElement);

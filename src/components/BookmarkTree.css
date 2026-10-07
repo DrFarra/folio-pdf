@@ -18,7 +18,15 @@
 .bookmark-name-input{flex:1;min-width:0;width:100%;height:25px;padding:2px 4px;border:1px solid var(--accent);border-radius:3px;background:var(--surface);font-size:11px;color:var(--text)}
 .bookmark-name-input:focus-visible{outline:1px solid var(--accent);outline-offset:0}
 .bookmark-entry:not(:has(.bookmark-name-input)),.bookmark-entry .bookmark-label,.bookmark-entry .bookmark-symbol{cursor:grab}
-.bookmark-entry.dragging{opacity:.4}
+.bookmark-tree.is-sorting .bookmark-entry{transition:transform .22s cubic-bezier(.2,.8,.2,1),background-color .15s,border-color .15s}
+/* The picked-up row rides above the list, under the finger, and lets hit tests through to the rows below. */
+.bookmark-tree.is-sorting .bookmark-entry.lifted{transition:box-shadow .18s,background-color .18s;z-index:3;pointer-events:none;background:var(--surface);will-change:transform}
+.bookmark-entry.dragging{box-shadow:0 10px 26px #0004,0 2px 6px #0002;border-color:var(--line);animation:bookmark-lift .18s cubic-bezier(.2,.8,.2,1)}
+@keyframes bookmark-lift{from{box-shadow:0 0 0 #0000;background:transparent}}
+.bookmark-root-drop{animation:bookmark-fade-in .2s ease-out}
+.bookmark-drop-hint{animation:bookmark-fade-in .2s ease-out}
+@keyframes bookmark-fade-in{from{opacity:0;transform:translateY(4px)}}
+@media(prefers-reduced-motion:reduce){.bookmark-tree.is-sorting .bookmark-entry,.bookmark-entry.dragging,.bookmark-root-drop,.bookmark-drop-hint{transition:none;animation:none}}
 .bookmark-entry.drop-inside{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 3px 0 var(--accent)}
 .bookmark-entry.drop-before:before,.bookmark-entry.drop-after:after{content:'';position:absolute;left:calc(3px + var(--bookmark-depth)*12px);right:3px;height:3px;background:var(--accent);border-radius:2px;z-index:1}
 .bookmark-entry.drop-before:before{top:-2px}.bookmark-entry.drop-after:after{bottom:-2px}
@@ -26,8 +34,6 @@
 .bookmark-root-drop{display:flex;align-items:center;justify-content:center;min-height:38px;margin-top:8px;border:1px dashed var(--line);border-radius:5px;font-size:11px;color:var(--muted)}
 .bookmark-root-drop.active{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .bookmark-drop-hint{font-size:10px;line-height:16px;color:var(--muted);margin:7px 4px 0}
-.bookmark-drag-preview{position:fixed;z-index:10010;pointer-events:none;display:flex;align-items:center;gap:7px;width:175px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);box-shadow:0 5px 15px #0003;font-size:11px}
-.bookmark-drag-preview svg{color:var(--bookmark-color);flex-shrink:0}.bookmark-drag-preview span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Rows are dragged, never text-selected: iOS WebKit otherwise extends a selection under the finger. It ignores unprefixed user-select. */
 .bookmark-tree,.bookmark-root-drop{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .bookmark-tree .bookmark-name-input{-webkit-user-select:text;user-select:text}

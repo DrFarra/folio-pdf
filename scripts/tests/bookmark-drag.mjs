@@ -45,7 +45,7 @@ async function startDrag(id) {
   const box = await row(id).locator('.bookmark-label').boundingBox(); assert(box);
   const x = box.x + Math.min(24, box.width / 2), y = box.y + box.height / 2;
   await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 8, y, { steps: 3 });
-  await page.locator('.bookmark-drag-preview').waitFor();
+  await page.locator('.bookmark-entry.lifted').first().waitFor();
 }
 async function over(id, position = 'inside') {
   const box = await row(id).boundingBox(); assert(box);
@@ -53,7 +53,7 @@ async function over(id, position = 'inside') {
 }
 async function drag(id, target, position = 'inside') {
   await startDrag(id); await over(target, position); await row(target).locator(`xpath=self::*[contains(@class,"drop-${position}")]`).waitFor(); await page.mouse.up();
-  await page.locator('.bookmark-drag-preview').waitFor({ state: 'detached' });
+  await page.locator('.bookmark-entry.lifted').first().waitFor({ state: 'detached' });
 }
 
 try {
@@ -91,8 +91,15 @@ try {
   results.push({ id: 'branch-move-undo-and-redo', passed: true });
 
   const beforeCycle = (await stored()).bookmarks;
-  await startDrag('target'); await over('grandchild'); await row('grandchild').locator('xpath=self::*[contains(@class,"drop-blocked")]').waitFor();
-  await page.mouse.up(); assert.deepEqual((await stored()).bookmarks, beforeCycle);
+  // A dragged group carries its open descendants under the pointer, so none of them can become its drop target.
+  await startDrag('target');
+  const carried = await page.$$eval('.bookmark-entry', rows => {
+    const index = rows.findIndex(item => item.dataset.bookmarkId === 'target'), level = Number(rows[index].getAttribute('aria-level')), children = [];
+    for (let i = index + 1; i < rows.length && Number(rows[i].getAttribute('aria-level')) > level; i++) children.push(rows[i].classList.contains('lifted'));
+    return { self: rows[index].classList.contains('lifted'), children };
+  });
+  assert(carried.self && carried.children.length && carried.children.every(Boolean), JSON.stringify(carried));
+  await page.keyboard.press('Escape'); await page.mouse.up(); assert.deepEqual((await stored()).bookmarks, beforeCycle);
   await startDrag('mother'); await over('page-parent'); await page.keyboard.press('Escape'); await page.mouse.up();
   assert.deepEqual((await stored()).bookmarks, beforeCycle);
   results.push({ id: 'descendant-cycle-and-escape-cancel', passed: true });
