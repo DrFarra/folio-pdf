@@ -4,7 +4,7 @@ import type { ReadingPreferences } from '../reading-preferences';
 import './ReadingSettings.css';
 
 type Props = {
-  touch: boolean;
+  touch: boolean; phone?: boolean;
   mode: ReadingPreferences['mode']; onMode: (value: ReadingPreferences['mode']) => void;
   zoom: string; scale: number; onZoom: (value: string) => void;
   rotation: number; onRotate: () => void; onClose: () => void;
@@ -18,7 +18,7 @@ export default function ViewSettings(props: Props) {
   const values = [...new Set([50, 75, 100, 125, 150, 200, 300, ...props.zoom === 'custom' ? [Math.round(props.scale * 100)] : []])].sort((a, b) => a - b);
   return <Modal title="Vista del documento" onClose={props.onClose} className="view-settings-modal">
     <div className="page-tones" role="radiogroup" aria-label="Color de las páginas"><span>Color de las páginas</span><div>{TONES.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={props.pageTone === value} className={`page-tone ${value}`} onClick={() => props.onPageTone(value)}><span aria-hidden="true"><i /><i /><i /></span>{label}</button>)}</div></div>
-    <label className="reading-setting"><span>Desplazamiento</span><select aria-label="Modo de desplazamiento" value={props.mode} onChange={event => props.onMode(event.target.value as ReadingPreferences['mode'])}><option value="continuous">Continuo</option><option value="single">Una página</option></select></label>
+    <label className="reading-setting"><span>Desplazamiento</span><select aria-label="Modo de desplazamiento" value={props.mode} onChange={event => props.onMode(event.target.value as ReadingPreferences['mode'])}><option value="continuous">Continuo</option><option value="single">Una página</option>{!props.phone && <option value="spread">Dos páginas</option>}</select></label>
     <label className="reading-setting"><span>Zoom</span><select aria-label="Nivel de zoom" value={zoom} onChange={event => props.onZoom(event.target.value)}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{values.map(value => <option key={value} value={String(value)}>{value} %</option>)}</select></label>
     {props.onKeepAwake && <label className="settings-toggle"><span>Mantener la pantalla encendida</span><input type="checkbox" checked={!!props.keepAwake} onChange={event => props.onKeepAwake!(event.target.checked)} /></label>}
     <button className="secondary-button view-rotate" onClick={props.onRotate}><RotateCw size={18} />Girar vista · {props.rotation}°</button>

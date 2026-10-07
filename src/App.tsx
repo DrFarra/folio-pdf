@@ -93,7 +93,7 @@ const nativeReadingThreshold = 32 * 1024 * 1024;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
 type OpenContext = { drive?: DriveBinding; savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[] };
 type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[] };
-type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[] | null; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
+type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single' | 'spread'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[] | null; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
 type DocumentTab = TabView & { key: string; doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[]; undo: History[]; redo: History[]; scrollTop: number; scrollLeft: number };
 
 function IconButton({ children, label, onClick, onMouseDown, disabled = false, active = false, toggle = false, className = '' }: { children: React.ReactNode; label: string; onClick: () => void; onMouseDown?: React.MouseEventHandler<HTMLButtonElement>; disabled?: boolean; active?: boolean; toggle?: boolean; className?: string }) {
@@ -126,7 +126,7 @@ export default function App() {
   const [zoomMode, setZoomMode] = useState('page');
   const [customScale, setCustomScale] = useState(1);
   const [rotation, setRotation] = useState(0);
-  const [readingMode, setReadingMode] = useState<'continuous' | 'single'>(() => readReadingPreferences().mode);
+  const [readingMode, setReadingMode] = useState<'continuous' | 'single' | 'spread'>(() => readReadingPreferences().mode);
   const [tool, setTool] = useState<Tool>('select');
   const [inkKind, setInkKind] = useState<InkKind>(() => preference('folio.ink.kind', 'pen') === 'marker' ? 'marker' : 'pen');
   const [inkStyles, setInkStyles] = useState<Record<InkKind, InkStyle>>(() => {
@@ -1084,19 +1084,21 @@ export default function App() {
     return () => { observer.disconnect(); root.removeEventListener('scroll', schedule); if (frame) cancelAnimationFrame(frame); if (trackPage.current === schedule) trackPage.current = () => {}; };
   }, [doc, readingMode, readingMode === 'single' ? page : null, workbench, phone]);
 
+  // Two pages side by side share the width.
+  const spread = readingMode === 'spread' && !phone;
   const scale = useMemo(() => {
     const rotated = rotation % 180 !== 0;
-    const w = rotated ? dimensions.height : dimensions.width;
+    const w = (rotated ? dimensions.height : dimensions.width) * (spread ? 2 : 1) + (spread ? readingPreferences.pageGap : 0);
     const h = rotated ? dimensions.width : dimensions.height;
     // A phone held sideways fits the width: fitting the page height leaves it unreadable.
     if (zoomMode === 'width' || zoomMode === 'page' && phone && viewportSize.width > viewportSize.height) return Math.max(.25, Math.min(3, (viewportSize.width - (phone ? 16 : viewportSize.width < 600 ? 30 : 100)) / w));
     if (zoomMode === 'page') return Math.max(.25, Math.min(2, (viewportSize.width - (phone ? 16 : 54)) / w, (viewportSize.height - (phone ? 160 : 76)) / h));
     return customScale;
-  }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone]);
+  }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone, spread, readingPreferences.pageGap]);
   currentScale.current = scale;
   // The fitted-page scale a double tap zooms from and returns to.
   const fitScaleRef = useRef(1), zoomModeRef = useRef(zoomMode); zoomModeRef.current = zoomMode;
-  { const rotated = rotation % 180 !== 0, w = rotated ? dimensions.height : dimensions.width, h = rotated ? dimensions.width : dimensions.height;
+  { const rotated = rotation % 180 !== 0, w = (rotated ? dimensions.height : dimensions.width) * (spread ? 2 : 1) + (spread ? readingPreferences.pageGap : 0), h = rotated ? dimensions.width : dimensions.height;
     fitScaleRef.current = Math.max(.25, Math.min(2, (viewportSize.width - (phone ? 16 : 54)) / w, (viewportSize.height - (phone ? 160 : 76)) / h)); }
 
   useLayoutEffect(() => {
@@ -1434,8 +1436,8 @@ export default function App() {
       else if (library) return;
       // A zoomed page that overflows sideways scrolls with ← and →; PageUp/PageDown still turn pages.
       else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && viewer.current && viewer.current.scrollWidth > viewer.current.clientWidth + 4) { e.preventDefault(); viewer.current.scrollBy({ left: e.key === 'ArrowRight' ? 40 : -40 }); }
-      else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(page + 1); }
-      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(page - 1); }
+      else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(page + (spread ? 2 - (page + 1) % 2 : 1)); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(Math.max(1, page - (spread ? (page % 2 ? 2 : 3) : 1))); }
       else if (e.key.toLowerCase() === 'h') activateHighlight();
       else if (e.key.toLowerCase() === 'n' && docRef.current?.canAnnotate) setTool('note');
       else if (e.key.toLowerCase() === 'd' && docRef.current?.canAnnotate) { setMobileAnnotating(true); setTool('draw'); }
@@ -1444,7 +1446,7 @@ export default function App() {
     };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [page, library, goToPage, undo, redo, changeZoom, searchOpen, searchQuery, results, resultIndex]);
+  }, [page, library, goToPage, undo, redo, changeZoom, searchOpen, searchQuery, results, resultIndex, spread]);
 
   async function openFiles(files: File[]) {
     if (editorDraftRef.current) { notify('Aplica o descarta la edición antes de abrir otro documento.'); return; }
@@ -2183,7 +2185,7 @@ export default function App() {
         {tablet && doc && searchOpen && !sidebar && !inlineEditing && <div className="tablet-search-controls" role="toolbar" aria-label="Resultados de búsqueda"><IconButton label="Ver resultados" onClick={() => setSidebar(true)}><Search size={20} /></IconButton><span>{results.length ? `${resultIndex + 1} / ${results.length}` : 'Sin resultados'}</span><IconButton label="Resultado anterior" disabled={!results.length} onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={21} /></IconButton><IconButton label="Resultado siguiente" disabled={!results.length} onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={21} /></IconButton><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={21} /></IconButton></div>}
         {inlineEditing && workbenchPanel}
         <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
-          {doc ? <div className="pdf-stack" key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
+          {doc ? <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.pdf.loadingTask.docId} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={`${doc.revision}-${number}`} pdf={doc.pdf} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div> : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
           {loading && <div className="loading-overlay" role="status"><svg className="activity-ring large" viewBox="0 0 24 24" aria-hidden="true"><circle className="activity-ring-track" cx="12" cy="12" r="9" /><circle className="activity-ring-arc" cx="12" cy="12" r="9" /></svg><span>Abriendo PDF…</span></div>}
         </div>
         {touchLayout && doc && !inlineEditing && !loading && !(mobileAnnotating && (tool === 'draw' || tool === 'eraser')) && <PageScrubber pdf={doc.pdf} page={page} pages={doc.pdf.numPages} viewer={viewer.current} continuous={readingMode !== 'single'} label={pageName} section={outlineSection} onJump={target => { if (!returnLocation) rememberLocation(); goToPage(target, false); }} />}
@@ -2260,7 +2262,7 @@ export default function App() {
     {phone && annotationOptions && <Modal title="Opciones de anotación" onClose={() => setAnnotationOptions(false)}><div className="mobile-action-grid"><button onClick={() => { setAnnotationOptions(false); setSidebar(false); setNotesOpen(true); }}><MessageSquare size={21} />Ver anotaciones ({annotations.length})</button><button onClick={() => { setAnnotationOptions(false); openTools(); }}><Wrench size={21} />Herramientas</button></div></Modal>}
     {touchLayout && pageJump && doc && <Modal title="Ir a página" onClose={() => setPageJump(false)} className="page-jump-modal"><form onSubmit={event => { event.preventDefault(); const next = Number(pageInput); if (Number.isInteger(next) && next >= 1 && next <= doc.pdf.numPages) { rememberLocation(); setPageJump(false); requestAnimationFrame(() => goToPage(next, false)); } }}><label htmlFor="jump-page-number">Página (1–{doc.pdf.numPages})</label><input id="jump-page-number" autoFocus data-autofocus type="text" inputMode="numeric" pattern="[0-9]+" value={pageInput} onChange={event => setPageInput(event.target.value.replace(/\D/g, ''))} /><label className="reading-setting"><span>Recorrer páginas</span><input aria-label="Recorrer páginas" type="range" min="1" max={doc.pdf.numPages} value={Math.max(1, Math.min(doc.pdf.numPages, Number(pageInput) || page))} onChange={event => setPageInput(event.target.value)} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setPageJump(false)}>Cancelar</button><button className="primary-button" disabled={!Number.isInteger(Number(pageInput)) || Number(pageInput) < 1 || Number(pageInput) > doc.pdf.numPages}>Ir a página</button></div></form></Modal>}
 
-    {viewSettings && <ViewSettings touch={touchLayout} mode={readingMode} onMode={setReadingMode} zoom={zoomMode} scale={scale} onZoom={value => { if (['width', 'page'].includes(value)) setZoomMode(value); else { setCustomScale(Number(value) / 100); setZoomMode('custom'); } }} rotation={rotation} onRotate={() => setRotation(value => (value + 90) % 360)} pageTone={readingPreferences.pageTone} onPageTone={pageTone => setReadingPreferences(current => ({ ...current, pageTone }))} keepAwake={readingPreferences.keepAwake} onKeepAwake={isNative && isMobile ? keepAwake => setReadingPreferences(current => ({ ...current, keepAwake })) : undefined} onClose={() => setViewSettings(false)} />}
+    {viewSettings && <ViewSettings touch={touchLayout} phone={phone} mode={readingMode} onMode={setReadingMode} zoom={zoomMode} scale={scale} onZoom={value => { if (['width', 'page'].includes(value)) setZoomMode(value); else { setCustomScale(Number(value) / 100); setZoomMode('custom'); } }} rotation={rotation} onRotate={() => setRotation(value => (value + 90) % 360)} pageTone={readingPreferences.pageTone} onPageTone={pageTone => setReadingPreferences(current => ({ ...current, pageTone }))} keepAwake={readingPreferences.keepAwake} onKeepAwake={isNative && isMobile ? keepAwake => setReadingPreferences(current => ({ ...current, keepAwake })) : undefined} onClose={() => setViewSettings(false)} />}
     {capabilityNotice && <Modal title="Herramientas disponibles" onClose={() => setCapabilityNotice(false)}><p className="modal-description">{capabilitySummary}</p><div className="modal-actions"><button className="primary-button" onClick={() => setCapabilityNotice(false)}>Entendido</button></div></Modal>}
     <TextSelectionMenu key={doc?.pdf.loadingTask.docId} enabled={!!doc?.canCopy && !mobileActions && tool === 'select' && !loading && !busy && !noteDraft && !workbench && !creating && !library && !settings && !help && !info && !password && !closeBlocked && !pageJump && !viewSettings && !annotationOptions && !capabilityNotice && !deleteTarget && !(touchLayout && (sidebar || notesOpen || mobileActions || mobileTabs))} canAnnotate={!!doc?.canAnnotate} color={color} onHighlight={() => { highlightSelection(); }} onComment={() => { commentSelection(); }} onNotify={(message, error) => notify(message, error ? 'error' : 'success')} />
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}

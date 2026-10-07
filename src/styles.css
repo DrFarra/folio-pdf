@@ -178,3 +178,7 @@ html[data-touch] .search-recent [role=list] button{min-height:40px;font-size:14p
 .page-tone.sepia>span{background:#f4ecd8}.page-tone.sepia>span i{background:#5b4a3388}
 .page-tone.dark>span{background:#1c1d21}.page-tone.dark>span i{background:#d8dbe388}
 .note-shortcut{display:inline-grid;place-items:center;height:18px;padding:0 5px;border-radius:5px;border:1px solid var(--line);border-bottom-width:2px;background:var(--panel);font:600 10px/1 inherit;font-family:inherit;color:var(--muted)}
+
+/* Dos páginas: pairs side by side, still scrolling continuously. */
+.pdf-stack.spread{display:grid!important;grid-template-columns:repeat(2,max-content);justify-content:center;align-items:start}
+.pdf-stack.spread>:not(.pdf-page-wrap){grid-column:1/-1}
