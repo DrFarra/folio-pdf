@@ -102,7 +102,8 @@ export default function InkLayer({ viewport, page, annotations, tool, color, wid
       event.stopPropagation();
       if (!interactive) return;
       if (event.pointerType === 'pen') stylus.current = performance.now();
-      if (event.pointerType === 'touch' && (active.current || event.width > 35 || event.height > 35 || performance.now() - stylus.current < 400)) return;
+      // Palm rejection: a fingertip reports ~30–50 px and more when it lands fast, a resting palm far more.
+      if (event.pointerType === 'touch' && (active.current || event.width > 80 || event.height > 80 || performance.now() - stylus.current < 400)) return;
       if (event.pointerType === 'touch' && penOnly) { pan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(), vx: 0, vy: 0 }; event.currentTarget.setPointerCapture(event.pointerId); return; }
       if (active.current || event.button !== 0 && event.button !== 5) return;
       event.preventDefault(); window.getSelection()?.removeAllRanges();
