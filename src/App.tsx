@@ -901,6 +901,23 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
+  // Zooms keeping the point under the pointer or finger in place. The scale is
+  // kept unrounded so many small trackpad steps add up.
+  const zoomAt = (value: number, point: { clientX: number; clientY: number; target: EventTarget | null }) => {
+    const loaded = docRef.current, root = viewer.current, next = Math.max(.25, Math.min(3, value));
+    if (!loaded || !root || next === currentScale.current) return;
+    const node = point.target instanceof Element ? point.target.closest<HTMLElement>('.pdf-page') : null;
+    if (node) {
+      const bounds = node.getBoundingClientRect();
+      const frame = root.getBoundingClientRect();
+      wheelAnchor.current = { id: loaded.id, page: Number(node.closest<HTMLElement>('[data-page-number]')?.dataset.pageNumber),
+        x: (point.clientX - bounds.left) / bounds.width, y: (point.clientY - bounds.top) / bounds.height,
+        pointerX: point.clientX - frame.left, pointerY: point.clientY - frame.top };
+    }
+    currentScale.current = next;
+    setCustomScale(next); setZoomMode('custom');
+  };
+  const zoomAtRef = useRef(zoomAt); zoomAtRef.current = zoomAt;
   // The screen stays on while a document is being read, never in the library.
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useEffect(() => { void setKeepAwake(reading); }, [reading]);
@@ -1007,7 +1024,13 @@ export default function App() {
       if (event.pointerType !== 'touch' || !event.isPrimary || tool !== 'select' || busy || loading || mobileAnnotating || searchOpen || library || sidebar || notesOpen || mobileTabs) { origin = null; return; }
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest('.page-content') || target.closest('button,a,input,textarea,[role="button"],.highlight-annotation') || !window.getSelection()?.isCollapsed) { origin = null; return; }
-      if (Date.now() - lastTap < doubleTapWindow) { origin = null; lastTap = 0; return; }
+      // A double tap zooms in on that point; another one returns to the fitted page.
+      if (Date.now() - lastTap < doubleTapWindow) {
+        origin = null; lastTap = 0;
+        if (zoomModeRef.current === 'custom' && currentScale.current > fitScaleRef.current * 1.15) setZoomMode('page');
+        else zoomAtRef.current(Math.max(currentScale.current * 2, fitScaleRef.current * 2), event);
+        return;
+      }
       origin = { id: event.pointerId, x: event.clientX, y: event.clientY, top: root.scrollTop, left: root.scrollLeft, at: Date.now() };
     };
     const up = (event: PointerEvent) => {
@@ -1071,6 +1094,10 @@ export default function App() {
     return customScale;
   }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone]);
   currentScale.current = scale;
+  // The fitted-page scale a double tap zooms from and returns to.
+  const fitScaleRef = useRef(1), zoomModeRef = useRef(zoomMode); zoomModeRef.current = zoomMode;
+  { const rotated = rotation % 180 !== 0, w = rotated ? dimensions.height : dimensions.width, h = rotated ? dimensions.width : dimensions.height;
+    fitScaleRef.current = Math.max(.25, Math.min(2, (viewportSize.width - (phone ? 16 : 54)) / w, (viewportSize.height - (phone ? 160 : 76)) / h)); }
 
   useLayoutEffect(() => {
     const pointer = wheelAnchor.current, reading = readingAnchor.current, root = viewer.current;
@@ -1094,21 +1121,6 @@ export default function App() {
     const root = viewer.current;
     const shell = document;
     if (!root) return;
-    // The scale is kept unrounded so many small trackpad steps add up.
-    const zoomAt = (value: number, point: { clientX: number; clientY: number; target: EventTarget | null }) => {
-      const loaded = docRef.current, next = Math.max(.25, Math.min(3, value));
-      if (!loaded || next === currentScale.current) return;
-      const node = point.target instanceof Element ? point.target.closest<HTMLElement>('.pdf-page') : null;
-      if (node) {
-        const bounds = node.getBoundingClientRect();
-        const frame = root.getBoundingClientRect();
-        wheelAnchor.current = { id: loaded.id, page: Number(node.closest<HTMLElement>('[data-page-number]')?.dataset.pageNumber),
-          x: (point.clientX - bounds.left) / bounds.width, y: (point.clientY - bounds.top) / bounds.height,
-          pointerX: point.clientX - frame.left, pointerY: point.clientY - frame.top };
-      }
-      currentScale.current = next;
-      setCustomScale(next); setZoomMode('custom');
-    };
     let gestureScale = 0;
     const onWheel = (event: Event) => {
       const wheel = event as WheelEvent;
