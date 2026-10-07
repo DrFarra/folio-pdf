@@ -22,3 +22,6 @@ src-tauri/plugins/folio-android/android/build/
 .codex-remote-attachments/
 output/
 tmp/
+
+# graphify knowledge graph, rebuilt locally by its git hooks
+graphify-out/
