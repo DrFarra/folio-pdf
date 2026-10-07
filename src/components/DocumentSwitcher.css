@@ -24,3 +24,8 @@
 @keyframes document-switcher-open{from{opacity:0;transform:translateY(-8px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes document-switcher-close{from{opacity:1;transform:translateY(0) scale(1)}to{opacity:0;transform:translateY(-5px) scale(.98)}}
 @media(prefers-reduced-motion:reduce){.document-switcher,.document-switcher.is-closing{animation:none}[aria-controls=document-switcher]>svg{transition:none}}
+/* Covers instead of file icons, as in the library. */
+.document-switcher-file:has(img){width:32px;height:42px;border-radius:4px;overflow:hidden;background:#fff;box-shadow:0 0 0 1px #0f172a1a,0 1px 4px #0f172a26}
+.document-switcher-file img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.document-switcher-progress{display:block;width:100%;max-width:140px;height:3px;margin-top:5px;border-radius:999px;background:color-mix(in srgb,var(--text) 12%,transparent);overflow:hidden}
+.document-switcher-progress>span{display:block;height:100%;border-radius:inherit;background:var(--accent);transform-origin:left center}
