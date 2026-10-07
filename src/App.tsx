@@ -1408,6 +1408,9 @@ export default function App() {
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // On Windows, WebView2's zoom stays on so that touchpad pinches reach the page as
+      // Ctrl+wheel (Tauri ties both together); its key zoom would scale the whole interface.
+      if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '0'].includes(e.key)) e.preventDefault();
       // ⌃⌘F is the menu's Pantalla completa on macOS; leave it to toggleFullScreen:.
       if (isMac && e.metaKey && e.ctrlKey && e.key.toLowerCase() === 'f') return;
       const editing = (e.target as HTMLElement).closest('input,textarea,select,[contenteditable]');

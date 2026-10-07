@@ -28,12 +28,13 @@ try {
       await page.goto(origin); await page.locator('.app-header input[type=file]').setInputFiles({ name: 'Gestos.pdf', mimeType: 'application/pdf', buffer: source });
       await page.locator('.textLayer span').first().waitFor(); await page.locator('.loading-overlay').waitFor({ state: 'detached' });
       // Area tools own a one-finger drag; the note tool and the reader keep scrolling.
+      // Desktop layouts never pinch-zoom the interface (WebView2's pinch is on for touchpads).
       const touchActions = await page.locator('.page-content').first().evaluate(content => {
         const original = content.className, actions = {};
         for (const tool of ['select', 'note', 'highlight', 'redact', 'crop', 'add-text', 'replace-image', 'create-field']) { content.className = `page-content tool-${tool}`; actions[tool] = getComputedStyle(content).touchAction; }
         content.className = original; return actions;
       });
-      assert.deepEqual(touchActions, { select: 'auto', note: 'pan-x pan-y', highlight: 'pan-y', redact: 'none', crop: 'none', 'add-text': 'none', 'replace-image': 'none', 'create-field': 'none' });
+      assert.deepEqual(touchActions, { select: layout === 'desktop' ? 'pan-x pan-y' : 'auto', note: 'pan-x pan-y', highlight: 'pan-y', redact: 'none', crop: 'none', 'add-text': 'none', 'replace-image': 'none', 'create-field': 'none' });
       await page.getByRole('button', { name: layout === 'phone' ? 'Anotar' : 'Anotar documento', exact: true }).click();
       await page.getByRole('button', { name: mobile ? 'Lápiz' : 'Lápiz (D)', exact: true }).click();
       await page.getByRole('button', { name: 'Opciones del lápiz', exact: true }).click();

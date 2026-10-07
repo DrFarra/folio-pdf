@@ -125,6 +125,8 @@ html:not([data-phone]) .workbench .modal-heading{position:sticky;top:0;z-index:3
   @page{size:auto;margin:0}
 }
 
+/* A touchscreen pinch on a desktop layout never scales the interface (WebView2's pinch is on for touchpads). */
+:where(html[data-layout=desktop]) *{touch-action:pan-x pan-y}
 /* A horizontal pen stroke selects the text to highlight; vertical drags scroll. */
 .page-content.tool-highlight{cursor:text;touch-action:pan-y}.page-content.tool-highlight .textLayer{pointer-events:auto;user-select:text}.page-content.tool-highlight .textLayer span{cursor:text}.page-content.tool-highlight ::selection{background:color-mix(in srgb,var(--highlight-preview,#f5d164) 45%,transparent)}
 .textLayer[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}

@@ -10,6 +10,11 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.3
+
+- En Windows, pellizcar con el touchpad vuelve a ampliar el PDF.
+- Ctrl + / Ctrl − / Ctrl 0 nunca amplían la interfaz, tampoco con un diálogo abierto, y un pellizco en una pantalla táctil de escritorio tampoco.
+
 ## Cambios en 0.9.2
 
 - Nueva herramienta «Dividir PDF» (Herramientas → Páginas): separa un documento en varios archivos por intervalos, cada N páginas, en partes iguales o por capítulos del índice, con vista previa y nombres editables.
