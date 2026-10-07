@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Copy, Highlighter, MessageSquare } from 'lucide-react';
 import { selectedTextRects } from '../text-selection';
 import { visibleBounds } from '../mobile';
-import { copyNativeText, isIOS, isNative } from '../platform';
+import { copyNativeText, isIOS, isNative, setCustomTextMenu } from '../platform';
 import './TextSelectionMenu.css';
 
 type Props = {
@@ -54,7 +54,12 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
 
   useEffect(() => {
     if (!enabled) { setSelected(null); return; }
-    let frame = 0, settle: ReturnType<typeof setTimeout> | undefined, escaped = false;
+    let frame = 0, settle: ReturnType<typeof setTimeout> | undefined, escaped = false, custom = false;
+    // Reported as the selection forms, before iOS would show its own menu on release.
+    const report = () => {
+      const node = document.getSelection()?.anchorNode, next = !!(node && (node instanceof Element ? node : node.parentElement)?.closest('.textLayer'));
+      if (next !== custom) setCustomTextMenu(custom = next);
+    };
     const update = () => {
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => { frame = 0; setSelected(moving.current ? null : selectionDetails()); });
@@ -72,7 +77,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     // Hide while the page moves and bring the menu back next to a selection
     // that is still visible once scrolling or zooming settles.
     const moved = () => { dismiss(); if (!escaped) settle = setTimeout(update, 150); };
-    const selectionChange = () => { escaped = false; update(); };
+    const selectionChange = () => { escaped = false; report(); update(); };
     const keyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { escaped = true; dismiss(); return; }
       if ((event.ctrlKey || event.metaKey) && ['+', '=', '-'].includes(event.key)) moved();
@@ -91,7 +96,7 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
     window.addEventListener('folio:pinch-start', dismiss);
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      clearTimeout(settle);
+      clearTimeout(settle); if (custom) setCustomTextMenu(false);
       document.removeEventListener('selectionchange', selectionChange);
       document.removeEventListener('pointerdown', pointerDown, true);
       document.removeEventListener('pointerup', pointerUp);

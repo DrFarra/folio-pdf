@@ -65,6 +65,26 @@ final class FolioPlugin: Plugin {
         let pencil = UIPencilInteraction()
         pencil.delegate = self
         webview.addInteraction(pencil)
+        hideSystemTextMenu(in: webview)
+    }
+
+    /// Folio draws its own toolbar (Copiar, Resaltar, Comentar) for text selected
+    /// in the PDF and the page reports when that is so; meanwhile the web view
+    /// offers no edit actions, so iOS shows no menu on top. Text fields keep it.
+    private static var textMenuInstalled = false
+    private func hideSystemTextMenu(in webview: WKWebView) {
+        webview.configuration.userContentController.add(TextMenuState(), name: "folioTextMenu")
+        guard !Self.textMenuInstalled, let cls = object_getClass(webview) else { return }
+        let selector = #selector(UIResponder.canPerformAction(_:withSender:))
+        guard let method = class_getInstanceMethod(cls, selector) else { return }
+        Self.textMenuInstalled = true
+        typealias Original = @convention(c) (AnyObject, Selector, Selector, Any?) -> Bool
+        let original = unsafeBitCast(method_getImplementation(method), to: Original.self)
+        let block: @convention(block) (AnyObject, Selector, Any?) -> Bool = { view, action, sender in
+            TextMenuState.custom ? false : original(view, selector, action, sender)
+        }
+        let replacement = imp_implementationWithBlock(block)
+        if !class_addMethod(cls, selector, replacement, method_getTypeEncoding(method)) { method_setImplementation(method, replacement) }
     }
 
     fileprivate func showPencilTools(at point: CGPoint?) {
@@ -382,4 +402,9 @@ extension FolioPlugin: UIPencilInteractionDelegate {
     func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
         if squeeze.phase == .ended { showPencilTools(at: squeeze.hoverPose?.location) }
     }
+}
+
+private final class TextMenuState: NSObject, WKScriptMessageHandler {
+    static var custom = false
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) { Self.custom = message.body as? Bool ?? false }
 }

@@ -14,6 +14,10 @@ export function haptic(kind: 'selection' | 'light' | 'medium' | 'success'): void
   if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
   void invoke('haptic', { kind }).catch(() => {});
 }
+/** iOS: while PDF text is selected Folio's toolbar replaces the system edit menu, which would cover it. */
+export function setCustomTextMenu(on: boolean): void {
+  (window as Window & { webkit?: { messageHandlers?: { folioTextMenu?: { postMessage(value: boolean): void } } } }).webkit?.messageHandlers?.folioTextMenu?.postMessage(on);
+}
 /** Keeps the screen on while reading on a phone or tablet; elsewhere it does nothing. */
 export async function setKeepAwake(on: boolean): Promise<void> {
   if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
