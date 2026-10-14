@@ -31,7 +31,11 @@ final class ImportTests: XCTestCase {
     // The phone page-jump sheet labels its field 'Página (1–N)'.
     private func pageNumberField() -> XCUIElement { folio.textFields.matching(NSPredicate(format: "label BEGINSWITH 'Página'")).firstMatch }
     // Files follows the app language: 'Cancel' or 'Cancelar', exposed as a button or a plain element.
-    private func pickerCancel() -> XCUIElement { folio.descendants(matching: .any).matching(NSPredicate(format: "label IN {'Cancel', 'Cancelar'}")).firstMatch }
+    // Newer pickers also expose a non-hittable 'Cancelar' Other over the bar, so the button wins when there is one.
+    private func pickerCancel() -> XCUIElement {
+        let label = NSPredicate(format: "label IN {'Cancel', 'Cancelar'}"), button = folio.buttons.matching(label).firstMatch
+        return button.exists ? button : folio.descendants(matching: .any).matching(label).firstMatch
+    }
     private func openPicker() {
         // Import belongs to the library. Returning there preserves the open
         // documents; choosing a second provider PDF must keep the first tab.
