@@ -136,7 +136,7 @@ html[data-phone] .library-grid .document-library-list{grid-template-columns:repe
 @media(max-width:360px){.document-library-create-actions button>svg{display:none}}
 
 /* Wider windows: the library is centred with more room for covers. */
-html:not([data-phone]) .app-shell .library-screen .document-library{max-width:1120px;margin:0 auto;width:100%}
+html:not([data-phone]) .app-shell .library-screen .document-library{width:100%}
 html:not([data-phone]) .app-shell .library-screen .document-library-header{padding:26px 28px 10px}
 html:not([data-phone]) .app-shell .library-screen .document-library-brand{display:none}
 html:not([data-phone]) .app-shell .library-screen .document-library-content{padding:10px 28px calc(28px + var(--native-safe-bottom, env(safe-area-inset-bottom,0px)))}

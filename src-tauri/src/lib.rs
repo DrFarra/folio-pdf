@@ -5,6 +5,8 @@ use tauri::{Emitter, Manager, State};
 mod binary_ipc;
 mod drive;
 mod drive_auth;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod updater;
 use drive::*;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tauri_plugin_dialog::DialogExt;
@@ -769,7 +771,7 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state, updater::check_update, updater::install_update]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
     let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]

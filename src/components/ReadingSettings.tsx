@@ -2,7 +2,7 @@ import { Check, Monitor, Moon, Sun, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { version } from '../../package.json';
 import { assetUrl } from '../assets';
-import { isDesktop, openExternalUrl } from '../platform';
+import { checkUpdate, installUpdate, isDesktop, isMac, openExternalUrl, type DesktopUpdate } from '../platform';
 import Modal from './Modal';
 import type { ReadingPreferences } from '../reading-preferences';
 import type { DeviceLayout } from '../mobile';
@@ -16,6 +16,7 @@ type Props = {
   rememberRecent: boolean; onRemember: (value: boolean) => void; openDocuments: number;
   confirmClear: boolean; onClear: () => void; onCancelClear: () => void; onClose: () => void;
 };
+const REPOSITORY = 'https://github.com/DrFarra/folio-pdf';
 export default function ReadingSettings(props: Props) {
   const { preferences: prefs } = props, phone = props.layout === 'phone', desktop = props.layout === 'desktop';
   // The licence ships with the app, so it also opens offline; the full third-party notices are online.
@@ -26,6 +27,17 @@ export default function ReadingSettings(props: Props) {
     void fetch(assetUrl('/licenses/LICENSE.txt')).then(response => response.ok ? response.text() : Promise.reject()).then(text => setLicense(current => current && { text: text.replace(/\r\n?/g, '\n').replace(/([^\n])\n(?=\S)/g, '$1 ') }), () => setLicense(current => current && { failed: true }));
   };
   const visit = (url: string) => { void openExternalUrl(url).catch(() => {}); };
+  // Windows installs the update from here; macOS still opens the release page.
+  const [release, setRelease] = useState<{ state: 'checking' | 'latest' | 'available' | 'installing' | 'failed'; found?: DesktopUpdate; message?: string } | null>(null);
+  const searchUpdate = () => {
+    if (isMac) { visit(`${REPOSITORY}/releases`); return; }
+    setRelease({ state: 'checking' });
+    checkUpdate().then(found => setRelease(found ? { state: 'available', found } : { state: 'latest' }), error => setRelease({ state: 'failed', message: String(error) }));
+  };
+  const install = (found: DesktopUpdate) => {
+    setRelease({ state: 'installing', found });
+    installUpdate(found).catch(error => setRelease({ state: 'failed', found, message: String(error) }));
+  };
   const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) => props.onPreferences({ ...prefs, [key]: value });
   return <><Modal title="Ajustes" onClose={props.onClose} className="settings-modal">
     <h3>Apariencia</h3>
@@ -57,11 +69,16 @@ export default function ReadingSettings(props: Props) {
     <p className="modal-description">Folio es software libre bajo la licencia AGPL-3.0 o posterior y se ofrece sin ninguna garantía.</p>
     <div className="settings-about-links">
       <button className="secondary-button" onClick={showLicense}>Ver licencia</button>
-      <button className="secondary-button" onClick={() => visit(`https://raw.githubusercontent.com/FarraPY/folio-pdf/v${version}/THIRD-PARTY-NOTICES.txt`)}>Avisos de terceros</button>
-      <button className="secondary-button" onClick={() => visit(`https://github.com/FarraPY/folio-pdf/releases/tag/v${version}`)}>Código fuente</button>
-      {/* Desktop builds have no automatic updates: this opens the latest release. */}
-      {isDesktop && <button className="secondary-button" onClick={() => visit('https://github.com/FarraPY/folio-pdf/releases/latest')}>Buscar actualizaciones</button>}
+      <button className="secondary-button" onClick={() => visit(`https://raw.githubusercontent.com/DrFarra/folio-pdf/v${version}/THIRD-PARTY-NOTICES.txt`)}>Avisos de terceros</button>
+      <button className="secondary-button" onClick={() => visit(`${REPOSITORY}/releases/tag/v${version}`)}>Código fuente</button>
+      {isDesktop && !release?.found && <button className="secondary-button" disabled={release?.state === 'checking'} onClick={searchUpdate}>{release?.state === 'checking' ? 'Buscando…' : 'Buscar actualizaciones'}</button>}
+      {release?.found && <button className="primary-button" disabled={release.state === 'installing'} onClick={() => install(release.found!)}>{release.state === 'installing' ? 'Descargando…' : `Instalar Folio ${release.found.version}`}</button>}
     </div>
+    {release && release.state !== 'checking' && <p className="modal-description" role={release.state === 'failed' ? 'alert' : 'status'}>{
+      release.state === 'latest' ? `Ya tienes la última versión (${version}).`
+      : release.state === 'failed' ? release.message
+      : release.state === 'installing' ? 'Folio se cerrará para instalar la actualización y volverá a abrirse.'
+      : 'Hay una versión nueva. Al instalarla, Folio se cerrará y volverá a abrirse.'}</p>}
     <div className="modal-actions"><span className="folio-version">Folio · {version}</span><button className="primary-button" onClick={props.onClose}><Check size={15} />Listo</button></div>
   </Modal>
   {license && <Modal title="Licencia de Folio" onClose={() => setLicense(null)} className="license-modal">

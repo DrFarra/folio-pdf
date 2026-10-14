@@ -42,6 +42,11 @@ export async function openExternalUrl(value: string): Promise<void> {
   else window.open(url.href, '_blank', 'noopener,noreferrer');
 }
 
+export type DesktopUpdate = { version: string; url: string };
+export const checkUpdate = () => invoke<DesktopUpdate | null>('check_update');
+/** Downloads and starts the installer; Folio closes and the installer reopens it. */
+export const installUpdate = (update: DesktopUpdate) => invoke('install_update', { url: update.url });
+
 export async function presentNativePdf(token: string, name: string, action: 'save' | 'share' | 'print', annotations: Annotation[], removedSourceRefs: string[], anchor?: Anchor): Promise<NativeDocument | boolean | null> {
   return invoke('native_pdf_present', { token, name, action, annotations, removedSourceRefs, anchor: anchor ? [anchor.left, anchor.top, anchor.width, anchor.height] : null });
 }
