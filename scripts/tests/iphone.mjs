@@ -264,6 +264,8 @@ async function removeHighlight(page, index = 0) {
   assert.equal(await page.locator('.app-shell').evaluate(shell=>shell.classList.contains('reader-chrome-hidden')),false,'Annotation interactions cancel the deferred reader chrome toggle.');
 }
 async function geometry(page) {
+  // Menus and sheets pop in from 96% scale; measure them at their settled size.
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity).map(animation => animation.finished.catch(() => {}))));
   return page.evaluate(() => ({ width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth,
     documentHeight: document.documentElement.scrollHeight, windowScroll: [scrollX, scrollY],
     reader: (() => { const element = document.querySelector('.reading-area'), box = element.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height }; })(),
@@ -765,7 +767,8 @@ try {
     const blankPoint = async () => {
       const canvas = await page.locator('.pdf-page-wrap[data-page-number="1"] .page-content > canvas').boundingBox();
       const view = await reader(page).boundingBox(); assert(canvas && view);
-      const point = { x: Math.min(canvas.x + canvas.width * .9, view.x + view.width - 30), y: Math.min(canvas.y + canvas.height * .8, view.y + view.height - 100) };
+      // Stay clear of the 44px page scrubber that appears on the right edge after scrolling.
+      const point = { x: Math.min(canvas.x + canvas.width * .9, view.x + view.width - 60), y: Math.min(canvas.y + canvas.height * .8, view.y + view.height - 100) };
       assert(point.x > Math.max(view.x, canvas.x) && point.x < Math.min(view.x + view.width, canvas.x + canvas.width));
       assert(point.y > Math.max(view.y, canvas.y) && point.y < Math.min(view.y + view.height, canvas.y + canvas.height));
       return point;
@@ -893,7 +896,9 @@ try {
     const note = await blankPoint(); await page.touchscreen.tap(note.x, note.y);
     await page.getByRole('dialog', { name: 'Añadir nota', exact: true }).waitFor();
     assert.equal(await shell.evaluate(element => element.classList.contains('reader-chrome-hidden')), false, 'Note creation must keep reader chrome visible.');
-    const dialog = page.getByRole('dialog', { name: 'Añadir nota', exact: true }), dialogBox = await dialog.boundingBox(); assert(dialogBox);
+    const dialog = page.getByRole('dialog', { name: 'Añadir nota', exact: true });
+    await dialog.evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
+    const dialogBox = await dialog.boundingBox(); assert(dialogBox);
     const padding = { x: dialogBox.x + 3, y: dialogBox.y + dialogBox.height / 2 };
     assert(await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.matches('.note-modal'), padding), 'The padding regression must tap the dialog itself.');
     await page.touchscreen.tap(padding.x, padding.y); await page.waitForTimeout(350);

@@ -153,7 +153,8 @@ html:not([data-phone]) .app-shell .library-screen .library-list .document-librar
 html:not([data-phone]) .app-shell .library-screen .document-library-continue{max-width:640px}
 html:not([data-phone]) .app-shell .library-screen .document-library-demo{width:auto;display:inline-flex}
 html[data-tablet] .app-shell .library-screen .library-grid .document-library-list{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
-html[data-tablet] .app-shell .library-screen .document-library-more{min-height:44px;width:44px}
+html:is([data-tablet],[data-phone]) .app-shell .library-screen .document-library-more{min-height:44px;width:44px}
+html[data-phone] .library-view-toggle .library-tool{min-height:44px}
 @media(prefers-reduced-motion:reduce){.document-library *{transition:none!important;animation:none!important}}
 
 /* En curso: other started documents, a horizontal shelf under the resume card. */
