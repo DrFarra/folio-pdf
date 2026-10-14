@@ -34,7 +34,8 @@ final class ImportTests: XCTestCase {
     // Newer pickers also expose a non-hittable 'Cancelar' Other over the bar, so the button wins when there is one.
     private func pickerCancel() -> XCUIElement {
         let label = NSPredicate(format: "label IN {'Cancel', 'Cancelar'}"), button = folio.buttons.matching(label).firstMatch
-        return button.exists ? button : folio.descendants(matching: .any).matching(label).firstMatch
+        // The label shows up a moment before the button, so give the button time to appear.
+        return button.waitForExistence(timeout: 5) ? button : folio.descendants(matching: .any).matching(label).firstMatch
     }
     private func openPicker() {
         // Import belongs to the library. Returning there preserves the open
