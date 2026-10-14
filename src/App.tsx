@@ -2103,6 +2103,8 @@ export default function App() {
   const savesOriginal = savesInPlace && !!doc?.nativeSource && !doc.drive && !doc.draftSource && !doc.sample;
   const sessionStatus = storageFailed ? `No se pudieron guardar tus cambios en ${here}. ${saveAdvice}` : `Los cambios se conservan en ${here}.`;
   const driveDirty = !!doc?.drive && (doc.modified || annotationFingerprint(annotations) !== doc.savedAnnotations);
+  // Same rule as the tab's unsaved dot, so Guardar lights up exactly when the tab shows changes.
+  const docDirty = !!doc && (doc.modified && !downloadedDrafts.current.has(doc) || annotationFingerprint(annotations) !== doc.savedAnnotations);
   const driveStatus = busy === 'download' && driveMessage ? driveMessage : driveDirty ? 'Google Drive: cambios pendientes de guardar' : 'Documento de Google Drive';
   const driveIndicator = doc?.drive && <span className={`drive-document-indicator${driveDirty ? ' pending' : ''}`} role="status" aria-label={driveStatus} title={driveStatus}>{busy === 'download' ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <Cloud size={15} aria-hidden="true" />}</span>;
 
@@ -2272,7 +2274,7 @@ export default function App() {
           <div className="toolbar-right">
             <div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => changeZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(Math.round(scale * 100)) : zoomMode} onChange={e => { if (['page', 'width'].includes(e.target.value)) setZoomMode(e.target.value); else { setCustomScale(Number(e.target.value) / 100); setZoomMode('custom'); } }} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{![50, 75, 100, 125, 150, 200, 300, 400, 600, 800].includes(Math.round(scale * 100)) && zoomMode === 'custom' && <option value={String(Math.round(scale * 100))}>{Math.round(scale * 100)} %</option>}{[50, 75, 100, 125, 150, 200, 300, 400, 600, 800].map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => changeZoom(.1)} disabled={!doc || scale >= MAX_ZOOM}><Plus size={16} /></IconButton></div>
             <span className="toolbar-divider" /><IconButton label={hasBookmarkPage(bookmarks, page) ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!doc || !!busy || loading} onClick={toggleBookmark} active={hasBookmarkPage(bookmarks, page)}><Bookmark size={17} fill={hasBookmarkPage(bookmarks, page) ? 'currentColor' : 'none'} /></IconButton>
-            <button className="download-button" aria-label={saveLabel} title={`${saveLabel} (${shortcutLabel('S')})`} onClick={() => void download()} disabled={!doc || !!busy || loading}><ArrowDownToLine size={16} /><span>{doc?.drive ? 'Guardar' : saveLabel}</span></button>
+            <button className={`download-button${docDirty ? ' pending' : ''}`} aria-label={saveLabel} title={`${saveLabel} (${shortcutLabel('S')})`} onClick={() => void download()} disabled={!doc || !!busy || loading}><ArrowDownToLine size={16} /><span>{doc?.drive ? 'Guardar' : saveLabel}</span></button>
             <IconButton label="Más acciones del documento" disabled={!doc || !!busy || loading} onClick={() => setMobileActions(true)}><MoreHorizontal size={20} /></IconButton>
           </div>
         </div>}

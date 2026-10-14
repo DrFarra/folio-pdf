@@ -135,6 +135,8 @@ html:not([data-phone]) .app-shell .download-button {
   color: var(--text);
 }
 html:not([data-phone]) .app-shell .download-button > span { display: inline; }
+html:not([data-phone]) .app-shell .download-button.pending:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+@media (hover: hover) { html:not([data-phone]) .app-shell .download-button.pending:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 88%, #000); } }
 html:not([data-phone]) .app-shell .desktop-annotation-toolbar {
   display: flex;
   align-items: center;
