@@ -2,7 +2,8 @@ name: Folio release
 
 # Pushing a v<version> tag publishes a prerelease with the packages that the
 # platform workflows built and verified. Packages built from an earlier commit
-# are used only when it differs from the tag in .github/ alone.
+# are used only when it differs from the tag in .github/ and scripts/tests/ alone,
+# which are never compiled into an app.
 on:
   push:
     tags: ['v*']
@@ -30,7 +31,7 @@ jobs:
           for pair in windows.yml:Folio-Windows android.yml:Folio-Android macos.yml:Folio-macos ios.yml:Folio-iOS; do
             workflow="${pair%%:*}" artifact="${pair#*:}" run=""
             for sha in $(git rev-list --max-count=20 HEAD); do
-              git diff --quiet "$sha" HEAD -- . ':(exclude).github' || break
+              git diff --quiet "$sha" HEAD -- . ':(exclude).github' ':(exclude)scripts/tests' || break
               run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
               [ -n "$run" ] && break
             done
