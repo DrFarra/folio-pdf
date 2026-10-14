@@ -10,6 +10,11 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.7
+
+- En el teléfono, los botones Cuadrícula y Lista de la biblioteca y el menú de cada documento tienen el tamaño táctil completo (44 px).
+- Primera versión publicada en GitHub desde la que Windows puede actualizarse con «Buscar actualizaciones».
+
 ## Cambios en 0.9.6
 
 - En Windows, «Buscar actualizaciones» (Ajustes) busca la última versión publicada en GitHub y la instala desde ahí: Folio se cierra, se actualiza y vuelve a abrirse. En macOS abre la página de versiones.
