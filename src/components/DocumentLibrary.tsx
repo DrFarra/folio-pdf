@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownUp, ArrowRight, BookOpen, Check, ChevronRight, Cloud, FilePlus2, HelpCircle, LayoutGrid, List, MessageSquare, MoreHorizontal, Search, Settings, Star, Trash2, Upload, X } from 'lucide-react';
 import type { RecentDocument } from '../types';
 import { isDesktop } from '../platform';
@@ -121,6 +121,17 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
     return () => document.removeEventListener('pointerdown', dismiss);
   }, [openMenu, sortOpen]);
   useEffect(() => { setOpenMenu(null); }, [query, props.documents]);
+  // A card's menu can be wider than the card or open near the bottom: keep it inside the window.
+  useLayoutEffect(() => {
+    const menu = menuRef.current?.querySelector<HTMLElement>('.document-library-menu');
+    if (!menu) return;
+    // It pops in scaled from its top right corner, so the unscaled size gives its final edges.
+    const box = menu.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight, edge = 8;
+    const left = box.right - width, bottom = box.top + height;
+    if (left < edge) menu.style.translate = `${edge - left}px 0`;
+    else if (box.right > innerWidth - edge) menu.style.translate = `${innerWidth - edge - box.right}px 0`;
+    if (bottom > innerHeight - edge && box.top - height > edge) { menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 3px)'; }
+  }, [openMenu]);
   const chooseView = (next: LibraryView) => { setView(next); saveLibraryPreference('folio.library.view', next); };
   const chooseSort = (next: LibrarySort) => { setSort(next); setSortOpen(false); saveLibraryPreference('folio.library.sort', next); };
   const toggleFavorite = (documentId: string) => { setFavorites(new Set(setFavorite(documentId, !favorites.has(documentId)))); setOpenMenu(null); };

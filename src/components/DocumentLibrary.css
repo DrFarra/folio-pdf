@@ -147,6 +147,12 @@ html:not([data-phone]) .app-shell .library-screen .document-library-search{max-w
 html:not([data-phone]) .app-shell .library-screen .library-toolbar{gap:8px}
 html:not([data-phone]) .app-shell .library-screen .library-toolbar .document-library-search{margin-right:auto}
 html:not([data-phone]) .app-shell .library-screen .library-grid .document-library-list{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:26px 22px}
+/* Desktop grid: the menu sits on the cover's corner, so the text keeps the card's full width and the menu opens over the card instead of past the window. */
+html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .document-library-file-text{padding:0 2px}
+html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .document-library-menu-container{top:6px;right:6px;bottom:auto}
+html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .document-library-more{min-height:32px;width:32px;border-radius:999px;background:#0f172acc;color:#fff;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .document-library-more[aria-expanded=true]{background:#0f172a;color:#fff}@media(hover:hover){html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .document-library-more:hover{background:#0f172a;color:#fff}}
+html:not([data-phone]):not([data-tablet]) .app-shell .library-screen .library-grid .library-badges{right:auto;left:5px}
 html:not([data-phone]) .app-shell .library-screen .library-list .document-library-list{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:4px}
 html:not([data-phone]) .app-shell .library-screen .library-list .document-library-open{padding:8px 56px 8px 10px}
 @media(hover:hover){html:not([data-phone]) .app-shell .library-screen .library-list .document-library-open:hover{background:var(--hover)}}

@@ -10,6 +10,11 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.8
+
+- En Windows y macOS, el menú «⋯» de cada documento de la biblioteca está en la esquina de su portada: el texto de la tarjeta ya no queda cortado ni tapado.
+- Ese menú ya no se sale de la ventana: se desplaza hacia dentro junto a los bordes y se abre hacia arriba cerca del borde inferior.
+
 ## Cambios en 0.9.7
 
 - En el teléfono, los botones Cuadrícula y Lista de la biblioteca y el menú de cada documento tienen el tamaño táctil completo (44 px).
