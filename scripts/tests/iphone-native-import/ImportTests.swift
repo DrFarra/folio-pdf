@@ -43,7 +43,9 @@ final class ImportTests: XCTestCase {
         let library = folio.buttons["Volver a la biblioteca"].firstMatch
         if library.exists && library.isHittable { library.tap() }
         let importPDF = folio.buttons["Abrir PDF"].firstMatch
-        XCTAssertTrue(importPDF.waitForExistence(timeout: 15)); XCTAssertTrue(importPDF.isEnabled)
+        XCTAssertTrue(importPDF.waitForExistence(timeout: 15))
+        // Right after launch the library is still loading and keeps its buttons disabled for a moment.
+        wait(for: [expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: importPDF)], timeout: 15)
         importPDF.tap()
         XCTAssertTrue(pickerCancel().waitForExistence(timeout: 15), "UIDocumentPicker did not appear")
     }
