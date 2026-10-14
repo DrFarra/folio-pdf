@@ -133,7 +133,13 @@ def fresh_diagnostic(started_at):
     native = diagnostic.get('iosNative')
     assert native and native.get('platform') == 'iOS' and native.get('uiAvailable'), 'No respondió el puente Swift/UIKit.'
     assert checked.get('nativeClipboardWritten'), 'La copia nativa no se completó.'
-    pasted = run('xcrun', 'simctl', 'pbpaste', device)
+    # simctl's pasteboard bridge sometimes times out (exit 60) right after a copy; retry before judging it.
+    for attempt in range(5):
+        try:
+            pasted = run('xcrun', 'simctl', 'pbpaste', device, timeout=30); break
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == 4: raise
+            time.sleep(2)
     assert pasted == checked['selectedText'].strip(), 'El portapapeles del simulador no coincide con el texto PDF.'
     viewport = diagnostic['snapshot']['document']
     assert viewport['scrollWidth'] <= viewport['width'] + 1, 'La aplicación completa desborda horizontalmente.'
