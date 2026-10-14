@@ -10,6 +10,10 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.5
+
+- En Windows y macOS, el botón Guardar se ilumina cuando el documento tiene cambios sin guardar, tanto en archivos locales como de Google Drive.
+
 ## Cambios en 0.9.4
 
 - En Windows y macOS, «Editar» ya no abre otra pantalla: se edita sobre las propias páginas, con el mismo zoom (también con el touchpad) y una barra de herramientas debajo de la principal.
