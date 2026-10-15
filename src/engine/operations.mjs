@@ -732,8 +732,9 @@ function pageFaces(scan, lines, faces) {
   }));
   const wordStyles = lines.map((line, i) => (line.words ?? []).map(word => wordStyle(scan, line, word, contrasts[i])));
   // A whole line's lean, from all its ink at once: surer than a word's (a heading set in italic;
-  // capitals, with fewer upright stems, sharpen less as they are sheared upright).
-  const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && ((style.lean >= 6 && style.gain >= 1.05) || (style.lean >= 9 && style.gain >= 1.03)); });
+  // a line of capitals, with fewer upright stems, sharpens less as it is sheared upright; a line of
+  // small letters with a few italic words in it leans a little too).
+  const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && ((style.lean >= 6 && style.gain >= 1.05) || (!!strips[i]?.capitals && style.lean >= 9 && style.gain >= 1.03)); });
   const mean = (face, among) => among.reduce((t, i) => t + score(i, face).score, 0) / among.length;
   // How evenly a face's widths match a set of lines' words: each word's width in the scan over its
   // width in the face is one size; in the face the text was set in, every word gives about the same
@@ -902,7 +903,10 @@ function pageFaces(scan, lines, faces) {
         if (known) return known;
         const before = measuredFaces.slice(0, n).reverse().find(Boolean), after = measuredFaces.slice(n + 1).find(Boolean);
         // Between two styles, the one after (a word opens the phrase it belongs to: «… azoemia. La nefritis»).
-        return before ? (!after || after === before ? before : after) : after ?? face;
+        const taken = before ? (!after || after === before ? before : after) : after ?? face;
+        // (Not an italic one: a sentence's capitalised «La» before an italic term is roman, where a
+        // bold run-in heading takes its article along.)
+        return taken !== before && taken.italic && !taken.bold && !face.italic && /^\p{Lu}/u.test(lines[i].words[n].text) ? before ?? face : taken;
       });
       // A line most of whose words are italic is an italic line (sized and placed in the italic).
       const italicWords = words.filter(other => other.italic).length;
