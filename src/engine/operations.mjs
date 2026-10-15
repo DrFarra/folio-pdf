@@ -313,7 +313,9 @@ function scanOf(bytes, width) {
 // The letters' size from the words' widths in a font: steadier than the ink's height, which takes
 // in a neighbour's accents and stray marks (0 without words to measure).
 function widthSize(font, line) {
-  const widths = (line.words ?? []).filter(word => [...word.text].length >= 3).map(word => {
+  // Words of small letters when the line has them: a word in capitals may be letter-spaced («C A P Í T U L O»).
+  const long = (line.words ?? []).filter(word => [...word.text].length >= 3), small = long.filter(word => /\p{Ll}/u.test(word.text));
+  const widths = (small.length ? small : long).map(word => {
     const [a, , b] = word.box, wordUnits = [...word.text].reduce((n, c) => { const gid = font.encodeCharacter(c); return n + (gid ? font.advanceGlyph(gid) : 0); }, 0);
     return wordUnits ? (b - a) / wordUnits : 0;
   }).filter(Boolean).sort((p, q) => p - q);
@@ -359,11 +361,12 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     const held = width && Math.abs(own - width) <= width * .12 ? Math.min(width * 1.05, Math.max(width * .95, own)) : own;
     // Into its room it always goes (a condensed title is narrower than any face we have).
     // A word of capitals may be a condensed or wide title face's: it may stretch further.
-    const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .45);
-    const stretch = Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
-    // A word far wider than its letters at any stretch is set with space between its letters
+    const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .45), shown = glyphs.filter(({ gid }) => gid);
+    // A word far wider than its letters would be is set with space between its letters
     // («C A P Í T U L O», mostly capitals): the letters keep their shape and the word its width.
-    const shown = glyphs.filter(({ gid }) => gid), tracking = own > (width || 1) * (/[a-zà-ÿ]/.test(word.text) ? 1.4 : 1.15) && shown.length >= 3 ? Math.max(0, ((b - a) - units * size * stretch) / (shown.length - 1)) : 0;
+    const spaced = own > (width || 1) * (/[a-zà-ÿ]/.test(word.text) ? 1.4 : 1.15) && shown.length >= 3;
+    const stretch = spaced ? width || 1 : Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
+    const tracking = spaced ? Math.max(0, ((b - a) - units * size * stretch) / (shown.length - 1)) : 0;
     let x = a;
     for (const { c, gid, font } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += font.advanceGlyph(gid) * size * stretch + tracking; } }
     x -= tracking;
@@ -886,10 +889,11 @@ function pageFaces(scan, lines, faces) {
   const plainKinds = new Set(lines.flatMap((line, i) => strips[i]?.capitals ? [] : [kindOf(penned[i], true)]).filter(Boolean));
   const page = lines.reduce((t, line) => t + line.text.length, 0) < 1200 && plainKinds.size < 2 ? [null] : [true, false];
   for (const kind of page) {
-    const members = lines.flatMap((_, i) => chosen[i] && !lines[i].band && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
+    const members = lines.flatMap((_, i) => chosen[i] && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
     if (members.length < 2) continue;
     const candidates = [...new Set(regulars.filter(face => kind === null || SERIF.has(face.family) === kind).map(face => face.family))];
-    const together = family => { const regular = regulars.find(face => face.family === family); return members.reduce((t, i) => t + score(i, regular).score * Math.min(40, lines[i].text.length), 0); };
+    // Bands do not choose (light letters on dark fit heavier, rounder faces) but take the choice.
+    const together = family => { const regular = regulars.find(face => face.family === family); return members.reduce((t, i) => t + (lines[i].band ? 0 : score(i, regular).score * Math.min(40, lines[i].text.length)), 0); };
     const best = candidates.reduce((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
     if (best) for (const i of members) if (chosen[i].face.family !== best) swapTo(i, best);
   }
