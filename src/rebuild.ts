@@ -8,8 +8,8 @@ export type Pixels = { data: Uint8ClampedArray; width: number; height: number; c
 export type Box = [number, number, number, number];
 /** A line to rebuild: its text, its ink box in image pixels and how sure the recogniser was of it (0–1). */
 export type LineArea = { text: string; box: Box; score: number; words?: { box: Box; score: number }[] };
-/** A line's ink colour and its background's, 0–1. */
-export type Style = { color: [number, number, number]; background: [number, number, number]; kept: number[] };
+/** A line's box (its band's rows when `band`: it sits on a band of its own colour, a table's dark row), its ink colour and its background's, 0–1. */
+export type Style = { box: Box; color: [number, number, number]; background: [number, number, number]; band: boolean; kept: number[] };
 
 /**
  * Styles of the lines (null for a line left in the image), with the others' letters
@@ -22,7 +22,8 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
   const rgb = (i: number) => n >= 3 ? [data[i * n], data[i * n + 1], data[i * n + 2]] : [data[i * n], data[i * n], data[i * n]];
   // Read every line before erasing any: lines close together share a margin.
   const looks = lines.map(({ text, box, score, words = [] }, index) => {
-    const x0 = Math.max(0, Math.floor(box[0])), x1 = Math.min(w, Math.ceil(box[2])), y0 = Math.max(0, Math.floor(box[1])), y1 = Math.min(h, Math.ceil(box[3]));
+    const x0 = Math.max(0, Math.floor(box[0])), x1 = Math.min(w, Math.ceil(box[2]));
+    let y0 = Math.max(0, Math.floor(box[1])), y1 = Math.min(h, Math.ceil(box[3]));
     // A few letters alone are a figure's label more often than text (and an α read as a): they need more certainty.
     const letters = text.replace(/\s/g, '').length;
     // Wrong text on the page is worse than the scan's own letters: only what was read with confidence is rewritten.
@@ -41,19 +42,45 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     if (em < (y1 - y0) * .45 || em > (y1 - y0) * 2.2) return null;
     // The background: the ring of pixels just around the line, which must be nearly one colour.
     const ring = Math.max(2, Math.round((y1 - y0) * .3)), around: number[][] = [];
+    const neighbours = lines.filter((other, k) => k !== index && other.box[2] > x0 - ring && other.box[0] < x1 + ring && other.box[3] > y0 - ring && other.box[1] < y1 + ring).map(other => other.box);
     for (let y = Math.max(0, y0 - ring); y < Math.min(h, y1 + ring); y++) for (let x = Math.max(0, x0 - ring); x < Math.min(w, x1 + ring); x += (y < y0 || y >= y1) ? 1 : x1 - x0 + ring) {
       if (y >= y0 && y < y1 && x >= x0 && x < x1) continue;
       // Not the letters of the lines just above or below (close leading reaches into the ring).
-      if (lines.some((other, k) => k !== index && x >= other.box[0] && x < other.box[2] && y >= other.box[1] && y < other.box[3])) continue;
+      if (neighbours.some(b => x >= b[0] && x < b[2] && y >= b[1] && y < b[3])) continue;
       around.push(rgb(y * w + x));
     }
     if (around.length < 8) return null;
-    const background = [0, 1, 2].map(c => { const values = around.map(p => p[c]).sort((a, b) => a - b); return values[values.length >> 1]; });
+    // Each channel's median, counted (the box holds thousands of pixels).
+    const median = (pixels: number[][]) => [0, 1, 2].map(c => {
+      const counts = new Uint32Array(256); for (const p of pixels) counts[p[c]]++;
+      let v = 0; for (let seen = counts[0]; seen <= pixels.length >> 1; ) seen += counts[++v];
+      return v;
+    });
+    let inside: number[][] = [];
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) inside.push(rgb(y * w + x));
+    let background = median(around);
     const far = (p: number[]) => Math.hypot(p[0] - background[0], p[1] - background[1], p[2] - background[2]);
-    if (around.filter(p => far(p) > 40).length > around.length * .2) return null;
+    // Letters fill a fraction of their box: when most of it is another colour than around it, the
+    // line sits on a band of its own (a table's dark heading row) and that band is its background.
+    // Its letters are erased within the band only: around it is another colour, not more ink.
+    const band = far(median(inside)) > 60;
+    if (band) {
+      // The band's colour without its letters' pixels.
+      const rough = median(inside);
+      background = median(inside.filter(p => Math.hypot(p[0] - rough[0], p[1] - rough[1], p[2] - rough[2]) < 40));
+      // The box reaches past the band's edges (into a light cell, as light as the letters): the
+      // line is the band's own rows, those with its colour across a good part of their width
+      // (the letters cover the rest).
+      const banded = (y: number) => { let on = 0, all = 0; for (let x = x0; x < x1; x += 2, all++) if (far(rgb(y * w + x)) < 40) on++; return on > all * .3; };
+      const rows = Array.from({ length: y1 - y0 }, (_, k) => banded(y0 + k)), first = rows.indexOf(true), last = rows.lastIndexOf(true);
+      if (first < 0 || last - first < 3) return null;
+      const [top, bottom] = [y0 + first, y0 + last + 1];
+      [y0, y1] = [top, bottom];
+      inside = [];
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) inside.push(rgb(y * w + x));
+    } else if (around.filter(p => far(p) > 40).length > around.length * .2) return null;
     // Ink: what stands apart from the background, darker or lighter.
-    const distances: number[] = [];
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) distances.push(far(rgb(y * w + x)));
+    const distances = inside.map(far);
     const sorted = [...distances].sort((a, b) => a - b), strongest = sorted[Math.floor(sorted.length * .98)];
     if (strongest < 50) return null;
     // The colour of the strokes' cores, away from their soft edges.
@@ -61,7 +88,11 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * .7) { const p = rgb(y * w + x); sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++; }
     const color = sum.map(v => Math.round(v / Math.max(1, count)) / 255) as [number, number, number];
     // The faint edge of a blurred scan's letters is erased too: anything clearly off the plain background.
-    return { x0, x1, y0, y1, far, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(2, Math.round((y1 - y0) * .06)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { color, background: background.map(v => v / 255) as [number, number, number], kept } };
+    const ink = color.map(v => v * 255), axis = Math.max(1, Math.hypot(ink[0] - background[0], ink[1] - background[1], ink[2] - background[2]));
+    // How far a pixel lies from the background toward the ink's colour: a letter's soft edge does,
+    // another colour beside the line (a table cell's edge, the white around a coloured box) does not.
+    const toward = (r: number, g: number, b: number) => ((r - background[0]) * (ink[0] - background[0]) + (g - background[1]) * (ink[1] - background[1]) + (b - background[2]) * (ink[2] - background[2])) / axis;
+    return { x0, x1, y0, y1, toward, band, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(3, Math.round((y1 - y0) * .09)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { box: [x0, y0, x1, y1] as Box, color, background: background.map(v => v / 255) as [number, number, number], band, kept } };
   });
   // Lines left in the image keep every pixel: erasing a neighbour must not reach into them.
   // A kept word is safe up to halfway into a neighbour's box that overlaps its own: the rest of
@@ -108,47 +139,175 @@ export function cleanPaper(image: Pixels) {
   for (let i = 0; i < count; i++) {
     const o = i * n, mapped = [0, 1, 2].map(c => map[c][data[o + (n >= 3 ? c : 0)]]);
     // Near-white becomes white: paper grain and show-through from the other side.
-    const lum = (mapped[0] * 299 + mapped[1] * 587 + mapped[2] * 114) / 1000, lift = lum > 235 ? 1 : lum > 215 ? (lum - 215) / 20 : 0;
+    // Only greys and the paper's own faint tint: a pale coloured cell or box keeps its colour.
+    const lum = (mapped[0] * 299 + mapped[1] * 587 + mapped[2] * 114) / 1000, chroma = Math.max(...mapped) - Math.min(...mapped);
+    const lift = chroma > 40 ? 0 : (lum > 235 ? 1 : lum > 215 ? (lum - 215) / 20 : 0) * (chroma > 20 ? (40 - chroma) / 20 : 1);
     for (let c = 0; c < Math.min(n, 3); c++) data[o + c] = mapped[n >= 3 ? c : 0] + (255 - mapped[n >= 3 ? c : 0]) * lift;
+  }
+  flatAreas(image);
+}
+
+/**
+ * Areas printed in one flat colour (a table's cells, a dark band, a tinted box) set to that
+ * colour again: the scan's grain gone, and with it the faint trace erased letters leave. The
+ * page's flat colours are those covering a good part of it; a pixel takes one only where all
+ * of its neighbours are close to it too, so photos, gradients and letters' edges stay as they are.
+ */
+function flatAreas(image: Pixels) {
+  const { data, width: w, height: h, channels: n } = image, count = w * h;
+  if (n < 3) return;
+  const step = Math.max(1, Math.floor(count / 200_000)), bins = new Map<number, number[]>();
+  for (let i = 0; i < count; i += step) {
+    const o = i * n, key = (data[o] >> 4) << 8 | (data[o + 1] >> 4) << 4 | data[o + 2] >> 4, bin = bins.get(key) ?? [0, 0, 0, 0];
+    bin[0]++; bin[1] += data[o]; bin[2] += data[o + 1]; bin[3] += data[o + 2]; bins.set(key, bin);
+  }
+  const distance = (p: number[], q: number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]), palette: number[][] = [];
+  for (const [seen, r, g, b] of [...bins.values()].sort((p, q) => q[0] - p[0])) {
+    if (seen < count / step * .01 || palette.length >= 12) break;
+    const colour = [r / seen, g / seen, b / seen];
+    if (!palette.some(other => distance(other, colour) < 16)) palette.push(colour);
+  }
+  // Which flat colour each colour is near, looked up at 6 bits a channel.
+  const near = new Int8Array(1 << 18).fill(-1);
+  for (let key = 0; key < near.length; key++) {
+    const p = [(key >> 12) * 4 + 2, (key >> 6 & 63) * 4 + 2, (key & 63) * 4 + 2];
+    let best = -1, closest = 14; palette.forEach((colour, k) => { const d = distance(colour, p); if (d < closest) { closest = d; best = k; } });
+    near[key] = best;
+  }
+  const label = new Int8Array(count);
+  for (let i = 0; i < count; i++) { const o = i * n; label[i] = near[(data[o] >> 2) << 12 | (data[o + 1] >> 2) << 6 | data[o + 2] >> 2]; }
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, k = label[i];
+    if (k < 0) continue;
+    let flat = true;
+    for (let dy = -1; dy <= 1 && flat; dy++) for (let dx = -1; dx <= 1; dx++) if (label[i + dy * w + dx] !== k) { flat = false; break; }
+    if (flat) for (let c = 0; c < 3; c++) data[i * n + c] = palette[k][c];
   }
 }
 
-/** The letters of one line erased: ink and its soft edge, each column filled from above to below. */
-function erase(image: Pixels, { x0, x1, y0, y1, far, ground, edge, grow }: { x0: number; x1: number; y0: number; y1: number; far: (p: number[]) => number; ground: number[]; edge: number; grow: number }, kept: Box[], words: Box[]) {
-  // A kept line is safe outside this line's own box (inside it, the line's letters always go,
-  // even where a neighbour's box overlaps); a kept word is safe everywhere.
+/**
+ * The letters of one line erased: their ink, the faint halo and the paler ringing a scan leaves
+ * around it, and strokes running past the box (descenders, accents). Each erased pixel is filled
+ * from the nearest clear background in its column and its row, weighed by nearness, so a cell's
+ * edge, a band above or the next line never bleed in.
+ */
+function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow }: { x0: number; x1: number; y0: number; y1: number; toward: (r: number, g: number, b: number) => number; band: boolean; ground: number[]; edge: number; grow: number }, kept: Box[], words: Box[]) {
+  // A kept word is safe everywhere; a kept line outside this line's box, and inside it (where
+  // the boxes of close lines overlap) for the strokes that belong to it (see below).
   const inside = (x: number, y: number, b: Box) => x >= b[0] && x < b[2] && y >= b[1] && y < b[3];
   const protectedAt = (x: number, y: number) => words.some(b => inside(x, y, b)) || ((y < y0 || y >= y1 || x < x0 || x >= x1) && kept.some(b => inside(x, y, b)));
-  const { data, width: w, height: h, channels: n } = image, pad = grow + 1;
-  const inked = (x: number, y: number) => { const i = (y * w + x) * n; return far(n >= 3 ? [data[i], data[i + 1], data[i + 2]] : [data[i], data[i], data[i]]) > edge; };
-  const left = Math.max(0, x0 - pad), right = Math.min(w, x1 + pad), top = Math.max(0, y0 - pad), bottom = Math.min(h, y1 + pad);
-  const cw = right - left, ch = bottom - top, mask = new Uint8Array(cw * ch);
-  // Ink, including the faint edge of each stroke a scan leaves, grown by a few pixels.
-  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (inked(left + x, top + y)) {
-    for (let dy = -grow; dy <= grow; dy++) for (let dx = -grow; dx <= grow; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < ch && xx >= 0 && xx < cw) mask[yy * cw + xx] = 1; }
+  const { data, width: w, height: h, channels: n } = image, spread = 3, reach = band ? 0 : Math.ceil((y1 - y0) * .5), pad = band ? 0 : grow + 1 + spread;
+  // The window: the line, its halo, and as far as its strokes may run past it.
+  const left = Math.max(0, x0 - pad), right = Math.min(w, x1 + pad), top = Math.max(0, y0 - pad - reach), bottom = Math.min(h, y1 + pad + reach);
+  const coreTop = Math.max(0, y0 - pad) - top, coreBottom = Math.min(h, y1 + pad) - top, cw = right - left, ch = bottom - top;
+  const pixel = (x: number, y: number) => { const i = ((top + y) * w + left + x) * n; return n >= 3 ? [data[i], data[i + 1], data[i + 2]] : [data[i], data[i], data[i]]; };
+  const off = (p: number[], q: number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+  const halo = Math.max(8, edge * .55);
+  // The background column by column, just above and just below the line:
+  // a line can cross two colours, side by side (a heading over a green and a pink band) or one
+  // above the other (a band's edge across its box), and a pixel is background near either.
+  const rows = Math.max(2, Math.round((y1 - y0) * .3));
+  // In each column the pixel furthest from the letters' colour (the lines just above and below
+  // reach in with their own letters), then the middle of those across the columns around.
+  const sampled = (above: boolean) => {
+    const columns = Array.from({ length: cw }, (_, x) => {
+      if (band) return ground;
+      let lightest: number[] | null = null, least = Infinity;
+      for (let k = 1; k <= rows; k++) { const y = above ? coreTop - k : coreBottom - 1 + k; if (y < 0 || y >= ch) continue; const p = pixel(x, y), t = toward(p[0], p[1], p[2]); if (t < least) { least = t; lightest = p; } }
+      return lightest;
+    });
+    return columns.map((_, x) => { const near = columns.slice(Math.max(0, x - rows), x + rows + 1).filter(Boolean) as number[][]; return near.length ? [0, 1, 2].map(c => near.map(p => p[c]).sort((a, b) => a - b)[near.length >> 1]) : null; });
+  };
+  const aboveLocal = sampled(true), belowLocal = sampled(false);
+  const local = aboveLocal.map((p, x) => p ?? belowLocal[x] ?? ground), under = belowLocal.map((p, x) => p ?? local[x]);
+  const fromGround = (p: number[], x: number) => Math.min(off(p, local[x]), off(p, under[x]));
+  // Ink: how far a pixel lies toward the letters' colour from its own column's background (the
+  // line's one background colour would take a tinted band for ink).
+  const base = local.map((p, x) => Math.max(toward(p[0], p[1], p[2]), toward(under[x][0], under[x][1], under[x][2])));
+  const tone = (x: number, y: number) => { const p = pixel(x, y); return toward(p[0], p[1], p[2]) - base[x]; };
+  // A rule (a table's line, an underline) is a thin run of solid ink far longer than any letter:
+  // it stays. Solid: at full ink all along (letters' halos and serifs touch, their ink does not);
+  // thin: clear a few pixels above and below along nearly all of it (a row through bold letters is
+  // a long run too, with ink all around it).
+  const rule = new Uint8Array(cw * ch), long = Math.max(40, (y1 - y0) * 4), gap = 3;
+  for (let y = 0; y < ch; y++) for (let x = 0, run = 0; x <= cw; x++) {
+    if (x < cw && tone(x, y) > edge) { run++; continue; }
+    // A run reaching the window's side goes on beyond it (a table's rule under a short word).
+    let length = run;
+    if (run && x - run === 0) for (let k = -1; left + k >= 0 && length <= long * 1.5 && tone(k, y) > edge; k--) length++;
+    if (run && x === cw) for (let k = cw; left + k < w && length <= long * 1.5 && tone(k, y) > edge; k++) length++;
+    if (length > long) {
+      let thin = 0;
+      for (let k = x - run; k < x; k++) if ((y - gap < 0 || tone(k, y - gap) <= halo) && (y + gap >= ch || tone(k, y + gap) <= halo)) thin++;
+      if (thin > run * .9) for (let yy = Math.max(0, y - 1); yy <= Math.min(ch - 1, y + 1); yy++) rule.fill(1, yy * cw + x - run, yy * cw + x);
+      // Thick and longer still, it is a band or a filled box beside the line: it stays too.
+      else if (length > long * 1.5) rule.fill(1, y * cw + x - run, y * cw + x);
+    }
+    run = 0;
   }
-  // A stroke can run past the box (a descender, an accent): follow it until background, a little way.
-  const reach = Math.ceil((y1 - y0) * .5);
+  // The ink, its faint halo included, grown by a few pixels.
+  const mask = new Uint8Array(cw * ch);
+  for (let y = coreTop; y < coreBottom; y++) for (let x = 0; x < cw; x++) if (!rule[y * cw + x] && tone(x, y) > halo) {
+    for (let yy = Math.max(coreTop, y - grow); yy <= Math.min(coreBottom - 1, y + grow); yy++) mask.fill(1, yy * cw + Math.max(0, x - grow), yy * cw + Math.min(cw, x + grow + 1));
+  }
+  // A stroke can run past the box (a descender, an accent): followed until background, a little way.
   for (let x = 0; x < cw; x++) {
-    for (let y = 0; y < ch; y++) {
-      if (!mask[y * cw + x]) continue;
-      let end = y; while (end < ch && mask[end * cw + x]) end++;
-      const px = left + x;
-      let above = top + y - 1, below = top + end;
-      if (y === 0) while (above >= 0 && top - above < reach && inked(px, above)) above--;
-      if (end === ch) while (below < h && below - bottom < reach && inked(px, below)) below++;
-      // An end still on ink (a stroke followed as far as it may go, into the next line's
-      // letters) lends the background's colour, not its own: it would draw a grey bar.
-      const from = (row: number, c: number) => row >= 0 && row < h && !inked(px, row) ? data[(row * w + px) * n + c] : n >= 3 ? ground[c] ?? 255 : ground[0];
-      for (let k = above + 1 - top; k < below - top; k++) {
-        if (protectedAt(px, top + k)) continue;
-        const f = (k - (above - top)) / (below - above), o = ((top + k) * w + px) * n;
-        for (let c = 0; c < n; c++) {
-          const a = from(above, c), b = from(below, c);
-          data[o + c] = c === 3 ? 255 : a + (b - a) * f;
-        }
+    if (mask[coreTop * cw + x]) for (let y = coreTop - 1; y >= 0 && tone(x, y) > edge && !rule[y * cw + x]; y--) mask[y * cw + x] = 1;
+    if (mask[(coreBottom - 1) * cw + x]) for (let y = coreBottom; y < ch && tone(x, y) > edge && !rule[y * cw + x]; y++) mask[y * cw + x] = 1;
+  }
+  // Next to the letters, any pixel off the background either way goes too: a compressed scan
+  // rings around dark strokes with paler, greyer pixels, which turn white once the paper is cleaned.
+  const across = new Uint8Array(cw * ch), near = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (mask[y * cw + x]) across.fill(1, y * cw + Math.max(0, x - spread), y * cw + Math.min(cw, x + spread + 1));
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (across[y * cw + x]) for (let yy = Math.max(0, y - spread); yy <= Math.min(ch - 1, y + spread); yy++) near[yy * cw + x] = 1;
+  for (let i = 0; i < mask.length; i++) if (!mask[i] && near[i] && !rule[i] && fromGround(pixel(i % cw, Math.floor(i / cw)), i % cw) > 12) mask[i] = 1;
+  // Where a kept line's box overlaps this one, each stroke goes with the line it belongs to: a
+  // connected piece of ink stays when its middle is nearer the kept line's middle than this one's
+  // (a descender of the line above, an accent of the line below), with its halo.
+  const keep = new Uint8Array(cw * ch), overlapping = kept.filter(b => b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0);
+  if (overlapping.length) {
+    const label = new Int32Array(cw * ch).fill(-1), stack: number[] = [];
+    for (let start = 0; start < label.length; start++) {
+      if (label[start] >= 0 || tone(start % cw, Math.floor(start / cw)) <= halo) continue;
+      const piece: number[] = []; label[start] = start; stack.push(start);
+      while (stack.length) {
+        const i = stack.pop()!, x = i % cw, y = (i - x) / cw; piece.push(i);
+        for (const j of [x > 0 ? i - 1 : -1, x < cw - 1 ? i + 1 : -1, y > 0 ? i - cw : -1, y < ch - 1 ? i + cw : -1]) if (j >= 0 && label[j] < 0 && tone(j % cw, Math.floor(j / cw)) > halo) { label[j] = start; stack.push(j); }
       }
-      y = end;
+      const cy = top + piece.reduce((t, i) => t + Math.floor(i / cw), 0) / piece.length, cx = left + piece.reduce((t, i) => t + i % cw, 0) / piece.length;
+      const owner = overlapping.find(b => cx >= b[0] && cx < b[2] && Math.abs(cy - (b[1] + b[3]) / 2) < Math.abs(cy - (y0 + y1) / 2));
+      if (owner) for (const i of piece) { const x = i % cw, y = (i - x) / cw; for (let yy = Math.max(0, y - grow); yy <= Math.min(ch - 1, y + grow); yy++) keep.fill(1, yy * cw + Math.max(0, x - grow), yy * cw + Math.min(cw, x + grow + 1)); }
     }
   }
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (rule[y * cw + x] || keep[y * cw + x] || protectedAt(left + x, top + y)) mask[y * cw + x] = 0;
+  const write = (x: number, y: number, value: number[]) => { const o = ((top + y) * w + left + x) * n; for (let c = 0; c < n; c++) data[o + c] = c === 3 ? 255 : value[n >= 3 ? c : 0]; };
+  // On a band, its one colour.
+  if (band) { for (let i = 0; i < mask.length; i++) if (mask[i]) write(i % cw, Math.floor(i / cw), ground); return; }
+  // Clear background: what is left unerased and close to the background (not another line's letters).
+  const clear = new Uint8Array(cw * ch);
+  for (let i = 0; i < mask.length; i++) clear[i] = !mask[i] && !keep[i] && fromGround(pixel(i % cw, Math.floor(i / cw)), i % cw) < 30 ? 1 : 0;
+  // The nearest clear pixel up, down, left and right of each erased one.
+  const up = new Int32Array(cw * ch).fill(-1), down = new Int32Array(cw * ch).fill(-1), before = new Int32Array(cw * ch).fill(-1), after = new Int32Array(cw * ch).fill(-1);
+  for (let x = 0; x < cw; x++) {
+    for (let y = 0, last = -1; y < ch; y++) { const i = y * cw + x; if (clear[i]) last = y; else up[i] = last; }
+    for (let y = ch - 1, last = -1; y >= 0; y--) { const i = y * cw + x; if (clear[i]) last = y; else down[i] = last; }
+  }
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0, last = -1; x < cw; x++) { const i = y * cw + x; if (clear[i]) last = x; else before[i] = last; }
+    for (let x = cw - 1, last = -1; x >= 0; x--) { const i = y * cw + x; if (clear[i]) last = x; else after[i] = last; }
+  }
+  const fills: [number, number, number[]][] = [];
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const i = y * cw + x;
+    if (!mask[i]) continue;
+    const sum = [0, 0, 0]; let weight = 0;
+    // The nearest weigh far more (a row between letters holds its own band's colour, sharp at its edge).
+    const add = (px: number, py: number, d: number) => { const p = pixel(px, py), k = 1 / (d * d); for (let c = 0; c < 3; c++) sum[c] += p[c] * k; weight += k; };
+    if (up[i] >= 0) add(x, up[i], y - up[i]);
+    if (down[i] >= 0) add(x, down[i], down[i] - y);
+    if (before[i] >= 0) add(before[i], y, x - before[i]);
+    if (after[i] >= 0) add(after[i], y, after[i] - x);
+    fills.push([x, y, weight ? sum.map(v => v / weight) : local[x]]);
+  }
+  for (const [x, y, value] of fills) write(x, y, value);
 }

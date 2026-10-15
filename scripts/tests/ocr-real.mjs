@@ -63,14 +63,21 @@ for (const spec of process.argv.slice(2)) {
   times.straighten = performance.now() - started; started = performance.now();
   const lines = await engine.recognize({ ...straight, data: new Uint8ClampedArray(straight.data) });
   times.ocr = performance.now() - started; started = performance.now();
+  if (process.env.FOLIO_LINES) for (const line of lines) if (line.text.match(new RegExp(process.env.FOLIO_LINES))) console.log('OCRLINE', line.score.toFixed(3), line.box.map(Math.round).join(','), JSON.stringify(line.text), line.words.map(w => w.text + '@' + w.box.map(Math.round).join(',')).join(' '));
   const heights = lines.map(line => line.box[3] - line.box[1]).sort((a, b) => a - b), usual = heights[heights.length >> 1] || 0;
-  const level = lines.filter(line => line.box[3] - line.box[1] <= usual * 2.5), scanned = pixmapOf(straight), original = scanned.asJPEG(90); scanned.destroy();
+  const level = lines.filter(line => line.box[3] - line.box[1] <= usual * 2.5), scanned = pixmapOf(straight), original = scanned.asJPEG(90); if (process.env.FOLIO_STRAIGHT) fs.writeFileSync(path.join(out, `${name}-straight.png`), scanned.asPNG()); scanned.destroy();
+  let t0 = performance.now();
   const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })));
+  times.lines = performance.now() - t0; t0 = performance.now();
+  if (process.env.FOLIO_BACKDROP) { const raw = pixmapOf(straight); fs.writeFileSync(path.join(out, `${name}-erased.png`), raw.asPNG()); raw.destroy(); }
   cleanPaper(straight);
-  const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, ...colours } = style, words = line.words.filter((_, n) => !kept.includes(n)); return [{ text: words.map(word => word.text).join(' '), box: line.box.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }]; });
-  const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); backdrop.destroy();
+  times.paper = performance.now() - t0; t0 = performance.now();
+  const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, box: lineBox, ...colours } = style, words = line.words.filter((_, n) => !kept.includes(n)); return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }]; });
+  // FOLIO_BACKDROP=1 also writes the cleaned image the text is laid over.
+  const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); if (process.env.FOLIO_BACKDROP) fs.writeFileSync(path.join(out, `${name}-backdrop.png`), backdrop.asPNG()); backdrop.destroy();
   const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, width, height], 0, blank.newDictionary(), ''));
   const result = operateDocument(new Uint8Array(blank.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [], image: jpeg, size: [width, height], lines: rebuilt, original }], faces });
+  times.engine = performance.now() - t0;
   times.rebuild = performance.now() - started;
   // Side by side, at 1.2 px per point: the page as it was, the page rebuilt.
   const view = 1.2, left = page.toPixmap(mupdf.Matrix.scale(view, view), mupdf.ColorSpace.DeviceRGB, false), right = mupdf.Document.openDocument(result, 'application/pdf').loadPage(0).toPixmap(mupdf.Matrix.scale(view, view), mupdf.ColorSpace.DeviceRGB, false);

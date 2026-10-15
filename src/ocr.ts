@@ -155,8 +155,8 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           // Rewritten lines without their doubtful words, which stay in the image and searchable.
           const rebuilt = level.flatMap((line, i) => {
             const style = styles[i]; if (!style) return [];
-            const { kept: doubtful, ...colours } = style, words = line.words.filter((_, n) => !doubtful.includes(n));
-            return [{ text: words.map(word => word.text).join(' '), box: line.box.map(v => v / scale) as Box, ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box })) }];
+            const { kept: doubtful, box: lineBox, ...colours } = style, words = line.words.filter((_, n) => !doubtful.includes(n));
+            return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale) as Box, ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box })) }];
           });
           const kept = [...found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]),
             ...level.flatMap((line, i) => styles[i] ? [{ ...line, words: line.words.filter((_, n) => styles[i]!.kept.includes(n)) }] : [])];
