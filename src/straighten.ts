@@ -214,8 +214,11 @@ export function marginTilt(mask: Uint8Array, w: number, h: number): number | nul
  * part of the page stays where it is; the curved part is brought to it.
  */
 export function flattenField(mask: Uint8Array, w: number, h: number): Field | null {
-  const { lines, spacing } = traceLines(mask, w, h);
-  if (lines.length < 4) return null;
+  const traced = traceLines(mask, w, h), spacing = traced.spacing;
+  // Only running text shows a page's curve: a few short lines (captions beside drawings,
+  // whose strokes can pass for lines) are no evidence of it.
+  const lines = traced.lines.filter(line => line.hi - line.lo >= w * .35);
+  if (lines.length < 6) return null;
   const at = (line: Line, x: number) => clampAt(line, x, w);
   // Curved: the middle of the line strays from the straight chord between its ends.
   const bent = lines.filter(line => {

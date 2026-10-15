@@ -55,7 +55,7 @@ function straighten(canvas: HTMLCanvasElement) {
 }
 
 type Box = [number, number, number, number];
-type Line = { text: string; box: Box; score: number; words: { text: string; box: Box }[] };
+type Line = { text: string; box: Box; score: number; words: { text: string; box: Box; score: number }[] };
 type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Line[]>; close: () => void };
 /** What OCR leaves: invisible text over the page as it is, or the page rebuilt as real, editable text. */
 export type OcrResult = 'search' | 'edit';
@@ -67,7 +67,7 @@ function engineReader(signal: AbortSignal): Reader {
     read: async canvas => {
       const image = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
       const lines = await engine.recognize({ data: image.data, width: image.width, height: image.height, channels: 4 }, signal);
-      return lines.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words.map(word => ({ text: word.text, box: word.box })) }));
+      return lines.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words.map(word => ({ text: word.text, box: word.box, score: word.score })) }));
     },
     close: () => engine.terminate(),
   };
@@ -95,7 +95,7 @@ async function tesseractReader(language: 'spa' | 'eng' | 'spa+eng', progress: (p
       const { data } = await cancellable(worker.recognize(canvas, {}, { blocks: true, text: true }), signal);
       const box = ({ bbox }: { bbox: { x0: number; y0: number; x1: number; y1: number } }): Box => [bbox.x0, bbox.y0, bbox.x1, bbox.y1];
       return (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines)).filter(line => line.text.trim())
-        .map(line => ({ text: line.text.trim(), box: box(line), score: line.confidence / 100, words: line.words.filter(word => word.text.trim()).map(word => ({ text: word.text, box: box(word) })) }));
+        .map(line => ({ text: line.text.trim(), box: box(line), score: line.confidence / 100, words: line.words.filter(word => word.text.trim()).map(word => ({ text: word.text, box: box(word), score: word.confidence / 100 })) }));
     },
     close: () => { signal.removeEventListener('abort', abort); void worker.terminate(); },
   };
@@ -148,12 +148,18 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           // The page as scanned goes too: the engine matches each line's face against its letters.
           const original = await jpeg();
           const context = read.getContext('2d', { willReadFrequently: true })!, pixels = context.getImageData(0, 0, read.width, read.height);
-          const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => ({ text: line.text, box: line.box, score: line.score })));
+          const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })));
           // What stays as image no longer looks scanned: white paper, black ink.
           cleanPaper({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 });
           context.putImageData(pixels, 0, 0);
-          const rebuilt = level.flatMap((line, i) => styles[i] ? [{ text: line.text, box: line.box.map(v => v / scale) as Box, ...styles[i]!, words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box })) }] : []);
-          const kept = found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]);
+          // Rewritten lines without their doubtful words, which stay in the image and searchable.
+          const rebuilt = level.flatMap((line, i) => {
+            const style = styles[i]; if (!style) return [];
+            const { kept: doubtful, ...colours } = style, words = line.words.filter((_, n) => !doubtful.includes(n));
+            return [{ text: words.map(word => word.text).join(' '), box: line.box.map(v => v / scale) as Box, ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box })) }];
+          });
+          const kept = [...found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]),
+            ...level.flatMap((line, i) => styles[i] ? [{ ...line, words: line.words.filter((_, n) => styles[i]!.kept.includes(n)) }] : [])];
           result.pages.push({ page: number, words: pdfWords(kept), image: await jpeg(), size: [width, height], lines: rebuilt, original });
           continue;
         }

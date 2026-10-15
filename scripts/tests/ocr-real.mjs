@@ -65,9 +65,9 @@ for (const spec of process.argv.slice(2)) {
   times.ocr = performance.now() - started; started = performance.now();
   const heights = lines.map(line => line.box[3] - line.box[1]).sort((a, b) => a - b), usual = heights[heights.length >> 1] || 0;
   const level = lines.filter(line => line.box[3] - line.box[1] <= usual * 2.5), scanned = pixmapOf(straight), original = scanned.asJPEG(90); scanned.destroy();
-  const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score })));
+  const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })));
   cleanPaper(straight);
-  const rebuilt = level.flatMap((line, i) => styles[i] ? [{ text: line.text, box: line.box.map(v => v / scale), ...styles[i], words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }] : []);
+  const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, ...colours } = style, words = line.words.filter((_, n) => !kept.includes(n)); return [{ text: words.map(word => word.text).join(' '), box: line.box.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }]; });
   const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); backdrop.destroy();
   const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, width, height], 0, blank.newDictionary(), ''));
   const result = operateDocument(new Uint8Array(blank.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [], image: jpeg, size: [width, height], lines: rebuilt, original }], faces });

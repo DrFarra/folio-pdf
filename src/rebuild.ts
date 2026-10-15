@@ -7,9 +7,9 @@
 export type Pixels = { data: Uint8ClampedArray; width: number; height: number; channels: number };
 export type Box = [number, number, number, number];
 /** A line to rebuild: its text, its ink box in image pixels and how sure the recogniser was of it (0–1). */
-export type LineArea = { text: string; box: Box; score: number };
+export type LineArea = { text: string; box: Box; score: number; words?: { box: Box; score: number }[] };
 /** A line's ink colour and its background's, 0–1. */
-export type Style = { color: [number, number, number]; background: [number, number, number] };
+export type Style = { color: [number, number, number]; background: [number, number, number]; kept: number[] };
 
 /**
  * Styles of the lines (null for a line left in the image), with the others' letters
@@ -21,20 +21,30 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
   const { data, width: w, height: h, channels: n } = image;
   const rgb = (i: number) => n >= 3 ? [data[i * n], data[i * n + 1], data[i * n + 2]] : [data[i * n], data[i * n], data[i * n]];
   // Read every line before erasing any: lines close together share a margin.
-  const looks = lines.map(({ text, box, score }) => {
+  const looks = lines.map(({ text, box, score, words = [] }, index) => {
     const x0 = Math.max(0, Math.floor(box[0])), x1 = Math.min(w, Math.ceil(box[2])), y0 = Math.max(0, Math.floor(box[1])), y1 = Math.min(h, Math.ceil(box[3]));
     // A few letters alone are a figure's label more often than text (and an α read as a): they need more certainty.
     const letters = text.replace(/\s/g, '').length;
     // Wrong text on the page is worse than the scan's own letters: only what was read with confidence is rewritten.
-    if (letters <= 3 || score < (letters < 6 ? .96 : .92) || x1 - x0 < 2 || y1 - y0 < 2) return null;
+    if (letters <= 3 || score < (letters < 6 ? .96 : .85) || x1 - x0 < 2 || y1 - y0 < 2) return null;
+    // A line on its own, with no line of its paragraph just above or below (a figure's label, a
+    // running head), is read without the help of its neighbours' context: it needs more certainty.
+    const alone = !lines.some((other, k) => k !== index && Math.abs(other.box[3] - other.box[1] - (y1 - y0)) < (y1 - y0) * .4 && Math.abs(other.box[1] + other.box[3] - y0 - y1) / 2 < (y1 - y0) * 2.5 && Math.min(other.box[2], x1) > Math.max(other.box[0], x0));
+    if (alone && score < .97) return null;
+    // A doubtful word stays as the scan shows it, the rest of its line is rewritten; a line
+    // mostly of doubtful words stays whole.
+    const kept = words.flatMap((word, n) => word.score < .8 ? [n] : []);
+    if (kept.length * 2 > words.length) return null;
     // Text about as wide as its letters make it at this height: a box holding several close
     // lines (too narrow for its height), or text read only in part (too wide), stays as it is.
     const em = (x1 - x0) / (text.length * .5);
-    if (em < (y1 - y0) * .55 || em > (y1 - y0) * 2.2) return null;
+    if (em < (y1 - y0) * .45 || em > (y1 - y0) * 2.2) return null;
     // The background: the ring of pixels just around the line, which must be nearly one colour.
     const ring = Math.max(2, Math.round((y1 - y0) * .3)), around: number[][] = [];
     for (let y = Math.max(0, y0 - ring); y < Math.min(h, y1 + ring); y++) for (let x = Math.max(0, x0 - ring); x < Math.min(w, x1 + ring); x += (y < y0 || y >= y1) ? 1 : x1 - x0 + ring) {
       if (y >= y0 && y < y1 && x >= x0 && x < x1) continue;
+      // Not the letters of the lines just above or below (close leading reaches into the ring).
+      if (lines.some((other, k) => k !== index && x >= other.box[0] && x < other.box[2] && y >= other.box[1] && y < other.box[3])) continue;
       around.push(rgb(y * w + x));
     }
     if (around.length < 8) return null;
@@ -51,11 +61,21 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * .7) { const p = rgb(y * w + x); sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++; }
     const color = sum.map(v => Math.round(v / Math.max(1, count)) / 255) as [number, number, number];
     // The faint edge of a blurred scan's letters is erased too: anything clearly off the plain background.
-    return { x0, x1, y0, y1, far, edge: Math.max(14, strongest * .1), grow: Math.max(2, Math.round((y1 - y0) * .06)), style: { color, background: background.map(v => v / 255) as [number, number, number] } };
+    return { x0, x1, y0, y1, far, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(2, Math.round((y1 - y0) * .06)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { color, background: background.map(v => v / 255) as [number, number, number], kept } };
   });
   // Lines left in the image keep every pixel: erasing a neighbour must not reach into them.
-  const kept = looks.flatMap((look, i) => look ? [] : [lines[i].box]);
-  for (const look of looks) if (look) erase(image, look, kept);
+  // A kept word is safe up to halfway into a neighbour's box that overlaps its own: the rest of
+  // that overlap holds the neighbour's descenders (or accents), which go with it.
+  const halfway = ([x0, y0, x1, y1]: Box, line: number): Box => {
+    for (const [k, { box }] of lines.entries()) {
+      if (k === line || box[2] <= x0 || box[0] >= x1) continue;
+      if (box[1] < y0 && box[3] > y0 && box[3] < y1) y0 = (y0 + box[3]) / 2;
+      if (box[3] > y1 && box[1] < y1 && box[1] > y0) y1 = (y1 + box[1]) / 2;
+    }
+    return [x0, y0, x1, y1];
+  };
+  const kept = looks.flatMap((look, i) => look ? [] : [lines[i].box]), words = looks.flatMap((look, i) => (look?.keep ?? []).map(box => halfway(box, i)));
+  for (const look of looks) if (look) erase(image, look, kept, words);
   return looks.map(look => look?.style ?? null);
 }
 
@@ -83,7 +103,7 @@ export function cleanPaper(image: Pixels) {
   for (let c = 0; c < 3; c++) white[c] /= samples;
   const darkest: number[][] = [[], [], []];
   for (let i = 0; i < count; i += step) if (light(i) < paper * .5) for (let c = 0; c < 3; c++) darkest[c].push(data[i * n + (n >= 3 ? c : 0)]);
-  for (let c = 0; c < 3; c++) { const values = darkest[c].sort((a, b) => a - b); black[c] = values.length ? Math.min(70, values[Math.floor(values.length * .05)]) : 0; }
+  for (let c = 0; c < 3; c++) { const values = darkest[c].sort((a, b) => a - b); black[c] = values.length ? Math.min(35, values[Math.floor(values.length * .05)]) : 0; }
   const map = [0, 1, 2].map(c => Uint8ClampedArray.from({ length: 256 }, (_, v) => (v - black[c]) / Math.max(1, white[c] - black[c]) * 255));
   for (let i = 0; i < count; i++) {
     const o = i * n, mapped = [0, 1, 2].map(c => map[c][data[o + (n >= 3 ? c : 0)]]);
@@ -94,9 +114,11 @@ export function cleanPaper(image: Pixels) {
 }
 
 /** The letters of one line erased: ink and its soft edge, each column filled from above to below. */
-function erase(image: Pixels, { x0, x1, y0, y1, far, edge, grow }: { x0: number; x1: number; y0: number; y1: number; far: (p: number[]) => number; edge: number; grow: number }, kept: Box[]) {
-  // Outside its own box only: inside it, the line's letters always go, even where a neighbour's box overlaps.
-  const protectedAt = (x: number, y: number) => (y < y0 || y >= y1 || x < x0 || x >= x1) && kept.some(b => x >= b[0] && x < b[2] && y >= b[1] && y < b[3]);
+function erase(image: Pixels, { x0, x1, y0, y1, far, ground, edge, grow }: { x0: number; x1: number; y0: number; y1: number; far: (p: number[]) => number; ground: number[]; edge: number; grow: number }, kept: Box[], words: Box[]) {
+  // A kept line is safe outside this line's own box (inside it, the line's letters always go,
+  // even where a neighbour's box overlaps); a kept word is safe everywhere.
+  const inside = (x: number, y: number, b: Box) => x >= b[0] && x < b[2] && y >= b[1] && y < b[3];
+  const protectedAt = (x: number, y: number) => words.some(b => inside(x, y, b)) || ((y < y0 || y >= y1 || x < x0 || x >= x1) && kept.some(b => inside(x, y, b)));
   const { data, width: w, height: h, channels: n } = image, pad = grow + 1;
   const inked = (x: number, y: number) => { const i = (y * w + x) * n; return far(n >= 3 ? [data[i], data[i + 1], data[i + 2]] : [data[i], data[i], data[i]]) > edge; };
   const left = Math.max(0, x0 - pad), right = Math.min(w, x1 + pad), top = Math.max(0, y0 - pad), bottom = Math.min(h, y1 + pad);
@@ -115,12 +137,14 @@ function erase(image: Pixels, { x0, x1, y0, y1, far, edge, grow }: { x0: number;
       let above = top + y - 1, below = top + end;
       if (y === 0) while (above >= 0 && top - above < reach && inked(px, above)) above--;
       if (end === ch) while (below < h && below - bottom < reach && inked(px, below)) below++;
+      // An end still on ink (a stroke followed as far as it may go, into the next line's
+      // letters) lends the background's colour, not its own: it would draw a grey bar.
+      const from = (row: number, c: number) => row >= 0 && row < h && !inked(px, row) ? data[(row * w + px) * n + c] : n >= 3 ? ground[c] ?? 255 : ground[0];
       for (let k = above + 1 - top; k < below - top; k++) {
         if (protectedAt(px, top + k)) continue;
         const f = (k - (above - top)) / (below - above), o = ((top + k) * w + px) * n;
         for (let c = 0; c < n; c++) {
-          const a = above >= 0 ? data[(above * w + px) * n + c] : below < h ? data[(below * w + px) * n + c] : 255;
-          const b = below < h ? data[(below * w + px) * n + c] : a;
+          const a = from(above, c), b = from(below, c);
           data[o + c] = c === 3 ? 255 : a + (b - a) * f;
         }
       }
