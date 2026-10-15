@@ -358,7 +358,8 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     // Never into the next word's place: a space's worth before it stays clear.
     const own = (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
     // The page's measure holds a word only near it: a heading or a title runs wider or narrower.
-    const held = width && Math.abs(own - width) <= width * .12 ? Math.min(width * 1.05, Math.max(width * .95, own)) : own;
+    // Within a tenth of it each word fills its own place (justified text sets its spaces, our face its letters).
+    const held = width && Math.abs(own - width) > width * .1 && Math.abs(own - width) <= width * .2 ? Math.min(width * 1.1, Math.max(width * .9, own)) : own;
     // Into its room it always goes (a condensed title is narrower than any face we have).
     // A word of capitals may be a condensed or wide title face's: it may stretch further.
     const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .45), shown = glyphs.filter(({ gid }) => gid);
@@ -828,13 +829,15 @@ function pageFaces(scan, lines, faces) {
       // Bold comes in runs (a phrase, «Fig. 4-9.»): two or more heavier words side by side, which
       // the bold face draws better than the regular one taken together (one word's shape alone
       // says little in a soft scan, and a lone heavy word is the scan's ink).
-      const own = wordStyles[i].filter(Boolean), common = own.length >= 3 ? median(own.map(style => style.stroke)) : 0;
+      // Words in their own colour (a blue link) are weighed apart: their strokes read thinner against the line's ink.
+      const plainWord = n => !lines[i].words?.[n]?.color;
+      const own = wordStyles[i].filter((style, n) => style && plainWord(n)), common = own.length >= 3 ? median(own.map(style => style.stroke)) : 0;
       // Heavier: past the line's usual stroke by a good margin, or, in a line plainly of two weights
       // (half bold, half not), on the heavy side of the split that parts them most.
       const sorted = own.map(style => style.stroke).sort((p, q) => p - q), average = list => list.reduce((t, v) => t + v, 0) / list.length;
       let cut = common * 1.22, widest = 1.25;
       for (let k = 2; k <= sorted.length - 2; k++) { const low = average(sorted.slice(0, k)), high = average(sorted.slice(k)); if (high / low > widest) { widest = high / low; cut = Math.sqrt(low * high); } }
-      const measured = wordStyles[i].flatMap((style, n) => style ? [n] : []), bolds = [];
+      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds = [];
       for (let m = 0; m < measured.length;) {
         let end = m; while (end < measured.length && !face.bold && common > 0 && wordStyles[i][measured[end]].stroke > cut) end++;
         const run = measured.slice(m, end);
