@@ -140,6 +140,7 @@ export default function Workbench(props: Props) {
   const [fieldOptions, setFieldOptions] = useState('');
   const [language, setLanguage] = useState<'spa' | 'eng' | 'spa+eng'>('spa+eng');
   const [ocrScope, setOcrScope] = useState<'current' | 'all' | 'range'>(doc.pdf.numPages > 1 ? 'all' : 'current');
+  const [straightenPages, setStraightenPages] = useState(true);
   const [pageRange, setPageRange] = useState(String(props.page));
   const [progress, setProgress] = useState('');
   const [pfx, setPfx] = useState<Uint8Array | null>(null);
@@ -464,15 +465,17 @@ export default function Workbench(props: Props) {
     {section === 'ocr' && <>
       <div className="security-form"><label>Páginas<select aria-label="Páginas a procesar" value={ocrScope} onChange={e => setOcrScope(e.target.value as typeof ocrScope)} disabled={busy}><option value="current">Página actual ({props.page})</option><option value="all">Todas ({plural(doc.pdf.numPages, 'página', 'páginas')})</option><option value="range">Un intervalo o varias páginas</option></select></label>
       {ocrScope === 'range' && <label>Intervalo<input aria-label="Intervalo de páginas" value={pageRange} onChange={e => setPageRange(e.target.value)} placeholder="1-3, 6" disabled={busy} /></label>}
-      <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label></div>
+      <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label>
+      <label className="check-option"><input type="checkbox" checked={straightenPages} disabled={busy} onChange={e => setStraightenPages(e.target.checked)} />Enderezar páginas torcidas o con líneas curvas</label></div>
       <p className="modal-description">Permite buscar y copiar el texto de las páginas escaneadas; las que ya tienen texto se omiten. Funciona sin conexión. Revisa el resultado: puede contener errores.</p>
+      {straightenPages && <p className="modal-description">Una página torcida se gira sin perder calidad. Si sus líneas se curvan, como cerca del lomo de un libro o en una foto, se reemplaza por una imagen aplanada.</p>}
       <div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void task(async signal => {
         const pages = selectedPages();
         const content = await Promise.all(pages.map(async number => (await (await doc.pdf.getPage(number)).getTextContent()).items));
         // Recognizing a page that already has text would duplicate it.
         const scanned = pages.filter((_, index) => !content[index].some(item => 'str' in item && item.str.trim()));
         if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto seleccionable.' : 'Las páginas elegidas ya tienen texto seleccionable.');
-        await onApply(await recognizePdf(doc.pdf, scanned, language, setProgress, signal), signal);
+        await onApply(await recognizePdf(doc.pdf, scanned, language, setProgress, signal, straightenPages), signal);
       })}>Reconocer texto</button></div>
     </>}
     {compareVisited && <div hidden={section !== 'compare'}><CompareDocuments doc={doc} getBytes={props.getBytes} onBusyChange={setCompareBusy} /></div>}

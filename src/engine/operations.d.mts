@@ -23,7 +23,8 @@ export type Operation =
   | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
   | { operation: 'split'; parts: PageEntry[][] }
   | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
-  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[] }[]; font?: Uint8Array }
+  /** angle turns the page clockwise first (degrees); image replaces it with a flattened scan of size [width, height] points. */
+  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[]; angle?: number; image?: Uint8Array; size?: [number, number] }[]; font?: Uint8Array }
   | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
   | ({ operation: 'add-text' | 'replace-text' } & TextOptions & Area)
   | ({ operation: 'add-image' | 'replace-image' } & ImageOptions & Area)

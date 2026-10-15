@@ -223,6 +223,36 @@ const folioDrawing = object => {
   catch { return false; } finally { buffer?.destroy(); }
 };
 
+// Turns a page's content about the centre of its visible area, clockwise as seen by
+// `degrees`: the original drawing is kept, only its placement changes.
+function turnContent(doc, page, degrees) {
+  if (!Number.isFinite(degrees) || Math.abs(degrees) > 20) fail('Ángulo inválido.');
+  const t = degrees * Math.PI / 180, cos = Math.cos(t), sin = Math.sin(t);
+  const area = mupdf.Rect.transform(page.getBounds(), mupdf.Matrix.invert(page.getTransform())), cx = (area[0] + area[2]) / 2, cy = (area[1] + area[3]) / 2;
+  const matrix = [cos, -sin, sin, cos, cx - cos * cx - sin * cy, cy + sin * cx - cos * cy];
+  const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
+  list.push(doc.addStream(`q ${matrix.map(v => +v.toFixed(6)).join(' ')} cm\n`, {}));
+  if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
+  else if (!contents.isNull()) list.push(contents);
+  list.push(doc.addStream('Q\n', {}));
+  object.put('Contents', list);
+}
+// A scan flattened by Folio takes the page's place: the image shows the page as it
+// was seen, so the page becomes upright and exactly that size.
+function replaceWithImage(doc, index, bytes, size) {
+  if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
+  const [width, height] = Array.isArray(size) ? size.map(Number) : [];
+  if (!(width > 0 && height > 0 && width <= 14400 && height <= 14400)) fail('Tamaño de página inválido.');
+  const image = new mupdf.Image(bytes);
+  try {
+    const object = doc.findPage(index), resources = doc.newDictionary(), xobjects = doc.newDictionary();
+    xobjects.put('FolioScan', doc.addImage(image)); resources.put('XObject', xobjects);
+    for (const box of ['TrimBox', 'BleedBox', 'ArtBox']) object.delete(box);
+    object.put('MediaBox', [0, 0, width, height]); object.put('CropBox', [0, 0, width, height]); object.put('Rotate', 0);
+    object.put('Resources', resources);
+    object.put('Contents', doc.addStream(`q ${width} 0 0 ${height} 0 0 cm /FolioScan Do Q\n`, {}));
+  } finally { image.destroy(); }
+}
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 // `own` marks text Folio writes: true, or the text it stands for.
 function appendDrawing(doc, page, draw, own = false) {
@@ -1571,7 +1601,11 @@ export function operateDocument(bytes, options, password = '', onPart) {
       const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font('Helvetica');
       try {
         for (const result of options.pages) {
-          const page = doc.loadPage(pageIndex(doc, result.page));
+          const index = pageIndex(doc, result.page);
+          // Straightened before OCR: a flattened image replaces the scan, or a tilt turns the content.
+          if (result.image) replaceWithImage(doc, index, result.image, result.size);
+          else if (result.angle) { const page = doc.loadPage(index); try { turnContent(doc, page, result.angle); } finally { page.destroy(); } }
+          const page = doc.loadPage(index);
           try {
             appendDrawing(doc, page, device => {
               const text = new mupdf.Text();
