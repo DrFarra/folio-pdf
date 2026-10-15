@@ -264,10 +264,38 @@ function appendDrawing(doc, page, draw) {
       list.push(doc.addStream('Q\n', {}));
     }
     list.push(stream); target.put('Contents', list);
+    return form;
   } finally {
     if (!closed) { try { writer.close(); } catch {} }
     generated?.destroy(); writer.destroy(); buffer.destroy();
   }
+}
+
+/** MuPDF's PDF writer builds a font's ToUnicode from the font's own character
+ * map, which in an embedded subset can name a glyph wrongly (Segoe UI's «(» as
+ * an ornate parenthesis): copying and searching the moved text would read it
+ * wrong. The moved glyphs carry the characters they stood for; those replace
+ * the writer's entries. Only fonts addressed by glyph id (Identity-H) are mapped. */
+function mapCharacters(doc, form, glyphs) {
+  const hex = n => n.toString(16).padStart(4, '0');
+  const utf16 = code => [...String.fromCodePoint(code)].flatMap(c => [...c].map(unit => unit.charCodeAt(0))).map(hex).join('');
+  form.get('Resources', 'Font').forEach(font => {
+    const descendant = font.get('DescendantFonts').get(0), map = descendant.get('CIDToGIDMap');
+    if (font.get('Subtype').asName() !== 'Type0' || font.get('Encoding').asName() !== 'Identity-H' || !(map.isNull() || map.asName() === 'Identity')) return;
+    const name = font.get('BaseFont').asName(), chars = new Map();
+    // What the writer already maps, then the moved glyphs' own characters over it.
+    const old = font.get('ToUnicode'); let text = '';
+    if (old.isStream()) { const buffer = old.readStream(); try { text = buffer.asString(); } finally { buffer.destroy(); } }
+    for (const [, body] of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) for (const [, code, value] of body.matchAll(/<([\da-f]+)>\s*<([\da-f]*)>/gi)) chars.set(parseInt(code, 16), value);
+    for (const [, body] of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) for (const [, low, high, value] of body.matchAll(/<([\da-f]+)>\s*<([\da-f]+)>\s*<([\da-f]+)>/gi)) {
+      for (let code = parseInt(low, 16), at = parseInt(value, 16); code <= parseInt(high, 16) && code - parseInt(low, 16) < 65536; code++, at++) chars.set(code, hex(at));
+    }
+    for (const glyph of glyphs) if (glyph.fontName === name && glyph.unicode > 0) chars.set(glyph.gid, utf16(glyph.unicode));
+    if (!chars.size) return;
+    const entries = [...chars].sort((a, b) => a[0] - b[0]), blocks = [];
+    for (let i = 0; i < entries.length; i += 100) blocks.push(`${entries.slice(i, i + 100).length} beginbfchar\n${entries.slice(i, i + 100).map(([code, value]) => `<${hex(code)}> <${value}>`).join('\n')}\nendbfchar`);
+    font.put('ToUnicode', doc.addStream(`/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <ffff>\nendcodespacerange\n${blocks.join('\n')}\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n`, {}));
+  });
 }
 
 // Edits made in Editar skip deduplication (garbage=3 and up), which takes
@@ -839,13 +867,16 @@ function fontCensus(glyphs, fontName) {
 
 // Draw captured glyphs again, moved by (dx, dy) in device space.
 // Spot and indexed colours are drawn with their RGB equivalent.
+// Each glyph is its own text: written as one run, the PDF writer turns their
+// places into whole thousandths of an em between glyphs, and along a long line
+// that rounding drifts the letters by a third of a point.
 function glyphDrawing(device, glyphs, dx, dy) {
   const paint = glyph => glyph.space ? [glyph.space, ...glyph.color, glyph.alpha] : ['rgb', ...glyph.rgb, glyph.alpha];
   for (let start = 0; start < glyphs.length;) {
-    const key = JSON.stringify(paint(glyphs[start])); let end = start;
+    let end = start;
     const text = new mupdf.Text();
     try {
-      while (end < glyphs.length && JSON.stringify(paint(glyphs[end])) === key) {
+      {
         const { font, matrix: m, gid, unicode, wmode } = glyphs[end++];
         text.showGlyph(font, [m[0], m[1], m[2], m[3], m[4] + dx, m[5] + dy], gid, unicode, wmode);
       }
@@ -1028,19 +1059,23 @@ function moveContent(doc, page, index, target, options) {
   const placed = !text && options.opacity === undefined && folioImage(folioImages(page), source);
   if (placed) return editFolioImage(doc, page, placed, options);
   const selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: text ? 'text' : 'image', rect: source });
-  const { draw, expected, release } = movedDrawing(page, selection, text, sourceBox, target, options);
+  const { draw, expected, glyphs, release } = movedDrawing(page, selection, text, sourceBox, target, options);
   try {
     if (!options.copy) {
       redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
       verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
     }
-    appendDrawing(doc, page, draw);
+    let form;
+    try { form = appendDrawing(doc, page, draw); }
+    catch (error) { throw /type 3/i.test(error?.message) ? new Error('Este texto usa una fuente dibujada (Type 3) que no se puede volver a escribir. Edítalo para reescribirlo.') : error; }
+    if (glyphs) mapCharacters(doc, form, glyphs);
     if (expected.length) {
       // Every glyph must appear where it was moved. A rewritten font may name an
       // odd glyph differently (a bullet as a middle dot, a TeX brace as a letter), so almost all must read the same.
       const moved = doc.loadPage(index); let found;
       try { found = contentGlyphs(moved); } finally { moved.destroy(); }
-      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .05 && Math.abs(other.origin[1] - glyph.origin[1]) < .05);
+      // Positions are written rounded: a glyph may land some hundredths of a point off (well inside the gap to the next one).
+      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .25 && Math.abs(other.origin[1] - glyph.origin[1]) < .25);
       if (expected.some(glyph => !at(glyph).length) || expected.filter(glyph => !at(glyph).some(other => other.c === glyph.c)).length > Math.max(3, expected.length * .05))
         fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
     }
@@ -1068,7 +1103,7 @@ function movedDrawing(page, selection, text, sourceBox, target, options) {
         if (!matches.length && glyph.c.trim() && !ligature) fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
         if (matches.length && glyph.c.trim()) expected.push({ c: glyph.c, origin: [glyph.origin[0] + dx, glyph.origin[1] + dy] });
       }
-      return { draw: device => glyphDrawing(device, moved, dx, dy), expected, release: captured.release };
+      return { draw: device => glyphDrawing(device, moved, dx, dy), expected, glyphs: moved, release: captured.release };
     } catch (error) { captured.release(); throw error; }
   }
   const { image, info } = selection;

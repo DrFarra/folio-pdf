@@ -246,5 +246,21 @@ await check('several-items-change-as-one-step', () => {
   return { movedTogether: 2, oneUndo: true, atomic: true };
 });
 
+await check('moved-text-lands-exactly-and-reads-the-same', () => {
+  // A long line in an embedded font with a little extra space between letters,
+  // as browsers print. Written back as one run, its glyphs drifted along the line.
+  const face = new mupdf.Font('DM Sans', fs.readFileSync('public/fonts/dm-sans-regular.ttf')), doc = new mupdf.PDFDocument();
+  const line = 'Armado a partir de las notas (guía de alumnos, Farreras y cuadros resumen), con dudas del banco.';
+  const codes = [...line].map(c => face.encodeCharacter(c.codePointAt(0)).toString(16).padStart(4, '0')).join('');
+  doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: doc.addFont(face) } }, `BT /F1 7 Tf 0.0137 Tc 30 742 Td <${codes}> Tj ET`));
+  const bytes = doc.saveToBuffer('').asUint8Array(), [item] = items(bytes, 1).filter(entry => entry.level === 'paragraph');
+  assert.equal(item.text, line);
+  const r = item.rect, moved = operateDocument(bytes, { operation: 'move-text', page: 1, sourceId: item.id, sourceRect: r, rect: [r[0] + 10, r[1] - 40, r[2] + 10, r[3] - 40] });
+  const before = glyphs(bytes, 0), after = glyphs(moved, 0);
+  for (const glyph of before) assert(after.some(g => g.c === glyph.c && Math.abs(g.x - glyph.x - 10) < .02 && Math.abs(g.y - glyph.y - 40) < .02), `${glyph.c} at its place`);
+  assert(items(moved, 1).some(entry => entry.level === 'paragraph' && entry.text === line), 'Reads the same, parentheses included');
+  return { glyphs: before.length, exact: true };
+});
+
 for (const result of results) console.log(JSON.stringify(result));
 process.exitCode = results.some(result => result.status !== 'passed') ? 1 : 0;
