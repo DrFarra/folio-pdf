@@ -33,6 +33,8 @@ rules that break things when ignored. Read the files named before changing them.
 - Content edits are redaction + redraw (`redactPage`, `appendDrawing`), always followed by `verifyRetainedGlyphs`; failures never return a partial PDF. `appendDrawing` must not re-wrap q/Q per edit.
 - Page item ids (`text-paragraph-b3`, `image-2`) are positional: valid only for the revision they were read from.
 - Shapes are Folio annotations (Square/Circle/Line), editable only when created by Folio (`NM` starts with `Folio:`).
+- The PDF's own drawings (boxes, rules) are read from the page's content streams (`pageDrawings`) and edited by rewriting their operators in place (`editDrawing`), so stacking order is kept; paths inside Form XObjects are not listed. Ids `graphic-N` are positional like the others.
+- Editar's saves use `QUICK` (no object deduplication): deduplicating a PDF with thousands of objects takes seconds per edit.
 - Binary IPC: Android sends base64 in 2 MiB slices; the bridge cap is 128 MiB (`binary_ipc.rs`).
 - Layout: `useDeviceLayout` — web is desktop unless a narrow coarse pointer; tablet needs an Android/iPad UA. The desktop app is always desktop.
 - CI builds with `cargo --locked`; there is no Rust toolchain on the Windows dev PC, so Rust only compiles in CI.

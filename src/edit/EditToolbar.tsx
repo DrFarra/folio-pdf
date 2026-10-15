@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, ArrowUpRight, Bold, Check, Circle, Copy, ImagePlus, Italic, LoaderCircle, Minus, MousePointer2, RotateCw, Square, Trash2, Type } from 'lucide-react';
 import type { LoadedDocument } from '../types';
 import { useEdit, type EditStore, type EditTool, type TextStyle } from './store';
-import { deleteSelection, duplicateSelection, editText, fadeSelection, replaceImage, rotateSelection, styleFrom } from './actions';
+import { deleteSelection, duplicateSelection, editText, fadeSelection, recolorSelection, replaceImage, rotateSelection, styleFrom } from './actions';
 import { parseFontName, systemFamilies } from './fonts';
 import { isMac } from '../platform';
 
@@ -14,7 +14,7 @@ const TOOLS: [EditTool, string, string, typeof Type][] = [
   ['rect', 'Rectángulo', 'R', Square], ['ellipse', 'Elipse', 'O', Circle], ['line', 'Línea', 'L', Minus], ['arrow', 'Flecha', 'A', ArrowUpRight],
 ];
 const HINTS: Record<EditTool, string> = {
-  select: 'Haz clic en un texto, imagen o forma para editarlo. Doble clic en un texto para escribir.',
+  select: 'Haz clic en un texto, imagen, dibujo o forma para editarlo. Doble clic en un texto para escribir. Alt+clic elige lo que está debajo.',
   text: 'Haz clic en un texto para modificarlo, o en un espacio libre para escribir uno nuevo.',
   image: 'Haz clic o arrastra en la página para colocar la imagen.',
   rect: 'Arrastra en la página para dibujar un rectángulo.', ellipse: 'Arrastra en la página para dibujar una elipse.',
@@ -51,9 +51,11 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
   const shapeStyle = useEdit(store, state => state.shapeStyle);
   const [families, setFamilies] = useState<string[]>([]);
   const [opacity, setOpacity] = useState<number | null>(null);
+  // A drawing's colours as just picked, before the PDF shows them.
+  const [picked, setPicked] = useState<{ fill?: string; stroke?: string }>({});
   const imageInput = useRef<HTMLInputElement>(null), replaceInput = useRef<HTMLInputElement>(null);
   useEffect(() => { void systemFamilies().then(setFamilies); }, []);
-  useEffect(() => { setOpacity(null); }, [selection]);
+  useEffect(() => { setOpacity(null); setPicked({}); }, [selection]);
 
   const chooseTool = (next: EditTool) => {
     if (next === 'image') { imageInput.current?.click(); return; }
@@ -70,6 +72,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
   const style: TextStyle | null = draft?.style ?? (textItem ? styleFrom(textItem) : null);
   const sourceName = draft?.source?.fontName ?? textItem?.fontName;
   const setStyle = async (patch: Partial<TextStyle>) => {
+    if (store.state.committing) return;
     const current = store.state.draft;
     if (current) { store.set({ draft: { ...current, style: { ...current.style, ...patch } } }); return; }
     const chosen = store.state.selection;
@@ -95,7 +98,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       </span>)}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg" className="sr-only" tabIndex={-1} onChange={event => { void pickImage(event.target.files?.[0]); event.target.value = ''; }} />
     </div>
-    {(style || selection?.kind === 'image' || shapeSelected || shapeTool) && <span className="edit-divider" />}
+    {(style || selection?.kind === 'image' || selection?.kind === 'graphic' || shapeSelected || shapeTool) && <span className="edit-divider" />}
     {style && <div className="edit-properties" aria-label="Formato del texto">
       <select aria-label="Fuente" value={style.family} disabled={committing} onChange={event => void setStyle({ family: event.target.value })}>
         {sourceName && <option value="original">Original · {parseFontName(sourceName).family}</option>}
@@ -123,6 +126,12 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)} disabled={committing}><Copy size={16} /></Toggle>
       <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)} disabled={committing}><Trash2 size={16} /></Toggle>
     </div>}
+    {selection?.kind === 'graphic' && <div className="edit-properties" aria-label="Dibujo">
+      {selection.item.fill !== undefined && <ColorField label="Color de relleno" value={picked.fill ?? selection.item.fill ?? null} onChange={fill => { setPicked(colors => ({ ...colors, fill })); recolorSelection(store, { fill }); }} />}
+      {selection.item.stroke !== undefined && <ColorField label="Color del borde" value={picked.stroke ?? selection.item.stroke ?? null} onChange={stroke => { setPicked(colors => ({ ...colors, stroke })); recolorSelection(store, { stroke }); }} />}
+      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)} disabled={committing}><Copy size={16} /></Toggle>
+      <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)} disabled={committing}><Trash2 size={16} /></Toggle>
+    </div>}
     {(shapeSelected || shapeTool) && <div className="edit-properties" aria-label="Forma">
       <ColorField label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
       {!lineShape && <><ColorField label="Color de relleno" value={shapeValues.fill} onChange={fill => setShape({ fill })} />
@@ -140,6 +149,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
         : draft ? `Haz clic fuera o ${modifier}Intro para terminar · Esc cancela`
         : selection?.kind === 'text' ? 'Arrastra para moverlo · clic otra vez para escribir · Supr lo elimina'
         : selection?.kind === 'image' ? 'Arrastra para moverla · las esquinas cambian el tamaño (Mayús: libre)'
+        : selection?.kind === 'graphic' ? 'Arrastra para moverlo · Alt+clic elige lo que está debajo · Supr lo elimina'
         : selection?.kind === 'shape' ? 'Arrastra para moverla · los tiradores cambian el tamaño'
         : HINTS[tool])}
     </span>

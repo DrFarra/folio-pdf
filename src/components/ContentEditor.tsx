@@ -187,7 +187,7 @@ export default function ContentEditor({ doc, area, initialItem, cancelLabel = 'C
     : manualImageChosen.current || !!originalImage.current && (fit !== originalImage.current.fit || opacity !== originalImage.current.opacity || rotation !== originalImage.current.rotation));
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   const operation = useMemo<Operation | null>(() => {
-    if (deleting) return initialItem ? { operation: 'remove-content', page: area.page, id: initialItem.id, kind: initialItem.kind, rect: sourceRect } : null;
+    if (deleting) return initialItem ? { operation: 'remove-content', page: area.page, id: initialItem.id, kind: initialItem.kind as 'text' | 'image', rect: sourceRect } : null;
     if (!dirty || validation || isText && !fontReady) return null;
     if (isText) return { operation: intent === 'duplicate' ? 'add-text' : kind as 'add-text' | 'replace-text', page: area.page, rect, ...(replacing ? { sourceRect, ...(initialItem ? { sourceId: initialItem.id } : {}) } : {}), text, size, color, align, lineHeight, wrap,
       ...(initialItem?.baselineOffset !== undefined && initialItem.size ? { baselineOffset: initialItem.baselineOffset * size / initialItem.size } : {}),

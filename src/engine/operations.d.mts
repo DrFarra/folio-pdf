@@ -1,8 +1,10 @@
 export type Area = { page: number; rect: [number, number, number, number] };
 export type AreaContentInfo = { text: string; size: number; color: string; fontName: string; mixedStyle: boolean; rotated: boolean };
-export type PageContentItem = { id: string; kind: 'text' | 'image'; level?: 'line' | 'paragraph'; rect: Area['rect']; text?: string; size?: number; color?: string; fontName?: string; mixedStyle?: boolean; rotated?: boolean; editable: boolean; reason?: string; areaReplaceable?: boolean; baselineOffset?: number; lineHeight?: number;
+export type PageContentItem = { id: string; kind: 'text' | 'image' | 'graphic'; level?: 'line' | 'paragraph'; rect: Area['rect']; text?: string; size?: number; color?: string; fontName?: string; mixedStyle?: boolean; rotated?: boolean; editable: boolean; reason?: string; areaReplaceable?: boolean; baselineOffset?: number; lineHeight?: number;
   /** Text: the characters the item's subset font painted on this page, or '*' for a complete font. Image: its opacity, quarter turn and transparency. */
-  fontGlyphs?: string; opacity?: number; rotation?: 0 | 90 | 180 | 270; transparent?: boolean };
+  fontGlyphs?: string; opacity?: number; rotation?: 0 | 90 | 180 | 270; transparent?: boolean;
+  /** Graphic: the colours it paints with (null for a pattern), and whether its path also clips. */
+  fill?: string | null; stroke?: string | null; clip?: boolean };
 export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
 /** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
 export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
@@ -13,7 +15,7 @@ export type PageEntry = { page?: number; source?: number; blank?: [number, numbe
 export type Operation =
   | { operation: 'fields' | 'text' | 'compress' | 'sanitize' | 'unprotect' }
   | ({ operation: 'area-info' } & Area)
-  | { operation: 'page-content'; page: number }
+  | { operation: 'page-content'; page: number; graphics?: boolean }
   | { operation: 'page-image'; page: number; id: string }
   | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
   | { operation: 'split'; parts: PageEntry[][] }
@@ -26,6 +28,9 @@ export type Operation =
   | ({ operation: 'move-text'; sourceId: string; sourceRect: Area['rect']; copy?: boolean } & Area)
   | ({ operation: 'move-image'; sourceId: string; sourceRect: Area['rect']; copy?: boolean; rotation?: 0 | 90 | 180 | 270; opacity?: number } & Area)
   | ({ operation: 'remove-image' | 'crop' } & Area)
+  | ({ operation: 'move-graphic'; sourceId: string; sourceRect: Area['rect']; copy?: boolean } & Area)
+  | ({ operation: 'remove-graphic'; sourceId: string; sourceRect: Area['rect'] } & Area)
+  | ({ operation: 'recolor-graphic'; sourceId: string; sourceRect: Area['rect']; fill?: string; stroke?: string } & Area)
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
 export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo;

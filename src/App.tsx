@@ -679,15 +679,23 @@ export default function App() {
   // Each document starts Editar afresh; leaving it drops the selection and any pending image.
   useEffect(() => { editStore.reset(); }, [doc?.id, editStore]);
   useEffect(() => { if (!editing) editStore.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, editStore]);
-  // A pasted screenshot or image is placed where the next click lands.
+  // A pasted screenshot or image lands in the middle of the view, on the page
+  // shown there; with no page in view, the next click places it.
   useEffect(() => {
     if (!editing) return;
     const paste = (event: ClipboardEvent) => {
-      if ((event.target as HTMLElement | null)?.closest?.('input,textarea,[contenteditable]')) return;
+      if (editStore.state.draft || (event.target as HTMLElement | null)?.closest?.('dialog')) return;
       const file = [...(event.clipboardData?.files || [])].find(item => /^image\/(png|jpeg)$/.test(item.type));
       if (!file) return;
       event.preventDefault();
-      void readImage(file).then(image => editStore.set({ image: { ...image, name: 'la imagen pegada' }, tool: 'image', selection: null, notice: '' })).catch(error => notify(errorMessage(error), 'error'));
+      void readImage(file).then(image => {
+        const view = document.querySelector('.reading-area')?.getBoundingClientRect();
+        const shown = (box: DOMRect) => view ? Math.max(0, Math.min(box.bottom, view.bottom) - Math.max(box.top, view.top)) : 0;
+        const page = [...document.querySelectorAll('.edit-layer')].map(node => node.getBoundingClientRect()).sort((a, b) => shown(b) - shown(a))[0];
+        if (!view || !page || !shown(page)) { editStore.set({ image: { ...image, name: 'la imagen pegada' }, tool: 'image', selection: null, notice: '' }); return; }
+        const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+        window.dispatchEvent(new CustomEvent('folio:edit-place-image', { detail: { image, clientX: clamp(view.left + view.width / 2, page.left + 1, page.right - 1), clientY: clamp(view.top + view.height / 2, Math.max(page.top, view.top) + 1, Math.min(page.bottom, view.bottom) - 1) } }));
+      }).catch(error => notify(errorMessage(error), 'error'));
     };
     document.addEventListener('paste', paste);
     return () => document.removeEventListener('paste', paste);

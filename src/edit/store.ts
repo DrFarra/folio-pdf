@@ -10,14 +10,16 @@ import type { Annotation, LoadedDocument } from '../types';
 export type Rect = Area['rect'];
 export type EditTool = 'select' | 'text' | 'image' | 'rect' | 'ellipse' | 'line' | 'arrow';
 export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'arrow';
-export type Selection = { kind: 'text' | 'image'; page: number; item: PageContentItem } | { kind: 'shape'; page: number; id: string };
+export type ContentKind = 'text' | 'image' | 'graphic';
+export type Selection = { kind: ContentKind; page: number; item: PageContentItem } | { kind: 'shape'; page: number; id: string };
 /** `family` is a fonts.ts family value; 'original' keeps the replaced text's font. */
 export type TextStyle = { family: string; bold: boolean; italic: boolean; size: number; color: string; align: 'left' | 'center' | 'right'; lineHeight: number };
-/** Text being typed on the page; `source` is the paragraph it replaces. */
-export type TextDraft = { page: number; rect: Rect; text: string; style: TextStyle; source?: PageContentItem; original?: { text: string; style: TextStyle } };
+/** Text being typed on the page; `source` is the paragraph it replaces. A
+ * `written` draft stays on show, read-only, until the page shows the result. */
+export type TextDraft = { page: number; rect: Rect; text: string; style: TextStyle; source?: PageContentItem; original?: { text: string; style: TextStyle }; written?: boolean };
 export type ShapeStyle = { color: string; fill: string | null; strokeWidth: number; opacity: number };
 /** What a page shows while its edit is being written: the content at its new place. */
-export type Ghost = { page: number; kind: 'text' | 'image'; item: PageContentItem; rect: Rect; rotation?: number; opacity?: number; copy?: boolean; removed?: boolean };
+export type Ghost = { page: number; kind: ContentKind; item: PageContentItem; rect: Rect; rotation?: number; opacity?: number; copy?: boolean; removed?: boolean };
 export type PendingImage = { bytes: Uint8Array; width: number; height: number; name: string };
 
 export type EditState = {
@@ -30,7 +32,7 @@ export type EditState = {
   shapeStyle: ShapeStyle;
   image: PendingImage | null;
   /** After a commit the page selects the item that best covers this rect. */
-  reselect: { page: number; kind: 'text' | 'image'; rect: Rect; from: string } | null;
+  reselect: { page: number; kind: ContentKind; rect: Rect; from: string } | null;
 };
 
 export type EditActions = {
@@ -69,7 +71,7 @@ export class EditStore {
     const key = `${doc.id}:${doc.revision}:${page}`;
     let request = this.cache.get(key);
     if (!request) {
-      request = this.queue.catch(() => {}).then(() => getPageContent(doc.bytes, page, doc.password));
+      request = this.queue.catch(() => {}).then(() => getPageContent(doc.bytes, page, doc.password, undefined, true));
       this.queue = request;
       this.cache.set(key, request);
       request.catch(() => { if (this.cache.get(key) === request) this.cache.delete(key); });

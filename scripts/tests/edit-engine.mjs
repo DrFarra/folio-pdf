@@ -113,5 +113,34 @@ await check('shape-annotations-round-trip-move-and-restyle', async () => {
   return { created: 3, movedAndRestyled: true };
 });
 
+await check('pdf-drawings-move-recolour-copy-and-remove-in-place', () => {
+  const doc = new mupdf.PDFDocument(), font = doc.addSimpleFont(new mupdf.Font('Helvetica'));
+  doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, [
+    '1 1 1 rg 0 0 595 842 re f', // the page's background is not listed
+    'q .48 .18 .36 rg 100 600 120 30 re f Q', // a badge's fill…
+    '.3 .1 .2 RG', 'q 2 w 100 600 120 30 re S Q', // …and its border: one drawing
+    'BT /F1 12 Tf 1 1 1 rg 110 610 Td (Dolor) Tj ET', // its label, above it
+    '0 0 0 RG 1 w 50 500 m 300 500 l S', // a lone rule
+  ].join('\n')));
+  const bytes = doc.saveToBuffer('').asUint8Array();
+  const drawings = value => operateDocument(value, { operation: 'page-content', page: 1, graphics: true }).items.filter(item => item.kind === 'graphic');
+  const label = value => glyphs(value, 0).map(g => [g.c, Math.round(g.x), Math.round(g.y)]).join();
+  const found = drawings(bytes), badge = found.find(item => item.fill);
+  assert.equal(found.length, 2, JSON.stringify(found));
+  assert.deepEqual([badge.rect.map(Math.round), badge.fill, badge.stroke], [[99, 599, 221, 631], '#7a2e5c', '#4d1a33']);
+  assert.equal(operateDocument(bytes, { operation: 'page-content', page: 1 }).items.filter(item => item.kind === 'graphic').length, 0, 'Listed only when asked');
+  const edit = (operation, extra = {}) => operateDocument(bytes, { operation, page: 1, sourceId: badge.id, sourceRect: badge.rect, rect: badge.rect, ...extra });
+  const moved = drawings(edit('move-graphic', { rect: [badge.rect[0] + 100, badge.rect[1] - 50, badge.rect[2] + 100, badge.rect[3] - 50] }));
+  assert(moved.some(item => item.fill && Math.abs(item.rect[0] - badge.rect[0] - 100) < .1 && Math.abs(item.rect[1] - badge.rect[1] + 50) < .1), 'Fill and border moved together');
+  assert.equal(label(edit('move-graphic', { rect: [badge.rect[0] + 100, badge.rect[1], badge.rect[2] + 100, badge.rect[3]] })), label(bytes), 'Text stays');
+  const recoloured = edit('recolor-graphic', { fill: '#00ff00' });
+  assert.deepEqual(drawings(recoloured).map(item => [item.fill, item.stroke]).find(([fill]) => fill), ['#00ff00', '#4d1a33']);
+  assert.equal(drawings(edit('move-graphic', { rect: [badge.rect[0], badge.rect[1] - 100, badge.rect[2], badge.rect[3] - 100], copy: true })).length, 3);
+  const removed = edit('remove-graphic');
+  assert.deepEqual([drawings(removed).length, label(removed)], [1, label(bytes)]);
+  assert.throws(() => operateDocument(bytes, { operation: 'remove-graphic', page: 1, sourceId: badge.id, sourceRect: [0, 0, 10, 10], rect: [0, 0, 10, 10] }), /selección cambió/);
+  return { listed: 2, movedTogether: true, recoloured: true, copied: true, removed: true, textKept: true };
+});
+
 for (const result of results) console.log(JSON.stringify(result));
 process.exitCode = results.some(result => result.status !== 'passed') ? 1 : 0;

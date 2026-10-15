@@ -5,3 +5,4 @@
 .highlight-annotation-menu{display:flex;align-items:center;gap:2px;max-width:calc(100vw - 16px)}
 .highlight-annotation-menu .highlight-color-trigger{flex-shrink:0}
 .highlight-annotation[data-selected=true],.highlight-annotation[role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.highlight-annotation-menu button.note-color{padding:0 5px}.note-color>span{width:18px;height:18px;border-radius:50%;border:1px solid #0002}.note-color[aria-checked=true]>span{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--accent)}

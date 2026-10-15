@@ -1,13 +1,13 @@
 import type { Operation, PageContentItem } from '../engine/operations.mjs';
 import type { Annotation } from '../types';
-import type { EditStore, Rect, TextDraft, TextStyle } from './store';
+import type { ContentKind, EditStore, Rect, TextDraft, TextStyle } from './store';
 import { fontFields, originalCovers, parseFontName } from './fonts';
 
 // Every change made in Editar goes through here: content edits are written to
 // the PDF (one undo step each), shapes change Folio's annotations at once.
 
 // After a commit the page selects whatever now covers this rect.
-const reselectAt = (store: EditStore, page: number, kind: 'text' | 'image', rect: Rect) => ({ page, kind, rect, from: store.doc?.revision ?? '' });
+const reselectAt = (store: EditStore, page: number, kind: ContentKind, rect: Rect) => ({ page, kind, rect, from: store.doc?.revision ?? '' });
 export const shift = (rect: Rect, dx: number, dy: number): Rect => [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy];
 const round = (value: number) => Math.round(value * 10) / 10;
 export const defaultStyle: TextStyle = { family: 'helvetica', bold: false, italic: false, size: 12, color: '#202020', align: 'left', lineHeight: 1.25 };
@@ -48,7 +48,7 @@ async function run(store: EditStore, operation: Operation, retry?: Operation): P
   try {
     let error = await actions.commit(operation);
     if (error && retry) error = await actions.commit(retry);
-    if (error) { actions.notify(error, 'error'); store.set({ ghost: null, reselect: null }); return false; }
+    if (error) { actions.notify(error, 'error'); store.set({ ghost: null, reselect: null, draft: null }); return false; }
     return true;
   } finally { store.set({ committing: false }); }
 }
@@ -58,7 +58,8 @@ export async function commitDraft(store: EditStore, rect: Rect, room: Rect) {
   const draft = store.state.draft; if (!draft) return;
   const text = draft.text.replace(/\s+$/u, ''), source = draft.source, style = draft.style;
   const unchanged = source && draft.original && draft.original.text.replace(/\s+$/u, '') === text && JSON.stringify(draft.original.style) === JSON.stringify(style) && Math.abs(rect[0] - draft.rect[0]) < .5 && Math.abs(rect[2] - draft.rect[2]) < .5 && Math.abs(rect[3] - draft.rect[3]) < .5;
-  store.set({ draft: null, notice: '' });
+  const done = unchanged || !text.trim();
+  store.set({ draft: done ? null : { ...draft, written: true }, notice: '' });
   if (unchanged || !source && !text.trim()) return;
   if (source && !text.trim()) { await removeItem(store, draft.page, 'text', source); return; }
   const parsed = source && parseFontName(source.fontName || '');
@@ -75,9 +76,9 @@ export async function commitDraft(store: EditStore, rect: Rect, room: Rect) {
   if (ok && source && style.family === 'original' && !original) store.actions!.notify(`Se usó ${fallback.label}: la fuente del PDF no incluye todas esas letras.`);
 }
 
-async function removeItem(store: EditStore, page: number, kind: 'text' | 'image', item: PageContentItem) {
+async function removeItem(store: EditStore, page: number, kind: ContentKind, item: PageContentItem) {
   store.set({ selection: null, ghost: { page, kind, item, rect: item.rect, removed: true } });
-  if (await run(store, { operation: 'remove-content', page, id: item.id, kind, rect: item.rect })) store.set({ reselect: null });
+  if (await run(store, kind === 'graphic' ? { operation: 'remove-graphic', page, sourceId: item.id, sourceRect: item.rect, rect: item.rect } : { operation: 'remove-content', page, id: item.id, kind, rect: item.rect })) store.set({ reselect: null });
 }
 
 export async function deleteSelection(store: EditStore) {
@@ -91,8 +92,8 @@ export async function moveSelection(store: EditStore, rect: Rect, options: { cop
   const selection = store.state.selection; if (!selection || selection.kind === 'shape' || store.state.committing) return;
   const { page, kind, item } = selection;
   store.set({ ghost: { page, kind, item, rect, copy: options.copy, rotation: options.rotation, opacity: options.opacity }, reselect: reselectAt(store, page, kind, rect) });
-  await run(store, kind === 'text'
-    ? { operation: 'move-text', page, sourceId: item.id, sourceRect: item.rect, rect, copy: options.copy }
+  await run(store, kind !== 'image'
+    ? { operation: kind === 'text' ? 'move-text' : 'move-graphic', page, sourceId: item.id, sourceRect: item.rect, rect, copy: options.copy }
     : { operation: 'move-image', page, sourceId: item.id, sourceRect: item.rect, rect, copy: options.copy, rotation: options.rotation, opacity: options.opacity });
 }
 
@@ -123,6 +124,21 @@ export function nudgeSelection(store: EditStore, dx: number, dy: number) {
   if (nudge) clearTimeout(nudge.timer);
   store.set({ ghost: { page: selection.page, kind: selection.kind, item: selection.item, rect } });
   nudge = { rect, timer: setTimeout(() => { nudge = null; void moveSelection(store, rect); }, 400) };
+}
+
+// Colour picks arrive while the picker is dragged: the last one is written once they pause.
+let recolor: { timer: ReturnType<typeof setTimeout>; colors: { fill?: string; stroke?: string } } | null = null;
+export function recolorSelection(store: EditStore, colors: { fill?: string; stroke?: string }) {
+  if (store.state.selection?.kind !== 'graphic') return;
+  if (recolor) clearTimeout(recolor.timer);
+  const next = { ...recolor?.colors, ...colors };
+  recolor = { colors: next, timer: setTimeout(() => {
+    recolor = null;
+    const selection = store.state.selection; if (selection?.kind !== 'graphic') return;
+    if (store.state.committing) { recolorSelection(store, next); return; }
+    store.set({ reselect: reselectAt(store, selection.page, 'graphic', selection.item.rect) });
+    void run(store, { operation: 'recolor-graphic', page: selection.page, sourceId: selection.item.id, sourceRect: selection.item.rect, rect: selection.item.rect, ...next });
+  }, 300) };
 }
 
 /** Turn the selected image a quarter clockwise about its centre. */

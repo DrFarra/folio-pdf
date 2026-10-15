@@ -270,6 +270,10 @@ function appendDrawing(doc, page, draw) {
   }
 }
 
+// Edits made in Editar skip deduplication (garbage=3 and up), which takes
+// seconds on a PDF with thousands of objects; each edit adds only its own subset font.
+const QUICK = 'garbage=2,compress=yes,encrypt=keep';
+
 function saveDrawnDocument(doc, password) {
   // MuPDF 1.28.1 can lose a newly grafted Form's stream when deduplicating
   // an embedded font already present in the document. Persist the new streams
@@ -408,7 +412,7 @@ function areaContent(page, box) {
 
 // Describe selectable regions, rather than pretending a PDF always has isolated
 // editable objects. The device pass also sees faint images and invisible OCR.
-function pageContent(doc, page, requestedImage, selectedContent) {
+function pageContent(doc, page, requestedImage, selectedContent, withDrawings = false) {
   if (requestedImage !== undefined && (typeof requestedImage !== 'string' || !/^image-\d{1,5}$/.test(requestedImage))) fail('La imagen seleccionada ya no es válida.');
   const bounds = page.getBounds(), inverse = mupdf.Matrix.invert(page.getTransform());
   const overlap = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > .5 && Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > .5;
@@ -535,13 +539,20 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     }
     const imageItems = images.map((image, i) => {
       const [a, b, c, d] = image.matrix, orthogonal = (Math.abs(b) < .01 && Math.abs(c) < .01) || (Math.abs(a) < .01 && Math.abs(d) < .01);
-      const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && textPaint.some(event => !event.hidden && overlap(event.box, candidate.box)) && overlap(image.box, candidate.box)) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
+      // Moving an image draws it again on top: text or drawings above it would end up
+      // below, and removal takes every image it touches. What lies below is kept.
+      const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && overlap(image.box, candidate.box) && textPaint.some(event => !event.hidden && event.order > image.order && overlap(event.box, candidate.box))) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
       const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos.' : a * d - b * c <= 0 ? 'Imagen reflejada.' : !orthogonal ? 'Imagen inclinada.' : overlaps ? 'Imagen con contenido superpuesto.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
       if (reason) warnings.add(reason);
       const rotation = ((Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
       return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, opacity: image.alpha, rotation, ...(image.transparent ? { transparent: true } : {}), ...(reason ? { reason } : {}), ...(reason && image.alpha > 0 ? { areaReplaceable: true } : {}) };
     });
     const items = [...candidates.map(candidate => candidate.item), ...imageItems];
+    if (withDrawings) {
+      const drawn = drawingItems(page);
+      if (drawn.tooMany) warnings.add('La página tiene demasiados dibujos para seleccionarlos.');
+      items.push(...drawn.items);
+    }
     if (hasSignature(doc) || !doc.hasPermission('edit')) {
       const reason = 'El documento firmado o sus permisos no permiten editar el contenido.';
       items.forEach(item => { item.editable = false; item.reason = reason; delete item.areaReplaceable; }); warnings.add(reason);
@@ -573,6 +584,193 @@ function pageContent(doc, page, requestedImage, selectedContent) {
     }
     return { items, warnings: [...warnings] };
   } finally { selectedImage?.destroy(); device?.destroy(); structured?.destroy(); display?.destroy(); }
+}
+
+// Drawings the PDF paints itself (boxes, bands, rules) are read from the page's
+// own content streams: a drawing is the outermost q…Q group that only paints
+// paths, or a lone painted path. Editing rewrites those operators where they
+// are, so whatever lies above or below a drawing stays there. Paths inside Form
+// XObjects, Folio's own additions among them, are not listed.
+const PAINT = new Set(['S', 's', 'f', 'F', 'f*', 'B', 'B*', 'b', 'b*']);
+const FILL_COLOR = new Set(['rg', 'g', 'k', 'sc', 'scn', 'cs']), STROKE_COLOR = new Set(['RG', 'G', 'K', 'SC', 'SCN', 'CS']);
+// What may stand between the parts of one drawing: state changes, none of them painting.
+const BETWEEN = new Set(['gs', 'w', 'J', 'j', 'M', 'd', 'ri', 'i', 'cm', 'BDC', 'BMC', 'EMC', 'MP', 'DP', ...FILL_COLOR, ...STROKE_COLOR]);
+const latin1 = bytes => { let text = ''; for (let i = 0; i < bytes.length; i += 32768) text += String.fromCharCode(...bytes.subarray(i, i + 32768)); return text; };
+const number = value => String(Math.round(value * 10000) / 10000);
+
+/** A content stream's operators, each with its operands and the offsets they span. */
+function contentOperators(text) {
+  const ops = [], args = [], n = text.length, white = c => c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === '\f' || c === '\0';
+  let i = 0, start = -1, depth = 0;
+  while (i < n) {
+    const c = text[i];
+    if (white(c)) { i++; continue; }
+    if (c === '%') { while (i < n && text[i] !== '\n' && text[i] !== '\r') i++; continue; }
+    const from = i;
+    if (c === '(') { for (let level = 0; i < n; i++) { if (text[i] === '\\') i++; else if (text[i] === '(') level++; else if (text[i] === ')' && --level === 0) { i++; break; } } }
+    else if (c === '<' && text[i + 1] === '<') { i += 2; depth++; }
+    else if (c === '>' && text[i + 1] === '>') { i += 2; depth = Math.max(0, depth - 1); }
+    else if (c === '<') { const close = text.indexOf('>', i); i = close < 0 ? n : close + 1; }
+    else if (c === '[') { i++; depth++; }
+    else if (c === ']') { i++; depth = Math.max(0, depth - 1); }
+    else { i++; while (i < n && !white(text[i]) && !'()<>[]{}/%'.includes(text[i])) i++; }
+    if (start < 0) start = from;
+    const token = text.slice(from, i);
+    if (depth > 0 || '(<>[]{}/'.includes(c) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(token) || token === 'true' || token === 'false' || token === 'null') {
+      if (depth === 0 && c !== ']' && c !== '>') args.push(token);
+      continue;
+    }
+    ops.push({ op: token, start, end: i, args: args.splice(0) }); start = -1;
+    // Inline image data runs, unparsed, to EI.
+    if (token === 'ID') { const end = /\sEI(?=\s|$)/g; end.lastIndex = i + 1; const found = end.exec(text); i = ops.at(-1).end = found ? found.index + 3 : n; }
+  }
+  return ops;
+}
+
+// Gray, RGB or CMYK operands as #rrggbb; a pattern or other space gives null.
+function colorHex(args) {
+  if (!args.length || args.some(arg => arg.startsWith('/'))) return null;
+  const v = args.map(Number), hex = values => '#' + values.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join('');
+  return v.length === 4 ? hex(v.slice(0, 3).map(x => (1 - x) * (1 - v[3]))) : v.length === 3 ? hex(v) : v.length === 1 ? hex([v[0], v[0], v[0]]) : null;
+}
+
+/** The page's drawings in PDF coordinates, with where each sits in its content stream. */
+function pageDrawings(page) {
+  const contents = page.getObject().get('Contents');
+  const streams = contents.isArray() ? Array.from({ length: contents.length }, (_, i) => contents.get(i)) : contents.isStream() ? [contents] : [];
+  const pageBox = mupdf.Rect.transform(page.getBounds(), mupdf.Matrix.invert(page.getTransform()));
+  const union = (a, b) => a ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : b;
+  const meet = (a, b) => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  const texts = [], drawings = [], saved = [];
+  let state = { ctm: [1, 0, 0, 1, 0, 0], width: 1, clip: pageBox, fill: '#000000', stroke: '#000000' }, path = null;
+  const point = (x, y) => { const [a, b, c, d, e, f] = state.ctm, px = x * a + y * c + e, py = x * b + y * d + f; path.box = union(path.box, [px, py, px, py]); };
+  // Open q…Q groups; the first stands for the page itself.
+  const fresh = (si, start) => ({ si, start, ctm: state.ctm, pure: true, children: [], loose: [], paints: [], fills: [], strokes: [] });
+  const groups = [{ ...fresh(-1, 0), pure: false }];
+  // A group that only drew paths waits inside its parent, which may take it in;
+  // a group with anything else gives its own drawings and lone paths.
+  const close = (group, si, end) => {
+    if (group.pure && group.si === si && group.box) { group.parts = [{ start: group.start, end, ctm: group.ctm }]; groups.at(-1).children.push(group); return; }
+    drawings.push(...group.children, ...group.loose);
+  };
+  for (const [si, stream] of streams.entries()) {
+    const buffer = stream.readStream();
+    try { texts.push(latin1(buffer.asUint8Array())); } finally { buffer.destroy(); }
+    for (const { op, start, end, args } of contentOperators(texts[si])) {
+      const v = args.map(Number);
+      if (op === 'q') { saved.push(state); state = { ...state }; groups.push(fresh(si, start)); }
+      else if (op === 'Q') { if (saved.length) state = saved.pop(); if (groups.length > 1) close(groups.pop(), si, end); }
+      else if (op === 'cm' && v.length === 6 && v.every(Number.isFinite)) state.ctm = mupdf.Matrix.concat(v, state.ctm);
+      else if (op === 'w' && Number.isFinite(v[0])) state.width = v[0];
+      else if (['m', 'l', 'c', 'v', 'y', 're', 'h'].includes(op)) {
+        path ??= { si, start, box: null, clip: false };
+        if (op === 're') { point(v[0], v[1]); point(v[0] + v[2], v[1]); point(v[0], v[1] + v[3]); point(v[0] + v[2], v[1] + v[3]); }
+        else for (let p = 0; p + 1 < v.length; p += 2) point(v[p], v[p + 1]);
+      }
+      else if (op === 'W' || op === 'W*') { if (path) path.clip = true; }
+      else if (op === 'n') { if (path?.clip && path.box) state.clip = meet(state.clip, path.box); path = null; }
+      else if (PAINT.has(op)) {
+        if (!path?.box || path.box.some(value => !Number.isFinite(value))) { path = null; continue; }
+        const stroked = op !== 'f' && op !== 'F' && op !== 'f*', filled = op !== 'S' && op !== 's';
+        const grow = stroked ? state.width * Math.hypot(state.ctm[0], state.ctm[1]) / 2 : 0;
+        const box = meet([path.box[0] - grow, path.box[1] - grow, path.box[2] + grow, path.box[3] + grow], state.clip), visible = box[2] > box[0] && box[3] > box[1];
+        if (path.clip) state.clip = meet(state.clip, path.box);
+        const paint = { start, end };
+        for (const group of groups) {
+          group.paints.push(paint);
+          if (visible) group.box = union(group.box, box);
+          if (filled && group.fill === undefined) group.fill = state.fill;
+          if (stroked && group.stroke === undefined) group.stroke = state.stroke;
+        }
+        if (visible && path.si === si) groups.at(-1).loose.push({ si, start: path.start, parts: [{ start: path.start, end, ctm: state.ctm, lone: true }], box, paints: [paint], fills: [], strokes: [], clip: path.clip, ...(filled ? { fill: state.fill } : {}), ...(stroked ? { stroke: state.stroke } : {}) });
+        path = null;
+      }
+      else if (FILL_COLOR.has(op) || STROKE_COLOR.has(op)) {
+        const fill = FILL_COLOR.has(op), lower = op.toLowerCase(), key = fill ? 'fill' : 'stroke';
+        if (lower !== 'cs') state[key] = colorHex(args);
+        else if (args[0] === '/Pattern') state[key] = null;
+        for (const group of groups) group[fill ? 'fills' : 'strokes'].push({ start, end });
+      }
+      // Text, images and shadings make a group more than a drawing.
+      else if (op === 'BT' || op === 'Do' || op === 'BI' || op === 'sh') for (const group of groups) group.pure = false;
+    }
+  }
+  while (groups.length > 1) close(groups.pop(), -1, 0);
+  close(groups[0], -1, 0);
+  // A shape's fill and its border are often painted one after the other, with at
+  // most a change of state between them: they make one drawing, in parts.
+  const same = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 && w * h > .8 * Math.max((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])); };
+  const merged = [];
+  for (const drawing of drawings.sort((a, b) => a.si - b.si || a.start - b.start)) {
+    const last = merged.at(-1);
+    if (last && last.si === drawing.si && !last.clip && !drawing.clip && same(last.box, drawing.box)
+      && contentOperators(texts[drawing.si].slice(last.parts.at(-1).end, drawing.start)).every(({ op }) => BETWEEN.has(op))) {
+      Object.assign(last, { box: union(last.box, drawing.box), parts: [...last.parts, ...drawing.parts], paints: [...last.paints, ...drawing.paints], fills: [...last.fills, ...drawing.fills], strokes: [...last.strokes, ...drawing.strokes] });
+      if (last.fill === undefined && drawing.fill !== undefined) last.fill = drawing.fill;
+      if (last.stroke === undefined && drawing.stroke !== undefined) last.stroke = drawing.stroke;
+    } else merged.push(drawing);
+  }
+  // The page's own background is not something to pick.
+  const area = box => (box[2] - box[0]) * (box[3] - box[1]), pageArea = area(pageBox);
+  const listed = merged.filter(drawing => area(drawing.box) < pageArea * .85);
+  return { streams, texts, drawings: listed.length > 3000 ? [] : listed, tooMany: listed.length > 3000 };
+}
+
+function drawingItems(page) {
+  const { drawings, tooMany } = pageDrawings(page);
+  return { tooMany, items: drawings.map((drawing, i) => ({ id: `graphic-${i}`, kind: 'graphic', rect: drawing.box, editable: true, ...(drawing.fill !== undefined ? { fill: drawing.fill } : {}), ...(drawing.stroke !== undefined ? { stroke: drawing.stroke } : {}), ...(drawing.clip ? { clip: true } : {}) })) };
+}
+
+/** Move, duplicate, recolour or remove one drawing by rewriting its operators. */
+function editDrawing(doc, page, index, options, password) {
+  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+  if (typeof options.sourceId !== 'string' || !/^graphic-\d{1,5}$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
+  const found = pageDrawings(page), drawing = found.drawings[Number(options.sourceId.slice(8))], source = rect(options.sourceRect);
+  if (!drawing || !drawing.box.every((value, i) => Math.abs(value - source[i]) <= .02)) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');
+  const text = found.texts[drawing.si], edits = [], operation = options.operation;
+  const color = hex => rgb(hex).map(number).join(' ');
+  let expected;
+  if (operation === 'move-graphic') {
+    if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede mover.');
+    if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
+    const target = rect(options.rect), dx = target[0] - source[0], dy = target[1] - source[1];
+    // The shift in a part's own coordinates that moves it by (dx, dy) on the page.
+    const shift = ([a, b, c, d]) => { const det = a * d - b * c; if (!(Math.abs(det) > 1e-9)) fail('Este dibujo no se puede mover.'); return `q 1 0 0 1 ${number((d * dx - c * dy) / det)} ${number((a * dy - b * dx) / det)} cm\n`; };
+    // A copy goes whole just before the drawing, where the state is the drawing's
+    // own; a move shifts each part where it is, leaving the state between them as it was.
+    if (options.copy) edits.push([drawing.parts[0].start, drawing.parts[0].start, `${shift(drawing.parts[0].ctm)}${text.slice(drawing.parts[0].start, drawing.parts.at(-1).end)}\nQ\n`]);
+    else for (const part of drawing.parts) edits.push([part.start, part.end, `${shift(part.ctm)}${text.slice(part.start, part.end)}\nQ`]);
+    expected = [source[0] + dx, source[1] + dy, source[2] + dx, source[3] + dy];
+  } else if (operation === 'remove-graphic') {
+    for (const paint of drawing.paints) edits.push([paint.start, paint.end, 'n']);
+  } else {
+    const { fill, stroke } = options;
+    if (!fill && !stroke) fail('Elige un color.');
+    if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede cambiar su color.');
+    const set = `${fill ? `${color(fill)} rg ` : ''}${stroke ? `${color(stroke)} RG ` : ''}`;
+    // A lone path is wrapped with its new colours; a group gets them after its
+    // own q, and each colour it sets is replaced.
+    for (const part of drawing.parts) {
+      if (part.lone) edits.push([part.start, part.start, `q ${set}\n`], [part.end, part.end, '\nQ']);
+      else edits.push([part.start + 1, part.start + 1, ` ${set}`]);
+    }
+    if (fill) for (const op of drawing.fills) edits.push([op.start, op.end, `${color(fill)} rg`]);
+    if (stroke) for (const op of drawing.strokes) edits.push([op.start, op.end, `${color(stroke)} RG`]);
+  }
+  let next = text;
+  for (const [from, to, value] of edits.sort((a, b) => b[0] - a[0])) next = next.slice(0, from) + value + next.slice(to);
+  const glyphs = contentGlyphs(page), object = page.getObject(), stream = doc.addStream(Uint8Array.from(next, c => c.charCodeAt(0)), {});
+  // A new stream rather than the old one rewritten: another page may share it.
+  if (!object.get('Contents').isArray()) object.put('Contents', stream);
+  else { const list = doc.newArray(); found.streams.forEach((value, i) => list.push(i === drawing.si ? stream : value)); object.put('Contents', list); }
+  const output = save(doc, QUICK);
+  verifyRetainedGlyphs(output, index, glyphs, password, 'No se pudo cambiar este dibujo sin afectar al texto. El original permanece intacto.');
+  if (expected) {
+    const check = open(output, password); let after;
+    try { const moved = check.loadPage(index); try { after = pageDrawings(moved).drawings; } finally { moved.destroy(); } } finally { check.destroy(); }
+    if (!after.some(other => other.box.every((value, i) => Math.abs(value - expected[i]) < .5))) fail('El dibujo quedaría recortado en esa posición. El original permanece intacto.');
+  }
+  return output;
 }
 
 function contentGlyphs(page, whitespace = false) {
@@ -805,13 +1003,13 @@ function moveContent(doc, page, index, target, options, password) {
       draw = device => device.fillImage(image, matrix, alpha);
     }
     if (!options.copy) redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
-    const removed = save(doc);
+    const removed = save(doc, QUICK);
     if (!options.copy) verifyRetainedGlyphs(removed, index, selection.retainedGlyphs, password, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
     const next = open(removed, password); let output;
     try {
       const nextPage = next.loadPage(index);
       try { appendDrawing(next, nextPage, draw); } finally { nextPage.destroy(); }
-      output = saveDrawnDocument(next, password);
+      output = save(next, QUICK);
     } finally { next.destroy(); }
     if (expected.length) {
       // Every glyph must appear where it was moved. A rewritten font may name an
@@ -844,7 +1042,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
       if (operation === 'page-image' && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
       const page = doc.loadPage(pageIndex(doc, options.page));
-      try { return pageContent(doc, page, operation === 'page-image' ? options.id : undefined); }
+      try { return pageContent(doc, page, operation === 'page-image' ? options.id : undefined, undefined, options.graphics === true); }
       finally { page.destroy(); }
     }
     if (operation === 'area-info') {
@@ -852,6 +1050,11 @@ export function operateDocument(bytes, options, password = '', onPart) {
       const page = doc.loadPage(pageIndex(doc, options.page));
       try { return areaContent(page, mupdf.Rect.transform(rect(options.rect), page.getTransform())); }
       finally { page.destroy(); }
+    }
+    if (['move-graphic', 'remove-graphic', 'recolor-graphic'].includes(operation)) {
+      allowed(doc, 'edit');
+      const index = pageIndex(doc, options.page), page = doc.loadPage(index);
+      try { return editDrawing(doc, page, index, options, password); } finally { page.destroy(); }
     }
     if (operation === 'remove-content') {
       allowed(doc, 'edit');
@@ -865,7 +1068,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
       // Redaction uses font character bounds rather than the picker's quads.
       // Verify the saved result before returning it; nearby text must survive
       // with its original glyphs/positions, including other lines in the block.
-      const output = save(doc); verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password);
+      const output = save(doc, QUICK); verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password);
       return output;
     }
     if (operation === 'text') {
@@ -1077,7 +1280,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
                 const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
                 // Image editing removes pixels in the source area; text and annotations remain.
                 redactPage(doc, page, [source], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
-                replacement = save(doc);
+                replacement = save(doc, QUICK);
               } else appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
             } finally { image.destroy(); }
             if (replacement) return operateDocument(replacement, { ...options, operation: 'add-image' }, password);
@@ -1114,7 +1317,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
                   textDrawing({ fillText() {} }, box, { ...options, glyphFont });
                 }
                 if (selection.boxes.length) redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
-                const output = save(doc);
+                const output = save(doc, QUICK);
                 if (selection.boxes.length) verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
                 // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
                 try { return operateDocument(output, { ...options, operation: 'add-text', glyphFont }, password); }
@@ -1141,7 +1344,8 @@ export function operateDocument(bytes, options, password = '', onPart) {
       allowed(doc, 'edit');
       return save(doc, 'garbage=4,compress=yes,encrypt=no');
     } else fail('Operación desconocida.');
-    const output = ['add-text', 'add-image', 'ocr'].includes(operation) ? saveDrawnDocument(doc, password) : save(doc);
+    // OCR draws the same font on every page: deduplication merges those copies.
+    const output = operation === 'ocr' ? saveDrawnDocument(doc, password) : save(doc, ['add-text', 'add-image', 'remove-image'].includes(operation) ? QUICK : undefined);
     return operation === 'compress' && output.length >= bytes.length ? new Uint8Array(bytes) : output;
   } finally { doc.destroy(); mupdf.emptyStore(); }
 }

@@ -54,5 +54,6 @@ export const splitPdf = (bytes: Uint8Array, parts: PageEntry[][], onPart: (index
 export const readFields = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<Field[]>('operate', bytes, password, undefined, signal, { operation: 'fields' });
 export const extractText = (bytes: Uint8Array, password?: string, signal?: AbortSignal) => run<string[]>('operate', bytes, password, undefined, signal, { operation: 'text' });
 export const readAreaContent = (bytes: Uint8Array, area: Area, password?: string, signal?: AbortSignal) => run<AreaContentInfo>('operate', bytes, password, undefined, signal, { operation: 'area-info', ...area });
-export const getPageContent = (bytes: Uint8Array, page: number, password?: string, signal?: AbortSignal) => run<PageContentInfo>('operate', bytes, password, undefined, signal, { operation: 'page-content', page });
+/** `graphics` also lists the drawings the page paints itself, for Editar. */
+export const getPageContent = (bytes: Uint8Array, page: number, password?: string, signal?: AbortSignal, graphics = false) => run<PageContentInfo>('operate', bytes, password, undefined, signal, { operation: 'page-content', page, ...(graphics ? { graphics } : {}) });
 export const readPageImage = (bytes: Uint8Array, page: number, id: string, password?: string, signal?: AbortSignal) => run<PageImageInfo>('operate', bytes, password, undefined, signal, { operation: 'page-image', page, id });

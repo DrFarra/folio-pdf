@@ -23,6 +23,8 @@ first.drawText('Informe trimestral', { x: 60, y: 760, size: 22, font, color: rgb
 ['Las ventas crecieron un doce por ciento respecto', 'al trimestre anterior gracias a la nueva tienda.'].forEach((line, i) => first.drawText(line, { x: 60, y: 700 - i * 16, size: 12, font }));
 first.drawImage(await pdf.embedPng(swatch.asPNG()), { x: 360, y: 420, width: 160, height: 120 });
 pdf.addPage([595, 842]).drawText('Segunda página', { x: 60, y: 760, size: 16, font });
+// Pages far enough to leave the reader's view.
+for (let i = 3; i <= 14; i++) pdf.addPage([595, 842]).drawText(`Página ${i}`, { x: 60, y: 760, size: 16, font });
 const fixture = path.join(output, 'edit-mode.pdf'); fs.writeFileSync(fixture, await pdf.save());
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe' });
@@ -173,14 +175,14 @@ try {
     await page.getByRole('button', { name: 'Girar 90°' }).click(); await settle();
     bytes = await exported('edit-turned.pdf');
     assert(items(bytes).some(item => item.kind === 'image' && item.rotation === 90), 'Turned a quarter');
-    // A pasted image waits for a click on the page.
+    // A pasted image lands at once in the middle of the view, selected, even with a toolbar field focused.
     await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: /^Texto/ }).focus();
     await page.evaluate(async png => {
       const data = new DataTransfer(); data.items.add(new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], 'captura.png', { type: 'image/png' }));
-      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+      document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
     }, Buffer.from(swatch.asPNG()).toString('base64'));
-    await page.getByText(/colocar «la imagen pegada»/).waitFor();
-    const spot = await toScreen(1, 120, 150); await page.mouse.click(spot.x, spot.y); await settle();
+    await settle(); await page.locator('.edit-selection.kind-image').waitFor();
     bytes = await exported('edit-pasted.pdf');
     assert(items(bytes).filter(item => item.kind === 'image').length >= 3, 'Pasted image placed');
     return { resizedKeepingRatio: true, turned: true, pasted: true };
@@ -199,9 +201,22 @@ try {
     await page.waitForFunction(() => document.querySelectorAll('.shape-layer polyline').length === 0);
     return { arrowDrawn: true, restyled: true, deleted: true };
   });
+
+  await check('a-page-of-an-older-revision-is-not-reused', async () => {
+    // A page shown before an edit and out of view since comes back with the new revision's page.
+    const far = page.locator('.pdf-page-wrap[data-page-number="14"]');
+    await far.scrollIntoViewIfNeeded(); await far.locator('.page-content canvas').first().waitFor();
+    await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
+    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await page.keyboard.press('ArrowRight'); await page.waitForTimeout(600); await settle(); await page.waitForTimeout(500);
+    await far.scrollIntoViewIfNeeded(); await far.locator('.page-content canvas').first().waitFor(); await settle();
+    assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
+    return { farPageShown: true };
+  });
 } finally {
   for (const result of results) console.log(JSON.stringify(result));
   fs.writeFileSync(path.join(output, 'edit-mode-ui-results.json'), JSON.stringify({ browser: useWebKit ? 'WebKit' : 'Chromium', results }, null, 2));
   await browser.close(); server.kill();
 }
-process.exitCode = results.length === 8 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 9 && results.every(result => result.status === 'passed') ? 0 : 1;

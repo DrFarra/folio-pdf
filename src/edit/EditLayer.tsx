@@ -3,7 +3,7 @@ import type { PageViewport, PDFPageProxy } from 'pdfjs-dist';
 import type { PageContentItem } from '../engine/operations.mjs';
 import type { Annotation, LoadedDocument } from '../types';
 import { errorMessage } from '../errors';
-import { useEdit, type EditStore, type Rect, type ShapeKind, type TextDraft } from './store';
+import { useEdit, type ContentKind, type EditStore, type Rect, type ShapeKind, type TextDraft } from './store';
 import { commitDraft, defaultStyle, editText, moveSelection, placeImage } from './actions';
 import { parseFontName } from './fonts';
 import { ShapeSvg } from './ShapeLayer';
@@ -12,7 +12,7 @@ import './edit.css';
 type Point = { x: number; y: number };
 type Box = { x: number; y: number; w: number; h: number };
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end';
-type Target = { kind: 'text' | 'image'; item: PageContentItem } | { kind: 'shape'; shape: Annotation };
+type Target = { kind: ContentKind; item: PageContentItem } | { kind: 'shape'; shape: Annotation };
 type Gesture =
   | { mode: 'move'; target: Target; start: Point; now: Point; moved: boolean; wasSelected: boolean }
   | { mode: 'resize'; target: Target; handle: Handle; start: Point; now: Point; free: boolean }
@@ -127,9 +127,9 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   // After a commit the moved, written or added content is selected again.
   useEffect(() => {
     if (!reselect || !items || reselect.from === doc.revision) return;
-    const best = items.filter(item => item.kind === reselect.kind && (item.kind === 'image' || item.level === 'paragraph'))
+    const best = items.filter(item => item.kind === reselect.kind && (item.kind !== 'text' || item.level === 'paragraph'))
       .map(item => ({ item, score: overlap(item.rect, reselect.rect) })).sort((a, b) => b.score - a.score)[0];
-    store.set({ reselect: null, ghost: null, selection: best && best.score > .2 ? { kind: reselect.kind, page: number, item: best.item } : null });
+    store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: best && best.score > .2 ? { kind: reselect.kind, page: number, item: best.item } : null });
   }, [store, items, reselect, number, doc.revision]);
   // A selection from an older revision no longer matches the page.
   const revision = useRef(doc.revision);
@@ -159,21 +159,28 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     return () => window.removeEventListener('folio:edit-place-image', place);
   }, [store, number]);
 
-  function hitTest(p: Point): Target | null {
+  /** Everything under a point, top first: Folio's shapes, the text, editable
+   * images, then the PDF's drawings, smallest first, so a box's empty part picks the box. */
+  function hitAll(p: Point): Target[] {
+    const hits: Target[] = [];
     for (const shape of [...shapes].reverse()) {
-      if (shape.line) { const a = toPoint(shape.line[0], shape.line[1]), b = toPoint(shape.line[2], shape.line[3]); if (segmentDistance(p, a, b) <= Math.max(6, (shape.strokeWidth || 1) * viewport.scale / 2 + 4)) return { kind: 'shape', shape }; }
-      else if (inside(toBox(shape.rect), p, 3)) return { kind: 'shape', shape };
+      if (shape.line) { const a = toPoint(shape.line[0], shape.line[1]), b = toPoint(shape.line[2], shape.line[3]); if (segmentDistance(p, a, b) <= Math.max(6, (shape.strokeWidth || 1) * viewport.scale / 2 + 4)) hits.push({ kind: 'shape', shape }); }
+      else if (inside(toBox(shape.rect), p, 3)) hits.push({ kind: 'shape', shape });
     }
-    if (!items) return null;
-    const texts = items.filter(item => item.kind === 'text' && item.level === 'paragraph' && inside(toBox(item.rect), p, 1)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)));
-    for (const paragraph of texts) {
-      if (paragraph.editable) return { kind: 'text', item: paragraph };
-      const line = items.find(item => item.kind === 'text' && item.level === 'line' && item.editable && item.id.startsWith(paragraph.id.replace('paragraph', 'line') + '-') && inside(toBox(item.rect), p, 1));
-      return { kind: 'text', item: line || paragraph };
+    if (!items) return hits;
+    const under = (kind: ContentKind, pad = 0) => items.filter(item => item.kind === kind && (kind !== 'text' || item.level === 'paragraph') && inside(toBox(item.rect), p, pad)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)));
+    const paragraph = under('text', 1)[0];
+    if (paragraph) {
+      const line = !paragraph.editable && items.find(item => item.kind === 'text' && item.level === 'line' && item.editable && item.id.startsWith(paragraph.id.replace('paragraph', 'line') + '-') && inside(toBox(item.rect), p, 1));
+      hits.push({ kind: 'text', item: line || paragraph });
     }
-    const image = items.filter(item => item.kind === 'image' && inside(toBox(item.rect), p)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)))[0];
-    return image ? { kind: 'image', item: image } : null;
+    const images = under('image');
+    for (const item of images) if (item.editable) hits.push({ kind: 'image', item });
+    for (const item of under('graphic', 2)) hits.push({ kind: 'graphic', item });
+    for (const item of images) if (!item.editable) hits.push({ kind: 'image', item });
+    return hits;
   }
+  const hitTest = (p: Point): Target | null => hitAll(p)[0] ?? null;
   const same = (a: Target | null, b: Target | null) => !!a && !!b && a.kind === b.kind && (a.kind === 'shape' ? a.shape.id === (b as { shape: Annotation }).shape.id : a.item.id === (b as { item: PageContentItem }).item.id);
   const selected: Target | null = !selection ? null : selection.kind === 'shape' ? (shapes.find(shape => shape.id === selection.id) ? { kind: 'shape', shape: shapes.find(shape => shape.id === selection.id)! } : null) : { kind: selection.kind, item: selection.item };
   const targetBox = (target: Target) => target.kind === 'shape' ? toBox(target.shape.rect) : toBox(target.item.rect);
@@ -262,13 +269,17 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     event.stopPropagation();
     if ((event.target as Element).closest('.edit-draft')) return;
     event.preventDefault();
+    // Keys go to the page again, not to the toolbar field used last (Supr, Ctrl+Z).
+    if (document.activeElement instanceof HTMLElement && document.activeElement.closest('.edit-toolbar')) document.activeElement.blur();
     setWanted(true);
     const p = local(event);
     if (store.state.draft) return;
     if (store.state.committing) return;
     const handle = (event.target as HTMLElement).dataset.handle as Handle | undefined;
     if (handle && selected) { event.currentTarget.setPointerCapture(event.pointerId); update({ mode: 'resize', target: selected, handle, start: p, now: p, free: event.shiftKey }); return; }
-    const target = hitTest(p);
+    // Alt+click reaches what lies under the selection.
+    const hits = hitAll(p), below = hits.findIndex(hit => same(hit, selected));
+    const target = (event.altKey && hits.length > 1 ? hits[below < 0 ? 1 : (below + 1) % hits.length] : hits[0]) ?? null;
     if (tool !== 'select' && !(tool === 'text' && target?.kind === 'text')) {
       if (tool === 'image' && !pendingImage) return;
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -292,7 +303,8 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       update({ ...current, now: p, ...(current.mode === 'move' ? { moved } : {}), ...(current.mode !== 'move' ? { free: event.shiftKey } : {}) } as Gesture);
       return;
     }
-    const target = tool === 'select' || tool === 'text' ? hitTest(p) : null;
+    // The text tool only takes text; a click anywhere else starts new text there.
+    const target = tool === 'select' ? hitTest(p) : tool === 'text' ? hitAll(p).find(hit => hit.kind === 'text') ?? null : null;
     if (!same(target, hover) && !(target === null && hover === null)) setHover(target);
   }
   function pointerUp(event: React.PointerEvent<HTMLDivElement>) {
@@ -351,7 +363,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     {live && gesture?.mode === 'create' && (gesture.tool === 'text' || gesture.tool === 'image') && <div className="edit-selection dragging" style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }} />}
     {selected && !draft && !ghost && !(gesture && gesture.mode !== 'move' || gesture?.moved) && (() => {
       const box = targetBox(selected), line = selected.kind === 'shape' && selected.shape.line ? [toPoint(selected.shape.line[0], selected.shape.line[1]), toPoint(selected.shape.line[2], selected.shape.line[3])] : null;
-      const handles: Handle[] = line ? [] : selected.kind === 'text' ? ['w', 'e'] : HANDLES;
+      const handles: Handle[] = line || selected.kind === 'graphic' ? [] : selected.kind === 'text' ? ['w', 'e'] : HANDLES;
       return <div className={`edit-selection kind-${selected.kind}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
         {handles.map(handle => <span key={handle} className={`edit-handle handle-${handle}`} data-handle={handle} />)}
         {line && line.map((end, i) => <span key={i} className="edit-handle handle-end" data-handle={i ? 'end' : 'start'} style={{ left: end.x - box.x, top: end.y - box.y }} />)}
@@ -389,6 +401,7 @@ function DraftBox({ store, draft, page, viewport, toBox, toRect, background }: {
   };
   // Clicking anywhere else, except the controls that format this text, writes it.
   useEffect(() => {
+    if (draft.written) return;
     const outside = (event: PointerEvent) => {
       const target = event.target as Element;
       if (target.closest('.edit-draft, .edit-properties, dialog, .toast')) return;
@@ -410,7 +423,7 @@ function DraftBox({ store, draft, page, viewport, toBox, toRect, background }: {
   };
   return <div className="edit-draft" style={{ left, top: box.y, width: single ? width : box.w }} onPointerDown={event => event.stopPropagation()}>
     {draft.source && (() => { const source = toBox(draft.source.rect); return <div className="edit-mask" style={{ left: source.x - left - 1, top: source.y - box.y - 1, width: source.w + 2, height: source.h + 2, background: fill }} />; })()}
-    <textarea ref={ref} aria-label={draft.source ? 'Texto del párrafo' : 'Texto nuevo'} spellCheck value={draft.text} placeholder="Escribe aquí"
+    <textarea ref={ref} aria-label={draft.source ? 'Texto del párrafo' : 'Texto nuevo'} spellCheck={!draft.written} readOnly={draft.written} value={draft.text} placeholder="Escribe aquí"
       style={{ fontFamily: family, fontSize: style.size * scale, lineHeight: style.lineHeight, color: style.color, textAlign: style.align, fontWeight: style.bold ? 700 : 400, fontStyle: style.italic ? 'italic' : 'normal', background: fill, whiteSpace: single ? 'pre' : undefined }}
       onChange={event => { const current = store.state.draft; if (current) store.set({ draft: { ...current, text: event.target.value } }); }}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
@@ -425,6 +438,6 @@ function DraftBox({ store, draft, page, viewport, toBox, toRect, background }: {
           store.set({ draft: { ...current, style: { ...current.style, ...(letter === 'b' ? { bold: !current.style.bold } : { italic: !current.style.italic }) } } });
         }
       }} />
-    <span className="edit-handle handle-e draft-width" title="Ancho del texto" onPointerDown={resize} />
+    {!draft.written && <span className="edit-handle handle-e draft-width" title="Ancho del texto" onPointerDown={resize} />}
   </div>;
 }

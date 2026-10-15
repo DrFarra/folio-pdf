@@ -15,15 +15,17 @@ addEventListener('gesturestart', event => event.preventDefault(), { passive: fal
 
 // A failed render must not leave a blank, frameless window: offer a reload and,
 // in the desktop app, a way to close it.
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean; message?: string }> {
+  state: { failed: boolean; message?: string } = { failed: false };
+  static getDerivedStateFromError(error: unknown) { return { failed: true, message: error instanceof Error ? error.message : String(error) }; }
   componentDidCatch(error: unknown) { console.error('Folio: error en la interfaz.', error); }
   render() {
     if (!this.state.failed) return this.props.children;
     return <div className="welcome" role="alert" data-tauri-drag-region>
       <h2>Folio encontró un error</h2>
       <p>Tus documentos y los cambios guardados se conservan. Recarga Folio para seguir.</p>
+      {/* What failed, for a screenshot of a report: the desktop app has no console. */}
+      {this.state.message && <p className="error-detail">{this.state.message}</p>}
       <button className="primary-button" onClick={() => location.reload()}>Recargar Folio</button>
       {isDesktop && <button className="text-button" onClick={() => void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().destroy())}>Cerrar Folio</button>}
     </div>;

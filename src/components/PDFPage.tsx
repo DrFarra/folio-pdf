@@ -155,7 +155,9 @@ export default memo(function PDFPage(props: Props) {
   // pixels until the new revision's page is ready, then swaps it in place.
   const [loaded, setLoaded] = useState<{ pdf: PDFDocumentProxy; page: PDFPageProxy } | null>(null);
   const [error, setError] = useState('');
-  const page = loaded && (loaded.pdf === props.pdf || nearby) ? loaded.page : null;
+  // A page of a revision already closed cannot be used, even for its old pixels:
+  // PDF.js throws on it (a page scrolled back into view after an edit).
+  const page = loaded && (loaded.pdf === props.pdf || nearby && !loaded.pdf.loadingTask.destroyed) ? loaded.page : null;
   useEffect(() => {
     if (!nearby || loaded?.pdf === props.pdf) return;
     let alive = true;
@@ -184,6 +186,7 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
   const [rendered, setRendered] = useState(false);
   const [failed, setFailed] = useState(false);
   const [highlightMenu, setHighlightMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [notePreview, setNotePreview] = useState<string | null>(null);
   const pointerOrigin = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   const rendering = useRef(false);
   const [drag, setDrag] = useState<{ x: number; y: number; ex: number; ey: number } | null>(null);
@@ -525,6 +528,10 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     onArea({ page: number, rect: [a[0], a[1], b[0], b[1]] });
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
+  function notePosition(note: Annotation) {
+    const p = viewport.convertToViewportPoint(note.rect[0], note.rect[1]), size = isMobile ? 44 : 28;
+    return { left: Math.max(0, Math.min(p[0], viewport.width - size)), top: Math.max(0, Math.min(p[1], viewport.height - size)) };
+  }
   function openHighlight(id: string, x: number, y: number) {
     if (!canAnnotate) return;
     window.dispatchEvent(new Event('folio:reader-interaction'));
@@ -612,15 +619,25 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
         return <div key={index} className="redaction-preview" style={{ left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) }}>Censurar</div>;
       })}
       {annotations.filter(a => a.kind === 'note').map(a => {
-        const p = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
-        return <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left: Math.max(0, Math.min(p[0], viewport.width - (isMobile ? 44 : 28))), top: Math.max(0, Math.min(p[1], viewport.height - (isMobile ? 44 : 28))) }} onPointerDown={e => e.stopPropagation()} onClick={event => { event.stopPropagation(); onNoteClick(a.id); }}><MessageSquare size={15} fill="currentColor" /></button>;
+        const { left, top } = notePosition(a);
+        return <button key={a.id} className="note-marker" aria-label={`Ver nota en página ${number}`} style={{ left, top, '--note': a.color } as React.CSSProperties} onPointerDown={e => e.stopPropagation()} onClick={event => { event.stopPropagation(); setNotePreview(null); onNoteClick(a.id); }}
+          onPointerEnter={event => { if (event.pointerType === 'mouse' && !highlightMenu) setNotePreview(a.id); }} onPointerLeave={() => setNotePreview(null)}
+          onContextMenu={event => { if (!canAnnotate) return; event.preventDefault(); event.stopPropagation(); setNotePreview(null); openHighlight(a.id, event.clientX, event.clientY); }}><MessageSquare size={15} fill="currentColor" /></button>;
       })}
       {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}
     </div>
+    {(() => {
+      const note = notePreview && annotations.find(a => a.id === notePreview);
+      if (!note) return null;
+      const { left, top } = notePosition(note), right = left > viewport.width - 290;
+      return <div className="note-preview" role="tooltip" style={right ? { right: viewport.width - left + 6, top } : { left: left + 34, top }}>
+        <p>{note.text.trim() || 'Nota vacía'}</p>{canAnnotate && <span>Clic para editar · clic derecho para más opciones</span>}
+      </div>;
+    })()}
     {!rendered && <div className="page-loading">{failed ? 'No se pudo mostrar la página.' : <LoaderCircle size={22} className="spin" />}</div>}
     {rendered && failed && <div className="page-render-error" role="alert">No se pudo actualizar esta página.</div>}
     {edit && <EditLayer store={edit.store} doc={edit.doc} number={number} viewport={viewport} page={page} canvas={canvasRef} shapes={shapes} />}
-    {highlightMenu && canAnnotate && <HighlightAnnotationMenu x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); requestAnimationFrame(() => document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true })); }} />}
+    {highlightMenu && canAnnotate && <HighlightAnnotationMenu note={annotations.find(annotation => annotation.id === highlightMenu.id)?.kind === 'note'} x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation?.kind === 'note') onNoteClick(annotation.id); else if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); requestAnimationFrame(() => document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true })); }} />}
   </div>;
 }
 
