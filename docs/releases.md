@@ -10,6 +10,12 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.12
+
+- En Editar ya se puede mover el texto de los PDF impresos desde el navegador (por ejemplo, resúmenes en Segoe UI): antes muchos párrafos se negaban con «no se puede mover sin cambiar su aspecto». Las letras quedan en su sitio exacto.
+- Al mover texto, los paréntesis y demás signos se siguen copiando y buscando bien.
+- Un texto con una fuente dibujada (Type 3, como algunas estrellas ★) explica que hay que editarlo para reescribirlo.
+
 ## Cambios en 0.9.11
 
 - Editar va mucho más rápido: cada cambio tarda unos 35 ms aunque el PDF tenga cientos de MB (antes, cerca de 1 s en un PDF de 238 MB y 1,5 s en uno de 475 MB). El PDF ya no se reabre en cada cambio, solo una vez al salir de Editar.
