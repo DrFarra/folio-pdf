@@ -64,9 +64,20 @@ export function fitWords(image: Pixels, found: Found[], read: Read[]): Read[] {
     if (high - low < 40) return line;
     const threshold = (low + high) / 2, inked = (x: number) => { for (let y = y0; y < y1; y++) if (light(x, y) < threshold) return true; return false; };
     const words = [...line.words].sort((a, b) => a.box[0] - b.box[0]);
+    // Each boundary between two words is the widest blank gap near where the recogniser put
+    // it (it places letters inside them, so a midpoint can fall inside the next word's first letter).
+    const blanks: [number, number][] = [];
+    for (let x = x0, start = -1; x <= x1; x++) { const empty = x < x1 && !inked(x); if (empty && start < 0) start = x; if (!empty && start >= 0) { blanks.push([start, x]); start = -1; } }
+    const reach = (y1 - y0) * .8;
+    const boundaries = words.slice(1).map((word, k) => {
+      const target = (words[k].box[2] + word.box[0]) / 2;
+      let best: [number, number] | null = null, value = -Infinity;
+      for (const [a, b] of blanks) { const centre = (a + b) / 2; if (Math.abs(centre - target) > reach) continue; const v = (b - a) - Math.abs(centre - target) * .3; if (v > value) { value = v; best = [a, b]; } }
+      return best ?? [Math.round(target), Math.round(target)] as [number, number];
+    });
     return { ...line, words: words.map((word, k) => {
-      const from = Math.max(x0, Math.floor(k ? (words[k - 1].box[2] + word.box[0]) / 2 : box[0])), to = Math.min(x1, Math.ceil(k < words.length - 1 ? (word.box[2] + words[k + 1].box[0]) / 2 : box[2]));
       let left = -1, right = -1;
+      const from = Math.max(x0, k ? boundaries[k - 1][1] : Math.floor(box[0])), to = Math.min(x1, k < words.length - 1 ? boundaries[k][0] : Math.ceil(box[2]));
       for (let x = from; x < to; x++) if (inked(x)) { if (left < 0) left = x; right = x + 1; }
       if (left < 0) return word;
       const scale = (right - left) / Math.max(1, word.box[2] - word.box[0]), move = (x: number) => left + (x - word.box[0]) * scale;

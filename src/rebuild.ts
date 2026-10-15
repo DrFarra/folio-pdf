@@ -59,6 +59,40 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
   return looks.map(look => look?.style ?? null);
 }
 
+/**
+ * The page cleaned of its scan: the paper's own tint (yellowed, grey) set to white, its
+ * faint noise and show-through gone, and dark ink set back to black, each channel
+ * stretched from the ink's black to the paper's colour (which also undoes a colour cast).
+ * Pages that are not light paper (a dark slide, a photo) are left as they are.
+ */
+export function cleanPaper(image: Pixels) {
+  const { data, width: w, height: h, channels: n } = image, count = w * h;
+  const light = (i: number) => n >= 3 ? (data[i * n] * 299 + data[i * n + 1] * 587 + data[i * n + 2] * 114) / 1000 : data[i * n];
+  const histogram = new Uint32Array(256), step = Math.max(1, Math.floor(count / 200_000));
+  for (let i = 0; i < count; i += step) histogram[Math.round(light(i))]++;
+  // The paper: the most common light tone.
+  let paper = 128; for (let v = 128; v < 256; v++) if (histogram[v] > histogram[paper]) paper = v;
+  let total = 0; for (let v = 0; v < 256; v++) total += histogram[v];
+  if (paper < 150 || histogram.slice(paper - 12, paper + 13).reduce((a, b) => a + b, 0) < total * .3) return;
+  // Its colour, and the ink's black, per channel.
+  const white = [0, 0, 0], black = [255, 255, 255]; let samples = 0;
+  for (let i = 0; i < count; i += step) {
+    const v = light(i);
+    if (Math.abs(v - paper) <= 8) { for (let c = 0; c < 3; c++) white[c] += data[i * n + (n >= 3 ? c : 0)]; samples++; }
+  }
+  for (let c = 0; c < 3; c++) white[c] /= samples;
+  const darkest: number[][] = [[], [], []];
+  for (let i = 0; i < count; i += step) if (light(i) < paper * .5) for (let c = 0; c < 3; c++) darkest[c].push(data[i * n + (n >= 3 ? c : 0)]);
+  for (let c = 0; c < 3; c++) { const values = darkest[c].sort((a, b) => a - b); black[c] = values.length ? Math.min(70, values[Math.floor(values.length * .05)]) : 0; }
+  const map = [0, 1, 2].map(c => Uint8ClampedArray.from({ length: 256 }, (_, v) => (v - black[c]) / Math.max(1, white[c] - black[c]) * 255));
+  for (let i = 0; i < count; i++) {
+    const o = i * n, mapped = [0, 1, 2].map(c => map[c][data[o + (n >= 3 ? c : 0)]]);
+    // Near-white becomes white: paper grain and show-through from the other side.
+    const lum = (mapped[0] * 299 + mapped[1] * 587 + mapped[2] * 114) / 1000, lift = lum > 235 ? 1 : lum > 215 ? (lum - 215) / 20 : 0;
+    for (let c = 0; c < Math.min(n, 3); c++) data[o + c] = mapped[n >= 3 ? c : 0] + (255 - mapped[n >= 3 ? c : 0]) * lift;
+  }
+}
+
 /** The letters of one line erased: ink and its soft edge, each column filled from above to below. */
 function erase(image: Pixels, { x0, x1, y0, y1, far, edge, grow }: { x0: number; x1: number; y0: number; y1: number; far: (p: number[]) => number; edge: number; grow: number }, kept: Box[]) {
   // Outside its own box only: inside it, the line's letters always go, even where a neighbour's box overlaps.

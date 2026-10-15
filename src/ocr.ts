@@ -2,7 +2,7 @@ import { assetUrl } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.mjs';
 import { OcrEngine } from './ppocr-client';
-import { rebuildLines } from './rebuild';
+import { cleanPaper, rebuildLines } from './rebuild';
 import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -149,6 +149,8 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           const original = await jpeg();
           const context = read.getContext('2d', { willReadFrequently: true })!, pixels = context.getImageData(0, 0, read.width, read.height);
           const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => ({ text: line.text, box: line.box, score: line.score })));
+          // What stays as image no longer looks scanned: white paper, black ink.
+          cleanPaper({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 });
           context.putImageData(pixels, 0, 0);
           const rebuilt = level.flatMap((line, i) => styles[i] ? [{ text: line.text, box: line.box.map(v => v / scale) as Box, ...styles[i]!, words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box })) }] : []);
           const kept = found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]);
@@ -165,6 +167,11 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
     }
     signal.throwIfAborted();
     if (!result.pages.some(page => page.words.length || page.lines?.length)) throw new Error('No se reconoció texto en las páginas seleccionadas.');
+    // Open fonts like books' own, for the engine to match rebuilt lines against.
+    if (outcome === 'edit') {
+      const { faces } = await (await fetch(assetUrl('/fonts/ocr/faces.json'))).json() as { faces: { family: string; name: string; bold: boolean; italic: boolean; file: string }[] };
+      result.faces = await Promise.all(faces.map(async ({ file, ...face }) => ({ ...face, file: new Uint8Array(await (await fetch(assetUrl(`/fonts/ocr/${file}`))).arrayBuffer()) })));
+    }
     const response = await fetch(assetUrl('/fonts/dm-sans-regular.ttf')); result.font = new Uint8Array(await response.arrayBuffer());
     return result;
   } finally { reader.close(); }

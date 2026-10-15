@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as ort from 'onnxruntime-web';
 import { PaddleOcr } from '../../src/ppocr.ts';
-import { rebuildLines } from '../../src/rebuild.ts';
+import { cleanPaper, rebuildLines } from '../../src/rebuild.ts';
 import { shrink, inkMask, skewAngle, flattenField, marginTilt, flatTilt, flatten } from '../../src/straighten.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -18,6 +18,7 @@ const require = createRequire(path.join(root, 'package.json'));
 const mupdf = await import(pathToFileURL(require.resolve('mupdf')).href);
 const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engine/operations.mjs')).href);
 const out = path.join(root, 'test-results/real'); fs.mkdirSync(out, { recursive: true });
+const faces = JSON.parse(fs.readFileSync(path.join(root, 'public/fonts/ocr/faces.json'), 'utf8')).faces.map(({ file, ...face }) => ({ ...face, file: new Uint8Array(fs.readFileSync(path.join(root, 'public/fonts/ocr', file))) }));
 ort.env.wasm.numThreads = 4;
 const model = name => new Uint8Array(fs.readFileSync(path.join(root, 'public/ocr/ppocr', name)));
 const engine = await PaddleOcr.create(ort, { det: model('det.onnx'), rec: model('rec-latin.onnx'), cls: model('cls.onnx'), dict: fs.readFileSync(path.join(root, 'public/ocr/ppocr/dict-latin.txt'), 'utf8') });
@@ -65,10 +66,11 @@ for (const spec of process.argv.slice(2)) {
   const heights = lines.map(line => line.box[3] - line.box[1]).sort((a, b) => a - b), usual = heights[heights.length >> 1] || 0;
   const level = lines.filter(line => line.box[3] - line.box[1] <= usual * 2.5), scanned = pixmapOf(straight), original = scanned.asJPEG(90); scanned.destroy();
   const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score })));
+  cleanPaper(straight);
   const rebuilt = level.flatMap((line, i) => styles[i] ? [{ text: line.text, box: line.box.map(v => v / scale), ...styles[i], words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }] : []);
   const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); backdrop.destroy();
   const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, width, height], 0, blank.newDictionary(), ''));
-  const result = operateDocument(new Uint8Array(blank.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [], image: jpeg, size: [width, height], lines: rebuilt, original }] });
+  const result = operateDocument(new Uint8Array(blank.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [], image: jpeg, size: [width, height], lines: rebuilt, original }], faces });
   times.rebuild = performance.now() - started;
   // Side by side, at 1.2 px per point: the page as it was, the page rebuilt.
   const view = 1.2, left = page.toPixmap(mupdf.Matrix.scale(view, view), mupdf.ColorSpace.DeviceRGB, false), right = mupdf.Document.openDocument(result, 'application/pdf').loadPage(0).toPixmap(mupdf.Matrix.scale(view, view), mupdf.ColorSpace.DeviceRGB, false);
