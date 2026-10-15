@@ -26,11 +26,12 @@ async function appearance(locator) {
   });
 }
 const ring = state => state.outlineStyle !== 'none' && state.outlineWidth > 0;
-// Pointer focus draws the ring only when the browser itself reports keyboard focus.
+// Pointer focus never draws the ring, even where the browser reports :focus-visible
+// (a modifier key held, focus moved by the app); only navigation keys do.
 async function pointerFocus(locator) {
   const state = await appearance(locator);
   assert.equal(state.focused, true, 'Quitar el anillo no debe quitar el foco del control.');
-  assert.equal(ring(state), state.nativeVisible, 'El anillo de foco sigue a :focus-visible: el clic no lo dibuja.');
+  assert.equal(ring(state), false, 'Un clic no dibuja el anillo de foco.');
   return state;
 }
 async function keyboardFocus(locator) {

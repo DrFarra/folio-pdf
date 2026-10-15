@@ -29,6 +29,10 @@ const second = pdf.addPage([595, 842]); second.drawText('Segunda página', { x: 
 second.drawRectangle({ x: 300, y: 600, width: 120, height: 40, color: rgb(.48, .18, .36) });
 // Pages far enough to leave the reader's view.
 for (let i = 3; i <= 14; i++) pdf.addPage([595, 842]).drawText(`Página ${i}`, { x: 60, y: 760, size: 16, font });
+// On page 3, a paragraph and another cell's text below it, as in a table.
+const third = pdf.getPage(2);
+['Interpreta sus efectos', 'farmacológicos'].forEach((line, i) => third.drawText(line, { x: 60, y: 700 - i * 16, size: 12, font }));
+third.drawText('Discusión de casos', { x: 150, y: 660, size: 12, font });
 const fixture = path.join(output, 'edit-mode.pdf'); fs.writeFileSync(fixture, await pdf.save());
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { stdio: 'pipe' });
@@ -225,7 +229,11 @@ try {
     const box = page.locator('.pdf-page-wrap[data-page-number="2"]'); await box.scrollIntoViewIfNeeded();
     const spot = await toScreen(2, 360, 620); await page.mouse.move(spot.x, spot.y); await page.locator('.edit-layer[data-edit-page="2"][data-edit-state=ready]').waitFor();
     await page.mouse.click(spot.x, spot.y); await page.locator('.edit-selection.kind-graphic').waitFor();
-    await page.getByLabel('Color de relleno').fill('#00aa00');
+    await page.getByRole('button', { name: 'Color de relleno' }).click();
+    // The panel offers document colours; a code picks any other.
+    await page.getByRole('dialog', { name: 'Color de relleno' }).getByRole('button', { name: 'Verde' }).waitFor();
+    await page.getByLabel('Código hexadecimal').fill('00aa00'); await page.keyboard.press('Enter');
+    assert(await page.getByRole('dialog', { name: 'Color de relleno' }).count() === 0, 'the colours stay open after Enter');
     // Shown in its new colour before anything is written.
     await page.locator('.edit-layer[data-edit-page="2"] .edit-sprite').waitFor({ timeout: 2000 });
     await settle();
@@ -276,6 +284,37 @@ try {
     return { shiftClick: true, movedAsOne: true, marquee: true, aligned: true, deletedAndRestored: true };
   });
 
+
+  await check('text-moved-over-other-text-moves-again-and-boxes-select-it', async () => {
+    // A paragraph dropped across another cell's text, as in a table, stays Folio's own block.
+    await page.locator('.pdf-page-wrap[data-page-number="3"]').scrollIntoViewIfNeeded();
+    const paragraph = bytes => items(bytes, 3).find(item => item.level === 'paragraph' && item.text.startsWith('Interpreta'));
+    const before = paragraph(new Uint8Array(Buffer.from(lastDraft, 'base64'))) ?? paragraph(new Uint8Array(fs.readFileSync(fixture)));
+    // Pressing on the text and dragging (a click first on selected text would start typing in it).
+    const drag = async (from, to) => {
+      let a = await toScreen(3, ...from); await page.mouse.move(a.x, a.y);
+      await page.locator('.edit-layer[data-edit-page="3"][data-edit-state=ready]').waitFor();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      a = await toScreen(3, ...from); const b = await toScreen(3, ...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up(); await settle();
+    };
+    await drag([80, 702], [170, 672]);
+    let bytes = await exported('edit-over-cell.pdf'), moved = paragraph(bytes);
+    assert(moved.editable && Math.abs(moved.rect[0] - before.rect[0] - 90) < 2, `Moved over the cell, still editable: ${moved.rect} ${moved.reason ?? ''}`);
+    await drag([170, 672], [170, 572]);
+    bytes = await exported('edit-over-cell-again.pdf'); const again = paragraph(bytes);
+    assert(Math.abs(again.rect[1] - moved.rect[1] + 100) < 2, `Moved a second time: ${moved.rect} → ${again.rect}`);
+    const cell = items(bytes, 3).find(item => item.level === 'paragraph' && item.text === 'Discusión de casos');
+    assert(cell && Math.abs(cell.rect[0] - 150) < 1, "The other cell's text stays where it was");
+    // A box loosely around it selects it (its box is larger than its letters).
+    await page.mouse.click((await toScreen(3, 500, 800)).x, (await toScreen(3, 500, 800)).y);
+    const from = await toScreen(3, 150, 600), to = await toScreen(3, 260, 560);
+    await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 6 }); await page.mouse.up();
+    await page.locator('.edit-layer[data-edit-page="3"] .edit-selection.kind-text').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
+    return { editableOverOtherText: true, movedAgain: true, boxSelects: true };
+  });
 
   await check('a-page-of-an-older-revision-is-not-reused', async () => {
     // A page shown before an edit and out of view since comes back with the new revision's page.
@@ -356,7 +395,9 @@ try {
     await settle();
     let written = before; for (let i = 0; i < 50 && written === before; i++) { await page.waitForTimeout(100); written = await draft(); }
     assert(Math.abs(x(written) - x(before) - 10) < 1.5, `Moved 10 pt: ${x(before)} → ${x(written)}`);
-    const shown = await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span', { hasText: 'Informe' }).first().boundingBox(), box = await pageBox(1);
+    // The text layer follows the pixels once scrolling settles.
+    const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span', { hasText: 'Informe' }).first(); await span.waitFor();
+    const shown = await span.boundingBox(), box = await pageBox(1);
     assert(Math.abs((shown.x - box.x) / (box.width / 595) - x(written)) < 3, 'The reader shows the moved title');
     // Closing the live document folded its changes into one step back to the PDF it was opened from (the original).
     const original = textAt(new Uint8Array(fs.readFileSync(fixture)), 'Informe trimestral').rect[0];
@@ -373,4 +414,4 @@ try {
   fs.writeFileSync(path.join(output, 'edit-mode-ui-results.json'), JSON.stringify({ browser: useWebKit ? 'WebKit' : 'Chromium', results }, null, 2));
   await browser.close(); server.kill();
 }
-process.exitCode = results.length === 14 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 15 && results.every(result => result.status === 'passed') ? 0 : 1;

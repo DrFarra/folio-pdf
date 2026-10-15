@@ -5,6 +5,7 @@ import { useEdit, type EditStore, type EditTool, type TextStyle } from './store'
 import { alignSelection, deleteSelection, duplicateSelection, editText, fadeSelection, recolorSelection, replaceImage, rotateSelection, styleFrom } from './actions';
 import { parseFontName, systemFamilies } from './fonts';
 import { isMac } from '../platform';
+import ColorPicker from './ColorPicker';
 
 // The row under the reader toolbar while editing: tools on the left, the
 // selection's properties next to them, what is happening on the right.
@@ -30,13 +31,6 @@ export async function readImage(file: File): Promise<{ bytes: Uint8Array; width:
   finally { bitmap.close(); }
 }
 
-function ColorField({ label, value, onChange, empty }: { label: string; value: string | null; onChange: (value: string) => void; empty?: boolean }) {
-  return <label className="edit-color" title={label} onMouseDown={event => event.stopPropagation()}>
-    <span className={value ? '' : 'empty'} style={value ? { background: value } : undefined} />
-    <input type="color" aria-label={label} value={value || '#ffffff'} onChange={event => onChange(event.target.value)} />
-    {empty && null}
-  </label>;
-}
 function Toggle({ label, pressed, onClick, children, disabled }: { label: string; pressed?: boolean; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
   return <button type="button" className="edit-toggle" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} onMouseDown={keep} onClick={onClick}>{children}</button>;
 }
@@ -124,7 +118,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       <input type="number" aria-label="Tamaño de letra" title="Tamaño de letra" min={4} max={200} step={.5} value={style.size} onChange={event => { const size = Number(event.target.value); if (size >= 4 && size <= 200) void setStyle({ size }); }} />
       <Toggle label={`Negrita (${modifier}B)`} pressed={style.bold} onClick={() => void setStyle({ bold: !style.bold })}><Bold size={16} /></Toggle>
       <Toggle label={`Cursiva (${modifier}I)`} pressed={style.italic} onClick={() => void setStyle({ italic: !style.italic })}><Italic size={16} /></Toggle>
-      <ColorField label="Color del texto" value={style.color} onChange={color => void setStyle({ color })} />
+      <ColorPicker label="Color del texto" value={style.color} onChange={color => void setStyle({ color })} />
       <Toggle label="Alinear a la izquierda" pressed={style.align === 'left'} onClick={() => void setStyle({ align: 'left' })}><AlignLeft size={16} /></Toggle>
       <Toggle label="Centrar" pressed={style.align === 'center'} onClick={() => void setStyle({ align: 'center' })}><AlignCenter size={16} /></Toggle>
       <Toggle label="Alinear a la derecha" pressed={style.align === 'right'} onClick={() => void setStyle({ align: 'right' })}><AlignRight size={16} /></Toggle>
@@ -143,14 +137,14 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
     </div>}
     {selection?.kind === 'graphic' && !count && <div className="edit-properties" aria-label="Dibujo">
-      {selection.item.fill !== undefined && <ColorField label="Color de relleno" value={picked.fill ?? selection.item.fill ?? null} onChange={fill => { setPicked(colors => ({ ...colors, fill })); recolorSelection(store, { fill }); }} />}
-      {selection.item.stroke !== undefined && <ColorField label="Color del borde" value={picked.stroke ?? selection.item.stroke ?? null} onChange={stroke => { setPicked(colors => ({ ...colors, stroke })); recolorSelection(store, { stroke }); }} />}
+      {selection.item.fill !== undefined && <ColorPicker label="Color de relleno" value={picked.fill ?? selection.item.fill ?? null} onChange={fill => { setPicked(colors => ({ ...colors, fill })); recolorSelection(store, { fill }); }} />}
+      {selection.item.stroke !== undefined && <ColorPicker label="Color del borde" value={picked.stroke ?? selection.item.stroke ?? null} onChange={stroke => { setPicked(colors => ({ ...colors, stroke })); recolorSelection(store, { stroke }); }} />}
       <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
       <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
     </div>}
     {(shapeSelected || shapeTool) && <div className="edit-properties" aria-label="Forma">
-      <ColorField label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
-      {!lineShape && <><ColorField label="Color de relleno" value={shapeValues.fill} onChange={fill => setShape({ fill })} />
+      <ColorPicker label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
+      {!lineShape && <><ColorPicker label="Color de relleno" value={shapeValues.fill} onChange={fill => setShape({ fill })} />
         <Toggle label="Sin relleno" pressed={!shapeValues.fill} onClick={() => setShape({ fill: shapeValues.fill ? null : '#ffe08a' })}><span style={{ fontSize: 11 }}>Sin relleno</span></Toggle></>}
       <select aria-label="Grosor del borde" title="Grosor" value={String(shapeValues.strokeWidth)} onChange={event => setShape({ strokeWidth: Number(event.target.value) })}>
         {[...new Set([...(lineShape ? [] : [0]), .5, 1, 2, 3, 5, 8, shapeValues.strokeWidth])].sort((a, b) => a - b).map(value => <option key={value} value={String(value)}>{value ? `${value.toLocaleString('es')} pt` : 'Sin borde'}</option>)}
