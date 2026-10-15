@@ -362,7 +362,7 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     const held = width && Math.abs(own - width) > width * .1 && Math.abs(own - width) <= width * .2 ? Math.min(width * 1.1, Math.max(width * .9, own)) : own;
     // Into its room it always goes (a condensed title is narrower than any face we have).
     // A word of capitals may be a condensed or wide title face's: it may stretch further.
-    const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .45), shown = glyphs.filter(({ gid }) => gid);
+    const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .6), shown = glyphs.filter(({ gid }) => gid);
     // A word far wider than its letters would be is set with space between its letters
     // («C A P Í T U L O», mostly capitals): the letters keep their shape and the word its width.
     const spaced = own > (width || 1) * (/[a-zà-ÿ]/.test(word.text) ? 1.4 : 1.15) && shown.length >= 3;
@@ -880,7 +880,8 @@ function pageFaces(scan, lines, faces) {
       // A line most of whose words are italic is an italic line (sized and placed in the italic).
       const italicWords = words.filter(other => other.italic).length;
       if (!face.italic && italicWords * 2 > words.length && slanted !== face) { chosen[i] = { face: slanted, dy: score(i, slanted).dy, size: 0, baseline: baselines[i], words: words.map(other => other.italic ? other : slanted), fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font }; return; }
-      chosen[i] = { face, dy: score(i, face).dy, size: 0, baseline: baselines[i], words, fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font };
+      // A line of capitals stands on the foot of its capitals as read from the ink: no nudge.
+      chosen[i] = { face, dy: strips[i]?.capitals && baselines[i] ? 0 : score(i, face).dy, size: 0, baseline: baselines[i], words, fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font };
     });
   }
   // A paragraph is set in one family: its lines (each joined to the next below it in its column,
