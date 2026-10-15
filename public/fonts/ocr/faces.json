@@ -1,5 +1,5 @@
 {
-  "about": "Open fonts OCR writes rebuilt scans in, chosen to resemble common book and office faces. Carlito, Caladea, Lato, Arvo: Google Fonts (SIL OFL 1.1). TeX Gyre Adventor, Bonum, Pagella, Schola: GUST Font License. EB Garamond: SIL OFL 1.1. Gillius ADF (a Gill Sans-like humanist sans, Arkandis Digital Foundry): GNU GPL 2 or later with the font exception.",
+  "about": "Open fonts OCR writes rebuilt scans in, chosen to resemble common book and office faces. Carlito, Caladea, Lato, Arvo: Google Fonts (SIL OFL 1.1). TeX Gyre Adventor, Bonum, Pagella, Schola: GUST Font License. EB Garamond: SIL OFL 1.1. Gillius ADF (a Gill Sans-like humanist sans, Arkandis Digital Foundry): GNU GPL 2 or later with the font exception. Crimson Text (Minion-like), Rokkitt Medium and Bold (Rockwell-like; Medium matches Rockwell's regular weight), Source Sans 3 (Myriad-like): SIL OFL 1.1.",
   "faces": [
     {
       "family": "Adventor",
@@ -122,6 +122,30 @@
       "sha256": "f6418f708baede9789daef5d458c0f53d2a888af9820e8062934e504fedc6595"
     },
     {
+      "family": "Crimson",
+      "name": "Crimson-Bold",
+      "bold": true,
+      "italic": false,
+      "file": "CrimsonText-Bold.ttf",
+      "sha256": "a3a0765fc5e8d0b49b540a23aefe0184887dd79f06a0bdf4db7035cea6befa93"
+    },
+    {
+      "family": "Crimson",
+      "name": "Crimson-Italic",
+      "bold": false,
+      "italic": true,
+      "file": "CrimsonText-Italic.ttf",
+      "sha256": "4ed1699ac7c64e8b3d33f6bb8323c3d7206b0d7bacb9ee2d65c697e6014d29de"
+    },
+    {
+      "family": "Crimson",
+      "name": "Crimson-Regular",
+      "bold": false,
+      "italic": false,
+      "file": "CrimsonText-Regular.ttf",
+      "sha256": "48e6c5d5ad1d01599d374ecb817e15890d1feb3b8a3a88e527d44c90389e1f06"
+    },
+    {
       "family": "EBGaramond",
       "name": "EBGaramond-Bold",
       "bold": true,
@@ -218,6 +242,22 @@
       "sha256": "44e64260716d8f2bbe412baa1ee99b7c995190ac4573177c24def0b9200438c7"
     },
     {
+      "family": "Rokkitt",
+      "name": "Rokkitt-Bold",
+      "bold": true,
+      "italic": false,
+      "file": "Rokkitt-Bold.ttf",
+      "sha256": "a665f6e82345eb6ff3ed3b77ce77365888c03b47c8c0a2ff6ed1293b2885198f"
+    },
+    {
+      "family": "Rokkitt",
+      "name": "Rokkitt-Medium",
+      "bold": false,
+      "italic": false,
+      "file": "Rokkitt-Medium.ttf",
+      "sha256": "120f701e5a5350aa213711ccdae98cae4bcd66bc3e6e61d1b3fc9f5823de384c"
+    },
+    {
       "family": "Schola",
       "name": "Schola-Bold",
       "bold": true,
@@ -240,6 +280,30 @@
       "italic": false,
       "file": "Schola-Regular.otf",
       "sha256": "935b82e25f56b1d1276ca82793205e8ce254fbb37ebd38bedf7388cef21fbf44"
+    },
+    {
+      "family": "SourceSans",
+      "name": "SourceSans-Bold",
+      "bold": true,
+      "italic": false,
+      "file": "SourceSans-Bold.otf",
+      "sha256": "7776ddb9f3eb58683e59f28d558d8896b768c2d0c80799fb3f1c56c54dfd98c9"
+    },
+    {
+      "family": "SourceSans",
+      "name": "SourceSans-Italic",
+      "bold": false,
+      "italic": true,
+      "file": "SourceSans-Italic.otf",
+      "sha256": "430b9f0eb1170be0981706d14b6cf87122efba9d86c373bbdf69daf276421462"
+    },
+    {
+      "family": "SourceSans",
+      "name": "SourceSans-Regular",
+      "bold": false,
+      "italic": false,
+      "file": "SourceSans-Regular.otf",
+      "sha256": "08df266400933d3178d081a45f94a08814c3e55b4b7dd2e0ff69cb1329f13ab6"
     }
   ]
 }

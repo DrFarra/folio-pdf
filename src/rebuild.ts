@@ -38,7 +38,8 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     if (alone && score < .97) return null;
     // A doubtful word stays as the scan shows it, the rest of its line is rewritten; a line
     // mostly of doubtful words stays whole.
-    const kept = words.flatMap((word, n) => word.score < .8 ? [n] : []);
+    // A bullet's mark (▪, •, a dash) is read as whatever symbol is nearest: it stays as the scan shows it.
+    const kept = words.flatMap((word, n) => word.score < .8 || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
     if (kept.length * 2 > words.length) return null;
     // Text about as wide as its letters make it at this height: a box holding several close
     // lines (too narrow for its height), or text read only in part (too wide), stays as it is.
