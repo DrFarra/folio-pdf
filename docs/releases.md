@@ -10,6 +10,12 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.15
+
+- «Reconocer texto (OCR)» con «Texto editable» reconstruye la página escaneada mucho más parecida al original: la misma familia de letra en toda la página y en todo el libro (Palatino, Gill Sans…), el grosor de la tinta del libro, y las negritas y cursivas donde las tiene el original (títulos de tabla, «Fig. 4-9.», términos en cursiva, cabeceras).
+- Los fondos de color se respetan al borrar las letras escaneadas: sin franjas blancas en los recuadros de color, y las rayas gruesas y las viñetas se conservan enteras.
+- Una palabra que el OCR leyó con dudas y que no está en el diccionario español o inglés se deja tal como se escaneó en lugar de reescribirse mal.
+
 ## Cambios en 0.9.14
 
 - Nuevo motor de OCR propio de Folio (modelos PP-OCRv5 de PaddleOCR): lee bien el 98 % de las palabras frente al 93 % del anterior, comete un tercio de los errores por letra y lee las columnas de los artículos en su orden. Con tarjeta gráfica (WebGPU) tarda alrededor de medio segundo por página; sin ella reparte el trabajo entre varios núcleos. Funciona sin conexión.
