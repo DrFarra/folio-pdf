@@ -92,6 +92,36 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     const sum = [0, 0, 0]; let count = 0;
     for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * .7) { const p = rgb(y * w + x); sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++; }
     const color = sum.map(v => Math.round(v / Math.max(1, count)) / 255) as [number, number, number];
+    // A word with a sub- or superscript (O₂, β₁, Ca²⁺) is misread (the small figure as a comma or a
+    // dot, or lost): it stays as the scan shows it. Such a figure is a piece of ink about half the
+    // small letters' height, below the baseline (often at the box's foot) or above them; a piece
+    // reaching the box's top is the line above's.
+    {
+      const isInk = (x: number, y: number) => far(rgb(y * w + x)) > strongest * .5, rows = Array.from({ length: y1 - y0 }, (_, r) => { let c = 0; for (let x = x0; x < x1; x++) if (isInk(x, y0 + r)) c++; return c; });
+      const peak = Math.max(...rows), at = rows.indexOf(peak);
+      let xTop = at, base = at; while (xTop > 0 && rows[xTop - 1] >= peak * .45) xTop--; while (base < rows.length && rows[base] >= peak * .45) base++;
+      const xh = base - xTop;
+      if (xh >= 4) words.forEach(({ box: [a, , b] }, n) => {
+        if (kept.includes(n)) return;
+        const wa = Math.max(x0, Math.floor(a)), wb = Math.min(x1, Math.ceil(b)), cw = wb - wa, ch = y1 - y0;
+        if (cw < 2) return;
+        const seen = new Uint8Array(cw * ch);
+        for (let start = 0; start < seen.length; start++) {
+          if (seen[start] || !isInk(wa + start % cw, y0 + Math.floor(start / cw))) continue;
+          let top = ch, bottom = 0, edge = false; const stack = [start]; seen[start] = 1;
+          while (stack.length) {
+            const i = stack.pop()!, x = i % cw, y = (i - x) / cw;
+            top = Math.min(top, y); bottom = Math.max(bottom, y + 1); if (y === 0) edge = true;
+            for (const j of [x > 0 ? i - 1 : -1, x < cw - 1 ? i + 1 : -1, y > 0 ? i - cw : -1, y < ch - 1 ? i + cw : -1]) if (j >= 0 && !seen[j] && isInk(wa + j % cw, y0 + Math.floor(j / cw))) { seen[j] = 1; stack.push(j); }
+          }
+          const height = bottom - top;
+          if (edge || height < xh * .45 || height > xh * 1.05) continue;
+          const below = bottom > base + xh * .2 && top > xTop + xh * .3, above = bottom < base - xh * .45 && top < xTop - xh * .1;
+          if (below || above) { kept.push(n); return; }
+        }
+      });
+    }
+    if (kept.length * 2 > words.length) return null;
     // Each word's own colour, from its strokes' cores the same way: kept only when clearly another.
     const colors = words.map(({ box: [a, , b] }) => {
       const tally = [0, 0, 0]; let seen = 0;
