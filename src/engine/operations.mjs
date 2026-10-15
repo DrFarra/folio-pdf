@@ -614,6 +614,19 @@ function pageFaces(scan, lines, faces) {
       if (last === x1 - 1) { const stop = Math.min(scan.w - 1, x1 - 1 + Math.round((bottom - top) * .2 * k)); while (last < stop && inked(last + 1)) last++; }
       return last - first >= 2 && (last + 1 - first) / k > (b - a) * .5 ? [first / k, t, (last + 1) / k, u] : [a, t, b, u];
     };
+    // A word set letter-spaced in capitals («C A P Í T U L O») is read as several: three or more
+    // runs of one to three capitals in a row, as far apart as their letters, are one word.
+    const merged = [];
+    for (let n = 0; n < (line.words ?? []).length;) {
+      const caps = word => /^[\p{Lu}]{1,3}$/u.test(word.text);
+      let end = n; while (end < line.words.length && caps(line.words[end]) && (end === n || line.words[end].box[0] - line.words[end - 1].box[2] < (bottom - top) * .8)) end++;
+      if (end - n >= 3) {
+        const run = line.words.slice(n, end);
+        merged.push({ ...run[0], text: run.map(word => word.text).join(''), box: [run[0].box[0], run[0].box[1], run[run.length - 1].box[2], run[0].box[3]], letters: run.every(word => word.letters) ? run.flatMap(word => word.letters) : undefined });
+        n = end;
+      } else merged.push(line.words[n++]);
+    }
+    line.words = merged;
     line.words = (line.words ?? []).flatMap(word => {
       const box = tighten(word.box), joined = /^(\d+|\p{Ll}+)(\p{Lu}.*)$/u.exec(word.text);
       if (!joined) return [{ ...word, box }];
