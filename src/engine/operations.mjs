@@ -224,7 +224,8 @@ const folioDrawing = object => {
 };
 
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
-function appendDrawing(doc, page, draw) {
+// `own` marks text Folio writes: true, or the text it stands for.
+function appendDrawing(doc, page, draw, own = false) {
   const bounds = page.getBounds();
   const buffer = new mupdf.Buffer(), writer = new mupdf.DocumentWriter(buffer, 'pdf', 'compress=yes');
   let generated, closed = false;
@@ -247,7 +248,17 @@ function appendDrawing(doc, page, draw) {
     const name = `Folio${form.asIndirect()}`; xobjects.put(name, form); resources.put('XObject', xobjects); target.put('Resources', resources);
     // Writer already converts top-left coordinates to PDF coordinates.
     const generatedPage = generated.loadPage(0);
-    const transform = mupdf.Matrix.concat(generatedPage.getTransform(), mupdf.Matrix.invert(page.getTransform())); generatedPage.destroy();
+    const transform = mupdf.Matrix.concat(generatedPage.getTransform(), mupdf.Matrix.invert(page.getTransform()));
+    // Text Folio writes keeps the box it covers, in its own space: wherever its
+    // wrapper later puts it, it is found and moved as a whole (folioTexts).
+    if (own) {
+      let structured, box = null, text = '';
+      try { structured = generatedPage.toStructuredText(); text = structured.asText(); structured.walk({ beginTextBlock: bounds => { box = box ? [Math.min(box[0], bounds[0]), Math.min(box[1], bounds[1]), Math.max(box[2], bounds[2]), Math.max(box[3], bounds[3])] : [...bounds]; } }); }
+      finally { structured?.destroy(); }
+      // Its text too (as the caller drew it: the writer's own map can misname letters), since a neighbour's text overlapping it can share its box.
+      if (box) { form.put('FolioBox', mupdf.Rect.transform(box, mupdf.Matrix.invert(generatedPage.getTransform()))); form.put('FolioText', doc.newString(typeof own === 'string' ? own : text)); }
+    }
+    generatedPage.destroy();
     const stream = doc.addStream(`q ${transform.join(' ')} cm /${name} Do Q\n`, {});
     const contents = target.get('Contents'), list = doc.newArray();
     if (contents.isArray() && contents.length > 2 && folioDrawing(contents.get(contents.length - 1))) {
@@ -290,7 +301,8 @@ function mapCharacters(doc, form, glyphs) {
     for (const [, body] of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) for (const [, low, high, value] of body.matchAll(/<([\da-f]+)>\s*<([\da-f]+)>\s*<([\da-f]+)>/gi)) {
       for (let code = parseInt(low, 16), at = parseInt(value, 16); code <= parseInt(high, 16) && code - parseInt(low, 16) < 65536; code++, at++) chars.set(code, hex(at));
     }
-    for (const glyph of glyphs) if (glyph.fontName === name && glyph.unicode > 0) chars.set(glyph.gid, utf16(glyph.unicode));
+    // Subsetting may prefix the name of a font that had no prefix (Helvetica → ABCDEF+Helvetica).
+    for (const glyph of glyphs) if ((glyph.fontName === name || glyph.fontName === name.replace(/^[A-Z]{6}\+/, '')) && glyph.unicode > 0) chars.set(glyph.gid, utf16(glyph.unicode));
     if (!chars.size) return;
     const entries = [...chars].sort((a, b) => a[0] - b[0]), blocks = [];
     for (let i = 0; i < entries.length; i += 100) blocks.push(`${entries.slice(i, i + 100).length} beginbfchar\n${entries.slice(i, i + 100).map(([code, value]) => `<${hex(code)}> <${value}>`).join('\n')}\nendbfchar`);
@@ -535,10 +547,7 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
       },
     });
     const candidates = [];
-    for (const [bi, block] of blocks.entries()) {
-      const rows = block.lines.filter(row => row.text.trim() && usable(intersection(row.box, bounds)));
-      if (!rows.length) continue;
-      const addText = (id, level, box, rows) => {
+    const addText = (id, level, box, rows, bi) => {
         const styles = new Map(); rows.forEach(row => row.styles.forEach((style, key) => { const entry = styles.get(key) || { ...style, count: 0 }; entry.count += style.count; styles.set(key, entry); }));
         const style = [...styles.values()].sort((a, b) => b.count - a.count)[0] || { size: 12, color: '#202020', fontName: 'Helvetica' };
         const related = textPaint.filter(event => overlap(event.box, box)), hidden = related.some(event => event.hidden), visible = related.some(event => !event.hidden);
@@ -552,10 +561,26 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor.';
         const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}), fontGlyphs: /^[A-Z]{6}\+/.test(style.fontName) ? [...(fontChars.get(style.fontName) || [])].join('') : '*' };
         candidates.push({ item, box, block: bi, rows });
-      };
-      rows.forEach((row, li) => addText(`text-line-b${bi}-l${li}`, 'line', row.box, [row]));
-      addText(`text-paragraph-b${bi}`, 'paragraph', rows.reduce((box, row) => [Math.min(box[0], row.box[0]), Math.min(box[1], row.box[1]), Math.max(box[2], row.box[2]), Math.max(box[3], row.box[3])], [...rows[0].box]), rows);
+    };
+    const around = rows => rows.reduce((box, row) => [Math.min(box[0], row.box[0]), Math.min(box[1], row.box[1]), Math.max(box[2], row.box[2]), Math.max(box[3], row.box[3])], [...rows[0].box]);
+    for (const [bi, block] of blocks.entries()) {
+      const rows = block.lines.filter(row => row.text.trim() && usable(intersection(row.box, bounds)));
+      if (!rows.length) continue;
+      rows.forEach((row, li) => addText(`text-line-b${bi}-l${li}`, 'line', row.box, [row], bi));
+      addText(`text-paragraph-b${bi}`, 'paragraph', around(rows), rows, bi);
     }
+    // Text Folio wrote that the page reads as part of a neighbour's paragraph (it
+    // was dropped next to it) is still offered alone, as the block Folio drew.
+    const written = folioTexts(page);
+    written.forEach((own, n) => {
+      if (candidates.some(candidate => candidate.item.level === 'paragraph' && folioText([own], candidate.item.rect, candidate.item.text))) return;
+      const [x0, y0, x1, y1] = mupdf.Rect.transform(own.box, page.getTransform());
+      const rows = candidates.filter(candidate => candidate.item.level === 'line').flatMap(candidate => candidate.rows)
+        .filter(row => { const x = (row.box[0] + row.box[2]) / 2, y = (row.box[1] + row.box[3]) / 2; return x >= x0 && x <= x1 && y >= y0 && y <= y1; });
+      if (!rows.length) return;
+      addText(`text-folio-${n}`, 'paragraph', mupdf.Rect.transform(own.box, page.getTransform()), rows, -1 - n);
+      candidates.at(-1).item.text = own.text.trim();
+    });
     for (const candidate of candidates) {
       if (candidate.item.editable && candidates.some(other => other.block !== candidate.block && other.item.level === 'line' && overlap(candidate.box, other.box))) {
         Object.assign(candidate.item, { editable: false, reason: 'Hay otro bloque de texto superpuesto.', areaReplaceable: true });
@@ -564,6 +589,9 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         Object.assign(candidate.item, { editable: false, reason: 'El texto está cubierto por una imagen.', areaReplaceable: true });
       }
       if (candidate.item.reason) warnings.add(candidate.item.reason);
+    }
+    for (const candidate of candidates) if (candidate.item.level === 'paragraph' && !candidate.item.rotated && folioText(written, candidate.item.rect, candidate.item.text)) {
+      candidate.item.editable = true; delete candidate.item.reason; delete candidate.item.areaReplaceable;
     }
     const placed = folioImages(page);
     const imageItems = images.map((image, i) => {
@@ -1026,8 +1054,44 @@ function folioImages(page) {
 // Only an unambiguous match: two placed images on exactly the same spot take the general path.
 const folioImage = (placed, box) => { const matches = placed.filter(image => image.box.every((value, i) => Math.abs(value - box[i]) < .05)); return matches.length === 1 ? matches[0] : null; };
 
-function editFolioImage(doc, page, image, options) {
+/** Draws a placed Form with another matrix (null removes it); a copy keeps the original. */
+function rewrap(doc, page, placed, matrix, copy = false) {
   const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
+  const replacement = matrix && doc.addStream(`q ${matrix.map(number).join(' ')} cm /${placed.name} Do Q\n`, {});
+  for (let i = 0; i < contents.length; i++) {
+    if (i !== placed.index || copy) list.push(contents.get(i));
+    if (i === placed.index && replacement) list.push(replacement);
+  }
+  object.put('Contents', list);
+}
+
+// Text Folio wrote (moved, added or retyped) is a Form drawn by its own wrapper,
+// like a placed image, and carries the box it covers (FolioBox). Moving, copying,
+// removing or retyping it rewrites that wrapper, so text overlapping it does not
+// matter: nothing is redacted.
+function folioTexts(page) {
+  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found = [];
+  if (!contents.isArray() || !xobjects.isDictionary()) return found;
+  for (let index = 0; index < contents.length; index++) {
+    let buffer, text = '';
+    try { buffer = contents.get(index).readStream(); text = buffer.asString(); } catch { continue; } finally { buffer?.destroy(); }
+    const match = /^q ((?:[-\d.e]+ ){6})cm \/(Folio\d+) Do Q\n$/.exec(text), form = match && xobjects.get(match[2]), box = form?.get('FolioBox');
+    if (!box?.isArray() || box.length !== 4) continue;
+    const wrapper = match[1].trim().split(' ').map(Number);
+    found.push({ index, name: match[2], wrapper, box: mupdf.Rect.transform(box.asJS(), wrapper), text: form.get('FolioText').asString() });
+  }
+  return found;
+}
+// Compared without spaces or line breaks: lines wrap and join differently.
+const letters = text => text.replace(/\s+/g, '');
+// The paragraph that is one of them: mostly the same box (and, given, the same text), and only one such.
+const folioText = (placed, box, text) => {
+  const iou = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 ? w * h / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - w * h) : 0; };
+  const matches = placed.filter(own => iou(own.box, box) > .75 && (text === undefined || letters(own.text) === letters(text)));
+  return matches.length === 1 ? matches[0] : null;
+};
+
+function editFolioImage(doc, page, image, options) {
   let replacement = null;
   if (options.operation === 'move-image') {
     const turn = options.rotation ?? 0;
@@ -1038,13 +1102,9 @@ function editFolioImage(doc, page, image, options) {
     const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
     const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
     const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(-turn)), mupdf.Matrix.translate(cx, cy));
-    replacement = doc.addStream(`q ${mupdf.Matrix.concat(mupdf.Matrix.concat(image.wrapper, fit), spin).map(number).join(' ')} cm /${image.name} Do Q\n`, {});
+    replacement = mupdf.Matrix.concat(mupdf.Matrix.concat(image.wrapper, fit), spin);
   }
-  for (let i = 0; i < contents.length; i++) {
-    if (i !== image.index || options.copy) list.push(contents.get(i));
-    if (i === image.index && replacement) list.push(replacement);
-  }
-  object.put('Contents', list);
+  rewrap(doc, page, image, replacement, options.copy);
 }
 
 // Move, resize, turn or duplicate a text block or an image without rewriting it:
@@ -1055,9 +1115,15 @@ function moveContent(doc, page, index, target, options) {
   if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
   const source = rect(options.sourceRect), sourceBox = mupdf.Rect.transform(source, page.getTransform());
   const text = options.operation === 'move-text';
-  if (typeof options.sourceId !== 'string' || !(text ? /^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/ : /^image-\d{1,5}$/).test(options.sourceId)) fail('La selección de contenido no es válida.');
+  if (typeof options.sourceId !== 'string' || !(text ? /^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4}|text-folio-\d{1,4})$/ : /^image-\d{1,5}$/).test(options.sourceId)) fail('La selección de contenido no es válida.');
   const placed = !text && options.opacity === undefined && folioImage(folioImages(page), source);
   if (placed) return editFolioImage(doc, page, placed, options);
+  const written = text && folioText(folioTexts(page), source);
+  if (written) {
+    const to = rect(options.rect);
+    if (Math.abs((to[2] - to[0]) - (source[2] - source[0])) > .5 || Math.abs((to[3] - to[1]) - (source[3] - source[1])) > .5) fail('Para cambiar el tamaño del texto, edítalo.');
+    return rewrap(doc, page, written, mupdf.Matrix.concat(written.wrapper, mupdf.Matrix.translate(to[0] - source[0], to[1] - source[1])), options.copy);
+  }
   const selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: text ? 'text' : 'image', rect: source });
   const { draw, expected, glyphs, release } = movedDrawing(page, selection, text, sourceBox, target, options);
   try {
@@ -1066,7 +1132,9 @@ function moveContent(doc, page, index, target, options) {
       verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
     }
     let form;
-    try { form = appendDrawing(doc, page, draw); }
+    // The moved text as it reads, a line break wherever the baseline changes.
+    const reading = text && selection.selected.map((glyph, i, all) => (i && Math.abs(glyph.origin[1] - all[i - 1].origin[1]) > glyph.size / 2 ? '\n' : '') + glyph.c).join('');
+    try { form = appendDrawing(doc, page, draw, reading); }
     catch (error) { throw /type 3/i.test(error?.message) ? new Error('Este texto usa una fuente dibujada (Type 3) que no se puede volver a escribir. Edítalo para reescribirlo.') : error; }
     if (glyphs) mapCharacters(doc, form, glyphs);
     if (expected.length) {
@@ -1186,9 +1254,11 @@ export function editDocument(doc, options) {
     if (['move-graphic', 'remove-graphic', 'recolor-graphic'].includes(operation)) return editDrawing(doc, page, index, options);
     if (operation === 'remove-content') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
-      if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
+      if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4}|text-folio-\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
       const placed = options.kind === 'image' && folioImage(folioImages(page), rect(options.rect));
       if (placed) return editFolioImage(doc, page, placed, options);
+      const written = options.kind === 'text' && folioText(folioTexts(page), rect(options.rect));
+      if (written) return rewrap(doc, page, written, null);
       const selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: rect(options.rect) });
       redactPage(doc, page, selection.boxes, { black: false, images: options.kind === 'image', imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text: options.kind === 'text', preserveAnnotations: true });
       // Redaction uses font character bounds rather than the picker's quads:
@@ -1206,16 +1276,21 @@ export function editDocument(doc, options) {
         return appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
       } finally { image.destroy(); }
     }
-    if (operation === 'add-text') return appendDrawing(doc, page, device => textDrawing(device, box, options));
+    if (operation === 'add-text') return appendDrawing(doc, page, device => textDrawing(device, box, options), options.text);
     // replace-text. Fit validation happens before redaction.
     if (options.originalFont !== undefined && typeof options.originalFont !== 'boolean') fail('Opción de fuente inválida.');
     if (!options.originalFont) textDrawing({ fillText() {} }, box, options);
     const source = rect(options.sourceRect ?? options.rect);
     // A selected line or paragraph removes exactly its glyphs, like remove-content.
     let selection, glyphFont;
-    if (options.sourceId !== undefined) {
+    // Text Folio wrote is retyped by replacing its wrapper: what overlaps it stays untouched.
+    const written = options.sourceId !== undefined && folioText(folioTexts(page), source);
+    if (written) {
+      const area = mupdf.Rect.transform(written.box, page.getTransform()), inside = ({ origin: [x, y] }) => x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3];
+      selection = { boxes: [], retainedGlyphs: [], selected: contentGlyphs(page).filter(inside) };
+    } else if (options.sourceId !== undefined) {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
-      if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
+      if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4}|text-folio-\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
       selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
     } else if (options.originalFont) fail('La fuente original necesita un texto seleccionado.');
     else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
@@ -1237,7 +1312,8 @@ export function editDocument(doc, options) {
         redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
         verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
       }
-      try { appendDrawing(doc, page, device => textDrawing(device, box, { ...options, glyphFont })); }
+      if (written) rewrap(doc, page, written, null);
+      try { appendDrawing(doc, page, device => textDrawing(device, box, { ...options, glyphFont }), options.text); }
       catch (error) { throw glyphFont && !/no incluye|no cabe/.test(error?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
     } finally { glyphFont?.font.destroy(); }
   } finally { page.destroy(); }
@@ -1269,7 +1345,7 @@ export function editDocumentAll(doc, operations) {
   [...operations].sort((a, b) => ahead(b) - ahead(a)).forEach((options, index) => {
     if (index) {
       const [idKey, rectKey] = source(options), id = options[idKey], place = rect(options[rectKey]);
-      const kind = /^text-/.test(id) ? 'text' : /^image-/.test(id) ? 'image' : 'graphic', level = id.startsWith('text-line-') ? 'line' : id.startsWith('text-paragraph-') ? 'paragraph' : undefined;
+      const kind = /^text-/.test(id) ? 'text' : /^image-/.test(id) ? 'image' : 'graphic', level = id.startsWith('text-line-') ? 'line' : kind === 'text' ? 'paragraph' : undefined;
       const found = readPage(doc, { operation: 'page-content', page: options.page, graphics: kind === 'graphic' }).items
         .find(item => item.kind === kind && item.level === level && item.rect.every((value, i) => Math.abs(value - place[i]) <= .02));
       if (!found) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');

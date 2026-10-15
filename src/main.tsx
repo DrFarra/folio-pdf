@@ -5,9 +5,9 @@ import './styles.css';
 import './cursors.css';
 import { isDesktop, isNative } from './platform';
 
-// iOS WebKit reports focus moved by the app (a dialog focusing its close
-// button) as :focus-visible even after a tap. On touch layouts the ring waits
-// for keys that navigate a hardware keyboard; the on-screen keyboard sends none.
+// Browsers report focus moved by the app (a dialog focusing its close button,
+// focus handed back after Esc or a shortcut) as :focus-visible. The ring waits
+// for keys that navigate; touch on-screen keyboards send none.
 const navigationKeys = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
 addEventListener('keydown', event => { if (navigationKeys.has(event.key)) document.documentElement.dataset.keyboard = 'true'; }, true);
 addEventListener('pointerdown', () => { delete document.documentElement.dataset.keyboard; }, true);

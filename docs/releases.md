@@ -10,6 +10,13 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.13
+
+- En Editar, el texto que ya moviste se puede volver a mover aunque quede encima de otro texto, y el recuadro de selección toma todo lo que queda al menos a medias dentro.
+- El color en Editar se elige en un panel con colores para documentos, un selector personalizado, el código hexadecimal y un cuentagotas (Windows).
+- El selector de zoom ocupa solo lo que mide su texto.
+- Los botones ya no quedan con un marco naranja después de un clic, un atajo o al cerrar un diálogo; el marco aparece solo al moverse con Tab o las flechas.
+
 ## Cambios en 0.9.12
 
 - En Editar ya se puede mover el texto de los PDF impresos desde el navegador (por ejemplo, resúmenes en Segoe UI): antes muchos párrafos se negaban con «no se puede mover sin cambiar su aspecto». Las letras quedan en su sitio exacto.

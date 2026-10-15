@@ -23,6 +23,8 @@ type Props = { store: EditStore; doc: LoadedDocument; number: number; viewport: 
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const area = (box: Box) => box.w * box.h;
+// Text Folio wrote comes first among equals: a neighbour's paragraph can share its box.
+const own = (item: PageContentItem) => item.id.startsWith('text-folio-') ? 1 : 0;
 const inside = (box: Box, p: Point, pad = 0) => p.x >= box.x - pad && p.x <= box.x + box.w + pad && p.y >= box.y - pad && p.y <= box.y + box.h + pad;
 const overlap = (a: Rect, b: Rect) => {
   const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
@@ -162,7 +164,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     const taken = new Set<string>(), found: PageContentItem[] = [];
     for (const { kind, rect } of [reselect, ...reselect.others ?? []]) {
       const best = items.filter(item => item.kind === kind && (item.kind !== 'text' || item.level === 'paragraph') && !taken.has(item.id))
-        .map(item => ({ item, score: overlap(item.rect, rect) })).sort((a, b) => b.score - a.score)[0];
+        .map(item => ({ item, score: overlap(item.rect, rect) })).sort((a, b) => b.score - a.score || own(b.item) - own(a.item))[0];
       if (best && best.score > .2) { taken.add(best.item.id); found.push(best.item); } else if (!found.length) break;
     }
     store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: selectItems(number, found) });
@@ -223,7 +225,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       else if (inside(toBox(shape.rect), p, 3)) hits.push({ kind: 'shape', shape });
     }
     if (!items) return hits;
-    const under = (kind: ContentKind, pad = 0) => items.filter(item => item.kind === kind && (kind !== 'text' || item.level === 'paragraph') && inside(toBox(item.rect), p, pad)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)));
+    const under = (kind: ContentKind, pad = 0) => items.filter(item => item.kind === kind && (kind !== 'text' || item.level === 'paragraph') && inside(toBox(item.rect), p, pad)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)) || own(b) - own(a));
     const paragraph = under('text', 1)[0], images = under('image');
     const line = paragraph && !paragraph.editable && items.find(item => item.kind === 'text' && item.level === 'line' && item.editable && item.id.startsWith(paragraph.id.replace('paragraph', 'line') + '-') && inside(toBox(item.rect), p, 1));
     const text: Target | null = paragraph ? { kind: 'text', item: line || paragraph } : null;
@@ -301,8 +303,10 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       return;
     }
     if (current.mode === 'marquee') {
-      // Everything editable wholly inside the box; with Shift, added to what was selected.
-      const area = toRect(box), held = (items ?? []).filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph') && item.rect[0] >= area[0] && item.rect[1] >= area[1] && item.rect[2] <= area[2] && item.rect[3] <= area[3]);
+      // Everything editable at least half inside the box (a text's box is often larger
+      // than its letters); with Shift, added to what was selected.
+      const area = toRect(box), half = (r: Rect) => Math.max(0, Math.min(r[2], area[2]) - Math.max(r[0], area[0])) * Math.max(0, Math.min(r[3], area[3]) - Math.max(r[1], area[1])) >= (r[2] - r[0]) * (r[3] - r[1]) / 2;
+      const held = (items ?? []).filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph') && half(item.rect));
       const kept = current.add ? groupItems(store.state.selection?.page === number ? store.state.selection : null) : [];
       store.set({ notice: '', selection: selectItems(number, [...kept, ...held.filter(item => !kept.some(other => other.id === item.id))]) });
       return;

@@ -262,5 +262,26 @@ await check('moved-text-lands-exactly-and-reads-the-same', () => {
   return { glyphs: before.length, exact: true };
 });
 
+await check('text-folio-wrote-moves-again-over-other-text', async () => {
+  // A paragraph moved onto another cell's text, as in a table, is still Folio's own block.
+  const pdf = await PDFDocument.create(), font = await pdf.embedFont(StandardFonts.Helvetica), page = pdf.addPage([595, 842]);
+  ['Interpreta sus efectos', 'farmacológicos'].forEach((line, i) => page.drawText(line, { x: 60, y: 700 - i * 16, size: 12, font }));
+  page.drawText('Discusión de casos', { x: 150, y: 660, size: 12, font });
+  let bytes = new Uint8Array(await pdf.save());
+  const block = items(bytes, 1).find(item => item.level === 'paragraph' && item.text.startsWith('Interpreta')), r = block.rect;
+  bytes = operateDocument(bytes, { operation: 'move-text', page: 1, sourceId: block.id, sourceRect: r, rect: [r[0] + 90, r[1] - 30, r[2] + 90, r[3] - 30] });
+  const own = items(bytes, 1).find(item => item.level === 'paragraph' && item.text === 'Interpreta sus efectos\nfarmacológicos');
+  assert(own?.editable, `Offered alone and editable: ${JSON.stringify(items(bytes, 1).filter(item => item.level === 'paragraph').map(item => [item.id, item.text, item.editable]))}`);
+  const copied = operateDocument(bytes, { operation: 'move-text', page: 1, sourceId: own.id, sourceRect: own.rect, rect: [own.rect[0], own.rect[1] - 200, own.rect[2], own.rect[3] - 200], copy: true });
+  assert.equal(items(copied, 1).filter(item => item.level === 'paragraph' && item.text.endsWith('farmacológicos')).length >= 2, true, 'Copied');
+  bytes = operateDocument(bytes, { operation: 'move-text', page: 1, sourceId: own.id, sourceRect: own.rect, rect: [own.rect[0] - 90, own.rect[1] + 30, own.rect[2] - 90, own.rect[3] + 30] });
+  const back = items(bytes, 1).find(item => item.level === 'paragraph' && item.text.startsWith('Interpreta')), cell = items(bytes, 1).find(item => item.level === 'paragraph' && item.text === 'Discusión de casos');
+  assert(Math.abs(back.rect[0] - r[0]) < .5 && Math.abs(back.rect[1] - r[1]) < .5, `Back in place: ${back.rect}`);
+  assert(cell?.editable && Math.abs(cell.rect[0] - 150) < 1, 'The other text untouched and editable again');
+  const removed = operateDocument(bytes, { operation: 'remove-content', page: 1, id: back.id, kind: 'text', rect: back.rect });
+  assert(!items(removed, 1).some(item => item.text?.startsWith('Interpreta')) && items(removed, 1).some(item => item.text === 'Discusión de casos'), 'Removed alone');
+  return { overOtherText: true, movedBack: true, copied: true, removed: true };
+});
+
 for (const result of results) console.log(JSON.stringify(result));
 process.exitCode = results.some(result => result.status !== 'passed') ? 1 : 0;
