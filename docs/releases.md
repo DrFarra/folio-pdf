@@ -10,6 +10,12 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.14
+
+- Nuevo motor de OCR propio de Folio (modelos PP-OCRv5 de PaddleOCR): lee bien el 98 % de las palabras frente al 93 % del anterior, comete un tercio de los errores por letra y lee las columnas de los artículos en su orden. Con tarjeta gráfica (WebGPU) tarda alrededor de medio segundo por página; sin ella reparte el trabajo entre varios núcleos. Funciona sin conexión.
+- «Reconocer texto (OCR)» puede enderezar las páginas: una página torcida se gira sin perder calidad, y si sus líneas se curvan (cerca del lomo de un libro o en una foto) se aplana para que quede recta como un PDF digital.
+- Las palabras reconocidas se ajustan a su tinta, así que resaltar y seleccionar texto escaneado encaja mejor.
+
 ## Cambios en 0.9.13
 
 - En Editar, el texto que ya moviste se puede volver a mover aunque quede encima de otro texto, y el recuadro de selección toma todo lo que queda al menos a medias dentro.
