@@ -1040,7 +1040,10 @@ function pageFaces(scan, lines, faces) {
     const off = thicken => median(longest.map(i => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) + 1e-9 : 0; }));
     let best = 0, least = off(0);
     for (const thicken of [.01, .02, .03, .04, .05]) { const value = off(thicken); if (value < least - .01) { least = value; best = thicken; } }
-    if (best) members.forEach(i => { chosen[i].thicken = best; });
+    // Each line still keeps whichever lays down ink nearer its own (a running head in a light
+    // weight, letter-spaced, is already as dark as the scan without it).
+    const near = (i, thicken) => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) : Infinity; };
+    if (best) members.forEach(i => { if (near(i, best) <= near(i, 0)) chosen[i].thicken = best; });
   }
   return chosen;
 }
