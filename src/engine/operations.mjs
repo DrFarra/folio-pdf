@@ -435,16 +435,20 @@ function inkBand(scan, line, size) {
   if (x1 - x0 < 10 || y1 - y0 < 6 || !size) return null;
   const counts = Array.from({ length: y1 - y0 }, (_, y) => { let n = 0; for (let x = x0; x < x1; x++) if (Math.abs(scan.gray[(y0 + y) * scan.w + x] - ground) > Math.abs(text - ground) / 2) n++; return n; });
   const peak = Math.max(...counts), expect = size * .48 * k, capitals = !/[a-zà-ÿ]/.test(line.text);
-  let best = null;
+  const bands = [];
   for (let a = 0; a < counts.length; a++) {
     if (counts[a] < peak * .45) continue;
     let b = a, sum = 0; while (b < counts.length && counts[b] >= peak * .45) sum += counts[b++];
     // In a line of capitals (or figures) the band is the capitals' height, whatever the size
     // guessed from the widths (a condensed title is far taller than its width says).
     const height = b - a, fits = capitals ? height > expect * .5 : Math.abs(height - expect) < expect * .4;
-    if (fits && (!best || sum > best.sum)) best = { a, b, sum, height };
+    if (fits) bands.push({ a, b, sum, height });
     a = b;
   }
+  // Of the bands with ink enough (a box overlapping the next line's holds its band too), the one
+  // whose foot is nearest where the box puts the baseline (above its descenders).
+  const deep = /[gjpqyQ,;()]/.test(line.text), guess = (y1 - y0) - (deep ? size * .21 * k : 0), most = Math.max(0, ...bands.map(band => band.sum));
+  const best = bands.filter(band => band.sum >= most * .5).sort((p, q) => Math.abs(p.b - guess) - Math.abs(q.b - guess))[0] ?? null;
   if (best && capitals) {
     // Capitals' rows are not all full (an A's apex, the bowls of R and S thin out, a serif row
     // peaks): against the band's typical row, its top is the first row with a good share of it,
@@ -603,6 +607,10 @@ function pageFaces(scan, lines, faces) {
       let first = x0, last = x1 - 1;
       while (first < last && !inked(first)) first++;
       while (last > first && !inked(last)) last--;
+      // Out to ink the box cut off (a slanted letter's foot, a box set a little short), within a
+      // fifth of the line's height and up to a clear column.
+      if (first === x0) { const stop = Math.max(0, x0 - Math.round((bottom - top) * .2 * k)); while (first > stop && inked(first - 1)) first--; }
+      if (last === x1 - 1) { const stop = Math.min(scan.w - 1, x1 - 1 + Math.round((bottom - top) * .2 * k)); while (last < stop && inked(last + 1)) last++; }
       return last - first >= 2 && (last + 1 - first) / k > (b - a) * .5 ? [first / k, t, (last + 1) / k, u] : [a, t, b, u];
     };
     line.words = (line.words ?? []).flatMap(word => {
@@ -660,13 +668,17 @@ function pageFaces(scan, lines, faces) {
   const ratios = new Map(), ratioOf = face => {
     if (!ratios.has(face)) {
       const found = lines.flatMap((line, i) => { const strip = strips[i], wide = (line.words?.length ?? 0) >= 4 && widthSize(face.font, line); return strip && !strip.capitals && wide ? [strip.height / face.xheight / wide] : []; }).sort((p, q) => p - q);
-      ratios.set(face, found.length >= 3 ? Math.min(1.35, Math.max(.75, found[found.length >> 1])) : 1);
+      // Too few lines in a bold or italic face (an italic's slanted rows read its height badly): its family's regular's.
+      const regular = faces.find(other => other.family === face.family && !other.bold && !other.italic);
+      ratios.set(face, found.length >= 3 && !face.italic ? Math.min(1.35, Math.max(.75, found[found.length >> 1])) : regular && regular !== face ? ratioOf(regular) : 1);
     }
     return ratios.get(face);
   };
   const measure = (i, face) => {
     const wide = widthSize(face.font, lines[i]), strip = strips[i];
     if (strip?.capitals) return strip.height / face.cap;
+    // An italic by its height: italics differ in width far more than romans (ours run wider than Palatino's).
+    if (face.italic && strip) return strip.height / face.xheight;
     if (wide) return wide * ratioOf(face);
     return strip ? strip.height / face.xheight : placeIn(face, lines[i]).size;
   };
@@ -848,6 +860,9 @@ function pageFaces(scan, lines, faces) {
         const before = measuredFaces.slice(0, n).reverse().find(Boolean), after = measuredFaces.slice(n + 1).find(Boolean);
         return before ? (!after || after === before ? before : face) : after ?? face;
       });
+      // A line most of whose words are italic is an italic line (sized and placed in the italic).
+      const italicWords = words.filter(other => other.italic).length;
+      if (!face.italic && italicWords * 2 > words.length && slanted !== face) { chosen[i] = { face: slanted, dy: score(i, slanted).dy, size: 0, baseline: baselines[i], words: words.map(other => other.italic ? other : slanted), fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font }; return; }
       chosen[i] = { face, dy: score(i, face).dy, size: 0, baseline: baselines[i], words, fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font };
     });
   }
@@ -891,11 +906,10 @@ function pageFaces(scan, lines, faces) {
   const plainKinds = new Set(lines.flatMap((line, i) => strips[i]?.capitals ? [] : [kindOf(penned[i], true)]).filter(Boolean));
   const page = lines.reduce((t, line) => t + line.text.length, 0) < 1200 && plainKinds.size < 2 ? [null] : [true, false];
   for (const kind of page) {
-    const members = lines.flatMap((_, i) => chosen[i] && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
+    const members = lines.flatMap((_, i) => chosen[i] && !lines[i].band && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
     if (members.length < 2) continue;
     const candidates = [...new Set(regulars.filter(face => kind === null || SERIF.has(face.family) === kind).map(face => face.family))];
-    // Bands do not choose (light letters on dark fit heavier, rounder faces) but take the choice.
-    const together = family => { const regular = regulars.find(face => face.family === family); return members.reduce((t, i) => t + (lines[i].band ? 0 : score(i, regular).score * Math.min(40, lines[i].text.length)), 0); };
+    const together = family => { const regular = regulars.find(face => face.family === family); return members.reduce((t, i) => t + score(i, regular).score * Math.min(40, lines[i].text.length), 0); };
     const best = candidates.reduce((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
     if (best) for (const i of members) if (chosen[i].face.family !== best) swapTo(i, best);
   }
@@ -942,6 +956,17 @@ function pageFaces(scan, lines, faces) {
     const width = median(widths);
     if (widths.length >= 5) members.forEach(i => { chosen[i].width = width; });
   }
+  // An italic line set among roman lines of its family takes their size (italics are measured on
+  // fewer, slanted letters): the roman line just above or below, when within a sixth of it.
+  lines.forEach((_, i) => {
+    if (!chosen[i]?.face.italic) return;
+    const [x0, top, x1, bottom] = lines[i].box, h = bottom - top;
+    const near = lines.flatMap((line, j) => j !== i && chosen[j] && Math.min(line.box[2], x1) > Math.max(line.box[0], x0) && Math.abs((line.box[1] + line.box[3]) / 2 - (top + bottom) / 2) < h * 1.6 ? [j] : []);
+    for (const j of near) {
+      if (chosen[j].face.italic || chosen[j].face.family !== chosen[i].face.family || !chosen[j].size || !chosen[i].size) continue;
+      if (Math.abs(chosen[j].size - chosen[i].size) <= chosen[j].size * .17) { chosen[i].size = chosen[j].size; break; }
+    }
+  });
   return chosen;
 }
 
