@@ -7,7 +7,7 @@
 export type Pixels = { data: Uint8ClampedArray; width: number; height: number; channels: number };
 export type Box = [number, number, number, number];
 /** A line to rebuild: its text, its ink box in image pixels and how sure the recogniser was of it (0–1). */
-export type LineArea = { text: string; box: Box; score: number; words?: { box: Box; score: number }[] };
+export type LineArea = { text: string; box: Box; score: number; words?: { text?: string; box: Box; score: number }[] };
 /**
  * A line's box (its band's rows when `band`: it sits on a band of its own colour, a table's dark
  * row), its ink colour and its background's, 0–1, and the colour of each word printed in another
@@ -122,6 +122,8 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
       });
     }
     if (kept.length * 2 > words.length) return null;
+    // Too few letters left to rewrite (a table cell's «+ α» once its «β₁» stays): the line stays whole.
+    if (words.length && words.reduce((t, word, n) => t + (kept.includes(n) ? 0 : word.text?.replace(/[^\p{L}\p{N}]/gu, '').length ?? 4), 0) <= 3) return null;
     // Each word's own colour, from its strokes' cores the same way: kept only when clearly another.
     const colors = words.map(({ box: [a, , b] }) => {
       const tally = [0, 0, 0]; let seen = 0;
