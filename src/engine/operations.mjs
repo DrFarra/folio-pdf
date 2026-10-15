@@ -356,8 +356,8 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     const units = glyphs.reduce((n, { gid, font }) => n + (gid ? font.advanceGlyph(gid) : 0), 0);
     if (!units) continue;
     // Never into the next word's place: a space's worth before it stays clear.
-    // A word of one letter is mostly its letter' side bearings, which its inked box leaves out: it takes the page's measure.
-    const own = width && glyphs.filter(({ gid }) => gid).length < 2 ? width : (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
+    // A word of one letter is mostly its letter's side bearings, which its inked box leaves out: it takes the page's measure (or the face's own).
+    const own = glyphs.filter(({ gid }) => gid).length < 2 ? width || 1 : (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
     // The page's measure holds a word only near it: a heading or a title runs wider or narrower.
     // Within a tenth of it each word fills its own place (justified text sets its spaces, our face its letters).
     const held = width && Math.abs(own - width) > width * .1 && Math.abs(own - width) <= width * .2 ? Math.min(width * 1.1, Math.max(width * .9, own)) : own;
@@ -731,8 +731,9 @@ function pageFaces(scan, lines, faces) {
     return j !== i && gap < h * 5 && Math.min(line.box[2], other.box[2]) > Math.max(line.box[0], other.box[0]) ? [j] : [];
   }));
   const wordStyles = lines.map((line, i) => (line.words ?? []).map(word => wordStyle(scan, line, word, contrasts[i])));
-  // A whole line's lean, from all its ink at once: surer than a word's (a heading set in italic).
-  const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && style.lean >= 6 && style.gain >= 1.05; });
+  // A whole line's lean, from all its ink at once: surer than a word's (a heading set in italic;
+  // capitals, with fewer upright stems, sharpen less as they are sheared upright).
+  const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && ((style.lean >= 6 && style.gain >= 1.05) || (style.lean >= 9 && style.gain >= 1.03)); });
   const mean = (face, among) => among.reduce((t, i) => t + score(i, face).score, 0) / among.length;
   // How evenly a face's widths match a set of lines' words: each word's width in the scan over its
   // width in the face is one size; in the face the text was set in, every word gives about the same
@@ -810,9 +811,12 @@ function pageFaces(scan, lines, faces) {
       // running text plenty, so it takes another family than its style's only when that one fits it
       // clearly better.
       // (A slab only on a page set in one: an even-stroked serif passes for a sans elsewhere.)
+      // Uneven strokes say serif in a short line too when it is no heavier than the text around
+      // (a bold heading's stems are thick for its bars too; an italic running head's are not). When
+      // the strokes agree with the style's family, the line keeps it.
       const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home) && (!SLAB.has(f) || SLAB.has(main))).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
-      const sure = kindOf(penned[i], true), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
-      const family = against || fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03) ? rival : home, { regular, heavy, slant } = set(family);
+      const sure = kindOf(penned[i], true), level = strokes[i] / (median(near[i].map(j => strokes[j])) || usual || 1), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 || level < 1.1 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
+      const family = against || (!plainly && fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03)) ? rival : home, { regular, heavy, slant } = set(family);
       const plain = score(i, regular).score, thick = heavy ? score(i, heavy).score : -2, leaning = slant ? score(i, slant).score : -2;
       // Bold: the strokes are clearly heavier than the text around and the bold face fits about as
       // well, or the bold face fits better than the upright and the italic ones, with strokes at
@@ -822,8 +826,8 @@ function pageFaces(scan, lines, faces) {
       const heavier = strokes[i] / (median(near[i].map(j => strokes[j])) || usual || 1), shape = thick - Math.max(plain, leaning);
       const apart = lines[i].band || (lines[i].words?.length ?? 0) <= 6;
       // A title in capitals (too few shapes, a face unlike ours) is weighed by its ink: the bold face
-      // when it lays down nearer the scan's ink than the regular.
-      const inkCloser = strips[i]?.capitals && heavy && Math.abs(Math.log(score(i, heavy).weight || 1)) + .15 < Math.abs(Math.log(score(i, regular).weight || 1));
+      // when it lays down nearer the scan's ink than the regular, its shapes not clearly worse.
+      const inkCloser = strips[i]?.capitals && heavy && shape > -.03 && Math.abs(Math.log(score(i, heavy).weight || 1)) + .15 < Math.abs(Math.log(score(i, regular).weight || 1));
       const lineBold = !!heavy && (bold || inkCloser || (shape > .008 && (apart ? heavier > 1.05 || lines[i].band : heavier > 1.13)) || (heavier >= 1.15 && shape > -.03) || (apart && heavier >= 1.3 && shape > -.06));
       // On a band (white letters on a dark row), the OCR's word boxes sit a little off the letters
       // and a slanted face can make up for it: italic there only as its letters' own lean shows.
