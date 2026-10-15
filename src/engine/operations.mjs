@@ -823,7 +823,7 @@ function pageFaces(scan, lines, faces) {
         return faceScore(around, line, one, fixed).score - faceScore(around, line, other, fixed).score;
       };
       // A line set in italic shows it in its letters' shapes even where the lean is too blurred to measure.
-      const slanted = sibling(false, true), italicLine = !face.italic && slanted !== face && score(i, slanted).score - score(i, face).score > .01;
+      const slanted = sibling(false, true), italicLine = !face.italic && slanted !== face && score(i, slanted).score - score(i, face).score > .025;
       // A word's weight against the other words of its own line (ink varies from line to line).
       // Bold comes in runs (a phrase, «Fig. 4-9.»): two or more heavier words side by side, which
       // the bold face draws better than the regular one taken together (one word's shape alone
@@ -843,13 +843,14 @@ function pageFaces(scan, lines, faces) {
       }
       // Italic: a word that leans, or one in a line set in italic, or one of small letters whose
       // strokes are clearly thinner than the line's other upright words (an italic is lighter than
-      // its roman; capitals measure differently) and which the italic face draws clearly better.
+      // its roman; capitals measure differently), leaning a little, and which the italic face
+      // draws clearly better.
       const upright = median(wordStyles[i].flatMap((style, n) => style && !bolds[n] ? [style.stroke] : []));
       const measuredFaces = (lines[i].words ?? []).map((word, n) => {
         const style = wordStyles[i][n];
         if (!style) return null;
-        const thin = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.stroke < upright * .92 && fits(n, slanted, face) > .01;
-        const bold = face.bold || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || (italicLine && !lines[i].band && fits(n, slanted, face) > 0));
+        const thin = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.stroke < upright * .92 && style.lean >= 3 && fits(n, slanted, face) > .01;
+        const bold = face.bold || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
         return sibling(bold, italic);
       });
       // A short word («de», «y», too short to measure) takes the style around it: of the words on
