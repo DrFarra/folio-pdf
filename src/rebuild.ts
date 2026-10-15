@@ -202,7 +202,16 @@ export function rebuildLines(image: Pixels, lines: LineArea[], known?: (word: st
     // How far a pixel lies from the background toward the ink's colour: a letter's soft edge does,
     // another colour beside the line (a table cell's edge, the white around a coloured box) does not.
     const toward = (r: number, g: number, b: number) => ((r - background[0]) * (ink[0] - background[0]) + (g - background[1]) * (ink[1] - background[1]) + (b - background[2]) * (ink[2] - background[2])) / axis;
-    return { x0, x1, y0, y1, toward, band, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(3, Math.round((y1 - y0) * .09)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { box: [x0, y0, x1, y1] as Box, color, background: background.map(v => v / 255) as [number, number, number], ink: printed, band, kept, colors } };
+    // A kept word's box out to the ink it cuts off (a bullet's square wider than the OCR's box for
+    // it): its whole mark stays, up to the next blank column.
+    const inkedColumn = (x: number) => { for (let y = y0; y < y1; y++) if (far(rgb(y * w + x)) > strongest * .3) return true; return false; };
+    const grownToInk = ([a, , b]: Box): Box => {
+      let left = Math.max(0, Math.floor(a) - 1), right = Math.min(w, Math.ceil(b) + 1);
+      for (let k = 0; k < y1 - y0 && left > 0 && inkedColumn(left - 1); k++) left--;
+      for (let k = 0; k < y1 - y0 && right < w && inkedColumn(right); k++) right++;
+      return [left, y0, right, y1];
+    };
+    return { x0, x1, y0, y1, toward, band, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(3, Math.round((y1 - y0) * .09)), keep: kept.map(n => grownToInk(words[n].box)), style: { box: [x0, y0, x1, y1] as Box, color, background: background.map(v => v / 255) as [number, number, number], ink: printed, band, kept, colors } };
   });
   // Lines left in the image keep every pixel: erasing a neighbour must not reach into them.
   // A kept word is safe up to halfway into a neighbour's box that overlaps its own: the rest of

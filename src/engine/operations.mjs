@@ -356,7 +356,8 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     const units = glyphs.reduce((n, { gid, font }) => n + (gid ? font.advanceGlyph(gid) : 0), 0);
     if (!units) continue;
     // Never into the next word's place: a space's worth before it stays clear.
-    const own = (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
+    // A word of one letter is mostly its letter' side bearings, which its inked box leaves out: it takes the page's measure.
+    const own = width && glyphs.filter(({ gid }) => gid).length < 2 ? width : (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
     // The page's measure holds a word only near it: a heading or a title runs wider or narrower.
     // Within a tenth of it each word fills its own place (justified text sets its spaces, our face its letters).
     const held = width && Math.abs(own - width) > width * .1 && Math.abs(own - width) <= width * .2 ? Math.min(width * 1.1, Math.max(width * .9, own)) : own;
@@ -858,6 +859,16 @@ function pageFaces(scan, lines, faces) {
         if (run.length >= 2 && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > 0) run.forEach(n => bolds[n] = true);
         m = Math.max(end, m + 1);
       }
+      // Words in their own colour are weighed as a run against the rest of the line: far heavier
+      // (past what another ink alone makes: a black «Tabla 35-5» before a teal title) and drawn
+      // about as well by the bold, they are bold.
+      const words_ = lines[i].words ?? [], tinted = n => words_[n]?.color, alike = (p, q) => !!p === !!q && (!p || p.every((v, c) => Math.abs(v - q[c]) < .08));
+      if (!face.bold) for (let m = 0; m < words_.length;) {
+        let end = m + 1; while (end < words_.length && alike(tinted(end), tinted(m))) end++;
+        const run = Array.from({ length: end - m }, (_, k) => m + k).filter(n => wordStyles[i][n]), rest = wordStyles[i].flatMap((style, n) => style && (n < m || n >= end) ? [style.stroke] : []);
+        if (tinted(m) && run.length >= 2 && rest.length >= 2 && run.every(n => wordStyles[i][n].stroke > median(rest) * 1.5) && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > -.03 * run.length) run.forEach(n => bolds[n] = true);
+        m = end;
+      }
       // Italic: a word that leans, or one in a line set in italic, or one of small letters whose
       // strokes are clearly thinner than the line's other upright words (an italic is lighter than
       // its roman; capitals measure differently), leaning a little, and which the italic face
@@ -867,9 +878,14 @@ function pageFaces(scan, lines, faces) {
         const style = wordStyles[i][n];
         if (!style) return null;
         const thin = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.stroke < upright * .92 && style.lean >= 3 && fits(n, slanted, face) > .01;
+        // Three signs at once (a plain lean, lighter strokes, a lean that sharpens the letters) need no
+        // shape fit, which a word in parentheses or of soft letters can tip the wrong way.
+        const marked = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.lean >= 9 && style.gain >= 1.05 && style.stroke < upright * .92;
+        // A sans italic is as heavy as its roman: there a word that plainly leans and that the italic draws clearly better.
+        const sloped = !lines[i].band && slanted !== face && !SERIF.has(face.family) && /[a-zà-ÿ]{3}/.test(word.text) && style.lean >= 6 && style.gain >= 1.05 && fits(n, slanted, face) > .04;
         // A line set bold that plainly holds two weights (a bold phrase, then text): its light words are regular.
         const light = face.bold && widest > 1.25 && style.stroke < cut && plainWord(n);
-        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
+        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || sloped || marked || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
         return sibling(bold, italic);
       });
       // A short word («de», «y», too short to measure) takes the style around it: of the words on
