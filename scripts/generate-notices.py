@@ -96,6 +96,9 @@ add_text('DM Sans — SIL Open Font License 1.1', (root/'public/fonts/OFL.txt').
 index['ocrModels'] = json.loads((root/'public/ocr/models.json').read_text(encoding='utf-8'))
 add_text('Bundled tessdata_fast models — pinned source URLs and hashes', json.dumps(index['ocrModels'], indent=2))
 add_text('tessdata_fast — Apache-2.0', (root/'public/ocr/LICENSE').read_text(encoding='utf-8'))
+index['ppocrModels'] = json.loads((root/'public/ocr/ppocr/models.json').read_text(encoding='utf-8'))
+add_text('Bundled PP-OCRv5 models (PaddleOCR, ONNX by RapidOCR) — pinned source URLs and hashes', json.dumps(index['ppocrModels'], indent=2))
+add_text('PaddleOCR PP-OCRv5 models — Apache-2.0', (root/'public/ocr/ppocr/LICENSE').read_text(encoding='utf-8'))
 nsis_notice=root/'docs/nsis/COPYRIGHT.txt'
 if nsis_notice.exists():
     add_text('NSIS packaging tool and upstream RestartManager header — Debian NSIS copyright file', nsis_notice.read_text(encoding='utf-8'))

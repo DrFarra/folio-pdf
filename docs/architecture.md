@@ -44,7 +44,8 @@ rules that break things when ignored. Read the files named before changing them.
 - What moves on screen is the item's sprite (`itemSprite`: the item alone on transparent pixels, drawn by the live document with what moving it writes), prefetched on hover; the page's own pixels (`Snapshot`) only until it arrives.
 - Binary IPC: Android sends base64 in 2 MiB slices; the bridge cap is 128 MiB (`binary_ipc.rs`).
 - Layout: `useDeviceLayout` — web is desktop unless a narrow coarse pointer; tablet needs an Android/iPad UA. The desktop app is always desktop.
-- CI builds with `cargo --locked`; there is no Rust toolchain on the Windows dev PC, so Rust only compiles in CI.
+- OCR (`src/ocr.ts`): each page is rendered, straightened (`src/straighten.ts`: a tilt turns the content without re-encoding it; curved lines flatten into a new page image) and read by Folio's engine. The engine is PP-OCRv5 in ONNX Runtime Web (`src/ppocr.ts`; workers in `ppocr-client.ts`, `ppocr.worker.ts`; models in `public/ocr/ppocr`). It runs on one worker with WebGPU, or on up to 4 CPU workers (WASM threads would need cross-origin isolation, which Folio does not have). tesseract.js only takes over when the engine cannot start. WebGPU sessions must be created one at a time. `docs/ocr-benchmark.md` has the numbers.
+- CI builds with `cargo --locked`. The Windows dev PC has rustup but not the MSVC build tools, so Rust only compiles in CI.
 
 ## Tests
 

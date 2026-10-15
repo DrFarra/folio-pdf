@@ -1,0 +1,34 @@
+{
+  "source": "PaddlePaddle/PaddleOCR PP-OCRv5, ONNX conversion published by RapidAI/RapidOCR v3.10.0",
+  "license": "Apache-2.0",
+  "models": [
+    {
+      "name": "det.onnx",
+      "role": "Text detection (DB), PP-OCRv5 mobile",
+      "bytes": 4819576,
+      "sha256": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx"
+    },
+    {
+      "name": "rec-latin.onnx",
+      "role": "Latin-script recognition (Spanish, English and 30 more), PP-OCRv5 mobile",
+      "bytes": 7904513,
+      "sha256": "b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a",
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/latin_PP-OCRv5_rec_mobile.onnx"
+    },
+    {
+      "name": "cls.onnx",
+      "role": "Text line orientation (0° / 180°), PP-LCNet x0.25",
+      "bytes": 1018508,
+      "sha256": "54379ae5174d026780215fc748a7f31910dee36818e63d49e17dc598ecc82df7",
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/cls/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx"
+    },
+    {
+      "name": "dict-latin.txt",
+      "role": "Recognition alphabet",
+      "bytes": 1634,
+      "sha256": "3c0a8a79b612653c25f765271714f71281e4e955962c153e272b7b8c1d2b13ff",
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/paddle/PP-OCRv5/rec/latin_PP-OCRv5_rec_mobile/ppocrv5_latin_dict.txt"
+    }
+  ]
+}

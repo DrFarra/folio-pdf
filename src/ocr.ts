@@ -1,6 +1,7 @@
 import { assetUrl } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.mjs';
+import { OcrEngine } from './ppocr-client';
 import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -52,26 +53,56 @@ function straighten(canvas: HTMLCanvasElement) {
   return { page, angle, flattened: !!field };
 }
 
-export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], language: 'spa' | 'eng' | 'spa+eng',
-  progress: (message: string) => void, signal: AbortSignal, straightened = false): Promise<Operation & { operation: 'ocr' }> {
+type Word = { text: string; box: [number, number, number, number] };
+type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Word[]>; close: () => void };
+
+/** Folio's engine (PP-OCRv5 in a few workers): reads Spanish, English and other Latin-script text alike. */
+function engineReader(signal: AbortSignal): Reader {
+  const engine = new OcrEngine();
+  return {
+    read: async canvas => {
+      const image = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
+      const lines = await engine.recognize({ data: image.data, width: image.width, height: image.height, channels: 4 }, signal);
+      return lines.flatMap(line => line.words).map(word => ({ text: word.text, box: word.box }));
+    },
+    close: () => engine.terminate(),
+  };
+}
+
+/** Tesseract, kept for a device where the engine cannot start. */
+async function tesseractReader(language: 'spa' | 'eng' | 'spa+eng', progress: (page: number, share: number) => void, signal: AbortSignal): Promise<Reader> {
   const { createWorker } = await import('tesseract.js');
-  let pageNumber = pages[0];
+  let pageNumber = 0;
   const pendingWorker = createWorker(language, 1, {
     workerPath: assetUrl('/ocr/worker.min.js'),
     corePath: assetUrl('/ocr/core/'),
     langPath: assetUrl('/ocr'),
     gzip: false, cacheMethod: 'none', workerBlobURL: false,
-    logger: event => progress(`Página ${pageNumber} · ${Math.round(event.progress * 100)} %`),
+    logger: event => progress(pageNumber, event.progress),
   });
   // A canceled initialization must also terminate the worker once it becomes available.
   void pendingWorker.then(worker => { if (signal.aborted) void worker.terminate(); }, () => {});
   const worker = await cancellable(pendingWorker, signal);
   const abort = () => { void worker.terminate(); };
   signal.addEventListener('abort', abort, { once: true });
+  return {
+    read: async (canvas, page) => {
+      pageNumber = page;
+      const { data } = await cancellable(worker.recognize(canvas, {}, { blocks: true, text: true }), signal);
+      return (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line => line.words))).filter(word => word.text.trim())
+        .map(word => ({ text: word.text, box: [word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1] }));
+    },
+    close: () => { signal.removeEventListener('abort', abort); void worker.terminate(); },
+  };
+}
+
+export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], language: 'spa' | 'eng' | 'spa+eng',
+  progress: (message: string) => void, signal: AbortSignal, straightened = false): Promise<Operation & { operation: 'ocr' }> {
+  let reader = engineReader(signal), fallback = false;
   try {
     const result: Extract<Operation, { operation: 'ocr' }> = { operation: 'ocr', pages: [] };
     for (const number of pages) {
-      signal.throwIfAborted(); pageNumber = number;
+      signal.throwIfAborted();
       const page = await pdf.getPage(number);
       const basic = page.getViewport({ scale: 1 });
       const scale = Math.min(3, Math.sqrt(12_000_000 / (basic.width * basic.height)));
@@ -79,18 +110,29 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
       const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
       let read = canvas, angle = 0, flattened = false;
       try {
+        progress(`Página ${number} · preparando`);
         await page.render({ canvas, viewport, intent: 'print' }).promise;
         if (straightened) {
           progress(`Página ${number} · enderezando`); await new Promise(resolve => setTimeout(resolve));
           ({ page: read, angle, flattened } = straighten(canvas)); signal.throwIfAborted();
         }
-        const { data } = await cancellable(worker.recognize(read, {}, { blocks: true, text: true }), signal);
+        progress(`Página ${number} · reconociendo`);
+        let found: Word[];
+        try { found = await reader.read(read, number); }
+        catch (error) {
+          if (signal.aborted || fallback) throw error;
+          // The engine could not start here (an old WebView, no WebAssembly SIMD): Tesseract takes over.
+          console.warn('Motor de OCR no disponible; se usa Tesseract.', error);
+          reader.close(); fallback = true;
+          reader = await tesseractReader(language, (n, share) => progress(`Página ${n} · ${Math.round(share * 100)} %`), signal);
+          found = await reader.read(read, number);
+        }
         // A flattened page becomes an upright page of the size it was seen at.
         const width = viewport.width / scale, height = viewport.height / scale;
         const toPdf = (x: number, y: number) => flattened ? [x / scale, height - y / scale] : viewport.convertToPdfPoint(x, y);
-        const words = (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line => line.words))).filter(word => word.text.trim()).map(word => {
-          const a = toPdf(word.bbox.x0, word.bbox.y0), b = toPdf(word.bbox.x1, word.bbox.y1);
-          return { text: word.text, rect: [a[0], a[1], b[0], b[1]] as [number, number, number, number] };
+        const words = found.map(({ text, box }) => {
+          const a = toPdf(box[0], box[1]), b = toPdf(box[2], box[3]);
+          return { text, rect: [a[0], a[1], b[0], b[1]] as [number, number, number, number] };
         });
         if (flattened) {
           const blob = await new Promise<Blob | null>(resolve => read.toBlob(resolve, 'image/jpeg', .9));
@@ -103,5 +145,5 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
     if (!result.pages.some(page => page.words.length)) throw new Error('No se reconoció texto en las páginas seleccionadas.');
     const response = await fetch(assetUrl('/fonts/dm-sans-regular.ttf')); result.font = new Uint8Array(await response.arrayBuffer());
     return result;
-  } finally { signal.removeEventListener('abort', abort); await worker.terminate(); }
+  } finally { reader.close(); }
 }
