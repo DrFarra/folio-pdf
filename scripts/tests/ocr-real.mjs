@@ -77,7 +77,8 @@ for (const spec of process.argv.slice(2)) {
   const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, box: lineBox, colors, ...colours } = style, words = line.words.flatMap((word, n) => kept.includes(n) ? [] : [{ ...word, color: colors[n] ?? undefined }]); return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale), color: word.color, letters: word.letters.map(([a, b]) => [a / scale, b / scale]) })) }]; });
   // FOLIO_BACKDROP=1 also writes the cleaned image the text is laid over.
   const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); if (process.env.FOLIO_BACKDROP) fs.writeFileSync(path.join(out, `${name}-backdrop.png`), backdrop.asPNG()); backdrop.destroy();
-  const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, width, height], 0, blank.newDictionary(), ''));
+  // The page itself, as the app hands it over (its scan and any earlier OCR included).
+  const blank = new mupdf.PDFDocument(); blank.graftPage(-1, doc, number - 1);
   const result = operateDocument(new Uint8Array(blank.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [], image: jpeg, size: [width, height], lines: rebuilt, original }], faces });
   times.engine = performance.now() - t0;
   times.rebuild = performance.now() - started;

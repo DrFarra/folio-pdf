@@ -673,7 +673,9 @@ function pageFaces(scan, lines, faces) {
   // Serif or sans, read from the strokes themselves (0 when there is too little ink to tell). Even
   // strokes say sans anywhere; uneven ones say serif in running text only (a bold heading's stems
   // are thick for its bars too).
-  const penned = lines.map((line, i) => strokeContrast(scan, line, baselines[i], sizes[i], contrasts[i]));
+  // (Only where small letters are some seven pixels tall in the scan itself: below, the blur evens out every stroke and
+  // a serif reads as a sans; the shapes say it then.)
+  const detail = Math.min(scan.k, scan.native || scan.k), penned = lines.map((line, i) => sizes[i] * .48 * detail >= 7 ? strokeContrast(scan, line, baselines[i], sizes[i], contrasts[i]) : 0);
   const kindOf = (value, sure) => !value ? null : value > (sure ? 2 : 1.75) ? 'serif' : value < (sure ? 1.45 : 1.55) ? 'sans' : null;
   // A line of capitals is drawn as tall as its capitals for the comparison (its widths tell its
   // size badly when its face is condensed or wide).
@@ -829,7 +831,11 @@ function pageFaces(scan, lines, faces) {
       // A title in capitals (too few shapes, a face unlike ours) is weighed by its ink: the bold face
       // when it lays down nearer the scan's ink than the regular, its shapes not clearly worse.
       const inkCloser = strips[i]?.capitals && heavy && shape > -.03 && Math.abs(Math.log(score(i, heavy).weight || 1)) + .15 < Math.abs(Math.log(score(i, regular).weight || 1));
-      const lineBold = !!heavy && (bold || inkCloser || (shape > .008 && (apart ? heavier > 1.05 || lines[i].band : heavier > 1.13)) || (heavier >= 1.15 && shape > -.03) || (apart && heavier >= 1.3 && shape > -.06));
+      // Small text (a figure's labels) reads heavy by its strokes alone: a scan's blur adds about the
+      // same pixels to any stroke, a far larger share of a small letter's size. There only the bold's
+      // shapes, clearly better, say bold.
+      const small = sizes[i] < bodySize * .85;
+      const lineBold = !!heavy && (bold || (small ? shape > .015 : inkCloser || (shape > .008 && (apart ? heavier > 1.05 || lines[i].band : heavier > 1.13)) || (heavier >= 1.15 && shape > -.03) || (apart && heavier >= 1.3 && shape > -.06)));
       // On a band (white letters on a dark row), the OCR's word boxes sit a little off the letters
       // and a slanted face can make up for it: italic there only as its letters' own lean shows.
       const leans = lines[i].band ? wordStyles[i].filter(style => style?.italic).length * 2 > wordStyles[i].filter(Boolean).length : true;
@@ -860,11 +866,13 @@ function pageFaces(scan, lines, faces) {
       const sorted = own.map(style => style.stroke).sort((p, q) => p - q), average = list => list.reduce((t, v) => t + v, 0) / list.length;
       let cut = common * 1.22, widest = 1.25;
       for (let k = 2; k <= sorted.length - 2; k++) { const low = average(sorted.slice(0, k)), high = average(sorted.slice(k)); if (high / low > widest) { widest = high / low; cut = Math.sqrt(low * high); } }
-      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds = [];
+      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds = [], slants = [];
       for (let m = 0; m < measured.length;) {
         let end = m; while (end < measured.length && !face.bold && common > 0 && wordStyles[i][measured[end]].stroke > cut) end++;
         const run = measured.slice(m, end);
-        if (run.length >= 2 && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > 0) run.forEach(n => bolds[n] = true);
+        // (One of them plainly leaning: a run-in heading in italic, whose strokes read heavy too.)
+        if (run.length >= 2 && run.some(n => wordStyles[i][n].italic)) run.forEach(n => slants[n] = true);
+        else if (run.length >= 2 && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > 0) run.forEach(n => bolds[n] = true);
         m = Math.max(end, m + 1);
       }
       // Words in their own colour are weighed as a run against the rest of the line: far heavier
@@ -893,7 +901,7 @@ function pageFaces(scan, lines, faces) {
         const sloped = !lines[i].band && slanted !== face && !SERIF.has(face.family) && /[a-zà-ÿ]{3}/.test(word.text) && style.lean >= 6 && style.gain >= 1.05 && fits(n, slanted, face) > .04;
         // A line set bold that plainly holds two weights (a bold phrase, then text): its light words are regular.
         const light = face.bold && widest > 1.25 && style.stroke < cut && plainWord(n);
-        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || sloped || marked || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
+        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || !!slants[n] || thin || sloped || marked || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
         return sibling(bold, italic);
       });
       // A short word («de», «y», too short to measure) takes the style around it: of the words on
@@ -943,7 +951,8 @@ function pageFaces(scan, lines, faces) {
     const usual = group.map(i => chosen[i].face.family).sort((a, b) => count(b) - count(a))[0];
     const together = family => { const face = regulars.find(other => other.family === family); return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
     // Of the kind the paragraph's strokes show, when they show it plainly.
-    const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => (!SLAB.has(family) || SLAB.has(main)) && (!kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family))));
+    // (Strokes too few pixels to read: the kind most of its lines already took, by their shapes.)
+    const kind = kindOf(median(group.map(i => penned[i])), false) ?? (group.filter(i => SERIF.has(chosen[i].face.family)).length * 2 > group.length ? 'serif' : 'sans'), allowed = kinds.filter(family => (!SLAB.has(family) || SLAB.has(main)) && (!kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family))));
     const start = allowed.includes(usual) ? usual : allowed[0];
     const best = widest(group, allowed) ?? allowed.reduce((best, family) => together(family) > together(best) ? family : best, start);
     // The best fit, unless the family most lines took fits about as well (then that one).
@@ -2469,6 +2478,10 @@ export function operateDocument(bytes, options, password = '', onPart) {
       try {
         for (const result of options.pages) {
           const index = pageIndex(doc, result.page);
+          // The scan's own resolution, before its image is replaced (the page is read from a render
+          // that can be finer than the scan, which adds no detail).
+          let native = 0;
+          { const page = doc.loadPage(index), device = new mupdf.Device({ fillImage: (image, ctm) => { native = Math.max(native, image.getWidth() / (Math.hypot(ctm[0], ctm[1]) || 1)); } }); try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); } }
           // Straightened before OCR: a flattened image replaces the scan, or a tilt turns the content.
           if (result.image) replaceWithImage(doc, index, result.image, result.size);
           else if (result.angle) { const page = doc.loadPage(index); try { turnContent(doc, page, result.angle); } finally { page.destroy(); } }
@@ -2476,7 +2489,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
           try {
             // A rebuilt page: its letters were erased from the image and are written again as
             // real text, one Folio text per line, so Editar can change each line.
-            const scan = result.lines?.length && result.original ? scanOf(result.original, page.getBounds()[2] - page.getBounds()[0]) : null;
+            const scan = result.lines?.length && result.original ? { ...scanOf(result.original, page.getBounds()[2] - page.getBounds()[0]), native } : null;
             const lines = (result.lines ?? []).map(checkLine);
             if (lines.length) {
               faces ??= loadFaces(options.faces);
