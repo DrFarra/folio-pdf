@@ -253,6 +253,32 @@ function replaceWithImage(doc, index, bytes, size) {
     object.put('Contents', doc.addStream(`q ${width} 0 0 ${height} 0 0 cm /FolioScan Do Q\n`, {}));
   } finally { image.destroy(); }
 }
+// A line of OCR text written as real text where the scan showed it. `box` is the ink of
+// the line in page points (y down): its size comes from the ink's height (which letters
+// reach above x-height or below the baseline) and from its width, in Helvetica.
+function writeLine(doc, page, line) {
+  if (typeof line?.text !== 'string' || !line.text.trim() || line.text.length > 2000) fail('Línea OCR inválida.');
+  const [x0, top, x1, bottom] = rect(line.box), color = line.color;
+  if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
+  const font = new mupdf.Font(line.bold ? 'Helvetica-Bold' : 'Helvetica');
+  try {
+    const glyphs = [...line.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
+    const units = glyphs.reduce((n, { c, gid }) => n + (gid ? font.advanceGlyph(gid) : /\s/.test(c) ? .278 : 0), 0);
+    const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
+    const byHeight = (bottom - top) / ((tall ? .718 : .523) + (deep ? .207 : 0)), byWidth = units ? (x1 - x0) / units : byHeight;
+    const size = Math.min(byHeight * 1.15, Math.max(byHeight * .85, byWidth)), baseline = bottom - (deep ? .207 * size : 0);
+    if (!(size >= 2 && size <= 400)) return;
+    appendDrawing(doc, page, device => {
+      const text = new mupdf.Text();
+      try {
+        let x = x0;
+        for (const { c, gid } of glyphs) { if (gid) text.showGlyph(font, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += (gid ? font.advanceGlyph(gid) : .278) * size; }
+        device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, color, 1);
+      } finally { text.destroy(); }
+    }, line.text);
+  } finally { font.destroy(); }
+}
+
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 // `own` marks text Folio writes: true, or the text it stands for.
 function appendDrawing(doc, page, draw, own = false) {
@@ -1433,6 +1459,16 @@ export function operateDocument(bytes, options, password = '', onPart) {
     if (operation === 'fields') return fields(doc);
     if (operation === 'page-content' || operation === 'page-image') return readPage(doc, options);
     if (operation === 'page-plate') return pagePlate(doc, options);
+    if (operation === 'text-layers') {
+      // How much of each page's text is painted and how much is invisible (an OCR layer, 3 Tr).
+      if (!Array.isArray(options.pages) || options.pages.length > 100000) fail('Páginas inválidas.');
+      return options.pages.map(number => {
+        const page = doc.loadPage(pageIndex(doc, number)); let visible = 0, hidden = 0;
+        const device = new mupdf.Device({ fillText: () => { visible++; }, strokeText: () => { visible++; }, ignoreText: () => { hidden++; } });
+        try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); }
+        return { page: number, visible, hidden };
+      });
+    }
     if (operation === 'area-info') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       const page = doc.loadPage(pageIndex(doc, options.page));
@@ -1607,7 +1643,10 @@ export function operateDocument(bytes, options, password = '', onPart) {
           else if (result.angle) { const page = doc.loadPage(index); try { turnContent(doc, page, result.angle); } finally { page.destroy(); } }
           const page = doc.loadPage(index);
           try {
-            appendDrawing(doc, page, device => {
+            // A rebuilt page: its letters were erased from the image and are written again as
+            // real text, one Folio text per line, so Editar can change each line.
+            for (const line of result.lines ?? []) writeLine(doc, page, line);
+            if (result.words.length) appendDrawing(doc, page, device => {
               const text = new mupdf.Text();
               try {
                 for (const word of result.words) {

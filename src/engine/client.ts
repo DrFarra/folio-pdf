@@ -1,6 +1,6 @@
 import type { Annotation } from '../types';
 import type { Inspection } from './mupdf-engine.mjs';
-import type { Operation, PageEntry, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo, PagePlate } from './operations.mjs';
+import type { Operation, PageEntry, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo, PagePlate, TextLayers } from './operations.mjs';
 
 // Starting a worker loads ~10 MB of WASM, so idle workers are reused. A worker
 // runs one request at a time and is reused only after a successful result: an
@@ -57,4 +57,5 @@ export const readAreaContent = (bytes: Uint8Array, area: Area, password?: string
 /** `graphics` also lists the drawings the page paints itself, for Editar. */
 export const getPageContent = (bytes: Uint8Array, page: number, password?: string, signal?: AbortSignal, graphics = false) => run<PageContentInfo>('operate', bytes, password, undefined, signal, { operation: 'page-content', page, ...(graphics ? { graphics } : {}) });
 export const readPagePlate = (bytes: Uint8Array, page: number, item: { id: string; kind: 'text' | 'image' | 'graphic'; rect: Area['rect'] }, scale: number, password?: string) => run<PagePlate>('operate', bytes, password, undefined, undefined, { operation: 'page-plate', page, id: item.id, kind: item.kind, rect: item.rect, scale });
+export const readTextLayers = (bytes: Uint8Array, pages: number[], password?: string, signal?: AbortSignal) => run<TextLayers[]>('operate', bytes, password, undefined, signal, { operation: 'text-layers', pages });
 export const readPageImage = (bytes: Uint8Array, page: number, id: string, password?: string, signal?: AbortSignal) => run<PageImageInfo>('operate', bytes, password, undefined, signal, { operation: 'page-image', page, id });

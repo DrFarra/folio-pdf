@@ -2,6 +2,7 @@ import { assetUrl } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.mjs';
 import { OcrEngine } from './ppocr-client';
+import { rebuildLines } from './rebuild';
 import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -53,8 +54,11 @@ function straighten(canvas: HTMLCanvasElement) {
   return { page, angle, flattened: !!field };
 }
 
-type Word = { text: string; box: [number, number, number, number] };
-type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Word[]>; close: () => void };
+type Box = [number, number, number, number];
+type Line = { text: string; box: Box; words: { text: string; box: Box }[] };
+type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Line[]>; close: () => void };
+/** What OCR leaves: invisible text over the page as it is, or the page rebuilt as real, editable text. */
+export type OcrResult = 'search' | 'edit';
 
 /** Folio's engine (PP-OCRv5 in a few workers): reads Spanish, English and other Latin-script text alike. */
 function engineReader(signal: AbortSignal): Reader {
@@ -63,7 +67,7 @@ function engineReader(signal: AbortSignal): Reader {
     read: async canvas => {
       const image = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
       const lines = await engine.recognize({ data: image.data, width: image.width, height: image.height, channels: 4 }, signal);
-      return lines.flatMap(line => line.words).map(word => ({ text: word.text, box: word.box }));
+      return lines.map(line => ({ text: line.text, box: line.box, words: line.words.map(word => ({ text: word.text, box: word.box })) }));
     },
     close: () => engine.terminate(),
   };
@@ -89,15 +93,16 @@ async function tesseractReader(language: 'spa' | 'eng' | 'spa+eng', progress: (p
     read: async (canvas, page) => {
       pageNumber = page;
       const { data } = await cancellable(worker.recognize(canvas, {}, { blocks: true, text: true }), signal);
-      return (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line => line.words))).filter(word => word.text.trim())
-        .map(word => ({ text: word.text, box: [word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1] }));
+      const box = ({ bbox }: { bbox: { x0: number; y0: number; x1: number; y1: number } }): Box => [bbox.x0, bbox.y0, bbox.x1, bbox.y1];
+      return (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines)).filter(line => line.text.trim())
+        .map(line => ({ text: line.text.trim(), box: box(line), words: line.words.filter(word => word.text.trim()).map(word => ({ text: word.text, box: box(word) })) }));
     },
     close: () => { signal.removeEventListener('abort', abort); void worker.terminate(); },
   };
 }
 
 export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], language: 'spa' | 'eng' | 'spa+eng',
-  progress: (message: string) => void, signal: AbortSignal, straightened = false): Promise<Operation & { operation: 'ocr' }> {
+  progress: (message: string) => void, signal: AbortSignal, straightened = false, outcome: OcrResult = 'search'): Promise<Operation & { operation: 'ocr' }> {
   let reader = engineReader(signal), fallback = false;
   try {
     const result: Extract<Operation, { operation: 'ocr' }> = { operation: 'ocr', pages: [] };
@@ -117,7 +122,7 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           ({ page: read, angle, flattened } = straighten(canvas)); signal.throwIfAborted();
         }
         progress(`Página ${number} · reconociendo`);
-        let found: Word[];
+        let found: Line[];
         try { found = await reader.read(read, number); }
         catch (error) {
           if (signal.aborted || fallback) throw error;
@@ -127,13 +132,29 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           reader = await tesseractReader(language, (n, share) => progress(`Página ${n} · ${Math.round(share * 100)} %`), signal);
           found = await reader.read(read, number);
         }
-        // A flattened page becomes an upright page of the size it was seen at.
-        const width = viewport.width / scale, height = viewport.height / scale;
-        const toPdf = (x: number, y: number) => flattened ? [x / scale, height - y / scale] : viewport.convertToPdfPoint(x, y);
-        const words = found.map(({ text, box }) => {
+        // A flattened or rebuilt page becomes an upright page of the size it was seen at.
+        const width = viewport.width / scale, height = viewport.height / scale, upright = flattened || outcome === 'edit';
+        const toPdf = (x: number, y: number) => upright ? [x / scale, height - y / scale] : viewport.convertToPdfPoint(x, y);
+        const pdfWords = (lines: Line[]) => lines.flatMap(line => line.words).map(({ text, box }) => {
           const a = toPdf(box[0], box[1]), b = toPdf(box[2], box[3]);
-          return { text, rect: [a[0], a[1], b[0], b[1]] as [number, number, number, number] };
+          return { text, rect: [a[0], a[1], b[0], b[1]] as Box };
         });
+        if (outcome === 'edit') {
+          progress(`Página ${number} · reconstruyendo`);
+          // Lines far taller than the page's text (turned text, a figure) stay in the image, searchable.
+          const heights = found.map(line => line.box[3] - line.box[1]).sort((a, b) => a - b), usual = heights[heights.length >> 1] || 0;
+          const level = found.filter(line => line.box[3] - line.box[1] <= usual * 2.5);
+          const context = read.getContext('2d', { willReadFrequently: true })!, pixels = context.getImageData(0, 0, read.width, read.height);
+          const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => line.box));
+          context.putImageData(pixels, 0, 0);
+          const rebuilt = level.flatMap((line, i) => styles[i] ? [{ text: line.text, box: line.box.map(v => v / scale) as Box, ...styles[i]! }] : []);
+          const kept = found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]);
+          const blob = await new Promise<Blob | null>(resolve => read.toBlob(resolve, 'image/jpeg', .9));
+          if (!blob) throw new Error('No se pudo guardar la página reconstruida.');
+          result.pages.push({ page: number, words: pdfWords(kept), image: new Uint8Array(await blob.arrayBuffer()), size: [width, height], lines: rebuilt });
+          continue;
+        }
+        const words = pdfWords(found);
         if (flattened) {
           const blob = await new Promise<Blob | null>(resolve => read.toBlob(resolve, 'image/jpeg', .9));
           if (!blob) throw new Error('No se pudo guardar la página enderezada.');
@@ -142,7 +163,7 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
       } finally { canvas.width = 0; canvas.height = 0; read.width = 0; read.height = 0; }
     }
     signal.throwIfAborted();
-    if (!result.pages.some(page => page.words.length)) throw new Error('No se reconoció texto en las páginas seleccionadas.');
+    if (!result.pages.some(page => page.words.length || page.lines?.length)) throw new Error('No se reconoció texto en las páginas seleccionadas.');
     const response = await fetch(assetUrl('/fonts/dm-sans-regular.ttf')); result.font = new Uint8Array(await response.arrayBuffer());
     return result;
   } finally { reader.close(); }
