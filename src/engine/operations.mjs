@@ -537,7 +537,10 @@ function faceScore(around, line, face, fixed = {}) {
   let text, best = { dy: 0, score: -1 };
   try {
     pix.clear(255); const placed = placeIn(face, line, fixed); text = line.words?.length ? wordsText(face.font, placed, line.words, .35, [], fixed.fallback) : textOf(face.font, placed, fixed.fallback);
-    device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); device.close();
+    device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1);
+    // Thickened as the page writes it (see `thicken` in pageFaces): an outline around each letter.
+    if (fixed.thicken) { const stroke = new mupdf.StrokeState({ lineCap: 'Round', lineJoin: 'Round', lineWidth: fixed.thicken * placed.size, miterLimit: 10 }); try { device.strokeText(text, stroke, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); } finally { stroke.destroy(); } }
+    device.close();
     const drawn = pix.getPixels(), mark = new Float32Array(drawn.length);
     for (let i = 0; i < drawn.length; i++) mark[i] = 1 - drawn[i] / 255;
     // Only the rows of this line's own letters, from the top of its tallest to the bottom of its
@@ -948,7 +951,12 @@ function pageFaces(scan, lines, faces) {
     const members = lines.flatMap((_, i) => chosen[i] && !lines[i].band && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
     if (members.length < 2) continue;
     const candidates = [...new Set(regulars.filter(face => kind === null || SERIF.has(face.family) === kind).map(face => face.family))];
-    const together = family => { const regular = regulars.find(face => face.family === family); return members.reduce((t, i) => t + score(i, regular).score * Math.min(40, lines[i].text.length), 0); };
+    // Judged on its longest lines (a table's short cells and stray fragments fit any face about as
+    // well, and tip close families the wrong way when they are many),
+    const longest = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 10);
+    // Each line at the softening that suits it best (the page's one softening, fixed to weigh bold
+    // fairly, blunts the shapes that tell close families apart).
+    const together = family => { const regular = regulars.find(face => face.family === family); return longest.reduce((t, i) => t + faceScore(arounds[i], lines[i], regular, { baseline: baselines[i], size: measure(i, regular) }).score, 0); };
     const best = candidates.reduce((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
     if (best) for (const i of members) if (chosen[i].face.family !== best) swapTo(i, best);
   }
@@ -1013,6 +1021,18 @@ function pageFaces(scan, lines, faces) {
       if (Math.abs(chosen[j].size - chosen[i].size) <= chosen[j].size * .17) { chosen[i].size = chosen[j].size; break; }
     }
   });
+  // Our faces are often lighter than the book's (Gillius beside Gill Sans): a face whose letters lay
+  // down less ink than the scan's, on the page's longest lines in it, is written with an outline
+  // that brings its ink up to the scan's (in ems of the size; a scan's blur spreads ink alike in both).
+  for (const face of new Set(chosen.map(choice => choice?.face))) {
+    const members = chosen.flatMap((choice, i) => choice?.face === face && !lines[i].band ? [i] : []);
+    const longest = members.sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 6);
+    if (longest.length < 2) continue;
+    const off = thicken => median(longest.map(i => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) + 1e-9 : 0; }));
+    let best = 0, least = off(0);
+    for (const thicken of [.01, .02, .03, .04, .05]) { const value = off(thicken); if (value < least - .01) { least = value; best = thicken; } }
+    if (best) members.forEach(i => { chosen[i].thicken = best; });
+  }
   return chosen;
 }
 
@@ -1031,7 +1051,7 @@ function checkLine(line) {
   const spans = (letters, text) => Array.isArray(letters) && letters.length === [...text].length && letters.every(span => Array.isArray(span) && span.length === 2 && span.every(Number.isFinite)) ? letters : undefined;
   return { ...line, box: rect(line.box), words: line.words?.map(word => ({ text: word.text, box: rect(word.box), color: colour(word.color), letters: spans(word.letters, word.text) })) };
 }
-function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 0, words: wordFaces = [], fallback = null }) {
+function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 0, words: wordFaces = [], fallback = null, thicken = 0 }) {
   const placed = placeIn(face, line, { size, baseline });
   if (!(placed.size >= 2 && placed.size <= 400)) return;
   placed.baseline += dy;
@@ -1047,12 +1067,13 @@ function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 
       try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, colourOf(line.words[start]), 1); } finally { text.destroy(); }
       start = end;
     }
-  }, line.text);
+  }, line.text, thicken * placed.size);
 }
 
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 // `own` marks text Folio writes: true, or the text it stands for.
-function appendDrawing(doc, page, draw, own = false) {
+// `outline`: a width (pt) its text is also stroked at, in its own colour (fill then stroke, one text).
+function appendDrawing(doc, page, draw, own = false, outline = 0) {
   const bounds = page.getBounds();
   const buffer = new mupdf.Buffer(), writer = new mupdf.DocumentWriter(buffer, 'pdf', 'compress=yes');
   let generated, closed = false;
@@ -1063,10 +1084,11 @@ function appendDrawing(doc, page, draw, own = false) {
     // A system or CJK font would otherwise be embedded whole on every edit.
     generated.subsetFonts();
     const object = generated.findPage(0);
-    const content = object.get('Contents').readStream();
+    let content = object.get('Contents').readStream();
+    if (outline) { const thick = content.asString().replace(/\bBT\b/g, `BT 2 Tr ${outline.toFixed(3)} w 1 j`).replace(/([-\d.]+) ([-\d.]+) ([-\d.]+) rg/g, '$& $1 $2 $3 RG'); content.destroy(); content = thick; }
     let form;
     try { form = doc.addStream(content, { Type: 'XObject', Subtype: 'Form', BBox: object.get('MediaBox').asJS(), Resources: doc.graftObject(object.get('Resources')) }); }
-    finally { content.destroy(); }
+    finally { if (typeof content !== 'string') content.destroy(); }
     const target = page.getObject(), inherited = target.getInheritable('Resources');
     const resources = doc.newDictionary();
     if (!inherited.isNull()) inherited.forEach((value, key) => resources.put(key, value));
