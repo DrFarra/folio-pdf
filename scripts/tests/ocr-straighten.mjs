@@ -64,6 +64,33 @@ await check('curved-lines-come-out-straight', () => {
   return { before: +before.toFixed(1), after: +after.toFixed(1) };
 });
 
+await check('a-photo-is-not-taken-for-lines-of-text', () => {
+  // A micrograph above a short caption: its blobs line up across strips by chance,
+  // which once turned and warped the page. Nothing in it may count as a line.
+  const sheet = page(1500, 2000, k => k < 48 ? -100 : 1700 + (k - 48) * 34), { data, width } = sheet;
+  let seed = 7; const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let y = 150; y < 1550; y++) for (let x = 90; x < 1410; x++) data.fill(150, (y * width + x) * 3, (y * width + x) * 3 + 3);
+  for (let n = 0; n < 4000; n++) {
+    const cx = 100 + random() * 1300, cy = 160 + random() * 1380, r = 4 + random() * 14;
+    for (let y = Math.round(cy - r); y <= cy + r; y++) for (let x = Math.round(cx - r); x <= cx + r; x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) data.fill(40, (y * width + x) * 3, (y * width + x) * 3 + 3);
+  }
+  const { sample, mask } = analyse(sheet), { lines } = traceLines(mask, sample.width, sample.height);
+  const inPhoto = lines.filter(({ fit }) => fit[0] < 1560 * sample.scale).length;
+  assert.equal(inPhoto, 0, `lines traced in the photo: ${inPhoto}`);
+  assert.equal(flattenField(mask, sample.width, sample.height), null);
+  assert.equal(marginTilt(mask, sample.width, sample.height), null);
+  return { lines: lines.length, inPhoto };
+});
+
+await check('two-columns-out-of-step-are-not-a-curve', () => {
+  // A flat table or two-column page whose right column's rows sit up or down from the
+  // left's, by a different amount on each row (headings, paragraphs, subscripts): a
+  // trace that slides from one column's row to the other's is no curve of the page.
+  const sheet = page(1500, 2000, (k, x) => 140 + k * 34 + (x > 760 ? (k * 7 % 5 - 2) * 5 : 0)), { sample, mask } = analyse(sheet);
+  assert.equal(flattenField(mask, sample.width, sample.height), null);
+  return { flattened: false };
+});
+
 // Turned clockwise by `degrees` about the centre, smoothly, as the canvas does it.
 function turned({ data, width: w, height: h, channels: n }, degrees) {
   const t = degrees * Math.PI / 180, c = Math.cos(t), s = Math.sin(t), out = new Uint8ClampedArray(data.length).fill(255);

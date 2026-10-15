@@ -136,8 +136,17 @@ export function traceLines(mask: Uint8Array, w: number, h: number): { lines: Lin
     const fit = cubic(points, w); if (!fit) return;
     const rms = Math.sqrt(points.reduce((t, [x, y]) => t + (evaluate(fit, x, w) - y) ** 2, 0) / points.length);
     if (rms > spacing * .2) return;
-    const xs = points.map(([x]) => x);
-    lines.push({ fit, lo: Math.min(...xs), hi: Math.max(...xs), count: points.length });
+    const xs = points.map(([x]) => x), lo = Math.min(...xs), hi = Math.max(...xs);
+    // Text has white between its lines; the texture of a photo or a drawing has ink
+    // there too (≥ .4 of the ink on the line, against ≤ .16 for text, tables included).
+    const half = Math.round(spacing / 2), at = (y: number, x: number) => y >= 0 && y < h ? mask[y * w + x] : 0;
+    let on = 0, between = 0;
+    for (let x = Math.ceil(lo); x <= hi; x++) {
+      const y = Math.round(evaluate(fit, x, w));
+      for (let d = -1; d <= 1; d++) { on += at(y + d, x); between += (at(y - half + d, x) + at(y + half + d, x)) / 2; }
+    }
+    if (between > on * .25) return;
+    lines.push({ fit, lo, hi, count: points.length });
   });
   // The same line traced twice keeps its longer trace.
   const kept = lines.filter(line => !lines.some(other => other !== line && Math.abs(evaluate(other.fit, w / 2, w) - evaluate(line.fit, w / 2, w)) < spacing * .5 && (other.count > line.count || other.count === line.count && lines.indexOf(other) < lines.indexOf(line))));
@@ -220,15 +229,24 @@ export function flattenField(mask: Uint8Array, w: number, h: number): Field | nu
   const lines = traced.lines.filter(line => line.hi - line.lo >= w * .35);
   if (lines.length < 6) return null;
   const at = (line: Line, x: number) => clampAt(line, x, w);
-  // Curved: the middle of the line strays from the straight chord between its ends.
-  const bent = lines.filter(line => {
-    let most = 0; const a = at(line, line.lo), b = at(line, line.hi);
-    for (let x = line.lo; x <= line.hi; x += w / 48) most = Math.max(most, Math.abs(at(line, x) - (a + (b - a) * (x - line.lo) / (line.hi - line.lo))));
-    return most > Math.max(2, spacing * .1);
-  });
-  if (bent.length < lines.length / 3) return null;
   const flat = flattest(lines, w), target = (line: Line) => at(line, flat);
   lines.sort((a, b) => target(a) - target(b));
+  // How much two lines stray from parallel where both run: a page's curve bends its
+  // neighbouring lines alike, a trace that slid between the rows of a table does not.
+  const apart = (a: Line, b: Line) => {
+    const lo = Math.max(a.lo, b.lo), hi = Math.min(a.hi, b.hi); let least = Infinity, most = -Infinity;
+    if (hi - lo < w * .2) return Infinity;
+    for (let x = lo; x <= hi; x += w / 48) { const d = at(a, x) - at(b, x); least = Math.min(least, d); most = Math.max(most, d); }
+    return most - least;
+  };
+  // Curved: the middle of the line strays from the straight chord between its ends,
+  // and a neighbour bends the same way.
+  const bent = lines.filter((line, k) => {
+    let most = 0; const a = at(line, line.lo), b = at(line, line.hi);
+    for (let x = line.lo; x <= line.hi; x += w / 48) most = Math.max(most, Math.abs(at(line, x) - (a + (b - a) * (x - line.lo) / (line.hi - line.lo))));
+    return most > Math.max(2, spacing * .1) && [lines[k - 1], lines[k + 1]].some(other => other && apart(line, other) < most / 2);
+  });
+  if (bent.length < lines.length / 3) return null;
   const step = 8, cols = Math.ceil(w / step) + 1, rows = Math.ceil(h / step) + 1, dy = new Float32Array(cols * rows);
   const offsets = new Float64Array(lines.length), targets = lines.map(target);
   for (let gx = 0; gx < cols; gx++) {
