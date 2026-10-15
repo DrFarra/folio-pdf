@@ -8,8 +8,12 @@ export type Pixels = { data: Uint8ClampedArray; width: number; height: number; c
 export type Box = [number, number, number, number];
 /** A line to rebuild: its text, its ink box in image pixels and how sure the recogniser was of it (0–1). */
 export type LineArea = { text: string; box: Box; score: number; words?: { box: Box; score: number }[] };
-/** A line's box (its band's rows when `band`: it sits on a band of its own colour, a table's dark row), its ink colour and its background's, 0–1. */
-export type Style = { box: Box; color: [number, number, number]; background: [number, number, number]; band: boolean; kept: number[] };
+/**
+ * A line's box (its band's rows when `band`: it sits on a band of its own colour, a table's dark
+ * row), its ink colour and its background's, 0–1, and the colour of each word printed in another
+ * (a link in blue, a term in red), null for the rest.
+ */
+export type Style = { box: Box; color: [number, number, number]; background: [number, number, number]; band: boolean; kept: number[]; colors: ([number, number, number] | null)[] };
 
 /**
  * Styles of the lines (null for a line left in the image), with the others' letters
@@ -87,12 +91,20 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     const sum = [0, 0, 0]; let count = 0;
     for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * .7) { const p = rgb(y * w + x); sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++; }
     const color = sum.map(v => Math.round(v / Math.max(1, count)) / 255) as [number, number, number];
+    // Each word's own colour, from its strokes' cores the same way: kept only when clearly another.
+    const colors = words.map(({ box: [a, , b] }) => {
+      const tally = [0, 0, 0]; let seen = 0;
+      for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (x >= a && x < b && distances[k] > strongest * .7) { const p = inside[k]; tally[0] += p[0]; tally[1] += p[1]; tally[2] += p[2]; seen++; }
+      if (seen < 6) return null;
+      const own = tally.map(v => Math.round(v / seen) / 255) as [number, number, number];
+      return Math.hypot(own[0] - color[0], own[1] - color[1], own[2] - color[2]) > .2 ? own : null;
+    });
     // The faint edge of a blurred scan's letters is erased too: anything clearly off the plain background.
     const ink = color.map(v => v * 255), axis = Math.max(1, Math.hypot(ink[0] - background[0], ink[1] - background[1], ink[2] - background[2]));
     // How far a pixel lies from the background toward the ink's colour: a letter's soft edge does,
     // another colour beside the line (a table cell's edge, the white around a coloured box) does not.
     const toward = (r: number, g: number, b: number) => ((r - background[0]) * (ink[0] - background[0]) + (g - background[1]) * (ink[1] - background[1]) + (b - background[2]) * (ink[2] - background[2])) / axis;
-    return { x0, x1, y0, y1, toward, band, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(3, Math.round((y1 - y0) * .09)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { box: [x0, y0, x1, y1] as Box, color, background: background.map(v => v / 255) as [number, number, number], band, kept } };
+    return { x0, x1, y0, y1, toward, band, ground: background, edge: Math.max(14, strongest * .1), grow: Math.max(3, Math.round((y1 - y0) * .09)), keep: kept.map(n => [words[n].box[0] - 1, y0, words[n].box[2] + 1, y1] as Box), style: { box: [x0, y0, x1, y1] as Box, color, background: background.map(v => v / 255) as [number, number, number], band, kept, colors } };
   });
   // Lines left in the image keep every pixel: erasing a neighbour must not reach into them.
   // A kept word is safe up to halfway into a neighbour's box that overlaps its own: the rest of
@@ -141,7 +153,7 @@ export function cleanPaper(image: Pixels) {
     // Near-white becomes white: paper grain and show-through from the other side.
     // Only greys and the paper's own faint tint: a pale coloured cell or box keeps its colour.
     const lum = (mapped[0] * 299 + mapped[1] * 587 + mapped[2] * 114) / 1000, chroma = Math.max(...mapped) - Math.min(...mapped);
-    const lift = chroma > 40 ? 0 : (lum > 235 ? 1 : lum > 215 ? (lum - 215) / 20 : 0) * (chroma > 20 ? (40 - chroma) / 20 : 1);
+    const lift = (lum > 235 ? 1 : lum > 215 ? (lum - 215) / 20 : 0) * (chroma <= 6 ? 1 : chroma >= 18 ? 0 : (18 - chroma) / 12);
     for (let c = 0; c < Math.min(n, 3); c++) data[o + c] = mapped[n >= 3 ? c : 0] + (255 - mapped[n >= 3 ? c : 0]) * lift;
   }
   flatAreas(image);
@@ -207,14 +219,17 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
   // a line can cross two colours, side by side (a heading over a green and a pink band) or one
   // above the other (a band's edge across its box), and a pixel is background near either.
   const rows = Math.max(2, Math.round((y1 - y0) * .3));
-  // In each column the pixel furthest from the letters' colour (the lines just above and below
-  // reach in with their own letters), then the middle of those across the columns around.
+  // In each column the pixels furthest from the letters' colour (the lines just above and below
+  // reach in with their own letters): the middle of the farther half, not the very farthest (a
+  // grainy tint's lightest grain is near white). Then the middle of those across the columns around.
   const sampled = (above: boolean) => {
     const columns = Array.from({ length: cw }, (_, x) => {
       if (band) return ground;
-      let lightest: number[] | null = null, least = Infinity;
-      for (let k = 1; k <= rows; k++) { const y = above ? coreTop - k : coreBottom - 1 + k; if (y < 0 || y >= ch) continue; const p = pixel(x, y), t = toward(p[0], p[1], p[2]); if (t < least) { least = t; lightest = p; } }
-      return lightest;
+      const samples: [number, number[]][] = [];
+      for (let k = 1; k <= rows; k++) { const y = above ? coreTop - k : coreBottom - 1 + k; if (y < 0 || y >= ch) continue; const p = pixel(x, y); samples.push([toward(p[0], p[1], p[2]), p]); }
+      if (!samples.length) return null;
+      samples.sort((p, q) => p[0] - q[0]);
+      return samples[samples.length >> 2][1];
     });
     return columns.map((_, x) => { const near = columns.slice(Math.max(0, x - rows), x + rows + 1).filter(Boolean) as number[][]; return near.length ? [0, 1, 2].map(c => near.map(p => p[c]).sort((a, b) => a - b)[near.length >> 1]) : null; });
   };

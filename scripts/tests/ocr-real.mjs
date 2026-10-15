@@ -72,7 +72,7 @@ for (const spec of process.argv.slice(2)) {
   if (process.env.FOLIO_BACKDROP) { const raw = pixmapOf(straight); fs.writeFileSync(path.join(out, `${name}-erased.png`), raw.asPNG()); raw.destroy(); }
   cleanPaper(straight);
   times.paper = performance.now() - t0; t0 = performance.now();
-  const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, box: lineBox, ...colours } = style, words = line.words.filter((_, n) => !kept.includes(n)); return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }]; });
+  const rebuilt = level.flatMap((line, i) => { const style = styles[i]; if (!style) return []; const { kept, box: lineBox, colors, ...colours } = style, words = line.words.flatMap((word, n) => kept.includes(n) ? [] : [{ ...word, color: colors[n] ?? undefined }]); return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale), ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale), color: word.color })) }]; });
   // FOLIO_BACKDROP=1 also writes the cleaned image the text is laid over.
   const backdrop = pixmapOf(straight), jpeg = backdrop.asJPEG(90); if (process.env.FOLIO_BACKDROP) fs.writeFileSync(path.join(out, `${name}-backdrop.png`), backdrop.asPNG()); backdrop.destroy();
   const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, width, height], 0, blank.newDictionary(), ''));

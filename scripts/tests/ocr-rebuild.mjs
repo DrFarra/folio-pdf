@@ -77,7 +77,7 @@ await check('the-page-comes-back-as-editable-text', () => {
   const pngPix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, image.width, image.height], false); pngPix.getPixels().set(image.data);
   const png = pngPix.asPNG(); pngPix.destroy();
   const scan = new mupdf.PDFDocument(); scan.insertPage(-1, scan.addPage([0, 0, 595, 400], 0, scan.newDictionary(), '')); const bytes = new Uint8Array(scan.saveToBuffer('').asUint8Array());
-  const rebuilt = lines.map((line, i) => { const { box, kept, ...colours } = styles[i]; return { text: line.text, box: box.map(v => v / scale), ...colours, words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }; });
+  const rebuilt = lines.map((line, i) => { const { box, kept, colors, ...colours } = styles[i]; return { text: line.text, box: box.map(v => v / scale), ...colours, words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }; });
   const out = operateDocument(bytes, { operation: 'ocr', pages: [{ page: 1, words: [], image: png, size: [595, 400], lines: rebuilt, original }] });
   const text = operateDocument(out, { operation: 'text' })[0];
   for (const [line] of LINES) assert(text.includes(line), `text: ${text}`);
