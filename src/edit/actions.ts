@@ -1,6 +1,6 @@
 import type { Operation, PageContentItem } from '../engine/operations.mjs';
 import type { Annotation } from '../types';
-import type { Colors, ContentKind, EditStore, Rect, TextDraft, TextStyle } from './store';
+import type { Colors, ContentKind, EditStore, Rect, Selection, TextDraft, TextStyle } from './store';
 import { fontFields, originalCovers, parseFontName } from './fonts';
 
 // Every change made in Editar goes through here: content edits are written to
@@ -42,7 +42,11 @@ export function paragraphText(item: PageContentItem, items: PageContentItem[]): 
   return { text: joined, align };
 }
 
-async function run(store: EditStore, operation: Operation, retry?: Operation): Promise<boolean> {
+/** The selected items: one, or a group on one page. */
+export const groupItems = (selection: Selection | null) => selection && selection.kind !== 'shape' ? [selection.item, ...selection.others ?? []] : [];
+export const selectItems = (page: number, items: PageContentItem[]): Selection | null => items.length ? { kind: items[0].kind, page, item: items[0], ...(items.length > 1 ? { others: items.slice(1) } : {}) } : null;
+
+async function run(store: EditStore, operation: Operation | Operation[], retry?: Operation): Promise<boolean> {
   const actions = store.actions!;
   store.set({ committing: true });
   try {
@@ -85,13 +89,49 @@ async function removeItem(store: EditStore, page: number, kind: ContentKind, ite
 export async function deleteSelection(store: EditStore) {
   const selection = store.state.selection; if (!selection || store.state.committing) return;
   if (selection.kind === 'shape') { store.actions!.removeShape(selection.id); store.set({ selection: null }); return; }
-  await removeItem(store, selection.page, selection.kind, selection.item);
+  if (!selection.others?.length) { await removeItem(store, selection.page, selection.kind, selection.item); return; }
+  const { page, kind, item } = selection, others = selection.others;
+  store.set({ selection: null, ghost: { page, kind, item, rect: item.rect, removed: true, others: others.map(other => ({ item: other, rect: other.rect })) }, reselect: reselectAt(store, page, kind, [0, 0, 0, 0]) });
+  await run(store, [item, ...others].map(each => each.kind === 'graphic' ? { operation: 'remove-graphic', page, sourceId: each.id, sourceRect: each.rect, rect: each.rect } as Operation : { operation: 'remove-content', page, id: each.id, kind: each.kind as 'text' | 'image', rect: each.rect }));
 }
 
-/** Move (or copy) the selected text or image to `rect`, keeping it exactly as it is. */
+const moveOperation = (page: number, item: PageContentItem, rect: Rect, copy?: boolean): Operation => item.kind === 'image'
+  ? { operation: 'move-image', page, sourceId: item.id, sourceRect: item.rect, rect, copy }
+  : { operation: item.kind === 'text' ? 'move-text' : 'move-graphic', page, sourceId: item.id, sourceRect: item.rect, rect, copy };
+
+/** Move (or copy) several items of one page, the first being the one in front, as one change. */
+export async function moveItems(store: EditStore, page: number, moves: { item: PageContentItem; rect: Rect }[], copy?: boolean) {
+  if (!moves.length || store.state.committing) return;
+  const [first, ...others] = moves, still = (move: typeof first) => move.rect.every((value, i) => Math.abs(value - move.item.rect[i]) < .01);
+  const operations = moves.filter(move => copy || !still(move)).map(move => moveOperation(page, move.item, move.rect, copy));
+  if (!operations.length) return;
+  store.set({ ghost: { page, kind: first.item.kind, item: first.item, rect: first.rect, copy, others }, reselect: { ...reselectAt(store, page, first.item.kind, first.rect), others: others.map(move => ({ kind: move.item.kind, rect: move.rect })) } });
+  await run(store, operations);
+}
+
+/** Shift the selected group (in PDF units). */
+export function moveGroup(store: EditStore, dx: number, dy: number, copy?: boolean) {
+  const selection = store.state.selection; if (!selection || selection.kind === 'shape') return;
+  return moveItems(store, selection.page, groupItems(selection).map(item => ({ item, rect: shift(item.rect, dx, dy) })), copy);
+}
+
+/** Line the selected items up with the edge or centre of the box around them all. */
+export function alignSelection(store: EditStore, edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') {
+  const selection = store.state.selection; if (!selection || selection.kind === 'shape' || !selection.others?.length) return;
+  const group = groupItems(selection), x0 = Math.min(...group.map(item => item.rect[0])), x1 = Math.max(...group.map(item => item.rect[2])), y0 = Math.min(...group.map(item => item.rect[1])), y1 = Math.max(...group.map(item => item.rect[3]));
+  void moveItems(store, selection.page, group.map(item => {
+    const [a, b, c, d] = item.rect, w = c - a, h = d - b;
+    const x = edge === 'left' ? x0 : edge === 'right' ? x1 - w : edge === 'center' ? (x0 + x1 - w) / 2 : a;
+    const y = edge === 'bottom' ? y0 : edge === 'top' ? y1 - h : edge === 'middle' ? (y0 + y1 - h) / 2 : b;
+    return { item, rect: [x, y, x + w, y + h] as Rect };
+  }));
+}
+
+/** Move (or copy) the selected text or image to `rect`, keeping it exactly as it is. A group moves along. */
 export async function moveSelection(store: EditStore, rect: Rect, options: { copy?: boolean; rotation?: 0 | 90 | 180 | 270; opacity?: number } = {}) {
   const selection = store.state.selection; if (!selection || selection.kind === 'shape' || store.state.committing) return;
   const { page, kind, item } = selection;
+  if (selection.others?.length) return moveGroup(store, rect[0] - item.rect[0], rect[1] - item.rect[1], options.copy);
   store.set({ ghost: { page, kind, item, rect, copy: options.copy, rotation: options.rotation, opacity: options.opacity }, reselect: reselectAt(store, page, kind, rect) });
   await run(store, kind !== 'image'
     ? { operation: kind === 'text' ? 'move-text' : 'move-graphic', page, sourceId: item.id, sourceRect: item.rect, rect, copy: options.copy }
@@ -112,8 +152,8 @@ export function duplicateSelection(store: EditStore) {
   void moveSelection(store, shift(selection.item.rect, 12, -12), { copy: true });
 }
 
-// Arrow-key nudges of text or images are written together once the keys pause.
-let nudge: { timer: ReturnType<typeof setTimeout>; rect: Rect } | null = null;
+// Arrow-key nudges of text or images (or a group) are written together once the keys pause.
+let nudge: { timer: ReturnType<typeof setTimeout>; dx: number; dy: number } | null = null;
 export function nudgeSelection(store: EditStore, dx: number, dy: number) {
   const selection = store.state.selection; if (!selection || store.state.committing) return;
   if (selection.kind === 'shape') {
@@ -121,10 +161,10 @@ export function nudgeSelection(store: EditStore, dx: number, dy: number) {
     if (shape) store.actions!.updateShape(shape.id, shapeMove(shape, dx, dy));
     return;
   }
-  const rect = shift(nudge?.rect ?? selection.item.rect, dx, dy);
+  const x = (nudge?.dx ?? 0) + dx, y = (nudge?.dy ?? 0) + dy, rect = shift(selection.item.rect, x, y);
   if (nudge) clearTimeout(nudge.timer);
-  store.set({ ghost: { page: selection.page, kind: selection.kind, item: selection.item, rect } });
-  nudge = { rect, timer: setTimeout(() => { nudge = null; void moveSelection(store, rect); }, 400) };
+  store.set({ ghost: { page: selection.page, kind: selection.kind, item: selection.item, rect, others: selection.others?.map(item => ({ item, rect: shift(item.rect, x, y) })) } });
+  nudge = { dx: x, dy: y, timer: setTimeout(() => { nudge = null; void moveSelection(store, rect); }, 400) };
 }
 
 // Colour picks arrive while the picker is dragged: each shows at once, drawn by

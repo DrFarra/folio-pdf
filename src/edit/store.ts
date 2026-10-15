@@ -13,7 +13,8 @@ export type Rect = Area['rect'];
 export type EditTool = 'select' | 'text' | 'image' | 'rect' | 'ellipse' | 'line' | 'arrow';
 export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'arrow';
 export type ContentKind = 'text' | 'image' | 'graphic';
-export type Selection = { kind: ContentKind; page: number; item: PageContentItem } | { kind: 'shape'; page: number; id: string };
+/** `others`: more items of the same page selected with `item`, changed together with it. */
+export type Selection = { kind: ContentKind; page: number; item: PageContentItem; others?: PageContentItem[] } | { kind: 'shape'; page: number; id: string };
 /** `family` is a fonts.ts family value; 'original' keeps the replaced text's font. */
 export type TextStyle = { family: string; bold: boolean; italic: boolean; size: number; color: string; align: 'left' | 'center' | 'right'; lineHeight: number };
 /** Text being typed on the page; `source` is the paragraph it replaces. A
@@ -21,7 +22,7 @@ export type TextStyle = { family: string; bold: boolean; italic: boolean; size: 
 export type TextDraft = { page: number; rect: Rect; text: string; style: TextStyle; source?: PageContentItem; original?: { text: string; style: TextStyle }; written?: boolean };
 export type ShapeStyle = { color: string; fill: string | null; strokeWidth: number; opacity: number };
 /** What a page shows while its edit is being written: the content at its new place (a drawing in its new `colors`). */
-export type Ghost = { page: number; kind: ContentKind; item: PageContentItem; rect: Rect; rotation?: number; opacity?: number; copy?: boolean; removed?: boolean; colors?: Colors };
+export type Ghost = { page: number; kind: ContentKind; item: PageContentItem; rect: Rect; rotation?: number; opacity?: number; copy?: boolean; removed?: boolean; colors?: Colors; others?: { item: PageContentItem; rect: Rect }[] };
 export type Colors = { fill?: string; stroke?: string };
 /** A picture drawn by the live document, as a URL, and the PDF area it covers. */
 export type Picture = { url: string; rect: Rect };
@@ -41,13 +42,13 @@ export type EditState = {
   shapeStyle: ShapeStyle;
   image: PendingImage | null;
   /** After a commit the page selects the item that best covers this rect. */
-  reselect: { page: number; kind: ContentKind; rect: Rect; from: string } | null;
+  reselect: { page: number; kind: ContentKind; rect: Rect; from: string; others?: { kind: ContentKind; rect: Rect }[] } | null;
   live: Live | null;
 };
 
 export type EditActions = {
-  /** Writes an edit to the PDF; resolves with an error message, or null. */
-  commit: (operation: Operation) => Promise<string | null>;
+  /** Writes an edit (or several to one page, as one) to the PDF; resolves with an error message, or null. */
+  commit: (operation: Operation | Operation[]) => Promise<string | null>;
   shapes: () => Annotation[];
   addShape: (shape: Omit<Annotation, 'id' | 'created' | 'text'>) => string | undefined;
   updateShape: (id: string, patch: Partial<Annotation>) => void;

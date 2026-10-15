@@ -32,6 +32,7 @@ rules that break things when ignored. Read the files named before changing them.
 - Workers: one request each; a worker that errored or handled > 32 MB is discarded (`client.ts`). Long jobs keep alive by posting progress (`split` parts).
 - Content edits are redaction + redraw (`redactPage`, `appendDrawing`), always followed by `verifyRetainedGlyphs`; failures never return a partial PDF. `appendDrawing` must not re-wrap q/Q per edit.
 - Page item ids (`text-paragraph-b3`, `image-2`) are positional: valid only for the revision they were read from (in Editar, for the page's live version: `EditStore.key`).
+- A selection in Editar can hold several items of one page (`Selection.others`); their changes go to the live document as one batch (`editDocumentAll`), each item found again by kind and place because earlier changes renumber the page.
 - Editar's live document undoes with MuPDF's journal. Saving it with `garbage>=2` silently breaks the journal: it is written with `garbage=1`. Anything that reads `doc.bytes` during Editar must `writeEditSession()` first (save, tab switch and close, quitting do).
 - Shapes are Folio annotations (Square/Circle/Line), editable only when created by Folio (`NM` starts with `Folio:`).
 - The PDF's own drawings (boxes, rules) are read from the page's content streams (`pageDrawings`) and edited by rewriting their operators in place (`editDrawing`), so stacking order is kept; paths inside Form XObjects are not listed. Ids `graphic-N` are positional like the others.

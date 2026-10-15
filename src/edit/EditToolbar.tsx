@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, ArrowUpRight, Bold, Check, Circle, Copy, ImagePlus, Italic, LoaderCircle, Minus, MousePointer2, RotateCw, Square, Trash2, Type } from 'lucide-react';
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, ArrowUpRight, Bold, Check, Circle, Copy, ImagePlus, Italic, LoaderCircle, Minus, MousePointer2, RotateCw, Square, Trash2, Type } from 'lucide-react';
 import type { LoadedDocument } from '../types';
 import { useEdit, type EditStore, type EditTool, type TextStyle } from './store';
-import { deleteSelection, duplicateSelection, editText, fadeSelection, recolorSelection, replaceImage, rotateSelection, styleFrom } from './actions';
+import { alignSelection, deleteSelection, duplicateSelection, editText, fadeSelection, recolorSelection, replaceImage, rotateSelection, styleFrom } from './actions';
 import { parseFontName, systemFamilies } from './fonts';
 import { isMac } from '../platform';
 
@@ -14,7 +14,7 @@ const TOOLS: [EditTool, string, string, typeof Type][] = [
   ['rect', 'Rectángulo', 'R', Square], ['ellipse', 'Elipse', 'O', Circle], ['line', 'Línea', 'L', Minus], ['arrow', 'Flecha', 'A', ArrowUpRight],
 ];
 const HINTS: Record<EditTool, string> = {
-  select: 'Haz clic en un texto, imagen, dibujo o forma para editarlo. Doble clic en un texto para escribir. Alt+clic elige lo que está debajo.',
+  select: 'Haz clic en un texto, imagen, dibujo o forma para editarlo. Doble clic en un texto para escribir. Mayús+clic o un recuadro selecciona varios.',
   text: 'Haz clic en un texto para modificarlo, o en un espacio libre para escribir uno nuevo.',
   image: 'Haz clic o arrastra en la página para colocar la imagen.',
   rect: 'Arrastra en la página para dibujar un rectángulo.', ellipse: 'Arrastra en la página para dibujar una elipse.',
@@ -70,8 +70,10 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
     catch (error) { store.actions?.notify((error as Error).message, 'error'); }
   };
 
+  // Several items: what applies to all of them; their own properties are for one at a time.
+  const count = selection && selection.kind !== 'shape' && selection.others?.length ? selection.others.length + 1 : 0;
   // Text: the draft being typed, or the selected paragraph (a change starts typing in it).
-  const textItem = selection?.kind === 'text' ? selection.item : null;
+  const textItem = selection?.kind === 'text' && !count ? selection.item : null;
   const style: TextStyle | null = draft?.style ?? (textItem ? styleFrom(textItem) : null);
   const sourceName = draft?.source?.fontName ?? textItem?.fontName;
   const setStyle = async (patch: Partial<TextStyle>) => {
@@ -101,7 +103,18 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       </span>)}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg" className="sr-only" tabIndex={-1} onChange={event => { void pickImage(event.target.files?.[0]); event.target.value = ''; }} />
     </div>
-    {(style || selection?.kind === 'image' || selection?.kind === 'graphic' || shapeSelected || shapeTool) && <span className="edit-divider" />}
+    {(style || count > 0 || selection?.kind === 'image' || selection?.kind === 'graphic' || shapeSelected || shapeTool) && <span className="edit-divider" />}
+    {count > 0 && <div className="edit-properties" aria-label="Varios elementos">
+      <span className="edit-count">{count} elementos</span>
+      <Toggle label="Alinear a la izquierda" onClick={() => alignSelection(store, 'left')}><AlignStartVertical size={16} /></Toggle>
+      <Toggle label="Centrar en horizontal" onClick={() => alignSelection(store, 'center')}><AlignCenterVertical size={16} /></Toggle>
+      <Toggle label="Alinear a la derecha" onClick={() => alignSelection(store, 'right')}><AlignEndVertical size={16} /></Toggle>
+      <Toggle label="Alinear arriba" onClick={() => alignSelection(store, 'top')}><AlignStartHorizontal size={16} /></Toggle>
+      <Toggle label="Centrar en vertical" onClick={() => alignSelection(store, 'middle')}><AlignCenterHorizontal size={16} /></Toggle>
+      <Toggle label="Alinear abajo" onClick={() => alignSelection(store, 'bottom')}><AlignEndHorizontal size={16} /></Toggle>
+      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
+      <Toggle label="Eliminar (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
+    </div>}
     {style && <div className="edit-properties" aria-label="Formato del texto">
       <select aria-label="Fuente" value={style.family} onChange={event => void setStyle({ family: event.target.value })}>
         {sourceName && <option value="original">Original · {parseFontName(sourceName).family}</option>}
@@ -120,7 +133,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       </select>
       {textItem && <Toggle label="Eliminar texto (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>}
     </div>}
-    {selection?.kind === 'image' && <div className="edit-properties" aria-label="Imagen">
+    {selection?.kind === 'image' && !count && <div className="edit-properties" aria-label="Imagen">
       <button type="button" className="edit-toggle" onMouseDown={keep} onClick={() => replaceInput.current?.click()}>Reemplazar…</button>
       <input ref={replaceInput} type="file" accept="image/png,image/jpeg" className="sr-only" tabIndex={-1} onChange={async event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; try { void replaceImage(store, (await readImage(file)).bytes); } catch (error) { store.actions?.notify((error as Error).message, 'error'); } }} />
       <Toggle label="Girar 90°" onClick={() => rotateSelection(store)}><RotateCw size={16} /></Toggle>
@@ -129,7 +142,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
       <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
     </div>}
-    {selection?.kind === 'graphic' && <div className="edit-properties" aria-label="Dibujo">
+    {selection?.kind === 'graphic' && !count && <div className="edit-properties" aria-label="Dibujo">
       {selection.item.fill !== undefined && <ColorField label="Color de relleno" value={picked.fill ?? selection.item.fill ?? null} onChange={fill => { setPicked(colors => ({ ...colors, fill })); recolorSelection(store, { fill }); }} />}
       {selection.item.stroke !== undefined && <ColorField label="Color del borde" value={picked.stroke ?? selection.item.stroke ?? null} onChange={stroke => { setPicked(colors => ({ ...colors, stroke })); recolorSelection(store, { stroke }); }} />}
       <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
@@ -150,6 +163,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
     <span className={`edit-status${notice ? ' notice' : ''}`} role="status" aria-live="polite">
       {slow ? <><LoaderCircle size={14} className="spin" />Guardando el cambio…</> : notice || (tool === 'image' && pendingImage ? `Haz clic o arrastra en la página para colocar «${pendingImage.name}».`
         : draft ? `Haz clic fuera o ${modifier}Intro para terminar · Esc cancela`
+        : count ? 'Arrastra para moverlos · Mayús+clic añade o quita · Supr los elimina'
         : selection?.kind === 'text' ? 'Arrastra para moverlo · clic otra vez para escribir · Supr lo elimina'
         : selection?.kind === 'image' ? 'Arrastra para moverla · las esquinas cambian el tamaño (Mayús: libre)'
         : selection?.kind === 'graphic' ? 'Arrastra para moverlo · Alt+clic elige lo que está debajo · Supr lo elimina'

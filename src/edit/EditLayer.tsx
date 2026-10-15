@@ -4,7 +4,7 @@ import type { PageContentItem } from '../engine/operations.mjs';
 import type { Annotation, LoadedDocument } from '../types';
 import { errorMessage } from '../errors';
 import { useEdit, type Colors, type ContentKind, type EditStore, type Picture, type Rect, type ShapeKind, type TextDraft } from './store';
-import { commitDraft, defaultStyle, editText, moveSelection, placeImage } from './actions';
+import { commitDraft, defaultStyle, editText, groupItems, moveGroup, moveSelection, placeImage, selectItems } from './actions';
 import { parseFontName } from './fonts';
 import { ShapeSvg } from './ShapeLayer';
 import './edit.css';
@@ -14,7 +14,8 @@ type Box = { x: number; y: number; w: number; h: number };
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end';
 type Target = { kind: ContentKind; item: PageContentItem } | { kind: 'shape'; shape: Annotation };
 type Gesture =
-  | { mode: 'move'; target: Target; start: Point; now: Point; moved: boolean; wasSelected: boolean }
+  | { mode: 'move'; target: Target; start: Point; now: Point; moved: boolean; wasSelected: boolean; group?: PageContentItem[] }
+  | { mode: 'marquee'; start: Point; now: Point; add: boolean }
   | { mode: 'resize'; target: Target; handle: Handle; start: Point; now: Point; free: boolean }
   | { mode: 'create'; tool: 'text' | 'image' | ShapeKind; start: Point; now: Point; free: boolean };
 /** `drawn`: the canvas shows this state of the page, not the previous one. */
@@ -158,22 +159,26 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   // stood in for it stays until the page has drawn the result: no jump back.
   useEffect(() => {
     if (!reselect || !items || reselect.from === key || !drawn) return;
-    const best = items.filter(item => item.kind === reselect.kind && (item.kind !== 'text' || item.level === 'paragraph'))
-      .map(item => ({ item, score: overlap(item.rect, reselect.rect) })).sort((a, b) => b.score - a.score)[0];
-    store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: best && best.score > .2 ? { kind: reselect.kind, page: number, item: best.item } : null });
+    const taken = new Set<string>(), found: PageContentItem[] = [];
+    for (const { kind, rect } of [reselect, ...reselect.others ?? []]) {
+      const best = items.filter(item => item.kind === kind && (item.kind !== 'text' || item.level === 'paragraph') && !taken.has(item.id))
+        .map(item => ({ item, score: overlap(item.rect, rect) })).sort((a, b) => b.score - a.score)[0];
+      if (best && best.score > .2) { taken.add(best.item.id); found.push(best.item); } else if (!found.length) break;
+    }
+    store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: selectItems(number, found) });
   }, [store, items, reselect, number, key, drawn]);
   // What lies under the selected item is drawn ahead of time, to show at its old
   // place while it is dragged, written elsewhere or removed.
-  const [plate, setPlate] = useState<{ id: string; itemRect: Rect; url: string; rect: Rect } | null>(null);
+  const [plates, setPlates] = useState<Record<string, { itemRect: Rect; url: string; rect: Rect }>>({});
   const plateScale = Math.round(viewport.scale * Math.min(window.devicePixelRatio || 1, 2) * 100) / 100;
+  useEffect(() => { setPlates({}); }, [key]);
   useEffect(() => {
-    if (!selection || selection.kind === 'shape') return;
-    let alive = true; const { item } = selection;
-    void store.plate(doc, number, item, plateScale).then(found => { if (alive && found) setPlate({ id: item.id, itemRect: item.rect, ...found }); });
+    let alive = true;
+    for (const item of groupItems(selection)) void store.plate(doc, number, item, plateScale).then(found => { if (alive && found) setPlates(all => ({ ...all, [item.id]: { itemRect: item.rect, ...found } })); });
     return () => { alive = false; };
   }, [store, doc, number, selection, plateScale]);
   useEffect(() => { if (hover && hover.kind !== 'shape' && hover.item.editable) void store.sprite(doc, number, hover.item, plateScale); }, [store, doc, number, hover, plateScale]);
-  const plateFor = (item: PageContentItem) => plate && plate.id === item.id && plate.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null;
+  const plateFor = (item: PageContentItem) => { const plate = plates[item.id]; return plate?.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null; };
   // Where an item was: what lies under it if drawn, else the page's plain colour, else nothing.
   const vacated = (item: PageContentItem) => {
     const under = plateFor(item), from = toBox(item.rect);
@@ -233,20 +238,24 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   const hitTest = (p: Point): Target | null => hitAll(p)[0] ?? null;
   const same = (a: Target | null, b: Target | null) => !!a && !!b && a.kind === b.kind && (a.kind === 'shape' ? a.shape.id === (b as { shape: Annotation }).shape.id : a.item.id === (b as { item: PageContentItem }).item.id);
   const selected: Target | null = !selection ? null : selection.kind === 'shape' ? (shapes.find(shape => shape.id === selection.id) ? { kind: 'shape', shape: shapes.find(shape => shape.id === selection.id)! } : null) : { kind: selection.kind, item: selection.item };
+  const others = selection?.kind !== 'shape' ? selection?.others ?? [] : [];
   const targetBox = (target: Target) => target.kind === 'shape' ? toBox(target.shape.rect) : toBox(target.item.rect);
 
   /** The box (or line ends) a gesture is showing. */
   function preview(current: Gesture): { box: Box; line?: [Point, Point] } {
     const dx = current.now.x - current.start.x, dy = current.now.y - current.start.y;
-    if (current.mode === 'create') {
+    if (current.mode === 'create' || current.mode === 'marquee') {
       const box = { x: Math.min(current.start.x, current.now.x), y: Math.min(current.start.y, current.now.y), w: Math.abs(dx), h: Math.abs(dy) };
+      if (current.mode === 'marquee') return { box };
       if (current.tool === 'image' && pendingImage && !current.free && box.w > 4) { const ratio = pendingImage.height / pendingImage.width; box.h = box.w * ratio; if (current.now.y < current.start.y) box.y = current.start.y - box.h; }
       return { box, ...(current.tool === 'line' || current.tool === 'arrow' ? { line: [current.start, current.now] as [Point, Point] } : {}) };
     }
     const target = current.target, base = targetBox(target);
     if (current.mode === 'move') {
-      // Content stays on its page: beyond the edge it would be cut off.
-      const box = { ...base, x: Math.max(Math.min(0, base.x), Math.min(base.x + dx, Math.max(viewport.width, base.x + base.w) - base.w)), y: Math.max(Math.min(0, base.y), Math.min(base.y + dy, Math.max(viewport.height, base.y + base.h) - base.h)) };
+      // Content stays on its page: beyond the edge it would be cut off. A group stays on it as a whole.
+      const bound = current.group ? current.group.map(item => toBox(item.rect)).reduce((a, b) => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }; }) : base;
+      const sx = Math.max(Math.min(0, bound.x), Math.min(bound.x + dx, Math.max(viewport.width, bound.x + bound.w) - bound.w)) - bound.x, sy = Math.max(Math.min(0, bound.y), Math.min(bound.y + dy, Math.max(viewport.height, bound.y + bound.h) - bound.h)) - bound.y;
+      const box = { ...base, x: base.x + sx, y: base.y + sy };
       if (target.kind === 'shape' && target.shape.line) { const a = toPoint(target.shape.line[0], target.shape.line[1]), b = toPoint(target.shape.line[2], target.shape.line[3]), mx = box.x - base.x, my = box.y - base.y; return { box, line: [{ x: a.x + mx, y: a.y + my }, { x: b.x + mx, y: b.y + my }] }; }
       return { box };
     }
@@ -291,10 +300,22 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       if (id) store.set({ tool: 'select', selection: { kind: 'shape', page: number, id } });
       return;
     }
+    if (current.mode === 'marquee') {
+      // Everything editable wholly inside the box; with Shift, added to what was selected.
+      const area = toRect(box), held = (items ?? []).filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph') && item.rect[0] >= area[0] && item.rect[1] >= area[1] && item.rect[2] <= area[2] && item.rect[3] <= area[3]);
+      const kept = current.add ? groupItems(store.state.selection?.page === number ? store.state.selection : null) : [];
+      store.set({ notice: '', selection: selectItems(number, [...kept, ...held.filter(item => !kept.some(other => other.id === item.id))]) });
+      return;
+    }
     const target = current.target;
     if (current.mode === 'move' && !current.moved) {
-      // A second click on selected text starts typing in it.
-      if (current.wasSelected && target.kind === 'text' && target.item.editable && items) editText(store, number, target.item, items);
+      // A click on one item of a group selects it alone; a second click on selected text starts typing in it.
+      if (current.group && target.kind !== 'shape') store.set({ selection: selectItems(number, [target.item]) });
+      else if (current.wasSelected && target.kind === 'text' && target.item.editable && items) editText(store, number, target.item, items);
+      return;
+    }
+    if (current.mode === 'move' && current.group && target.kind !== 'shape') {
+      const to = toRect(box); void moveGroup(store, to[0] - target.item.rect[0], to[1] - target.item.rect[1]);
       return;
     }
     if (target.kind === 'shape') {
@@ -336,13 +357,24 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       update({ mode: 'create', tool, start: p, now: p, free: event.shiftKey });
       return;
     }
-    if (!target) { store.set({ selection: null, notice: '' }); return; }
+    const add = event.shiftKey || event.ctrlKey || event.metaKey;
+    if (!target) {
+      if (!add) store.set({ selection: null, notice: '' });
+      if (tool === 'select') { event.currentTarget.setPointerCapture(event.pointerId); update({ mode: 'marquee', start: p, now: p, add }); }
+      return;
+    }
     if (target.kind !== 'shape' && !target.item.editable) { store.set({ selection: null, notice: target.item.reason || 'Este contenido no se puede editar.' }); return; }
     if (tool === 'text' && target.kind === 'text' && items) { editText(store, number, target.item, items); return; }
-    const wasSelected = same(target, selected);
-    store.set({ notice: '', selection: target.kind === 'shape' ? { kind: 'shape', page: number, id: target.shape.id } : { kind: target.kind, page: number, item: target.item } });
+    const group = groupItems(selection);
+    if (add && target.kind !== 'shape' && group.length) {
+      const next = group.some(item => item.id === target.item.id) ? group.filter(item => item.id !== target.item.id) : [...group, target.item];
+      store.set({ notice: '', selection: selectItems(number, next) });
+      return;
+    }
+    const wasSelected = same(target, selected), inGroup = target.kind !== 'shape' && group.length > 1 && group.some(item => item.id === target.item.id);
+    if (!inGroup) store.set({ notice: '', selection: target.kind === 'shape' ? { kind: 'shape', page: number, id: target.shape.id } : { kind: target.kind, page: number, item: target.item } });
     event.currentTarget.setPointerCapture(event.pointerId);
-    update({ mode: 'move', target, start: p, now: p, moved: false, wasSelected });
+    update({ mode: 'move', target, start: p, now: p, moved: false, wasSelected, ...(inGroup ? { group } : {}) });
   }
   function pointerMove(event: React.PointerEvent<HTMLDivElement>) {
     event.stopPropagation();
@@ -371,7 +403,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   }
 
   const live = gesture && (gesture.mode !== 'move' || gesture.moved) ? preview(gesture) : null;
-  const liveTarget = gesture && gesture.mode !== 'create' ? gesture.target : null;
+  const liveTarget = gesture && gesture.mode !== 'create' && gesture.mode !== 'marquee' ? gesture.target : null;
   // Reading pixels back from the page is slow, so each spot is sampled once per state of the page.
   const sampled = useRef(new Map<string, string | null>());
   const pageBackground = (box: Box, plain = true) => {
@@ -384,22 +416,33 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
 
   return <div ref={layer} className="edit-layer" style={{ cursor }} data-edit-page={number} data-edit-state={items ? 'ready' : need ? 'loading' : 'idle'}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => update(null)} onPointerLeave={() => { if (!gestureRef.current) setHover(null); }} onDoubleClick={doubleClick} onClick={event => event.stopPropagation()}>
-    {hover && !gesture && !same(hover, selected) && !draft && (() => {
+    {hover && !gesture && !same(hover, selected) && !(hover.kind !== 'shape' && others.some(item => item.id === hover.item.id)) && !draft && (() => {
       const box = targetBox(hover), editable = hover.kind === 'shape' || hover.item.editable;
       return <div className={`edit-hover${editable ? '' : ' locked'}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }} title={editable ? undefined : (hover as { item: PageContentItem }).item.reason} />;
     })()}
-    {ghost && (() => {
-      const from = toBox(ghost.item.rect), to = toBox(ghost.rect);
-      return <>
-        {!ghost.copy && vacated(ghost.item)}
-        {!ghost.removed && <Sprite store={store} doc={doc} number={number} item={ghost.item} scale={plateScale} toBox={toBox} to={to} rotation={ghost.rotation} opacity={ghost.opacity} colors={ghost.colors}
-          fallback={<Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} rotation={ghost.rotation} opacity={ghost.opacity} />} />}
-        {!ghost.removed && <div className={`edit-selection edit-ghost kind-${ghost.kind}`} style={{ left: to.x, top: to.y, width: to.w, height: to.h }}>
-          {(ghost.kind === 'image' ? HANDLES : ghost.kind === 'text' ? ['w', 'e'] : []).map(handle => <span key={handle} className={`edit-handle handle-${handle}`} />)}
+    {ghost && [{ item: ghost.item, rect: ghost.rect, first: true }, ...(ghost.others ?? []).map(other => ({ ...other, first: false }))].map(({ item, rect, first }) => {
+      const from = toBox(item.rect), to = toBox(rect), rotation = first ? ghost.rotation : undefined, opacity = first ? ghost.opacity : undefined;
+      return <span key={item.id} style={{ display: 'contents' }}>
+        {!ghost.copy && vacated(item)}
+        {!ghost.removed && <Sprite store={store} doc={doc} number={number} item={item} scale={plateScale} toBox={toBox} to={to} rotation={rotation} opacity={opacity} colors={first ? ghost.colors : undefined}
+          fallback={<Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} rotation={rotation} opacity={opacity} />} />}
+        {!ghost.removed && <div className={`edit-selection edit-ghost kind-${item.kind}`} style={{ left: to.x, top: to.y, width: to.w, height: to.h }}>
+          {(ghost.others?.length ? [] : item.kind === 'image' ? HANDLES : item.kind === 'text' ? ['w', 'e'] : []).map(handle => <span key={handle} className={`edit-handle handle-${handle}`} />)}
         </div>}
-      </>;
+      </span>;
+    })}
+    {live && liveTarget && liveTarget.kind !== 'shape' && gesture?.mode === 'move' && gesture.group && (() => {
+      const base = targetBox(liveTarget), sx = live.box.x - base.x, sy = live.box.y - base.y;
+      return gesture.group.map(item => {
+        const from = toBox(item.rect), to = { ...from, x: from.x + sx, y: from.y + sy };
+        return <span key={item.id} style={{ display: 'contents' }}>
+          {vacated(item)}
+          <Sprite store={store} doc={doc} number={number} item={item} scale={plateScale} toBox={toBox} to={to} fallback={<Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} />} />
+          <div className="edit-selection dragging" style={{ left: to.x, top: to.y, width: to.w, height: to.h }} />
+        </span>;
+      });
     })()}
-    {live && liveTarget && liveTarget.kind !== 'shape' && (() => {
+    {live && liveTarget && liveTarget.kind !== 'shape' && !(gesture?.mode === 'move' && gesture.group) && (() => {
       const from = targetBox(liveTarget);
       return <>
         {liveTarget.kind === 'image' || gesture?.mode === 'move' ? <>
@@ -414,13 +457,17 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       rect: toRect(live.box), ...(live.line ? { line: [...viewport.convertToPdfPoint(live.line[0].x, live.line[0].y), ...viewport.convertToPdfPoint(live.line[1].x, live.line[1].y)] as Annotation['line'] } : {}),
     } as Annotation]} />}
     {live && gesture?.mode === 'create' && (gesture.tool === 'text' || gesture.tool === 'image') && <div className="edit-selection dragging" style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }} />}
+    {live && gesture?.mode === 'marquee' && <div className="edit-marquee" style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }} />}
     {selected && !draft && !ghost && !(gesture && gesture.mode !== 'move' || gesture?.moved) && (() => {
       const box = targetBox(selected), line = selected.kind === 'shape' && selected.shape.line ? [toPoint(selected.shape.line[0], selected.shape.line[1]), toPoint(selected.shape.line[2], selected.shape.line[3])] : null;
-      const handles: Handle[] = line || selected.kind === 'graphic' ? [] : selected.kind === 'text' ? ['w', 'e'] : HANDLES;
-      return <div className={`edit-selection kind-${selected.kind}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
-        {handles.map(handle => <span key={handle} className={`edit-handle handle-${handle}`} data-handle={handle} />)}
-        {line && line.map((end, i) => <span key={i} className="edit-handle handle-end" data-handle={i ? 'end' : 'start'} style={{ left: end.x - box.x, top: end.y - box.y }} />)}
-      </div>;
+      const handles: Handle[] = line || selected.kind === 'graphic' || others.length ? [] : selected.kind === 'text' ? ['w', 'e'] : HANDLES;
+      return <>
+        <div className={`edit-selection kind-${selected.kind}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
+          {handles.map(handle => <span key={handle} className={`edit-handle handle-${handle}`} data-handle={handle} />)}
+          {line && line.map((end, i) => <span key={i} className="edit-handle handle-end" data-handle={i ? 'end' : 'start'} style={{ left: end.x - box.x, top: end.y - box.y }} />)}
+        </div>
+        {others.map(item => { const other = toBox(item.rect); return <div key={item.id} className={`edit-selection kind-${item.kind}`} style={{ left: other.x, top: other.y, width: other.w, height: other.h }} />; })}
+      </>;
     })()}
     {draft && <DraftBox key={`${draft.source?.id || 'new'}`} store={store} draft={draft} page={page} viewport={viewport} toBox={toBox} toRect={toRect} background={box => pageBackground(box, false) ?? '#fff'} />}
   </div>;

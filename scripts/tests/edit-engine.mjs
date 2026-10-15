@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as mupdf from 'mupdf';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { operateDocument, editDocument, pagePlate, itemSprite, readPage } from '../../src/engine/operations.mjs';
+import { operateDocument, editDocument, editDocumentAll, pagePlate, itemSprite, readPage } from '../../src/engine/operations.mjs';
 import { writeAnnotations, inspectDocument, open } from '../../src/engine/mupdf-engine.mjs';
 
 const results = [];
@@ -219,6 +219,31 @@ await check('sprites-draw-one-item-alone-without-changing-the-document', () => {
   const drawn = pixels(itemSprite(picture, { page: 1, id: item.id, kind: 'image', rect: item.rect, scale: 2 }));
   assert.deepEqual([drawn.at(100, 140), drawn.at(100, 60).at(-1)], [[200, 30, 30, 255], 0], 'Its colour, and transparent where it is');
   return { text: true, drawingAlone: true, recolouredPreview: true, image: true, documentUnchanged: true };
+});
+
+await check('several-items-change-as-one-step', () => {
+  const doc = open(tracemonkey); doc.enableJournal();
+  const write = () => { const buffer = doc.saveToBuffer('garbage=1,compress=yes,encrypt=keep'); try { return new Uint8Array(buffer.asUint8Array()); } finally { buffer.destroy(); } };
+  // Two paragraphs of the left column, one above the other, moved right together.
+  const [a, b] = ['Abstract', 'Dynamic languag'].map(start => readPage(doc, { operation: 'page-content', page: 1 }).items.find(item => item.level === 'paragraph' && item.text.startsWith(start)));
+  const moves = [a, b].map(p => ({ operation: 'move-text', page: 1, sourceId: p.id, sourceRect: p.rect, rect: [p.rect[0] + 10, p.rect[1], p.rect[2] + 10, p.rect[3]] }));
+  doc.beginOperation('batch:1'); editDocumentAll(doc, moves); doc.endOperation();
+  let bytes = write();
+  for (const [p, start] of [[a, 'Abstract'], [b, 'Dynamic languag']]) {
+    // At the same height (re-emitted glyphs give a slightly different line box).
+    const moved = items(bytes, 1).find(item => item.level === 'paragraph' && item.text.startsWith(start) && Math.abs(item.rect[1] + item.rect[3] - p.rect[1] - p.rect[3]) < 6);
+    assert(moved && Math.abs(moved.rect[0] - p.rect[0] - 10) < .5, `${start} moved: ${moved?.rect}`);
+  }
+  // One step undoes both; a batch with one item that is gone changes nothing.
+  doc.undo(); bytes = write();
+  assert.equal(items(bytes, 1).find(item => item.text?.startsWith('Abstract')).rect[0], a.rect[0]);
+  const gone = { ...moves[1], sourceRect: [1, 1, 20, 20] };
+  doc.beginOperation('batch:1');
+  assert.throws(() => editDocumentAll(doc, [moves[0], gone]), /selección cambió/);
+  doc.abandonOperation();
+  assert.equal(items(write(), 1).find(item => item.text?.startsWith('Abstract')).rect[0], a.rect[0], 'Nothing half done');
+  doc.destroy();
+  return { movedTogether: 2, oneUndo: true, atomic: true };
 });
 
 for (const result of results) console.log(JSON.stringify(result));

@@ -1415,8 +1415,12 @@ export default function App() {
     return () => { root?.removeEventListener('touchstart', down); root?.removeEventListener('touchend', end); root?.removeEventListener('touchcancel', cancel); };
   }, [touchLayout, doc, readingMode, tool, mobileAnnotating, library, sidebar, notesOpen, busy, loading, goToPage]);
 
+  // A document the reader opens is shown where it was left; new bytes for the same
+  // reader copy (Editar writing its changes) leave the view where it is.
+  const scrolledPdf = useRef<PDFDocumentProxy | null>(null);
   useEffect(() => {
-    if (!doc) return;
+    if (!doc || scrolledPdf.current === doc.pdf) return;
+    scrolledPdf.current = doc.pdf;
     const restored = restoreScroll.current;
     restoreScroll.current = null;
     const frame = requestAnimationFrame(() => {
@@ -2300,7 +2304,7 @@ export default function App() {
     commit: async operation => {
       try {
         const session = editStore.session;
-        if (!session) { await applyOperation(operation, undefined, { quiet: true }); return null; }
+        if (!session) { if (Array.isArray(operation)) return 'Edita los elementos de uno en uno.'; await applyOperation(operation, undefined, { quiet: true }); return null; }
         const page = await session.edit(operation);
         undoStack.current.push({ annotations: annotationRef.current, session: true, ...(sessionDepth.current === 0 ? { base: true as const } : {}) });
         sessionDepth.current++; trimHistory(undoStack.current); redoStack.current = []; setHistoryTick(v => v + 1);

@@ -52,6 +52,13 @@ await page.addInitScript(() => new MutationObserver(() => { const toast = docume
 
 const pageBox = number => page.locator(`.pdf-page-wrap[data-page-number="${number}"] .page-content`).boundingBox();
 const toScreen = async (number, x, y) => { const box = await pageBox(number), scale = box.width / 595; return { x: box.x + x * scale, y: box.y + (842 - y) * scale }; };
+// Clicks a page point once its Editar layer is ready and the layout has settled (entering Editar shifts the page).
+const pick = async (number, x, y) => {
+  let at = await toScreen(number, x, y); await page.mouse.move(at.x, at.y);
+  await page.locator(`.edit-layer[data-edit-page="${number}"][data-edit-state=ready]`).waitFor();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  at = await toScreen(number, x, y); await page.mouse.move(at.x, at.y); await page.mouse.click(at.x, at.y);
+};
 const settle = async () => {
   await page.waitForFunction(() => !document.querySelector('.edit-toolbar[data-committing=true]') && !document.querySelector('.edit-snapshot') && !document.querySelector('.edit-ghost'));
   await page.waitForFunction(() => [...document.querySelectorAll('.pdf-page-wrap canvas:not(.page-detail)')].every(canvas => canvas.dataset.rendering !== 'true'));
@@ -229,13 +236,53 @@ try {
     return { previewed: true, written: true };
   });
 
+  await check('several-items-move-align-delete-and-undo-together', async () => {
+    const box = page.locator('.pdf-page-wrap[data-page-number="2"]'); await box.scrollIntoViewIfNeeded();
+    const page2 = bytes => operateDocument(bytes, { operation: 'page-content', page: 2, graphics: true }).items, label = bytes => page2(bytes).find(item => item.level === 'paragraph' && item.text.includes('Segunda')), badge = bytes => page2(bytes).find(item => item.kind === 'graphic');
+    const words = await toScreen(2, 100, 765), shape = await toScreen(2, 360, 620);
+    await page.mouse.move(words.x, words.y); await page.locator('.edit-layer[data-edit-page="2"][data-edit-state=ready]').waitFor();
+    // Click, then Shift+click: two items, with what applies to both.
+    await page.mouse.click(words.x, words.y); await page.keyboard.down('Shift'); await page.mouse.click(shape.x, shape.y); await page.keyboard.up('Shift');
+    await page.getByText('2 elementos').waitFor();
+    assert.equal(await page.locator('.edit-layer[data-edit-page="2"] .edit-selection').count(), 2);
+    const before = new Uint8Array(Buffer.from(lastDraft, 'base64')), k = (await pageBox(2)).width / 595;
+    // Dragging one moves both, as one change.
+    await page.mouse.move(shape.x, shape.y); await page.mouse.down(); await page.mouse.move(shape.x + 20, shape.y + 15, { steps: 4 }); await page.mouse.move(shape.x + 40, shape.y + 30, { steps: 4 });
+    await page.locator('.edit-layer[data-edit-page="2"] .edit-sprite').nth(1).waitFor({ timeout: 2000 });
+    await page.mouse.up(); await settle(); await page.getByText('2 elementos').waitFor();
+    let bytes = await exported('edit-group-moved.pdf');
+    for (const pick of [label, badge]) assert(Math.abs(pick(bytes).rect[0] - pick(before).rect[0] - 40 / k) < 2 && Math.abs(pick(bytes).rect[1] - pick(before).rect[1] + 30 / k) < 2, `Moved together: ${pick(before).rect} → ${pick(bytes).rect}`);
+    await page.keyboard.press('Control+z'); await settle();
+    bytes = await exported('edit-group-undone.pdf');
+    for (const pick of [label, badge]) assert(Math.abs(pick(bytes).rect[0] - pick(before).rect[0]) < .5, 'One undo puts both back');
+    // Writing the change and undoing it leave the view on this page.
+    const shown = await pageBox(2); assert(shown.y > -shown.height / 2 && shown.y < 900, `Page 2 still in view: ${shown.y}`);
+    // A box drawn on empty space selects what it holds; aligning lines them up.
+    const from = await toScreen(2, 40, 790), to = await toScreen(2, 450, 580);
+    await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 6 });
+    await page.locator('.edit-marquee').waitFor(); await page.mouse.up();
+    await page.getByText('2 elementos').waitFor();
+    await page.getByRole('button', { name: 'Alinear a la izquierda' }).click(); await settle();
+    bytes = await exported('edit-group-aligned.pdf');
+    assert(Math.abs(label(bytes).rect[0] - badge(bytes).rect[0]) < 1.5, `Aligned left: ${label(bytes).rect[0]} / ${badge(bytes).rect[0]}`);
+    await page.getByText('2 elementos').waitFor();
+    await page.keyboard.press('Delete'); await settle();
+    bytes = await exported('edit-group-deleted.pdf');
+    assert(!label(bytes) && !badge(bytes), 'Both removed');
+    await page.keyboard.press('Control+z'); await settle();
+    bytes = await exported('edit-group-restored.pdf');
+    assert(label(bytes) && badge(bytes), 'Both back');
+    await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
+    return { shiftClick: true, movedAsOne: true, marquee: true, aligned: true, deletedAndRestored: true };
+  });
+
+
   await check('a-page-of-an-older-revision-is-not-reused', async () => {
     // A page shown before an edit and out of view since comes back with the new revision's page.
     const far = page.locator('.pdf-page-wrap[data-page-number="14"]');
     await far.scrollIntoViewIfNeeded(); await far.locator('.page-content canvas').first().waitFor();
     await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
-    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
-    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await pick(1, 100, 765); await page.locator('.edit-selection.kind-text').waitFor();
     await page.keyboard.press('ArrowRight'); await page.waitForTimeout(600); await settle(); await page.waitForTimeout(500);
     await far.scrollIntoViewIfNeeded(); await far.locator('.page-content canvas').first().waitFor(); await settle();
     assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
@@ -251,8 +298,7 @@ try {
     const before = textAt(new Uint8Array(Buffer.from(lastDraft, 'base64')), 'Informe trimestral');
     // Another visit to Editar: one change, then back to reading.
     await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
-    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
-    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await pick(1, 100, 765); await page.locator('.edit-selection.kind-text').waitFor();
     await page.keyboard.press('Shift+ArrowRight'); await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(600); await settle();
     const moved = textAt(await exported('edit-second-visit.pdf'), 'Informe trimestral');
     assert(Math.abs(moved.rect[0] - before.rect[0] - 20) < 1.5, `Moved 20 pt: ${before.rect[0]} → ${moved.rect[0]}`);
@@ -269,8 +315,7 @@ try {
     const x = bytes => textAt(bytes, 'Informe trimestral').rect[0], workers = liveWorkers;
     // The document stayed live after the last visit: Editar opens it again without another copy.
     await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
-    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
-    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await pick(1, 100, 765); await page.locator('.edit-selection.kind-text').waitFor();
     const start = x(new Uint8Array(Buffer.from(lastDraft, 'base64')));
     await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(600); await settle();
     assert(Math.abs(x(await exported('edit-step-1.pdf')) - start - 10) < 1.5, 'First step');
@@ -299,8 +344,7 @@ try {
     }), id);
     const before = await draft(), x = bytes => textAt(new Uint8Array(Buffer.from(bytes, 'base64')), 'Informe trimestral').rect[0];
     await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
-    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
-    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await pick(1, 100, 765); await page.locator('.edit-selection.kind-text').waitFor();
     await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(450); await settle();
     // Another document opens before the change is written (800 ms after it).
     const other = await PDFDocument.create(); other.addPage([595, 842]).drawText('Otro documento', { x: 60, y: 760, size: 16, font: await other.embedFont(StandardFonts.Helvetica) });
@@ -329,4 +373,4 @@ try {
   fs.writeFileSync(path.join(output, 'edit-mode-ui-results.json'), JSON.stringify({ browser: useWebKit ? 'WebKit' : 'Chromium', results }, null, 2));
   await browser.close(); server.kill();
 }
-process.exitCode = results.length === 13 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 14 && results.every(result => result.status === 'passed') ? 0 : 1;

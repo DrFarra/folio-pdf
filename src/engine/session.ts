@@ -46,8 +46,8 @@ export class EditSession {
   plate(page: number, item: { id: string; kind: 'text' | 'image' | 'graphic'; rect: [number, number, number, number] }, scale: number) { return this.call<PagePlate | null>({ type: 'plate', page, ...item, scale }); }
   /** One item drawn alone on transparent pixels, to move on screen; a drawing optionally in other colours. */
   sprite(page: number, item: { id: string; kind: 'text' | 'image' | 'graphic'; rect: [number, number, number, number] }, scale: number, colors?: { fill?: string; stroke?: string }) { return this.call<PagePlate>({ type: 'sprite', page, ...item, scale, ...colors }); }
-  /** Applies a change; resolves with the page it changed. A change that fails leaves the document as it was. */
-  edit(operation: Operation) { return this.call<number>({ type: 'edit', operation }); }
+  /** Applies a change, or several to one page as one; resolves with the page it changed. A change that fails leaves the document as it was. */
+  edit(operation: Operation | Operation[]) { return this.call<number>({ type: 'edit', operation }); }
   /** Resolves with the page changed, or null when there was nothing to undo or redo. */
   undo() { return this.call<number | null>({ type: 'undo' }); }
   redo() { return this.call<number | null>({ type: 'redo' }); }

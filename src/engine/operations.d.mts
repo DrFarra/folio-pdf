@@ -38,6 +38,8 @@ export type Operation =
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
 export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate;
 export const EDITS: Set<string>;
+/** Several Editar changes to one page as one, each item found again by kind and place. */
+export function editDocumentAll(doc: import('mupdf').PDFDocument, operations: Operation[]): void;
 /** Applies one Editar change to an open document, checked in place; the caller discards or undoes it on failure. */
 export function editDocument(doc: import('mupdf').PDFDocument, options: Operation): void;
 export function readPage(doc: import('mupdf').PDFDocument, options: Extract<Operation, { operation: 'page-content' | 'page-image' }>): PageContentInfo | PageImageInfo;

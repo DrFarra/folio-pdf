@@ -38,17 +38,19 @@ Ahora:
 
 ### Medición (antes → después)
 
-`node scripts/tests/edit-perf.mjs` (Chromium, PDF de 600 páginas y 238 MB con un
-escaneo distinto por página; mover un párrafo, desde soltar el ratón hasta que la
-página muestra el resultado y vuelve a estar seleccionado):
+`node scripts/tests/edit-perf.mjs` (Chromium, PDF con un escaneo distinto por
+página y dos líneas de texto encima; mover un párrafo, desde soltar el ratón hasta
+que la página muestra el resultado y vuelve a estar seleccionado). Antes = 0.9.10
+(e874790) con el mismo guion y el mismo PDF:
 
-| | Antes (0.9.10) | Después |
-|---|---|---|
-| Por cambio (mediana de 4) | 896 ms | 35 ms |
-| Salir de Editar | 0 (nada pendiente) | 751 ms, una vez |
+| | 238 MB / 600 págs., antes | después | 475 MB / 1200 págs., antes | después |
+|---|---|---|---|---|
+| Por cambio (mediana de 4) | 865 ms | 35 ms | 1,49 s | 35 ms |
+| Salir de Editar | 0 (nada pendiente) | 616 ms, una vez | 0 | 1,6 s, una vez |
 
-Con 1200 páginas (475 MB), después: 35 ms por cambio (no depende del tamaño) y
-3,2 s al salir (escribir y reabrir el libro entero una vez).
+El coste por cambio ya no depende del tamaño del PDF. (Una primera medición dio
+896 → 35 ms con un PDF de prueba cuyos escaneos declaraban un tamaño distinto del
+real; MuPDF los pintaba negros. El guion se corrigió y se midió otra vez.)
 
 En Node, sobre el mismo PDF: editar en el sitio 10 ms frente a 177 ms del camino
 abrir→editar→guardar; escribir el PDF entero ~50 ms (incremental ~26 ms).
@@ -169,9 +171,9 @@ Medido (`edit-perf.mjs`, Chromium):
 
 | | 238 MB / 600 págs. | 475 MB / 1200 págs. |
 |---|---|---|
-| Entrar en Editar, primera vez | 138 ms | 169 ms |
-| Volver a entrar (documento vivo abierto) | 83 ms | 156 ms |
-| Deshacer el último cambio fuera de Editar | 571 ms | 1,07 s |
+| Entrar en Editar, primera vez | 122 ms | 170 ms |
+| Volver a entrar (documento vivo abierto) | 104 ms | 101 ms |
+| Deshacer el último cambio fuera de Editar | 624 ms | 1,37 s |
 | Por cambio, en Editar | 35 ms | 35 ms |
 
 Antes de la etapa 3, en estos PDFs (más de 200 MB) los cambios de Editar no se
@@ -196,7 +198,33 @@ podían deshacer tras salir; en PDFs menores se deshacían todos de una vez.
 
 - El documento aparcado ocupa otra copia del PDF en memoria mientras el documento
   está abierto y activo.
-- Deshacer fuera de Editar reabre el lector en cada paso (571 ms con 238 MB).
+- Deshacer fuera de Editar reabre el lector en cada paso (624 ms con 238 MB).
+
+## Después de las etapas: selección múltiple
+
+Primer paso hacia «a la altura de los visores profesionales»: en Editar se pueden
+seleccionar varios elementos de una página y cambiarlos juntos, como un solo paso.
+
+- Seleccionar: Mayús (o Ctrl/⌘) + clic añade o quita; arrastrar en un espacio
+  libre dibuja un recuadro que selecciona lo que queda dentro entero (con Mayús, lo
+  añade); Ctrl/⌘+A selecciona todo lo editable de la página.
+- Con varios: arrastrar cualquiera mueve todos (el grupo no sale de la página);
+  flechas, duplicar (Ctrl/⌘+D), eliminar (Supr) y seis alineaciones en la barra
+  (izquierda, centro, derecha, arriba, medio, abajo, respecto a la caja de todos).
+  Cada uno se ve como su sprite y donde estaba, su placa. Un clic sin arrastrar en
+  uno del grupo lo deja solo seleccionado.
+- Motor: `editDocumentAll` aplica la lista como un paso del journal; como un cambio
+  puede renumerar los elementos de la página, cada siguiente se vuelve a buscar por
+  tipo y lugar, y los movimientos van primero los que van delante en su dirección.
+  Si uno falla, no se aplica ninguno.
+- Las formas de Folio (anotaciones) no entran en un grupo.
+
+Medido (`edit-perf.mjs`, 238 MB): mover juntos el párrafo y el escaneo, 71 ms.
+
+Al hacerlo apareció un fallo de la etapa 1, corregido: cada escritura del PDF tras
+una pausa movía la vista a la página con la que se abrió el documento (el efecto
+que restaura el scroll se disparaba con cada nueva copia de los bytes). Ahora solo
+actúa cuando el lector abre otro documento.
 
 ## Pruebas
 
@@ -204,8 +232,13 @@ podían deshacer tras salir; en PDFs menores se deshacían todos de una vez.
   (mismo resultado que el camino de una vez, cambio fallido o abandonado sin efecto,
   deshacer/rehacer del journal tras escribir) y
   `sprites-draw-one-item-alone-without-changing-the-document` (texto, imagen con
-  transparencia, dibujo aislado y recoloreado; el documento no cambia).
+  transparencia, dibujo aislado y recoloreado; el documento no cambia) y
+  `several-items-change-as-one-step` (dos párrafos movidos juntos, un deshacer, y
+  un lote con un elemento ya inexistente que no deja nada a medias).
 - `npm run test:edit-mode:ui` (Chromium; `FOLIO_TEST_BROWSER=webkit` para WebKit):
+  `several-items-move-align-delete-and-undo-together` (Mayús+clic, arrastrar el
+  grupo, deshacer de una vez sin que la vista salte, recuadro, alinear, borrar y
+  restaurar),
   la página se dibuja desde el documento vivo, el arrastre muestra el sprite,
   rehacer, `recolouring-a-drawing-shows-at-once-and-is-written-after`,
   `leaving-opens-the-written-pdf-and-one-undo-returns-to-before`,
@@ -213,4 +246,5 @@ podían deshacer tras salir; en PDFs menores se deshacían todos de una vez.
   `a-change-not-yet-written-survives-opening-another-document` (que también
   comprueba el repliegue de los pasos al cerrar el documento vivo).
 - `node scripts/tests/edit-perf.mjs` tras compilar: tiempos por cambio, hasta el
-  sprite, al salir, al entrar (primera vez y de nuevo) y al deshacer fuera de Editar.
+  sprite, mover dos a la vez, al salir, al entrar (primera vez y de nuevo) y al
+  deshacer fuera de Editar.

@@ -9,7 +9,7 @@ export type SessionRequest =
   | { type: 'content'; page: number }
   | { type: 'plate'; page: number; id: string; kind: 'text' | 'image' | 'graphic'; rect: [number, number, number, number]; scale: number }
   | { type: 'sprite'; page: number; id: string; kind: 'text' | 'image' | 'graphic'; rect: [number, number, number, number]; scale: number; fill?: string; stroke?: string }
-  | { type: 'edit'; operation: Operation }
+  | { type: 'edit'; operation: Operation | Operation[] }
   | { type: 'render'; page: number; scale: number; rotation: number }
   | { type: 'undo' | 'redo' | 'save' };
 
@@ -23,7 +23,7 @@ const stepPage = (name?: string) => Number(name?.split(':').at(-1)) || null;
 self.onmessage = async (event: MessageEvent<{ id: number; request: SessionRequest }>) => {
   const { id, request } = event.data;
   try {
-    const [mupdf, { open, save }, { editDocument, readPage, pagePlate, renderPage, itemSprite }] = await engine;
+    const [mupdf, { open, save }, { editDocument, editDocumentAll, readPage, pagePlate, renderPage, itemSprite }] = await engine;
     if (request.type === 'open') {
       source = request.bytes; doc = open(source, request.password); doc.enableJournal();
       self.postMessage({ id, result: doc.countPages() }); return;
@@ -45,10 +45,10 @@ self.onmessage = async (event: MessageEvent<{ id: number; request: SessionReques
       self.postMessage({ id, result: sprite }, { transfer: [sprite.png.buffer] }); return;
     }
     if (request.type === 'edit') {
-      const page = (request.operation as { page?: number }).page;
-      doc.beginOperation(`${request.operation.operation}:${page}`);
-      // A change that fails its checks is undone at once: the document stays as it was.
-      try { editDocument(doc, request.operation); doc.endOperation(); }
+      const operation = request.operation, several = Array.isArray(operation), page = ((several ? operation[0] : operation) as { page?: number }).page;
+      doc.beginOperation(`${several ? 'batch' : operation.operation}:${page}`);
+      // A change that fails its checks is undone at once (all of a batch): the document stays as it was.
+      try { if (several) editDocumentAll(doc, operation); else editDocument(doc, operation); doc.endOperation(); }
       catch (error) { doc.abandonOperation(); throw error; }
       self.postMessage({ id, result: page }); return;
     }

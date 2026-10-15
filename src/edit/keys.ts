@@ -1,9 +1,10 @@
 import type { EditStore, EditTool } from './store';
-import { deleteSelection, duplicateSelection, editText, nudgeSelection } from './actions';
+import { deleteSelection, duplicateSelection, editText, nudgeSelection, selectItems } from './actions';
 
 // Keys while editing, outside a text field: Supr deletes, Ctrl/⌘+D duplicates,
-// arrows move by a point (Shift, ten), letters pick tools, Intro types in the
-// selected text and Esc deselects, then leaves Editar.
+// Ctrl/⌘+A selects everything editable on the page, arrows move by a point
+// (Shift, ten), letters pick tools, Intro types in the selected text and Esc
+// deselects, then leaves Editar.
 
 const TOOL_KEYS: Record<string, EditTool> = { v: 'select', t: 'text', i: 'image', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow' };
 
@@ -20,7 +21,16 @@ export function editKey(store: EditStore, event: KeyboardEvent, leave: () => voi
     nudgeSelection(store, arrows[key][0] * step, arrows[key][1] * step);
     return true;
   }
-  if (key === 'Enter' && selection?.kind === 'text') {
+  if (command && !event.shiftKey && key.toLowerCase() === 'a' && store.doc) {
+    // The selection's page, or the page most in view.
+    const view = document.querySelector('.reading-area')?.getBoundingClientRect(), shown = (node: Element) => { const box = node.getBoundingClientRect(); return view ? Math.max(0, Math.min(box.bottom, view.bottom) - Math.max(box.top, view.top)) : 0; };
+    const page = selection?.page ?? Number([...document.querySelectorAll('.edit-layer')].sort((a, b) => shown(b) - shown(a))[0]?.getAttribute('data-edit-page'));
+    if (!page) return false;
+    event.preventDefault();
+    void store.items(store.doc, page).then(info => store.set({ notice: '', selection: selectItems(page, info.items.filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph'))) })).catch(() => {});
+    return true;
+  }
+  if (key === 'Enter' && selection?.kind === 'text' && !selection.others?.length) {
     event.preventDefault();
     void store.items(store.doc!, selection.page).then(info => editText(store, selection.page, selection.item, info.items)).catch(() => {});
     return true;

@@ -1218,6 +1218,32 @@ export function readPage(doc, options) {
   finally { page.destroy(); }
 }
 
+/** Several changes to one page as one (a selection of several items). An
+ * earlier change can renumber the page's items, so each later one finds its
+ * item again by kind and place. Moves and copies go front first, along their
+ * shift, so nothing lands where an item still to be changed is. */
+export function editDocumentAll(doc, operations) {
+  if (!Array.isArray(operations) || !operations.length || operations.length > 500) fail('La selección no es válida.');
+  if (operations.some(options => options?.page !== operations[0].page)) fail('Los elementos deben estar en la misma página.');
+  const source = options => options.operation === 'remove-content' ? ['id', 'rect'] : ['sourceId', 'sourceRect'];
+  const ahead = options => {
+    if (!/^move-/.test(options.operation)) return 0;
+    const from = options.sourceRect, to = options.rect, dx = to[0] - from[0], dy = to[1] - from[1];
+    return (from[0] + from[2]) / 2 * dx + (from[1] + from[3]) / 2 * dy;
+  };
+  [...operations].sort((a, b) => ahead(b) - ahead(a)).forEach((options, index) => {
+    if (index) {
+      const [idKey, rectKey] = source(options), id = options[idKey], place = rect(options[rectKey]);
+      const kind = /^text-/.test(id) ? 'text' : /^image-/.test(id) ? 'image' : 'graphic', level = id.startsWith('text-line-') ? 'line' : id.startsWith('text-paragraph-') ? 'paragraph' : undefined;
+      const found = readPage(doc, { operation: 'page-content', page: options.page, graphics: kind === 'graphic' }).items
+        .find(item => item.kind === kind && item.level === level && item.rect.every((value, i) => Math.abs(value - place[i]) <= .02));
+      if (!found) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');
+      options = { ...options, [idKey]: found.id };
+    }
+    editDocument(doc, options);
+  });
+}
+
 /** Paints a page as the reader shows it, on white: contents, then annotations
  * and fields, leaving out the annotations Folio draws itself. `box` is in device
  * space; with `alpha` the pixels are RGBA, still opaque. */

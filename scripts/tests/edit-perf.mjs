@@ -17,11 +17,12 @@ if (!fs.existsSync(textPdf)) throw new Error('Run npm run test:fixtures first (e
 
 // A textbook-like file: a distinct scan per page and two lines of text over it,
 // written directly (no library holds it in memory).
-const pages = Number(process.env.FOLIO_EDIT_PERF_PAGES || 600), book = path.join(output, `book-${pages}.pdf`);
+const pages = Number(process.env.FOLIO_EDIT_PERF_PAGES || 600), book = path.join(output, `book-${pages}-v2.pdf`);
 if (!fs.existsSync(book)) {
   const source = mupdf.Document.openDocument(fs.readFileSync(textPdf), 'application/pdf');
-  const jpegs = Array.from({ length: 8 }, (_, i) => Buffer.from(source.loadPage(30 + i * 40).toPixmap(mupdf.Matrix.scale(2.8, 2.8), mupdf.ColorSpace.DeviceRGB, false).asJPEG(75)));
-  const size = jpegs.map(j => [j.readUInt16BE(j.indexOf(Buffer.from([0xff, 0xc0])) + 7), j.readUInt16BE(j.indexOf(Buffer.from([0xff, 0xc0])) + 5)]);
+  const scans = Array.from({ length: 8 }, (_, i) => source.loadPage(30 + i * 40).toPixmap(mupdf.Matrix.scale(2.8, 2.8), mupdf.ColorSpace.DeviceRGB, false));
+  // The size the PDF declares must be the JPEG's own: MuPDF draws a mismatch black.
+  const jpegs = scans.map(scan => Buffer.from(scan.asJPEG(75))), size = scans.map(scan => [scan.getWidth(), scan.getHeight()]);
   const fd = fs.openSync(book, 'w'), offsets = [];
   let at = 0; const put = data => { const b = Buffer.isBuffer(data) ? data : Buffer.from(data, 'latin1'); fs.writeSync(fd, b); at += b.length; };
   const obj = (n, body, stream) => { offsets[n] = at; put(`${n} 0 obj\n${body}\n`); if (stream) { put('stream\n'); put(stream); put('\nendstream'); } put('\nendobj\n'); };
@@ -76,15 +77,28 @@ try {
     const at = { x: box.x + x * k, y: box.y + y * k };
     await page.mouse.move(at.x, at.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
     await page.mouse.move(at.x + 1, at.y); await page.locator('.edit-hover').waitFor();
-    // The paragraph alone (its sprite) follows the pointer from the start of the drag.
-    await page.mouse.down(); let drag = Date.now(); await page.mouse.move(at.x + 10 * k, at.y + 15 * k, { steps: 4 });
-    await page.locator('.edit-sprite').waitFor(); sprites.push(Date.now() - drag); await page.mouse.move(at.x + 20 * k, at.y + 30 * k, { steps: 4 });
+    // The paragraph alone (its sprite) follows the pointer from the start of the drag
+    // (null in a build without sprites). Moves go right, clear of the scan below.
+    await page.mouse.down(); let drag = Date.now(); await page.mouse.move(at.x + 10 * k, at.y, { steps: 4 });
+    sprites.push(await page.locator('.edit-sprite').waitFor({ timeout: 2000 }).then(() => Date.now() - drag, () => null)); await page.mouse.move(at.x + 20 * k, at.y, { steps: 4 });
     started = Date.now(); await page.mouse.up(); await settle();
     // The moved paragraph is selected again: the change is done.
     await page.locator('.edit-selection.kind-text').waitFor();
-    times.push(Date.now() - started); x += 20; y += 30;
+    times.push(Date.now() - started); x += 20;
     await page.mouse.click(box.x + 20, box.y + 20); await page.locator('.edit-selection').waitFor({ state: 'detached' });
   }
+  // Two items at once (the paragraph and the scan below it), dragged together as one change.
+  const words = { x: box.x + (x + 10) * k, y: box.y + y * k }, scan = { x: box.x + 300 * k, y: box.y + 500 * k };
+  await page.mouse.move(words.x, words.y); await page.locator('.edit-hover').waitFor(); await page.mouse.click(words.x, words.y);
+  await page.keyboard.down('Shift'); await page.mouse.click(scan.x, scan.y); await page.keyboard.up('Shift');
+  // null in a build without selecting several.
+  let groupMs = null;
+  if (await page.getByText('2 elementos').waitFor({ timeout: 3000 }).then(() => true, () => false)) {
+    await page.mouse.move(scan.x, scan.y); await page.mouse.down(); await page.mouse.move(scan.x + 10 * k, scan.y + 10 * k, { steps: 4 });
+    started = Date.now(); await page.mouse.up(); await settle(); await page.getByText('2 elementos').waitFor();
+    groupMs = Date.now() - started;
+  }
+  await page.mouse.click(box.x + 20, box.y + 20);
   // Leaving Editar writes the PDF once and the reader opens it: from Listo (or an
   // undo outside Editar) until the header works again. 0 when nothing was pending.
   const busy = () => page.evaluate(() => new Promise(resolve => {
@@ -104,7 +118,7 @@ try {
   leaving = busy(); await page.keyboard.press('Control+z');
   const undoMs = await leaving; await settle();
   const sorted = [...times].sort((a, b) => a - b);
-  const report = { pages, sizeMB: Math.round(fs.statSync(book).size / 1048576), openMs, moveMs: times, medianMs: sorted[Math.floor(sorted.length / 2)], spriteMs: sprites, leaveMs, enterMs, undoMs, errors };
+  const report = { pages, sizeMB: Math.round(fs.statSync(book).size / 1048576), openMs, moveMs: times, medianMs: sorted[Math.floor(sorted.length / 2)], spriteMs: sprites, groupMs, leaveMs, enterMs, undoMs, errors };
   console.log(JSON.stringify(report));
   fs.writeFileSync(path.join(output, `report-${process.env.FOLIO_EDIT_PERF_LABEL || 'run'}.json`), JSON.stringify(report, null, 2));
 } catch (error) { await browser.contexts()[0]?.pages()[0]?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); throw error; } finally { await browser.close(); server.kill(); }
