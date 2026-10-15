@@ -1,5 +1,5 @@
 {
-  "about": "Open fonts OCR writes rebuilt scans in, chosen to resemble common book and office faces. Carlito, Caladea, Lato, Arvo: Google Fonts (SIL OFL 1.1). TeX Gyre Adventor, Bonum, Pagella, Schola: GUST Font License. EB Garamond: SIL OFL 1.1.",
+  "about": "Open fonts OCR writes rebuilt scans in, chosen to resemble common book and office faces. Carlito, Caladea, Lato, Arvo: Google Fonts (SIL OFL 1.1). TeX Gyre Adventor, Bonum, Pagella, Schola: GUST Font License. EB Garamond: SIL OFL 1.1. Gillius ADF (a Gill Sans-like humanist sans, Arkandis Digital Foundry): GNU GPL 2 or later with the font exception.",
   "faces": [
     {
       "family": "Adventor",
@@ -144,6 +144,30 @@
       "italic": false,
       "file": "EBGaramond-Regular.otf",
       "sha256": "d3e1471a4a0f836716bad35326d3c0ab5caddb74ae5c1917f99f8225abf43a7d"
+    },
+    {
+      "family": "Gillius",
+      "name": "Gillius-Bold",
+      "bold": true,
+      "italic": false,
+      "file": "Gillius-Bold.otf",
+      "sha256": "84eabbabf20845873686c5571b735f8dcc851be6829ef92980381f33d32691a6"
+    },
+    {
+      "family": "Gillius",
+      "name": "Gillius-Italic",
+      "bold": false,
+      "italic": true,
+      "file": "Gillius-Italic.otf",
+      "sha256": "c2c6d8b654599685381f29d869d3e706e82b3b17d39012b6c953f6fc3c147349"
+    },
+    {
+      "family": "Gillius",
+      "name": "Gillius-Regular",
+      "bold": false,
+      "italic": false,
+      "file": "Gillius-Regular.otf",
+      "sha256": "20e4e107fee0d0e2ea06dc3942c4d18d409e0336228d941688e1334681dca7b0"
     },
     {
       "family": "Lato",

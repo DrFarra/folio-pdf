@@ -101,7 +101,7 @@ add_text('Bundled PP-OCRv5 models (PaddleOCR, ONNX by RapidOCR) — pinned sourc
 add_text('PaddleOCR PP-OCRv5 models — Apache-2.0', (root/'public/ocr/ppocr/LICENSE').read_text(encoding='utf-8'))
 index['ocrFonts'] = json.loads((root/'public/fonts/ocr/faces.json').read_text(encoding='utf-8'))
 add_text('Open fonts for rebuilt scans — files and hashes', json.dumps(index['ocrFonts'], indent=2))
-for name in ['OFL-arvo.txt', 'OFL-caladea.txt', 'OFL-carlito.txt', 'OFL-ebgaramond.txt', 'OFL-lato.txt', 'GUST-FONT-LICENSE.txt']:
+for name in ['OFL-arvo.txt', 'OFL-caladea.txt', 'OFL-carlito.txt', 'OFL-ebgaramond.txt', 'OFL-lato.txt', 'GUST-FONT-LICENSE.txt', 'GPL-gillius.txt']:
     add_text(f'Font licence — {name}', (root/'public/fonts/ocr'/name).read_text(encoding='utf-8'))
 nsis_notice=root/'docs/nsis/COPYRIGHT.txt'
 if nsis_notice.exists():

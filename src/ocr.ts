@@ -55,7 +55,7 @@ function straighten(canvas: HTMLCanvasElement) {
 }
 
 type Box = [number, number, number, number];
-type Line = { text: string; box: Box; score: number; words: { text: string; box: Box; score: number }[] };
+type Line = { text: string; box: Box; score: number; words: { text: string; box: Box; score: number; letters?: [number, number][] }[] };
 type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Line[]>; close: () => void };
 /** What OCR leaves: invisible text over the page as it is, or the page rebuilt as real, editable text. */
 export type OcrResult = 'search' | 'edit';
@@ -67,7 +67,7 @@ function engineReader(signal: AbortSignal): Reader {
     read: async canvas => {
       const image = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
       const lines = await engine.recognize({ data: image.data, width: image.width, height: image.height, channels: 4 }, signal);
-      return lines.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words.map(word => ({ text: word.text, box: word.box, score: word.score })) }));
+      return lines.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words.map(word => ({ text: word.text, box: word.box, score: word.score, letters: word.letters })) }));
     },
     close: () => engine.terminate(),
   };
@@ -156,7 +156,7 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           const rebuilt = level.flatMap((line, i) => {
             const style = styles[i]; if (!style) return [];
             const { kept: doubtful, box: lineBox, colors, ...colours } = style, words = line.words.flatMap((word, n) => doubtful.includes(n) ? [] : [{ ...word, color: colors[n] ?? undefined }]);
-            return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale) as Box, ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box, color: word.color })) }];
+            return [{ text: words.map(word => word.text).join(' '), box: lineBox.map(v => v / scale) as Box, ...colours, words: words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) as Box, color: word.color, letters: word.letters?.map(([a, b]) => [a / scale, b / scale] as [number, number]) })) }];
           });
           const kept = [...found.filter(line => !level.includes(line) || !styles[level.indexOf(line)]),
             ...level.flatMap((line, i) => styles[i] ? [{ ...line, words: line.words.filter((_, n) => styles[i]!.kept.includes(n)) }] : [])];

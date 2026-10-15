@@ -108,4 +108,45 @@ await check('an-ocr-layer-is-told-apart-from-printed-text', () => {
   return { ocrLayerHidden: true, printedVisible: true };
 });
 
+// A typeface made from a page's own letters: a "scan" of words in Times, soft and noisy, each
+// letter cut out where Times put it; the font made from them draws an «e» and an «n» as Times does.
+await check('a-typeface-is-made-from-the-scans-letters', async () => {
+  const { averageLetters, fontFromLetters } = await import(pathToFileURL(path.join(root, 'src/engine/scanfont.mjs')).href);
+  const times = new mupdf.Font('Times-Roman'), k = 3, size = 10, em = size * k, words = ['ninguna', 'mente', 'una', 'neumonia', 'menu', 'nene', 'unen', 'mueve'];
+  const w = 1400, h = 60 * words.length, pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, [0, 0, w, h], false); pix.clear(255);
+  const device = new mupdf.DrawDevice(mupdf.Matrix.identity, pix), samples = [];
+  words.forEach((word, row) => {
+    const text = new mupdf.Text(), baseline = 40 + row * 60; let x = 20;
+    for (let copy = 0; copy < 4; copy++) {
+      for (const c of word) {
+        const gid = times.encodeCharacter(c), advance = times.advanceGlyph(gid) * em;
+        text.showGlyph(times, [em, 0, 0, -em, x + copy * .37, baseline], gid, c.codePointAt(0));
+        samples.push({ char: c, word: `${row}:${copy}`, x0: Math.floor(x), x1: Math.ceil(x + advance) + 1, top: baseline - em, bottom: baseline + em * .3, baseline, em, ground: 255, text: 0 });
+        x += advance;
+      }
+      x += em * .6;
+    }
+    device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1);
+  });
+  device.close();
+  // Softened and grainy, as a scan is.
+  const raw = pix.getPixels(), gray = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s += raw[(y + dy) * w + x + dx]; gray[y * w + x] = Math.max(0, Math.min(255, s / 9 + ((x * 7919 + y * 104729) % 23) - 11)); }
+  const bytes = fontFromLetters(averageLetters({ gray, w, h, k }, samples), 'Folio Scan Test');
+  assert(bytes, 'no font made');
+  const made = new mupdf.Font('FolioScanTest', bytes);
+  const shape = (font, c) => { const p = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, [0, 0, 120, 120], false); p.clear(255); const d = new mupdf.DrawDevice(mupdf.Matrix.identity, p), t = new mupdf.Text(); t.showGlyph(font, [100, 0, 0, -100, 10, 90], font.encodeCharacter(c), c.codePointAt(0)); d.fillText(t, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); d.close(); return Array.from(p.getPixels(), v => v < 128); };
+  // Placed by its own spacing, so compared at its best horizontal offset.
+  const overlap = (a, b) => { let best = 0; for (let shift = -12; shift <= 12; shift++) { let both = 0, either = 0; for (let y = 0; y < 120; y++) for (let x = 0; x < 120; x++) { const p = a[y * 120 + x], q = x - shift >= 0 && x - shift < 120 && b[y * 120 + x - shift]; if (p && q) both++; if (p || q) either++; } best = Math.max(best, both / either); } return best; };
+  const likeness = {};
+  for (const [c, other] of [['e', 'o'], ['n', 'u']]) {
+    assert(made.encodeCharacter(c), `no «${c}» made`);
+    const own = overlap(shape(made, c), shape(times, c)), wrong = overlap(shape(made, c), shape(times, other));
+    likeness[c] = +own.toFixed(2);
+    // Its own letter, plainly: much like it, and more like it than like the nearest other letter.
+    assert(own > .65 && own > wrong + .05, `«${c}» made from the scan matches Times «${c}» by ${own.toFixed(2)}, «${other}» by ${wrong.toFixed(2)}`);
+  }
+  return { madeFromScan: true, likeness };
+});
+
 for (const result of results) console.log(JSON.stringify({ ...result, status: 'passed' }));
