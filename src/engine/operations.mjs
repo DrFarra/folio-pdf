@@ -253,28 +253,171 @@ function replaceWithImage(doc, index, bytes, size) {
     object.put('Contents', doc.addStream(`q ${width} 0 0 ${height} 0 0 cm /FolioScan Do Q\n`, {}));
   } finally { image.destroy(); }
 }
-// A line of OCR text written as real text where the scan showed it. `box` is the ink of
-// the line in page points (y down): its size comes from the ink's height (which letters
-// reach above x-height or below the baseline) and from its width, in Helvetica.
-function writeLine(doc, page, line) {
-  if (typeof line?.text !== 'string' || !line.text.trim() || line.text.length > 2000) fail('Línea OCR inválida.');
-  const [x0, top, x1, bottom] = rect(line.box), color = line.color;
-  if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
-  const font = new mupdf.Font(line.bold ? 'Helvetica-Bold' : 'Helvetica');
+// The faces a rebuilt line can take, with how far their capitals reach above the
+// baseline and their descenders below it, in ems.
+const FACES = {
+  'Helvetica': [.718, .207], 'Helvetica-Bold': [.718, .207], 'Helvetica-Oblique': [.718, .207],
+  'Times-Roman': [.662, .217], 'Times-Bold': [.676, .217], 'Times-Italic': [.653, .217],
+};
+
+/** The scan of a rebuilt page, in grey, and its pixels per point. */
+function scanOf(bytes, width) {
+  if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
+  const image = new mupdf.Image(bytes), pix = image.toPixmap();
   try {
-    const glyphs = [...line.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
-    const units = glyphs.reduce((n, { c, gid }) => n + (gid ? font.advanceGlyph(gid) : /\s/.test(c) ? .278 : 0), 0);
+    const w = pix.getWidth(), h = pix.getHeight(), n = pix.getNumberOfComponents(), source = pix.getPixels(), gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) gray[i] = n >= 3 ? (source[i * n] * 299 + source[i * n + 1] * 587 + source[i * n + 2] * 114) / 1000 : source[i * n];
+    return { gray, w, h, k: w / width };
+  } finally { pix.destroy(); image.destroy(); }
+}
+
+/**
+ * Where and how big a line's text goes in a face: as wide as the line, its baseline
+ * from the ink's bottom (lower when letters reach below it).
+ */
+function placeIn(face, font, line) {
+  const [x0, top, x1, bottom] = line.box, [cap, descender] = FACES[face];
+  const glyphs = [...line.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
+  const units = glyphs.reduce((n, { c, gid }) => n + (gid ? font.advanceGlyph(gid) : /\s/.test(c) ? .25 : 0), 0);
+  const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
+  const byHeight = (bottom - top) / ((tall ? cap : cap * .7) + (deep ? descender : 0)), byWidth = units ? (x1 - x0) / units : byHeight;
+  // The width is the surer measure (the ink's height takes in stray marks); the height only bounds it.
+  const size = line.text.trim().length >= 4 ? Math.min(byHeight * 1.4, Math.max(byHeight * .6, byWidth)) : byHeight;
+  return { glyphs, size, baseline: bottom - (deep ? descender * size : 0), x: x0 };
+}
+/** Each word drawn across its own box: compared with the scan letter by letter, without the drift a whole line in another face gathers. */
+function wordsText(font, { size, baseline }, words) {
+  const text = new mupdf.Text();
+  for (const word of words) {
+    const [a, , b] = rect(word.box), glyphs = [...word.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
+    const units = glyphs.reduce((n, { gid }) => n + (gid ? font.advanceGlyph(gid) : 0), 0);
+    if (!units) continue;
+    const stretch = Math.min(1.6, Math.max(.6, (b - a) / (units * size)));
+    let x = a;
+    for (const { c, gid } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += font.advanceGlyph(gid) * size * stretch; } }
+  }
+  return text;
+}
+function textOf(font, { glyphs, size, baseline, x }) {
+  const text = new mupdf.Text();
+  for (const { c, gid } of glyphs) { if (gid) text.showGlyph(font, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += (gid ? font.advanceGlyph(gid) : .25) * size; }
+  return text;
+}
+
+/**
+ * How thick a line's strokes are, in ems: the typical width of the ink crossed
+ * horizontally at full scan resolution, at half contrast (where a blurred edge still
+ * sits), against the size of its letters. Regular faces' stems are near 0.09 em, bold
+ * ones' near 0.14.
+ */
+function strokeWidth(scan, line) {
+  const [x0, top, x1, bottom] = line.box, k = scan.k, size = (x1 - x0) / Math.max(1, line.text.length * .5);
+  const text = line.color.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255, ground = (line.background ?? [1, 1, 1]).reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255;
+  const runs = [], y0 = Math.max(0, Math.floor(top * k)), y1 = Math.min(scan.h, Math.ceil(bottom * k)), a = Math.max(0, Math.floor(x0 * k)), b = Math.min(scan.w, Math.ceil(x1 * k));
+  for (let y = y0; y < y1; y++) { let run = 0; for (let x = a; x <= b; x++) { if (x < b && Math.abs(scan.gray[y * scan.w + x] - ground) > Math.abs(text - ground) / 2) run++; else if (run) { runs.push(run); run = 0; } } }
+  if (runs.length < 20) return 0;
+  runs.sort((p, q) => p - q);
+  return runs[runs.length >> 1] / (size * k);
+}
+
+/**
+ * The face a line was printed in, and where its baseline really is: each face's text is
+ * drawn over the line's place and compared with the scan's ink there, nudged a few
+ * pixels each way; the face whose letters cover the ink best wins.
+ */
+function matchFace(scan, line) {
+  const k = Math.min(scan.k, 2), step = scan.k / k, [x0, top, x1, bottom] = line.box, margin = (bottom - top) * .4;
+  const bx0 = Math.max(0, Math.floor((x0 - margin) * k)), by0 = Math.max(0, Math.floor((top - margin) * k));
+  const bx1 = Math.min(Math.floor(scan.w / step), Math.ceil((x1 + margin) * k)), by1 = Math.min(Math.floor(scan.h / step), Math.ceil((bottom + margin) * k));
+  const cw = bx1 - bx0, ch = by1 - by0;
+  if (cw < 4 || ch < 4) return { Helvetica: { dy: 0, score: 0 } };
+  // The scan's ink here: the cores of its strokes (a scan thickens them, which would favour bold faces).
+  const text = line.color.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255, ground = (line.background ?? [1, 1, 1]).reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255;
+  const ink = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const v = scan.gray[Math.min(scan.h - 1, Math.round((by0 + y) * step)) * scan.w + Math.min(scan.w - 1, Math.round((bx0 + x) * step))]; ink[y * cw + x] = Math.abs(v - ground) > Math.abs(text - ground) * .65 ? 1 : 0; }
+  const scores = { stroke: strokeWidth(scan, line) };
+  for (const face of Object.keys(FACES)) {
+    let best = { dy: 0, score: -1 };
+    const font = new mupdf.Font(face), pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, [bx0, by0, bx1, by1], false), device = new mupdf.DrawDevice(mupdf.Matrix.scale(k, k), pix);
+    let text;
+    try {
+      pix.clear(255); text = line.words?.length ? wordsText(font, placeIn(face, font, line), line.words) : textOf(font, placeIn(face, font, line));
+      device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); device.close();
+      const drawn = pix.getPixels();
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -1; dx <= 1; dx++) {
+        let both = 0, either = 0;
+        for (let y = Math.max(0, -dy); y < Math.min(ch, ch - dy); y++) for (let x = Math.max(0, -dx); x < Math.min(cw, cw - dx); x++) {
+          const a = drawn[y * cw + x] < 128, b = ink[(y + dy) * cw + x + dx] === 1;
+          if (a && b) both++; if (a || b) either++;
+        }
+        const score = either ? both / either : 0;
+        if (score > best.score) best = { dy: dy / k, score };
+      }
+      scores[face] = best;
+    } finally { text?.destroy(); device.destroy(); pix.destroy(); font.destroy(); }
+  }
+  return scores;
+}
+
+/**
+ * The face of each line of a page. Lines of one size and colour are one style and take
+ * one face, the one their scores add up best for, so a font that is neither Helvetica
+ * nor Times stays one face instead of changing from line to line.
+ */
+function pageFaces(scan, lines) {
+  if (!scan) return lines.map(() => ({ face: 'Helvetica', dy: 0 }));
+  const matched = lines.map(line => matchFace(scan, line));
+  const groups = [];
+  lines.forEach((line, i) => {
+    // The letters' size, not the ink's height: a line with no descender is shorter in ink, not smaller.
     const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
-    const byHeight = (bottom - top) / ((tall ? .718 : .523) + (deep ? .207 : 0)), byWidth = units ? (x1 - x0) / units : byHeight;
-    const size = Math.min(byHeight * 1.15, Math.max(byHeight * .85, byWidth)), baseline = bottom - (deep ? .207 * size : 0);
-    if (!(size >= 2 && size <= 400)) return;
+    const height = (line.box[3] - line.box[1]) / ((tall ? .7 : .5) + (deep ? .21 : 0)), { stroke } = matched[i];
+    // One style: one size, colour, weight and family (a bold heading or a sans note beside serif text is another).
+    const serif = (matched[i]['Times-Roman']?.score ?? 0) > (matched[i]['Helvetica']?.score ?? 0);
+    const group = groups.find(g => Math.abs(g.height - height) <= g.height * .15 && Math.hypot(...g.color.map((v, c) => v - line.color[c])) < .15 && Math.abs(g.stroke - stroke) <= g.stroke * .18 && g.serif === serif);
+    if (group) group.members.push(i); else groups.push({ height, color: line.color, stroke, serif, members: [i] });
+  });
+  // Weight by stroke thickness, against the page's own text: how thick a regular stroke
+  // looks depends on the scan's blur, so bold is a style clearly heavier than most of the page.
+  const median = values => { const sorted = values.filter(v => v > 0).sort((p, q) => p - q); return sorted.length ? sorted[sorted.length >> 1] : 0; };
+  const usual = median(lines.flatMap((line, i) => Array(line.text.length).fill(matched[i].stroke)));
+  const faces = [];
+  for (const { members, height } of groups) {
+    const all = {};
+    for (const i of members) for (const [face, best] of Object.entries(matched[i])) if (face !== 'stroke') all[face] = (all[face] ?? 0) + best.score;
+    // Bold needs both signs, in a noisy scan either alone misleads: strokes clearly thicker
+    // than the page's text, and a bold face covering the letters better than the regular one.
+    const heavier = all['Times-Bold'] + all['Helvetica-Bold'] > all['Times-Roman'] + all['Helvetica'];
+    const bold = usual > 0 && heavier && median(members.map(i => matched[i].stroke)) > usual * 1.22, sum = {};
+    for (const [face, score] of Object.entries(all)) if (face.endsWith('Bold') === bold) sum[face] = score;
+    // Serif or sans, upright or italic, by how well each face's letters cover the ink;
+    // italic must win clearly, and more so in small text, where the blur blunts every shape.
+    const margin = face => /Italic|Oblique/.test(face) ? height < 11 ? .05 : .03 : 0;
+    const [face] = Object.entries(sum).sort((a, b) => (b[1] / members.length - margin(b[0])) - (a[1] / members.length - margin(a[0])))[0];
+    for (const i of members) faces[i] = { face, dy: matched[i][face]?.dy ?? 0 };
+  }
+  return faces;
+}
+
+// A line of OCR text written as real text where the scan showed it, in `face`, its
+// baseline nudged by `dy`. `box` is the ink of the line in page points (y down).
+function checkLine(line) {
+  if (typeof line?.text !== 'string' || !line.text.trim() || line.text.length > 2000) fail('Línea OCR inválida.');
+  const color = line.color;
+  if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
+  if (line.background !== undefined && !(Array.isArray(line.background) && line.background.length === 3 && line.background.every(v => v >= 0 && v <= 1))) fail('Color de fondo inválido.');
+  return { ...line, box: rect(line.box) };
+}
+function writeLine(doc, page, line, { face, dy }) {
+  const box = line.box, color = line.color;
+  const font = new mupdf.Font(face);
+  try {
+    const placed = placeIn(face, font, { ...line, box });
+    if (!(placed.size >= 2 && placed.size <= 400)) return;
+    placed.baseline += dy;
     appendDrawing(doc, page, device => {
-      const text = new mupdf.Text();
-      try {
-        let x = x0;
-        for (const { c, gid } of glyphs) { if (gid) text.showGlyph(font, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += (gid ? font.advanceGlyph(gid) : .278) * size; }
-        device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, color, 1);
-      } finally { text.destroy(); }
+      const text = textOf(font, placed);
+      try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, color, 1); } finally { text.destroy(); }
     }, line.text);
   } finally { font.destroy(); }
 }
@@ -1460,13 +1603,21 @@ export function operateDocument(bytes, options, password = '', onPart) {
     if (operation === 'page-content' || operation === 'page-image') return readPage(doc, options);
     if (operation === 'page-plate') return pagePlate(doc, options);
     if (operation === 'text-layers') {
-      // How much of each page's text is painted and how much is invisible (an OCR layer, 3 Tr).
+      // How much of each page's text is painted and how much is invisible (an OCR layer, 3 Tr),
+      // and whether the page is a scan: an image over nearly all of it, with at most a little
+      // text drawn on top (a watermark, a stamp). Text drawn under the scan is covered by it.
       if (!Array.isArray(options.pages) || options.pages.length > 100000) fail('Páginas inválidas.');
       return options.pages.map(number => {
-        const page = doc.loadPage(pageIndex(doc, number)); let visible = 0, hidden = 0;
-        const device = new mupdf.Device({ fillText: () => { visible++; }, strokeText: () => { visible++; }, ignoreText: () => { hidden++; } });
+        const page = doc.loadPage(pageIndex(doc, number)), bounds = page.getBounds(), area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]);
+        let visible = 0, hidden = 0, covered = false, above = 0;
+        const letters = text => { let n = 0; text.walk({ showGlyph: () => { n++; } }); return n; };
+        const painted = text => { visible++; if (covered) above += letters(text); };
+        const device = new mupdf.Device({
+          fillText: painted, strokeText: painted, ignoreText: () => { hidden++; },
+          fillImage: (image, ctm) => { const box = mupdf.Rect.transform([0, 0, 1, 1], ctm); if ((box[2] - box[0]) * (box[3] - box[1]) >= area * .8) { covered = true; above = 0; } },
+        });
         try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); }
-        return { page: number, visible, hidden };
+        return { page: number, visible, hidden, scan: covered && above < 120 };
       });
     }
     if (operation === 'area-info') {
@@ -1645,7 +1796,9 @@ export function operateDocument(bytes, options, password = '', onPart) {
           try {
             // A rebuilt page: its letters were erased from the image and are written again as
             // real text, one Folio text per line, so Editar can change each line.
-            for (const line of result.lines ?? []) writeLine(doc, page, line);
+            const scan = result.lines?.length && result.original ? scanOf(result.original, page.getBounds()[2] - page.getBounds()[0]) : null;
+            const lines = (result.lines ?? []).map(checkLine), faces = pageFaces(scan, lines);
+            lines.forEach((line, i) => writeLine(doc, page, line, faces[i]));
             if (result.words.length) appendDrawing(doc, page, device => {
               const text = new mupdf.Text();
               try {

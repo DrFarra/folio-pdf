@@ -18,11 +18,13 @@ ort.env.wasm.numThreads = 1;
 const results = [];
 const check = async (id, run) => { results.push({ id, ...(await run()) }); };
 
-// The "paper": a regular line, a bold line, and red text on a light blue box.
+// The "paper": sans and serif text, a bold heading, red text on a light blue box.
 const LINES = [
   ['Los antimicrobianos inhiben la pared celular', 'Helvetica', [0, 0, 0], 120],
   ['Reacciones adversas frecuentes', 'Helvetica-Bold', [0, 0, 0], 170],
   ['Dosis ajustada en el anciano', 'Helvetica', [.75, .1, .1], 250],
+  ['La farmacocinética describe la absorción del fármaco', 'Times-Roman', [0, 0, 0], 310],
+  ['y su eliminación por el riñón en los ancianos', 'Times-Roman', [0, 0, 0], 335],
 ];
 const BOX = [50, 222, 545, 262], FILL = [.82, .9, .98];
 function paper() {
@@ -43,17 +45,20 @@ const model = name => new Uint8Array(fs.readFileSync(path.join(root, 'public/ocr
 const engine = await PaddleOcr.create(ort, { det: model('det.onnx'), rec: model('rec-latin.onnx'), cls: model('cls.onnx'), dict: fs.readFileSync(path.join(root, 'public/ocr/ppocr/dict-latin.txt'), 'utf8') });
 const lines = await engine.recognize({ ...image, data: new Uint8ClampedArray(image.data) });
 const pick = words => lines.find(line => line.text.includes(words));
-const styles = rebuildLines(image, lines.map(line => line.box));
+// The scan as it was, for the engine to match each line's face against.
+const scanned = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, image.width, image.height], false); scanned.getPixels().set(image.data);
+const original = scanned.asPNG(); scanned.destroy();
+const styles = rebuildLines(image, lines.map(line => ({ text: line.text, box: line.box, score: line.score })));
 const styleOf = words => styles[lines.findIndex(line => line.text.includes(words))];
 const at = (x, y) => { const i = (Math.round(y * scale) * image.width + Math.round(x * scale)) * 3; return [image.data[i], image.data[i + 1], image.data[i + 2]]; };
 
-await check('each-line-keeps-its-colour-and-weight', () => {
+await check('each-line-keeps-its-colour', () => {
   for (const [line] of LINES) assert(pick(line.split(' ')[0]), `read: ${lines.map(l => l.text).join(' | ')}`);
-  const regular = styleOf('antimicrobianos'), bold = styleOf('Reacciones'), red = styleOf('Dosis');
-  assert(!regular.bold && bold.bold, `weights: ${JSON.stringify([regular, bold])}`);
+  const regular = styleOf('antimicrobianos'), red = styleOf('Dosis');
   assert(red.color[0] > .5 && red.color[1] < .35 && red.color[2] < .35, `red read as ${red.color}`);
   assert(Math.max(...regular.color) < .3, `black read as ${regular.color}`);
-  return { regularBold: regular.bold, boldBold: bold.bold, red: red.color.map(v => +v.toFixed(2)) };
+  assert(red.background[2] > .9 && red.background[0] < .9, `the red line's background read as ${red.background}`);
+  return { red: red.color.map(v => +v.toFixed(2)), onBlue: red.background.map(v => +v.toFixed(2)) };
 });
 
 await check('letters-leave-the-image-and-the-box-stays', () => {
@@ -72,19 +77,26 @@ await check('the-page-comes-back-as-editable-text', () => {
   const pngPix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, image.width, image.height], false); pngPix.getPixels().set(image.data);
   const png = pngPix.asPNG(); pngPix.destroy();
   const scan = new mupdf.PDFDocument(); scan.insertPage(-1, scan.addPage([0, 0, 595, 400], 0, scan.newDictionary(), '')); const bytes = new Uint8Array(scan.saveToBuffer('').asUint8Array());
-  const rebuilt = lines.map((line, i) => ({ text: line.text, box: line.box.map(v => v / scale), ...styles[i] }));
-  const out = operateDocument(bytes, { operation: 'ocr', pages: [{ page: 1, words: [], image: png, size: [595, 400], lines: rebuilt }] });
+  const rebuilt = lines.map((line, i) => ({ text: line.text, box: line.box.map(v => v / scale), ...styles[i], words: line.words.map(word => ({ text: word.text, box: word.box.map(v => v / scale) })) }));
+  const out = operateDocument(bytes, { operation: 'ocr', pages: [{ page: 1, words: [], image: png, size: [595, 400], lines: rebuilt, original }] });
   const text = operateDocument(out, { operation: 'text' })[0];
   for (const [line] of LINES) assert(text.includes(line), `text: ${text}`);
   const items = operateDocument(out, { operation: 'page-content', page: 1 }).items.filter(item => item.kind === 'text' && item.editable);
   assert(items.some(item => item.text?.includes('Reacciones adversas')), JSON.stringify(items.map(i => i.text)));
   const layers = operateDocument(out, { operation: 'text-layers', pages: [1] })[0];
-  assert(layers.visible >= 3 && layers.hidden === 0, JSON.stringify(layers));
+  assert(layers.visible >= LINES.length && layers.hidden === 0, JSON.stringify(layers));
+  // Each line in the face it was printed in: sans, bold sans, serif.
+  const faces = {}; const reader = mupdf.Document.openDocument(out, 'application/pdf'), device = new mupdf.Device({ fillText: text => { let face = '', letters = ''; text.walk({ beginSpan: font => { face = font.getName().split('+').pop(); }, showGlyph: (font, trm, gid, ucs) => { letters += String.fromCodePoint(ucs); } }); faces[letters.trim().slice(0, 12)] = face; } });
+  reader.loadPage(0).run(device, mupdf.Matrix.identity); device.close();
+  const faceOf = start => Object.entries(faces).find(([letters]) => start.startsWith(letters.slice(0, 8)) || letters.startsWith(start.slice(0, 8)))?.[1];
+  assert.equal(faceOf('Los antimicrobianos'), 'Helvetica', JSON.stringify(faces));
+  assert.equal(faceOf('Reacciones adversas'), 'Helvetica-Bold', JSON.stringify(faces));
+  assert.equal(faceOf('La farmacocinética'), 'Times-Roman', JSON.stringify(faces));
   // Where the bold line is, its text sits within a point of the scan's letters.
   const placed = items.find(item => item.text?.includes('Reacciones')), source = pick('Reacciones').box.map(v => v / scale);
   assert(Math.abs(placed.rect[0] - source[0]) < 3, `placed at ${placed.rect} for ${source}`);
   fs.mkdirSync(path.join(root, 'test-results'), { recursive: true }); fs.writeFileSync(path.join(root, 'test-results/ocr-rebuilt.pdf'), out);
-  return { realText: true, editableLines: items.length, visible: layers.visible };
+  return { realText: true, editableLines: items.length, visible: layers.visible, faces };
 });
 
 await check('an-ocr-layer-is-told-apart-from-printed-text', () => {

@@ -167,6 +167,32 @@ function readingOrder<T extends { box: Box }>(items: T[]): T[] {
   return rowOrder(items);
 }
 
+/**
+ * The ink's rows in a box, as one band or, when blank rows split it into lines of
+ * text, one band each: [top, bottom] of the ink, then the box's own rows for that band.
+ */
+function inkBands(image: Pixels, box: Box): number[][] {
+  const whole = inkRows(image, box), { data, width: w, channels: n } = image;
+  const x0 = Math.max(0, Math.floor(box[0])), x1 = Math.min(w, Math.ceil(box[2])), y0 = Math.max(0, Math.floor(whole[0])), y1 = Math.min(image.height, Math.ceil(whole[1]));
+  if (y1 - y0 < 8) return [whole];
+  const light = (x: number, y: number) => { const i = (y * w + x) * n; return n >= 3 ? (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000 : data[i]; };
+  let low = 255, high = 0;
+  for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) { const v = light(x, y); if (v < low) low = v; if (v > high) high = v; }
+  const threshold = (low + high) / 2, least = Math.max(1, (x1 - x0) * .004), rows: boolean[] = [];
+  for (let y = y0; y < y1; y++) { let ink = 0; for (let x = x0; x < x1; x++) if (light(x, y) < threshold) ink++; rows.push(ink >= least); }
+  const bands: [number, number][] = []; let start = -1;
+  rows.forEach((inked, k) => { if (inked && start < 0) start = k; if (!inked && start >= 0) { bands.push([y0 + start, y0 + k]); start = -1; } });
+  if (start >= 0) bands.push([y0 + start, y1]);
+  // Bands too thin to be a line (an accent, a dot, a rule) join the band next to them.
+  const tall = Math.max(...bands.map(([a, b]) => b - a)), lines = bands.filter(([a, b]) => b - a >= tall * .45);
+  if (lines.length < 2) return [whole];
+  return lines.map(([a, b], k) => {
+    const top = k ? (lines[k - 1][1] + a) / 2 : box[1], bottom = k < lines.length - 1 ? (b + lines[k + 1][0]) / 2 : box[3];
+    const own = bands.filter(([c, d]) => c >= top && d <= bottom);
+    return [Math.min(...own.map(o => o[0])), Math.max(...own.map(o => o[1])), top, bottom];
+  });
+}
+
 /** Top and bottom of the ink in a box: where its darker pixels begin and end. */
 function inkRows(image: Pixels, box: Box): [number, number] {
   const { data, width: w, channels: n } = image, x0 = Math.max(0, Math.floor(box[0])), x1 = Math.min(w, Math.ceil(box[2])), y0 = Math.max(0, Math.floor(box[1])), y1 = Math.min(image.height, Math.ceil(box[3]));
@@ -209,7 +235,15 @@ export class PaddleOcr {
     const found = await this.detect(image);
     signal?.throwIfAborted();
     const flipped = await this.orientations(image, found.map(line => line.frame));
-    return found.map(({ frame, box }, i) => ({ frame, box, flipped: flipped[i], ink: level(frame) ? inkRows(image, box) : [box[1], box[3]] }));
+    const lines = found.flatMap(({ frame, box }, i): Found[] => {
+      if (!level(frame)) return [{ frame, box, flipped: flipped[i], ink: [box[1], box[3]] }];
+      // Two close lines the detector took as one are told apart by the blank rows between them.
+      return inkBands(image, box).map(ink => {
+        const band: Box = ink.length > 2 ? [box[0], ink[2], box[2], ink[3]] : box;
+        return { frame: upright(band), box: band, flipped: flipped[i], ink: [ink[0], ink[1]] as [number, number] };
+      });
+    });
+    return lines.length > found.length ? readingOrder(lines) : lines;
   }
 
   /** One line cut out along its frame and scaled to the recogniser's 48 pixels of height. */

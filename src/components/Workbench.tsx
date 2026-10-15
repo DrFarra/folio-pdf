@@ -477,9 +477,9 @@ export default function Workbench(props: Props) {
         const pages = selectedPages();
         let scanned: number[];
         if (ocrResult === 'edit') {
-          // Rebuilding replaces the page: never one with printed text, but an earlier OCR's invisible layer goes with it.
+          // Rebuilding replaces the page: only a scan (an earlier OCR's layer, a watermark go with it), never printed text.
           const layers = await readTextLayers(doc.bytes, pages, doc.password, signal);
-          scanned = layers.filter(layer => !layer.visible).map(layer => layer.page);
+          scanned = layers.filter(layer => layer.scan || !layer.visible).map(layer => layer.page);
           if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto impreso: no es un escaneo.' : 'Las páginas elegidas ya tienen texto impreso: no son escaneos.');
         } else {
           const content = await Promise.all(pages.map(async number => (await (await doc.pdf.getPage(number)).getTextContent()).items));

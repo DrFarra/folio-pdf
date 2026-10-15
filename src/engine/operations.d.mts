@@ -8,10 +8,10 @@ export type PageContentItem = { id: string; kind: 'text' | 'image' | 'graphic'; 
 export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
 /** A PNG of the page around an item, drawn without it, and the PDF area it covers. */
 export type PagePlate = { png: Uint8Array; rect: Area['rect'] };
-/** A line of a rebuilt scan, written as real text: its ink box in page points (y down), colour (0–1) and weight. */
-export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; bold: boolean };
-/** How many text runs a page paints and how many it keeps invisible (an OCR layer). */
-export type TextLayers = { page: number; visible: number; hidden: number };
+/** A line of a rebuilt scan, written as real text: its ink box in page points (y down), and its ink and background colours (0–1). */
+export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; background?: [number, number, number]; words?: { text: string; box: [number, number, number, number] }[] };
+/** How many text runs a page paints and how many it keeps invisible (an OCR layer), and whether it is a scan (an image over nearly all of it, little text on top). */
+export type TextLayers = { page: number; visible: number; hidden: number; scan: boolean };
 /** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
 export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
 export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; fontFamily?: string; fontIndex?: number; originalFont?: boolean; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; sourceId?: string; baselineOffset?: number };
@@ -28,7 +28,7 @@ export type Operation =
   | { operation: 'split'; parts: PageEntry[][] }
   | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
   /** angle turns the page clockwise first (degrees); image replaces it with a flattened scan of size [width, height] points. */
-  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[]; angle?: number; image?: Uint8Array; size?: [number, number]; lines?: RebuiltLine[] }[]; font?: Uint8Array }
+  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[]; angle?: number; image?: Uint8Array; size?: [number, number]; lines?: RebuiltLine[]; original?: Uint8Array }[]; font?: Uint8Array }
   | { operation: 'text-layers'; pages: number[] }
   | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
   | ({ operation: 'add-text' | 'replace-text' } & TextOptions & Area)
