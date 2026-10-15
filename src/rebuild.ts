@@ -17,12 +17,32 @@ export type LineArea = { text: string; box: Box; score: number; words?: { text?:
 export type Style = { box: Box; color: [number, number, number]; ink: [number, number, number]; background: [number, number, number]; band: boolean; kept: number[]; colors: ([number, number, number] | null)[] };
 
 /**
+ * Whether a word is in a word list: the list's words, sorted (by code unit) and one per line, as
+ * public/ocr/words.bin holds them, searched by halves. A word is looked up in lower case,
+ * without the punctuation around it; a hyphenated one by its parts.
+ */
+export function wordChecker(list: string): (word: string) => boolean {
+  const starts: number[] = [0];
+  for (let i = list.indexOf('\n'); i >= 0; i = list.indexOf('\n', i + 1)) starts.push(i + 1);
+  const at = (k: number) => list.slice(starts[k], k + 1 < starts.length ? starts[k + 1] - 1 : list.length);
+  const has = (word: string) => {
+    let low = 0, high = starts.length - 1;
+    while (low <= high) { const mid = (low + high) >> 1, here = at(mid); if (here === word) return true; if (here < word) low = mid + 1; else high = mid - 1; }
+    return false;
+  };
+  return word => {
+    const core = word.normalize('NFC').toLowerCase().replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    return !core || core.split('-').every(part => !part || has(part));
+  };
+}
+
+/**
  * Styles of the lines (null for a line left in the image), with the others' letters
  * erased from `image` in place. A line stays in the image when it was read with doubt,
  * when its background is not plain (a figure's labels, text over a photo), or when its
  * ink does not stand out.
  */
-export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[] {
+export function rebuildLines(image: Pixels, lines: LineArea[], known?: (word: string) => boolean): (Style | null)[] {
   const { data, width: w, height: h, channels: n } = image;
   const rgb = (i: number) => n >= 3 ? [data[i * n], data[i * n + 1], data[i * n + 2]] : [data[i * n], data[i * n], data[i * n]];
   // Read every line before erasing any: lines close together share a margin.
@@ -44,7 +64,10 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     // ellipsis; a figure among letters «l0s», «5o%»; a capital inside a small-letter word
     // «aumEnto») stays as scanned too. Ordinals («3er», «2a») and units are fine.
     const misread = (word: string) => /(?<![-.,;:])([-.,;:])\1(?![-.,;:])/u.test(word) || /\p{Ll}\d+\p{Ll}|^\d+\p{Ll}%$/u.test(word) || /\p{Ll}{2}\p{Lu}\p{Ll}/u.test(word);
-    const kept = words.flatMap((word, n) => word.score < .8 || misread(word.text ?? '') || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
+    // A word of letters not in the word list, read with any doubt, is a misreading more often than
+    // a term the list lacks (a term the recogniser is sure of is rewritten).
+    const unknown = (word: { text?: string; score: number }) => !!known && !!word.text && /^\P{N}*$/u.test(word.text) && /\p{L}{3}/u.test(word.text) && word.score < .995 && !known(word.text);
+    const kept = words.flatMap((word, n) => word.score < .8 || misread(word.text ?? '') || unknown(word) || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
     if (kept.length * 2 > words.length) return null;
     // A box taller than its text reaches into the next line: drawn in to its own letters, the
     // band of rows with most ink and as far above and below as letters reach (ascenders, descenders).
@@ -87,7 +110,11 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     // Letters fill a fraction of their box: when most of it is another colour than around it, the
     // line sits on a band of its own (a table's dark heading row) and that band is its background.
     // Its letters are erased within the band only: around it is another colour, not more ink.
-    const band = far(median(inside)) > 60;
+    // Unless much of it is the colour around: text on paper has paper between and inside its
+    // letters (dense small text, softened, can still have a grey middle).
+    // and a band is one flat colour, most of it close to its middle (blurred text's tones spread out).
+    const middle = median(inside), flat = inside.filter(p => Math.hypot(p[0] - middle[0], p[1] - middle[1], p[2] - middle[2]) < 25).length;
+    const band = far(middle) > 60 && inside.filter(p => far(p) < 40).length < inside.length * .4 && flat > inside.length * .45;
     if (band) {
       // The band's colour without its letters' pixels.
       const rough = median(inside);
@@ -110,12 +137,17 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     // The colour of the strokes' cores, away from their soft edges (what the scan shows, which the
     // letters are matched against), and of their darkest tenth (the ink printed: a scan's blur never
     // lets a thin stroke reach its full colour), which the text is written in.
-    const coreColour = (floor: number) => {
+    const coreColour = (floor: number, like?: number[]) => {
       const sum = [0, 0, 0]; let count = 0;
-      for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * floor) { const p = rgb(y * w + x); sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++; }
-      return sum.map(v => Math.round(v / Math.max(1, count)) / 255) as [number, number, number];
+      for (let y = y0, k = 0; y < y1; y++) for (let x = x0; x < x1; x++, k++) if (distances[k] > strongest * floor) {
+        const p = rgb(y * w + x);
+        // Of the line's own colour only (a black label beside teal words is not the teal's ink).
+        if (like && Math.hypot(p[0] - like[0], p[1] - like[1], p[2] - like[2]) > 70) continue;
+        sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; count++;
+      }
+      return count ? sum.map(v => Math.round(v / count) / 255) as [number, number, number] : null;
     };
-    const color = coreColour(.7), printed = coreColour(.9);
+    const color = coreColour(.7) ?? [0, 0, 0], printed = coreColour(.9, color.map(v => v * 255)) ?? color;
     // A word with a sub- or superscript (O₂, β₁, Ca²⁺) is misread (the small figure as a comma or a
     // dot, or lost): it stays as the scan shows it. Such a figure is a piece of ink about half the
     // small letters' height, starting above the baseline and reaching below it (often to the box's
@@ -293,7 +325,9 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
       if (!samples.length) return null;
       // The lighter quarter (the next lines' letters reach in), of what is not far lighter than the
       // line's own background (a thin white rule, the white beyond a coloured box are not it).
-      const groundTone = toward(ground[0], ground[1], ground[2]), usable = samples.filter(([t]) => t > groundTone - halo).sort((p, q) => p[0] - q[0]);
+      // (On paper, grey or not, lighter is only cleaner paper: all count.)
+      const tinted = Math.max(...ground) - Math.min(...ground) > 25, groundTone = toward(ground[0], ground[1], ground[2]);
+      const usable = samples.filter(([t]) => !tinted || t > groundTone - halo).sort((p, q) => p[0] - q[0]);
       if (usable.length) return usable[usable.length >> 2][1];
       samples.sort((p, q) => p[0] - q[0]);
       return samples[samples.length >> 2][1];
@@ -316,16 +350,23 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
     // At the halo's ink: a thin grey rule never reaches the letters' full ink.
     if (x < cw && tone(x, y) > halo) { run++; continue; }
     // A run reaching the window's side goes on beyond it (a table's rule under a short word).
-    let length = run;
-    if (run && x - run === 0) for (let k = -1; left + k >= 0 && length <= long * 1.5 && tone(k, y) > halo; k--) length++;
-    if (run && x === cw) for (let k = cw; left + k < w && length <= long * 1.5 && tone(k, y) > halo; k++) length++;
+    // (Followed far enough to tell whether it runs past the line's text.)
+    let before = 0, after = 0;
+    const far = long * 1.5 + (y1 - y0) * 2;
+    if (run && x - run === 0) for (let k = -1; left + k >= 0 && before < far && tone(k, y) > halo; k--) before++;
+    if (run && x === cw) for (let k = cw; left + k < w && after < far && tone(k, y) > halo; k++) after++;
+    const length = run + before + after;
     if (length > long) {
       let both = 0, either = 0;
       for (let k = x - run; k < x; k++) { const up = y - gap < 0 || tone(k, y - gap) <= halo, down = y + gap >= ch || tone(k, y + gap) <= halo; if (up && down) both++; if (up || down) either++; }
-      // Clear on one side only, it must run on past the text (a row along soft letters' tops never does).
-      if (both > run * .9 || (either > run * .9 && length > run + (y1 - y0))) for (let yy = Math.max(0, y - 1); yy <= Math.min(ch - 1, y + 1); yy++) rule.fill(1, yy * cw + x - run, yy * cw + x);
+      // A rule runs past the line's own text (a row along soft letters' feet or tops never does).
+      const start = left + x - run - before, end = left + x + after;
+      const beyond = start < x0 - (y1 - y0) || end > x1 + (y1 - y0);
+      // Clear on both sides it is thin wherever it lies; clear on one side only (just over a title's
+      // capitals) it must run past the line's text.
+      if (both > run * .9 || (beyond && either > run * .9)) for (let yy = Math.max(0, y - 1); yy <= Math.min(ch - 1, y + 1); yy++) rule.fill(1, yy * cw + x - run, yy * cw + x);
       // Thick and longer still, it is a band or a filled box beside the line: it stays too.
-      else if (length > long * 1.5) { let solid = 0; for (let k = x - run; k < x; k++) if (tone(k, y) > edge) solid++; if (solid > run * .95) rule.fill(1, y * cw + x - run, y * cw + x); }
+      else if (beyond && length > long * 1.5) { let solid = 0; for (let k = x - run; k < x; k++) if (tone(k, y) > edge) solid++; if (solid > run * .95) rule.fill(1, y * cw + x - run, y * cw + x); }
     }
     run = 0;
   }

@@ -2,7 +2,7 @@ import { assetUrl } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.mjs';
 import { OcrEngine } from './ppocr-client';
-import { cleanPaper, rebuildLines } from './rebuild';
+import { cleanPaper, rebuildLines, wordChecker } from './rebuild';
 import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -55,6 +55,12 @@ function straighten(canvas: HTMLCanvasElement) {
 }
 
 type Box = [number, number, number, number];
+/** The word list a rebuilt page's words are checked against (see scripts/build-wordlist.py). */
+async function loadWords() {
+  const response = await fetch(assetUrl('/ocr/words.bin'));
+  if (!response.ok || !response.body) throw new Error('No se pudo cargar el diccionario del OCR.');
+  return wordChecker(await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text());
+}
 type Line = { text: string; box: Box; score: number; words: { text: string; box: Box; score: number; letters?: [number, number][] }[] };
 type Reader = { read: (canvas: HTMLCanvasElement, page: number) => Promise<Line[]>; close: () => void };
 /** What OCR leaves: invisible text over the page as it is, or the page rebuilt as real, editable text. */
@@ -103,7 +109,7 @@ async function tesseractReader(language: 'spa' | 'eng' | 'spa+eng', progress: (p
 
 export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], language: 'spa' | 'eng' | 'spa+eng',
   progress: (message: string) => void, signal: AbortSignal, straightened = false, outcome: OcrResult = 'search'): Promise<Operation & { operation: 'ocr' }> {
-  let reader = engineReader(signal), fallback = false;
+  let reader = engineReader(signal), fallback = false, known: ((word: string) => boolean) | undefined;
   try {
     const result: Extract<Operation, { operation: 'ocr' }> = { operation: 'ocr', pages: [] };
     for (const number of pages) {
@@ -148,7 +154,8 @@ export async function recognizePdf(pdf: PDFDocumentProxy, pages: number[], langu
           // The page as scanned goes too: the engine matches each line's face against its letters.
           const original = await jpeg();
           const context = read.getContext('2d', { willReadFrequently: true })!, pixels = context.getImageData(0, 0, read.width, read.height);
-          const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })));
+          known ??= await loadWords();
+          const styles = rebuildLines({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 }, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })), known);
           // What stays as image no longer looks scanned: white paper, black ink.
           cleanPaper({ data: pixels.data, width: pixels.width, height: pixels.height, channels: 4 });
           context.putImageData(pixels, 0, 0);

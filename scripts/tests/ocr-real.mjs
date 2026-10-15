@@ -10,7 +10,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as ort from 'onnxruntime-web';
 import { PaddleOcr } from '../../src/ppocr.ts';
-import { cleanPaper, rebuildLines } from '../../src/rebuild.ts';
+import { cleanPaper, rebuildLines, wordChecker } from '../../src/rebuild.ts';
+import zlib from 'node:zlib';
 import { shrink, inkMask, skewAngle, flattenField, marginTilt, flatTilt, flatten } from '../../src/straighten.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -20,6 +21,7 @@ const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engi
 const out = path.join(root, 'test-results/real'); fs.mkdirSync(out, { recursive: true });
 const faces = JSON.parse(fs.readFileSync(path.join(root, 'public/fonts/ocr/faces.json'), 'utf8')).faces.map(({ file, ...face }) => ({ ...face, file: new Uint8Array(fs.readFileSync(path.join(root, 'public/fonts/ocr', file))) }));
 ort.env.wasm.numThreads = 4;
+const known = wordChecker(zlib.gunzipSync(fs.readFileSync(path.join(root, 'public/ocr/words.bin'))).toString('utf8'));
 const model = name => new Uint8Array(fs.readFileSync(path.join(root, 'public/ocr/ppocr', name)));
 const engine = await PaddleOcr.create(ort, { det: model('det.onnx'), rec: model('rec-latin.onnx'), cls: model('cls.onnx'), dict: fs.readFileSync(path.join(root, 'public/ocr/ppocr/dict-latin.txt'), 'utf8') });
 
@@ -67,7 +69,7 @@ for (const spec of process.argv.slice(2)) {
   const heights = lines.map(line => line.box[3] - line.box[1]).sort((a, b) => a - b), usual = heights[heights.length >> 1] || 0;
   const level = lines.filter(line => line.box[3] - line.box[1] <= usual * 2.5), scanned = pixmapOf(straight), original = scanned.asJPEG(90); if (process.env.FOLIO_STRAIGHT) fs.writeFileSync(path.join(out, `${name}-straight.png`), scanned.asPNG()); scanned.destroy();
   let t0 = performance.now();
-  const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })));
+  const styles = rebuildLines(straight, level.map(line => ({ text: line.text, box: line.box, score: line.score, words: line.words })), known);
   times.lines = performance.now() - t0; t0 = performance.now();
   if (process.env.FOLIO_BACKDROP) { const raw = pixmapOf(straight); fs.writeFileSync(path.join(out, `${name}-erased.png`), raw.asPNG()); raw.destroy(); }
   cleanPaper(straight);

@@ -805,7 +805,8 @@ function pageFaces(scan, lines, faces) {
       // far from Helvetica). A heading or a label of a few words has little to tell its family by;
       // running text plenty, so it takes another family than its style's only when that one fits it
       // clearly better.
-      const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home)).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
+      // (A slab only on a page set in one: an even-stroked serif passes for a sans elsewhere.)
+      const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home) && (!SLAB.has(f) || SLAB.has(main))).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
       const sure = kindOf(penned[i], true), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
       const family = against || fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03) ? rival : home, { regular, heavy, slant } = set(family);
       const plain = score(i, regular).score, thick = heavy ? score(i, heavy).score : -2, leaning = slant ? score(i, slant).score : -2;
@@ -825,7 +826,7 @@ function pageFaces(scan, lines, faces) {
       const leans = lines[i].band ? wordStyles[i].filter(style => style?.italic).length * 2 > wordStyles[i].filter(Boolean).length : true;
       // Slant before weight: an italic's strokes run heavier than its roman's at one size, a bold face
       // fits it better than the roman, yet the italic fits it better still.
-      const slanting = slant && leans && (leaning - Math.max(plain, thick) > (apart ? Math.min(margin, .02) : margin) || (tilted[i] && leaning > Math.max(plain, thick) - .02));
+      const slanting = slant && leans && (leaning - Math.max(plain, thick) > (apart ? Math.min(margin, .02) : margin) || (tilted[i] && leaning > Math.max(plain, thick) - .04));
       const face = slanting ? slant : lineBold ? heavy : regular;
       // Within the line, each word keeps its own weight and slant (a bold «Fig. 4-9.», an
       // italic name).
@@ -915,7 +916,7 @@ function pageFaces(scan, lines, faces) {
     const usual = group.map(i => chosen[i].face.family).sort((a, b) => count(b) - count(a))[0];
     const together = family => { const face = regulars.find(other => other.family === family); return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
     // Of the kind the paragraph's strokes show, when they show it plainly.
-    const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => !kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family)));
+    const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => (!SLAB.has(family) || SLAB.has(main)) && (!kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family))));
     const start = allowed.includes(usual) ? usual : allowed[0];
     const best = widest(group, allowed) ?? allowed.reduce((best, family) => together(family) > together(best) ? family : best, start);
     // The best fit, unless the family most lines took fits about as well (then that one).
