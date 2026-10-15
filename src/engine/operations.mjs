@@ -259,6 +259,8 @@ function replaceWithImage(doc, index, bytes, size) {
 // measured: how far its capitals reach above the baseline, and its descenders below.
 // Families with serifs; the rest are sans.
 const SERIF = new Set(['Times', 'Caladea', 'Pagella', 'Schola', 'Bonum', 'EBGaramond', 'Arvo']);
+// Slab serifs draw their strokes as evenly as a sans: stroke contrast cannot set them apart from one.
+const SLAB = new Set(['Arvo']);
 const STANDARD_FACES = [
   ['Helvetica', 'Helvetica', false, false], ['Helvetica', 'Helvetica-Bold', true, false], ['Helvetica', 'Helvetica-Oblique', false, true],
   ['Times', 'Times-Roman', false, false], ['Times', 'Times-Bold', true, false], ['Times', 'Times-Italic', false, true],
@@ -752,7 +754,7 @@ function pageFaces(scan, lines, faces) {
       // running text plenty, so it takes another family than its style's only when that one fits it
       // clearly better.
       const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home)).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
-      const sure = kindOf(penned[i], true), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home);
+      const sure = kindOf(penned[i], true), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
       const family = against || fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03) ? rival : home, { regular, heavy, slant } = set(family);
       const plain = score(i, regular).score, thick = heavy ? score(i, heavy).score : -2, leaning = slant ? score(i, slant).score : -2;
       // Bold: the strokes are clearly heavier than the text around and the bold face fits about as
@@ -848,7 +850,7 @@ function pageFaces(scan, lines, faces) {
     const usual = group.map(i => chosen[i].face.family).sort((a, b) => count(b) - count(a))[0];
     const together = family => { const face = regulars.find(other => other.family === family); return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
     // Of the kind the paragraph's strokes show, when they show it plainly.
-    const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => !kind || SERIF.has(family) === (kind === 'serif'));
+    const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => !kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family)));
     const start = allowed.includes(usual) ? usual : allowed[0];
     const best = widest(group, allowed) ?? allowed.reduce((best, family) => together(family) > together(best) ? family : best, start);
     const family = best !== usual && (!allowed.includes(usual) || together(best) - together(usual) > .008) ? best : count(usual) * 2 > group.length ? usual : null;
@@ -917,7 +919,7 @@ function scanTypefaces(scan, lines, chosen, faces) {
     });
   });
   for (const pool of pools.values()) {
-    if (pool.samples.length < 150 || pool.lines.size < 3) continue;
+    if (pool.samples.length < 80 || pool.lines.size < 3) continue;
     // The face the pool was mostly matched to: it lends the letters the made face lacks.
     pool.face = [...pool.faces].sort((a, b) => b[1] - a[1])[0][0];
     const lend = [pool.face.font, faces.find(face => face.name === 'Times-Roman')?.font].filter(Boolean);
