@@ -9,7 +9,7 @@ export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
 /** A PNG of the page around an item, drawn without it, and the PDF area it covers. */
 export type PagePlate = { png: Uint8Array; rect: Area['rect'] };
 /** A line of a rebuilt scan, written as real text: its ink box in page points (y down), and its ink and background colours (0–1). */
-export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; background?: [number, number, number]; band?: boolean; words?: { text: string; box: [number, number, number, number]; color?: [number, number, number]; letters?: [number, number][] }[] };
+export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; ink?: [number, number, number]; background?: [number, number, number]; band?: boolean; words?: { text: string; box: [number, number, number, number]; color?: [number, number, number]; letters?: [number, number][] }[] };
 /** An open font a rebuilt line can be written in: its family, PostScript-like name, style and file. */
 export type RebuildFace = { family: string; name: string; bold: boolean; italic: boolean; file: Uint8Array };
 /** How many text runs a page paints and how many it keeps invisible (an OCR layer), and whether it is a scan (an image over nearly all of it, little text on top). */

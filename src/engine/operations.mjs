@@ -996,6 +996,7 @@ function checkLine(line) {
   if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
   if (line.background !== undefined && !(Array.isArray(line.background) && line.background.length === 3 && line.background.every(v => v >= 0 && v <= 1))) fail('Color de fondo inválido.');
   if (line.band !== undefined && typeof line.band !== 'boolean') fail('Línea OCR inválida.');
+  if (line.ink !== undefined && !(Array.isArray(line.ink) && line.ink.length === 3 && line.ink.every(v => v >= 0 && v <= 1))) fail('Color de línea inválido.');
   if (line.words !== undefined && !(Array.isArray(line.words) && line.words.length <= 500 && line.words.every(word => typeof word?.text === 'string' && word.text.length <= 500))) fail('Palabras OCR inválidas.');
   const colour = value => Array.isArray(value) && value.length === 3 && value.every(v => v >= 0 && v <= 1) ? value : undefined;
   // Each letter's span across the page (x from, x to), when the recogniser gives them: one per character.
@@ -1010,8 +1011,8 @@ function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 
     // Words at their own places when the line has them, letters up to nearly half narrower or wider
     // than the face's own (a condensed title; across a page, the face's own measure holds them).
     // A run of words in their own colour (a link, a term in red) is drawn in it, runs in reading order.
-    if (!line.words?.length) { const text = textOf(face.font, placed, fallback); try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, line.color, 1); } finally { text.destroy(); } return; }
-    const colourOf = word => word.color ?? line.color, same = (p, q) => p.every((v, c) => v === q[c]);
+    if (!line.words?.length) { const text = textOf(face.font, placed, fallback); try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, line.ink ?? line.color, 1); } finally { text.destroy(); } return; }
+    const colourOf = word => word.color ?? line.ink ?? line.color, same = (p, q) => p.every((v, c) => v === q[c]);
     for (let start = 0; start < line.words.length;) {
       let end = start + 1; while (end < line.words.length && same(colourOf(line.words[end]), colourOf(line.words[start]))) end++;
       const text = wordsText(face.font, placed, line.words.slice(start, end), .35, wordFaces.slice(start, end).map(other => other.font), fallback, width);
