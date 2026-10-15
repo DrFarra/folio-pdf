@@ -130,6 +130,9 @@ export function rebuildLines(image: Pixels, lines: LineArea[], known?: (word: st
       inside = [];
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) inside.push(rgb(y * w + x));
     } else if (around.filter(p => far(p) > 40).length > around.length * .2) return null;
+    // Most of the box one flat colour other than the ring: the line's own paper (the first line of
+    // a tinted box, its ring half the white beyond it). Its letters stand on that.
+    else if (flat > inside.length * .7 && far(middle) > 20) background = middle;
     // Ink: what stands apart from the background, darker or lighter.
     const distances = inside.map(far);
     const sorted = [...distances].sort((a, b) => a - b), strongest = sorted[Math.floor(sorted.length * .98)];
@@ -327,10 +330,10 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
       // line's own background (a thin white rule, the white beyond a coloured box are not it).
       // (On paper, grey or not, lighter is only cleaner paper: all count.)
       const tinted = Math.max(...ground) - Math.min(...ground) > 25, groundTone = toward(ground[0], ground[1], ground[2]);
-      const usable = samples.filter(([t]) => !tinted || t > groundTone - halo).sort((p, q) => p[0] - q[0]);
-      if (usable.length) return usable[usable.length >> 2][1];
-      samples.sort((p, q) => p[0] - q[0]);
-      return samples[samples.length >> 2][1];
+      // Nor another colour altogether (a dark band just above a table row; on a tint, the white
+      // beyond its box).
+      const usable = samples.filter(([t, p]) => (!tinted || t > groundTone - halo) && off(p, ground) < (tinted ? 30 : 70)).sort((p, q) => p[0] - q[0]);
+      return usable.length ? usable[usable.length >> 2][1] : null;
     });
     return columns.map((_, x) => { const near = columns.slice(Math.max(0, x - rows), x + rows + 1).filter(Boolean) as number[][]; return near.length ? [0, 1, 2].map(c => near.map(p => p[c]).sort((a, b) => a - b)[near.length >> 1]) : null; });
   };
@@ -343,9 +346,9 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
   const tone = (x: number, y: number) => { const p = pixel(x, y); return toward(p[0], p[1], p[2]) - base[x]; };
   // A rule (a table's line, an underline) is a thin run of solid ink far longer than any letter:
   // it stays. Solid: at full ink all along (letters' halos and serifs touch, their ink does not);
-  // thin: clear a few pixels above and below along nearly all of it, or on one side when it runs on
+  // thin: clear a few pixels above and below (more on a finer scan, where a rule is thicker) along nearly all of it, or on one side when it runs on
   // past the text (a rule just over a title's capitals); a row through letters is a long run too.
-  const rule = new Uint8Array(cw * ch), long = Math.max(40, (y1 - y0) * 4), gap = 3;
+  const rule = new Uint8Array(cw * ch), long = Math.max(40, (y1 - y0) * 4), gap = Math.max(3, Math.round((y1 - y0) * .15));
   for (let y = 0; y < ch; y++) for (let x = 0, run = 0; x <= cw; x++) {
     // At the halo's ink: a thin grey rule never reaches the letters' full ink.
     if (x < cw && tone(x, y) > halo) { run++; continue; }
@@ -377,15 +380,17 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
   }
   // A stroke can run past the box (a descender, an accent): followed until background, a little way.
   for (let x = 0; x < cw; x++) {
-    if (mask[coreTop * cw + x]) for (let y = coreTop - 1; y >= 0 && tone(x, y) > edge && !rule[y * cw + x]; y--) mask[y * cw + x] = 1;
-    if (mask[(coreBottom - 1) * cw + x]) for (let y = coreBottom; y < ch && tone(x, y) > edge && !rule[y * cw + x]; y++) mask[y * cw + x] = 1;
+    // (Not into another colour beyond the line, a band above or below it: there no stroke runs on.)
+    if (mask[coreTop * cw + x] && aboveLocal[x]) for (let y = coreTop - 1; y >= 0 && tone(x, y) > edge && !rule[y * cw + x]; y--) mask[y * cw + x] = 1;
+    if (mask[(coreBottom - 1) * cw + x] && belowLocal[x]) for (let y = coreBottom; y < ch && tone(x, y) > edge && !rule[y * cw + x]; y++) mask[y * cw + x] = 1;
   }
   // Next to the letters, any pixel off the background either way goes too: a compressed scan
   // rings around dark strokes with paler, greyer pixels, which turn white once the paper is cleaned.
   const across = new Uint8Array(cw * ch), near = new Uint8Array(cw * ch);
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (mask[y * cw + x]) across.fill(1, y * cw + Math.max(0, x - spread), y * cw + Math.min(cw, x + spread + 1));
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (across[y * cw + x]) for (let yy = Math.max(0, y - spread); yy <= Math.min(ch - 1, y + spread); yy++) near[yy * cw + x] = 1;
-  for (let i = 0; i < mask.length; i++) if (!mask[i] && near[i] && !rule[i] && fromGround(pixel(i % cw, Math.floor(i / cw)), i % cw) > 12) mask[i] = 1;
+  // (Within the line's rows only: past them lies the next colour, not its ringing.)
+  for (let i = 0; i < mask.length; i++) { const y = Math.floor(i / cw); if (!mask[i] && near[i] && !rule[i] && y >= coreTop && y < coreBottom && fromGround(pixel(i % cw, y), i % cw) > 12) mask[i] = 1; }
   // Where a kept line's box overlaps this one, each stroke goes with the line it belongs to: a
   // connected piece of ink stays when its middle is nearer the kept line's middle than this one's
   // (a descender of the line above, an accent of the line below), with its halo.
