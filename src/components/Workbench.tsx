@@ -471,22 +471,16 @@ export default function Workbench(props: Props) {
       <label className="check-option"><input type="checkbox" checked={straightenPages} disabled={busy} onChange={e => setStraightenPages(e.target.checked)} />Enderezar páginas torcidas o con líneas curvas</label></div>
       <p className="modal-description">{ocrResult === 'edit'
         ? 'Convierte las páginas escaneadas en texto real: borra las letras de la imagen, conserva el fondo y los recuadros, y escribe el texto con su tamaño, color y negrita para cambiarlo en Editar. Rehace también el OCR que otro programa dejó; las páginas con texto impreso se omiten.'
-        : 'Permite buscar y copiar el texto de las páginas escaneadas; las que ya tienen texto se omiten.'} Funciona sin conexión. Revisa el resultado: puede contener errores.</p>
+        : 'Permite buscar y copiar el texto de las páginas escaneadas. Si ya tenían el OCR de otro programa, lo reemplaza; las páginas con texto impreso se omiten.'} Funciona sin conexión. Revisa el resultado: puede contener errores.</p>
       {straightenPages && <p className="modal-description">Una página torcida se gira sin perder calidad. Si sus líneas se curvan, como cerca del lomo de un libro o en una foto, se reemplaza por una imagen aplanada.</p>}
       <div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void task(async signal => {
         const pages = selectedPages();
-        let scanned: number[];
-        if (ocrResult === 'edit') {
-          // Rebuilding replaces the page: only a scan (an earlier OCR's layer, a watermark go with it), never printed text.
-          const layers = await readTextLayers(doc.bytes, pages, doc.password, signal);
-          scanned = layers.filter(layer => layer.scan || !layer.visible).map(layer => layer.page);
-          if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto impreso: no es un escaneo.' : 'Las páginas elegidas ya tienen texto impreso: no son escaneos.');
-        } else {
-          const content = await Promise.all(pages.map(async number => (await (await doc.pdf.getPage(number)).getTextContent()).items));
-          // Recognizing a page that already has text would duplicate it.
-          scanned = pages.filter((_, index) => !content[index].some(item => 'str' in item && item.str.trim()));
-          if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto seleccionable.' : 'Las páginas elegidas ya tienen texto seleccionable.');
-        }
+        // A scan, or a page whose only text is an earlier OCR's invisible layer, never printed text.
+        // Rebuilding replaces the page (that layer and a watermark go with it); searchable text
+        // replaces that layer (the engine removes it first, and keeps painted text).
+        const layers = await readTextLayers(doc.bytes, pages, doc.password, signal);
+        const scanned = layers.filter(layer => layer.scan || !layer.visible).map(layer => layer.page);
+        if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto impreso: no es un escaneo.' : 'Las páginas elegidas ya tienen texto impreso: no son escaneos.');
         await onApply(await recognizePdf(doc.pdf, scanned, language, setProgress, signal, straightenPages, ocrResult), signal);
       })}>Reconocer texto</button></div>
     </>}

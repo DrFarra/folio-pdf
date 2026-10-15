@@ -1869,6 +1869,23 @@ function pageImagePixels(image, info, jpeg) {
   } finally { rgb?.destroy(); decoded?.destroy(); }
 }
 
+// The invisible text on a page (an OCR layer, 3 Tr) removed where it lies, word by word: the
+// image, drawings and any text that is painted (a watermark over a scan) stay.
+function removeHiddenText(doc, page) {
+  const boxes = [];
+  const device = new mupdf.Device({ ignoreText: (text, ctm) => {
+    let run = null;
+    text.walk({ showGlyph: (font, trm) => {
+      const box = mupdf.Rect.transform([0, -.25, .6, 1], mupdf.Matrix.concat(trm, ctm)), size = box[3] - box[1];
+      // Glyphs of one word or line, side by side on one baseline, make one box.
+      if (run && Math.abs(box[3] - run[3]) < size * .3 && box[0] - run[2] < size * 1.5 && box[2] > run[0]) { run[0] = Math.min(run[0], box[0]); run[1] = Math.min(run[1], box[1]); run[2] = Math.max(run[2], box[2]); run[3] = Math.max(run[3], box[3]); }
+      else { if (run) boxes.push(run); run = [...box]; }
+    } });
+    if (run) boxes.push(run);
+  } });
+  try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); }
+  if (boxes.length) redactPage(doc, page, boxes, { black: false, images: false, graphics: false, text: true, preserveAnnotations: true });
+}
 function redactPage(doc, page, boxes, { black = true, images = true, imageMethod = mupdf.PDFPage.REDACT_IMAGE_PIXELS, graphics = true, text = true, preserveAnnotations = false } = {}) {
   // Editing content must retain comments, links, widgets and pending redaction marks.
   const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
@@ -2466,6 +2483,8 @@ export function operateDocument(bytes, options, password = '', onPart) {
               const chosen = pageFaces(scan, lines, faces);
               lines.forEach((line, i) => writeLine(doc, page, line, chosen[i]));
             }
+            // An earlier OCR's invisible words go first (read wrong, they would sit under the new ones).
+            if (result.words.length) removeHiddenText(doc, page);
             if (result.words.length) appendDrawing(doc, page, device => {
               const text = new mupdf.Text();
               try {

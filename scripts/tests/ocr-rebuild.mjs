@@ -124,4 +124,22 @@ await check('an-ocr-layer-is-told-apart-from-printed-text', () => {
   return { ocrLayerHidden: true, printedVisible: true };
 });
 
+await check('searchable-text-replaces-an-earlier-ocr-layer', () => {
+  // A scan with another program's OCR (misread) and a watermark painted over it.
+  const scan = new mupdf.PDFDocument(); scan.insertPage(-1, scan.addPage([0, 0, 595, 400], 0, scan.newDictionary(), ''));
+  const font = new mupdf.Font('Helvetica');
+  const watermarked = operateDocument(new Uint8Array(scan.saveToBuffer('').asUint8Array()), { operation: 'ocr', pages: [{ page: 1, words: [{ text: 'Rnal1eido', rect: [60, 300, 140, 316] }] }] });
+  const withMark = mupdf.Document.openDocument(watermarked, 'application/pdf'); const markPage = withMark.loadPage(0);
+  const stamp = withMark.addStream('BT /Helv 10 Tf 1 0 0 1 400 20 Tm (booksmedicos.org) Tj ET\n', {});
+  const resources = markPage.getObject().get('Resources'), fonts = resources.get('Font').isNull() ? withMark.newDictionary() : resources.get('Font');
+  fonts.put('Helv', withMark.addSimpleFont(font)); resources.put('Font', fonts);
+  const contents = markPage.getObject().get('Contents'), list = withMark.newArray(); if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i)); else list.push(contents); list.push(stamp); markPage.getObject().put('Contents', list);
+  const before = new Uint8Array(withMark.saveToBuffer('').asUint8Array()); markPage.destroy(); withMark.destroy(); font.destroy();
+  const again = operateDocument(before, { operation: 'ocr', pages: [{ page: 1, words: [{ text: 'Bienleído', rect: [60, 300, 140, 316] }] }] });
+  const text = mupdf.Document.openDocument(again, 'application/pdf').loadPage(0).toStructuredText().asText();
+  assert(text.includes('Bienleído') && !text.includes('Rnal1eido'), text);
+  assert(text.includes('booksmedicos.org'), `watermark lost: ${text}`);
+  return { replaced: true, watermarkKept: true };
+});
+
 for (const result of results) console.log(JSON.stringify({ ...result, status: 'passed' }));
