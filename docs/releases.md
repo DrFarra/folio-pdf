@@ -10,6 +10,14 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.11
+
+- Editar va mucho más rápido: cada cambio tarda unos 35 ms aunque el PDF tenga cientos de MB (antes, cerca de 1 s en un PDF de 238 MB y 1,5 s en uno de 475 MB). El PDF ya no se reabre en cada cambio, solo una vez al salir de Editar.
+- Al arrastrar, girar o recolorear, se mueve solo el elemento, con su transparencia, y el nuevo color se ve al instante.
+- Se pueden seleccionar varios elementos (Mayús+clic, un recuadro o Ctrl+A) y moverlos, duplicarlos, borrarlos o alinearlos juntos, en un solo paso de deshacer.
+- Los cambios hechos en Editar se deshacen uno a uno también después de salir, y volver a Editar es inmediato.
+- Corregido: la vista ya no salta a otra página un momento después de cada cambio.
+
 ## Cambios en 0.9.10
 
 - Editar se siente sólido: al soltar un elemento queda en su sitio, seleccionado, y donde estaba se ve al instante lo que hay debajo; ya no aparecen cuadros vacíos, copias duplicadas ni saltos, y la barra no se atenúa en cada cambio.
