@@ -974,7 +974,8 @@ function pageFaces(scan, lines, faces) {
     const heavy = peers.filter(j => chosen[j].face.bold).length * 2 > peers.length, italic = chosen[i].face.italic;
     const face = faces.find(other => other.family === family && other.bold === heavy && other.italic === italic && !(heavy && italic)) ?? chosen[i].face;
     const sizes = peers.map(j => chosen[j].size || measure(j, chosen[j].face)).sort((p, q) => p - q);
-    chosen[i] = { ...chosen[i], face, words: chosen[i].words.map(() => face), size: sizes[sizes.length >> 1] };
+    // (Words in a style of their own keep it: a bold «Fig. 4-9.», an italic title after it.)
+    chosen[i] = { ...chosen[i], face, words: chosen[i].words.map(other => other === chosen[i].face ? face : other), size: sizes[sizes.length >> 1] };
   });
   // Light letters on a dark band fit heavier, rounder faces than they are (the light spreads into
   // the dark): a band takes the family of the text around it (the rest of its table).
