@@ -365,8 +365,10 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     // A word far wider than its letters would be is set with space between its letters
     // («C A P Í T U L O», mostly capitals): the letters keep their shape and the word its width.
     const spaced = own > (width || 1) * (/[a-zà-ÿ]/.test(word.text) ? 1.4 : 1.15) && shown.length >= 3;
-    const stretch = spaced ? width || 1 : Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
-    const tracking = spaced ? Math.max(0, ((b - a) - units * size * stretch) / (shown.length - 1)) : 0;
+    // Up to .06 em between letters (a reader of the text takes each letter for a word past about
+    // a tenth: «C A P Í T U L O», unfound by search); the letters widen for the rest.
+    const tracking = spaced ? Math.min(size * .06, Math.max(0, ((b - a) - units * size * (width || 1)) / (shown.length - 1))) : 0;
+    const stretch = spaced ? Math.min(1 + reach, Math.max(width || 1, ((b - a) - tracking * (shown.length - 1)) / (units * size))) : Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
     let x = a;
     for (const { c, gid, font } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += font.advanceGlyph(gid) * size * stretch + tracking; } }
     x -= tracking;
