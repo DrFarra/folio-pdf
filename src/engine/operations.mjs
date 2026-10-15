@@ -866,7 +866,9 @@ function pageFaces(scan, lines, faces) {
         const style = wordStyles[i][n];
         if (!style) return null;
         const thin = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.stroke < upright * .92 && style.lean >= 3 && fits(n, slanted, face) > .01;
-        const bold = face.bold || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
+        // A line set bold that plainly holds two weights (a bold phrase, then text): its light words are regular.
+        const light = face.bold && widest > 1.25 && style.stroke < cut && plainWord(n);
+        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || thin || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
         return sibling(bold, italic);
       });
       // A short word («de», «y», too short to measure) takes the style around it: of the words on
@@ -875,7 +877,8 @@ function pageFaces(scan, lines, faces) {
       const words = measuredFaces.map((known, n) => {
         if (known) return known;
         const before = measuredFaces.slice(0, n).reverse().find(Boolean), after = measuredFaces.slice(n + 1).find(Boolean);
-        return before ? (!after || after === before ? before : face) : after ?? face;
+        // Between two styles, the one after (a word opens the phrase it belongs to: «… azoemia. La nefritis»).
+        return before ? (!after || after === before ? before : after) : after ?? face;
       });
       // A line most of whose words are italic is an italic line (sized and placed in the italic).
       const italicWords = words.filter(other => other.italic).length;
@@ -915,7 +918,8 @@ function pageFaces(scan, lines, faces) {
     const kind = kindOf(median(group.map(i => penned[i])), false), allowed = kinds.filter(family => !kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family)));
     const start = allowed.includes(usual) ? usual : allowed[0];
     const best = widest(group, allowed) ?? allowed.reduce((best, family) => together(family) > together(best) ? family : best, start);
-    const family = best !== usual && (!allowed.includes(usual) || together(best) - together(usual) > .008) ? best : count(usual) * 2 > group.length ? usual : null;
+    // The best fit, unless the family most lines took fits about as well (then that one).
+    const family = allowed.includes(usual) && together(best) - together(usual) <= .008 ? usual : best;
     if (family) for (const i of group) if (chosen[i].face.family !== family) swapTo(i, family);
   }
   // A book sets its text in one serif family and one sans (a slide in one typeface): the page's
@@ -973,6 +977,13 @@ function pageFaces(scan, lines, faces) {
     }));
     const width = median(widths);
     if (widths.length >= 5) members.forEach(i => { chosen[i].width = width; });
+  }
+  // One ink for the lines of a face and colour: each line's printed ink, read from its darkest
+  // strokes, wobbles with the scan's blur (one line would print darker than the next).
+  const inked = lines.flatMap((line, i) => chosen[i] && line.ink ? [i] : []);
+  for (const i of inked) {
+    const close = inked.filter(j => chosen[j].face === chosen[i].face && Math.hypot(...lines[j].color.map((v, c) => v - lines[i].color[c])) < .12);
+    if (close.length >= 3) lines[i].ink = [0, 1, 2].map(c => close.map(j => lines[j].ink[c]).sort((p, q) => p - q)[close.length >> 1]);
   }
   // An italic line set among roman lines of its family takes their size (italics are measured on
   // fewer, slanted letters): the roman line just above or below, when within a sixth of it.

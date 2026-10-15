@@ -46,6 +46,20 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     const misread = (word: string) => /(?<![-.,;:])([-.,;:])\1(?![-.,;:])/u.test(word) || /\p{Ll}\d+\p{Ll}|^\d+\p{Ll}%$/u.test(word) || /\p{Ll}{2}\p{Lu}\p{Ll}/u.test(word);
     const kept = words.flatMap((word, n) => word.score < .8 || misread(word.text ?? '') || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
     if (kept.length * 2 > words.length) return null;
+    // A box taller than its text reaches into the next line: drawn in to its own letters, the
+    // band of rows with most ink and as far above and below as letters reach (ascenders, descenders).
+    if ((x1 - x0) / (text.length * .5) < (y1 - y0) * .45) {
+      const tone = (i: number) => { const p = rgb(i); return (p[0] * 299 + p[1] * 587 + p[2] * 114) / 1000; };
+      const values: number[] = []; for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 4) values.push(tone(y * w + x));
+      values.sort((p, q) => p - q);
+      const paper = values[values.length >> 1], dark = (y: number) => { let n = 0; for (let x = x0; x < x1; x += 2) if (Math.abs(tone(y * w + x) - paper) > 60) n++; return n; };
+      const rows = Array.from({ length: y1 - y0 }, (_, k) => dark(y0 + k)), peak = Math.max(...rows), at = rows.indexOf(peak);
+      let a = at, b = at; while (a > 0 && rows[a - 1] >= peak * .3) a--; while (b < rows.length - 1 && rows[b + 1] >= peak * .3) b++;
+      const band = b - a + 1, top = Math.max(y0, y0 + a - Math.round(band * .45)), bottom = Math.min(y1, y0 + b + 1 + Math.round(band * .4));
+      // Only a box with one line in it: another band about as full is a second line, read into this one.
+      const other = Math.max(0, ...rows.filter((_, k) => k < a - band * .6 || k > b + band * .6));
+      if (other < peak * .7 && bottom - top >= 4 && bottom - top < y1 - y0) [y0, y1] = [top, bottom];
+    }
     // Text about as wide as its letters make it at this height: a box holding several close
     // lines (too narrow for its height), or text read only in part (too wide), stays as it is.
     const em = (x1 - x0) / (text.length * .5);
@@ -104,16 +118,22 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     const color = coreColour(.7), printed = coreColour(.9);
     // A word with a sub- or superscript (O₂, β₁, Ca²⁺) is misread (the small figure as a comma or a
     // dot, or lost): it stays as the scan shows it. Such a figure is a piece of ink about half the
-    // small letters' height, below the baseline (often at the box's foot) or above them; a piece
-    // reaching the box's top is the line above's.
+    // small letters' height, starting above the baseline and reaching below it (often to the box's
+    // foot), or above the letters; a piece reaching the box's top is the line above's, one wholly
+    // below the baseline the next line's.
     {
       const isInk = (x: number, y: number) => far(rgb(y * w + x)) > strongest * .5, rows = Array.from({ length: y1 - y0 }, (_, r) => { let c = 0; for (let x = x0; x < x1; x++) if (isInk(x, y0 + r)) c++; return c; });
       const peak = Math.max(...rows), at = rows.indexOf(peak);
       let xTop = at, base = at; while (xTop > 0 && rows[xTop - 1] >= peak * .45) xTop--; while (base < rows.length && rows[base] >= peak * .45) base++;
       const xh = base - xTop;
-      if (xh >= 4) words.forEach(({ box: [a, , b] }, n) => {
-        if (kept.includes(n)) return;
-        const wa = Math.max(x0, Math.floor(a)), wb = Math.min(x1, Math.ceil(b)), cw = wb - wa, ch = y1 - y0;
+      // The OCR's trace of a script it misread: a comma or point between a letter and more of the
+      // word («β,-», «O.,», «DA,/»), or figures against letters («Ca2+», «β2»); a comma at a word's
+      // end is only a comma.
+      const scripted = (word: string) => /\p{L}[,.][-–/,.)\p{L}]/u.test(word) || /\p{L}\d|\d\p{L}/u.test(word);
+      if (xh >= 4) words.forEach(({ box: [a, , b], text: said }, n) => {
+        if (kept.includes(n) || !scripted(said ?? '')) return;
+        // Not the word's own final comma or point.
+        const wa = Math.max(x0, Math.floor(a)), wb = Math.min(x1, Math.ceil(b - (/[,;.]$/u.test(said ?? '') ? xh * .45 : 0))), cw = wb - wa, ch = y1 - y0;
         if (cw < 2) return;
         const seen = new Uint8Array(cw * ch);
         for (let start = 0; start < seen.length; start++) {
@@ -126,7 +146,7 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
           }
           const height = bottom - top;
           if (edge || height < xh * .45 || height > xh * 1.05) continue;
-          const below = bottom > base + xh * .2 && top > xTop + xh * .3, above = bottom < base - xh * .45 && top < xTop - xh * .1;
+          const below = bottom > base + xh * .2 && top > xTop + xh * .3 && top < base, above = bottom < base - xh * .45 && top < xTop - xh * .1;
           if (below || above) { kept.push(n); return; }
         }
       });
@@ -271,12 +291,12 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
       const samples: [number, number[]][] = [];
       for (let k = 1; k <= rows; k++) { const y = above ? coreTop - k : coreBottom - 1 + k; if (y < 0 || y >= ch) continue; const p = pixel(x, y); samples.push([toward(p[0], p[1], p[2]), p]); }
       if (!samples.length) return null;
-      // Not ink (no darker than the line's ground by its halo): of those, the middle (a thin light
-      // rule across them is not the background); with no such pixel, the farthest from the ink.
-      const groundTone = toward(ground[0], ground[1], ground[2]), clear = samples.filter(([t]) => t - groundTone < halo).sort((p, q) => p[0] - q[0]);
-      if (clear.length) return clear[clear.length >> 1][1];
+      // The lighter quarter (the next lines' letters reach in), of what is not far lighter than the
+      // line's own background (a thin white rule, the white beyond a coloured box are not it).
+      const groundTone = toward(ground[0], ground[1], ground[2]), usable = samples.filter(([t]) => t > groundTone - halo).sort((p, q) => p[0] - q[0]);
+      if (usable.length) return usable[usable.length >> 2][1];
       samples.sort((p, q) => p[0] - q[0]);
-      return samples[0][1];
+      return samples[samples.length >> 2][1];
     });
     return columns.map((_, x) => { const near = columns.slice(Math.max(0, x - rows), x + rows + 1).filter(Boolean) as number[][]; return near.length ? [0, 1, 2].map(c => near.map(p => p[c]).sort((a, b) => a - b)[near.length >> 1]) : null; });
   };
@@ -289,8 +309,8 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
   const tone = (x: number, y: number) => { const p = pixel(x, y); return toward(p[0], p[1], p[2]) - base[x]; };
   // A rule (a table's line, an underline) is a thin run of solid ink far longer than any letter:
   // it stays. Solid: at full ink all along (letters' halos and serifs touch, their ink does not);
-  // thin: clear a few pixels above or below along nearly all of it (a rule may run just over a
-  // title's capitals; a row through bold letters is a long run too, with ink all around it).
+  // thin: clear a few pixels above and below along nearly all of it, or on one side when it runs on
+  // past the text (a rule just over a title's capitals); a row through letters is a long run too.
   const rule = new Uint8Array(cw * ch), long = Math.max(40, (y1 - y0) * 4), gap = 3;
   for (let y = 0; y < ch; y++) for (let x = 0, run = 0; x <= cw; x++) {
     // At the halo's ink: a thin grey rule never reaches the letters' full ink.
@@ -300,9 +320,10 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
     if (run && x - run === 0) for (let k = -1; left + k >= 0 && length <= long * 1.5 && tone(k, y) > halo; k--) length++;
     if (run && x === cw) for (let k = cw; left + k < w && length <= long * 1.5 && tone(k, y) > halo; k++) length++;
     if (length > long) {
-      let thin = 0;
-      for (let k = x - run; k < x; k++) if ((y - gap < 0 || tone(k, y - gap) <= halo) || (y + gap >= ch || tone(k, y + gap) <= halo)) thin++;
-      if (thin > run * .9) for (let yy = Math.max(0, y - 1); yy <= Math.min(ch - 1, y + 1); yy++) rule.fill(1, yy * cw + x - run, yy * cw + x);
+      let both = 0, either = 0;
+      for (let k = x - run; k < x; k++) { const up = y - gap < 0 || tone(k, y - gap) <= halo, down = y + gap >= ch || tone(k, y + gap) <= halo; if (up && down) both++; if (up || down) either++; }
+      // Clear on one side only, it must run on past the text (a row along soft letters' tops never does).
+      if (both > run * .9 || (either > run * .9 && length > run + (y1 - y0))) for (let yy = Math.max(0, y - 1); yy <= Math.min(ch - 1, y + 1); yy++) rule.fill(1, yy * cw + x - run, yy * cw + x);
       // Thick and longer still, it is a band or a filled box beside the line: it stays too.
       else if (length > long * 1.5) { let solid = 0; for (let k = x - run; k < x; k++) if (tone(k, y) > edge) solid++; if (solid > run * .95) rule.fill(1, y * cw + x - run, y * cw + x); }
     }
