@@ -8,7 +8,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as ort from 'onnxruntime-web';
 import { PaddleOcr } from '../../src/ppocr.ts';
-import { rebuildLines } from '../../src/rebuild.ts';
+import { rebuildLines, wordChecker } from '../../src/rebuild.ts';
+import zlib from 'node:zlib';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(path.join(root, 'package.json'));
@@ -48,6 +49,7 @@ const pick = words => lines.find(line => line.text.includes(words));
 // The scan as it was, for the engine to match each line's face against.
 const scanned = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, image.width, image.height], false); scanned.getPixels().set(image.data);
 const original = scanned.asPNG(); scanned.destroy();
+const before = new Uint8ClampedArray(image.data), unerased = () => ({ ...image, data: new Uint8ClampedArray(before) });
 const styles = rebuildLines(image, lines.map(line => ({ text: line.text, box: line.box, score: line.score })));
 const styleOf = words => styles[lines.findIndex(line => line.text.includes(words))];
 const at = (x, y) => { const i = (Math.round(y * scale) * image.width + Math.round(x * scale)) * 3; return [image.data[i], image.data[i + 1], image.data[i + 2]]; };
@@ -71,6 +73,20 @@ await check('letters-leave-the-image-and-the-box-stays', () => {
   const [r, g, b] = at(200, 245);
   assert(Math.abs(r - FILL[0] * 255) < 18 && Math.abs(g - FILL[1] * 255) < 18 && Math.abs(b - FILL[2] * 255) < 18, `box fill is now ${[r, g, b]}`);
   return { erased: true, boxKept: [r, g, b] };
+});
+
+await check('a-word-not-in-the-word-list-stays-as-scanned', () => {
+  const known = wordChecker(zlib.gunzipSync(fs.readFileSync(path.join(root, 'public/ocr/words.bin'))).toString('utf8'));
+  // Real Robbins misreadings, read at 0.86–0.98; accents count (tambiên is not también).
+  for (const word of ['cicio', 'muitacioners', 'tambiên', 'KTT.', 'seftales', 'prosimal']) assert(!known(word), `${word} in the list`);
+  for (const word of ['ciclo', 'Mutaciones,', 'también', 'señales', 'proximal', 'físico-químico', 'RAS.']) assert(known(word), `${word} not in the list`);
+  // On a line: the misread word stays as scanned, the rest is rewritten; one read surely is rewritten.
+  const line = pick('farmacocinética'), n = line.words.findIndex(word => word.text === 'describe');
+  const run = (text, score) => rebuildLines(unerased(), [{ ...line, words: line.words.map((word, k) => k === n ? { ...word, text, score } : word) }], known)[0];
+  assert.deepEqual(run('descrihe', .98).kept, [n]);
+  assert.deepEqual(run('describe', .98).kept, []);
+  assert.deepEqual(run('descrihe', .999).kept, []);
+  return { kept: 'descrihe' };
 });
 
 await check('the-page-comes-back-as-editable-text', () => {
