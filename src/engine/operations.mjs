@@ -964,7 +964,7 @@ function pageFaces(scan, lines, faces) {
     const members = chosen.flatMap((choice, i) => choice.face === face ? [i] : []), own = members.map(i => measure(i, face));
     // Lines of about one size are one size (each line's own measure is a pixel or two off); a
     // table's smaller text in the same face is another.
-    members.forEach((i, m) => { chosen[i].size = median(members.flatMap((_, p) => Math.abs(own[p] - own[m]) <= own[m] * .18 ? [own[p]] : [])); });
+    members.forEach((i, m) => { chosen[i].size = median(members.flatMap((_, p) => Math.abs(own[p] - own[m]) <= own[m] * .1 ? [own[p]] : [])); });
     const widths = members.flatMap(i => (lines[i].words ?? []).flatMap((word, n) => {
       if (chosen[i].words[n] !== face || [...word.text].length < 3) return [];
       const units = glyphsOf(word.text, face.font, chosen[i].fallback).reduce((t, { gid, font }) => t + (gid ? font.advanceGlyph(gid) : 0), 0);
