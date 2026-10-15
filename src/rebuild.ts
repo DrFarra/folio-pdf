@@ -40,7 +40,11 @@ export function rebuildLines(image: Pixels, lines: LineArea[]): (Style | null)[]
     // A doubtful word stays as the scan shows it, the rest of its line is rewritten; a line
     // mostly of doubtful words stays whole.
     // A bullet's mark (▪, •, a dash) is read as whatever symbol is nearest: it stays as the scan shows it.
-    const kept = words.flatMap((word, n) => word.score < .8 || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
+    // A word with the marks of a misreading (a punctuation mark doubled «pro--», «O..», not an
+    // ellipsis; a figure among letters «l0s», «5o%»; a capital inside a small-letter word
+    // «aumEnto») stays as scanned too. Ordinals («3er», «2a») and units are fine.
+    const misread = (word: string) => /(?<![-.,;:])([-.,;:])\1(?![-.,;:])/u.test(word) || /\p{Ll}\d+\p{Ll}|^\d+\p{Ll}%$/u.test(word) || /\p{Ll}{2}\p{Lu}\p{Ll}/u.test(word);
+    const kept = words.flatMap((word, n) => word.score < .8 || misread(word.text ?? '') || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
     if (kept.length * 2 > words.length) return null;
     // Text about as wide as its letters make it at this height: a box holding several close
     // lines (too narrow for its height), or text read only in part (too wide), stays as it is.
