@@ -163,8 +163,11 @@ await check('ambiguous-images-clipping-masks-skew-and-reflection-are-explained-a
     const info = content(source), found = info.items.filter(item => item.kind === 'image'); assert(found.length);
     // A PNG's own alpha is transparency: editable in place, but not exported for the touch editor.
     if (scenario === 'mask') { assert(found.every(item => item.editable && item.transparent)); found.forEach(item => assert.throws(() => pageImage(source, 1, item.id), /transparencia/)); cases.push(scenario); continue; }
-    assert(found.every(item => !item.editable && item.reason));
-    found.forEach(item => assert.throws(() => pageImage(source, 1, item.id), new RegExp(item.reason.split(':')[0]))); assert(info.warnings.length); cases.push(scenario);
+    // Of two overlapping images only the lower one is held: moving it would put it on top.
+    const held = scenario === 'overlap' ? [found[0]] : found;
+    if (scenario === 'overlap') assert(found[1].editable, 'The image on top stays editable');
+    assert(held.every(item => !item.editable && item.reason));
+    held.forEach(item => assert.throws(() => pageImage(source, 1, item.id), new RegExp(item.reason.split(':')[0]))); assert(info.warnings.length); cases.push(scenario);
   }
   return { cases, originalImageExtractionCannotBypassReadOnlyState: true };
 });

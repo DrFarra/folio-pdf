@@ -46,6 +46,9 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
   const selection = useEdit(store, state => state.selection);
   const draft = useEdit(store, state => state.draft);
   const committing = useEdit(store, state => state.committing);
+  // Writing a change usually takes a moment: the status says so only when it lasts.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { if (!committing) { setSlow(false); return; } const timer = setTimeout(() => setSlow(true), 700); return () => clearTimeout(timer); }, [committing]);
   const notice = useEdit(store, state => state.notice);
   const pendingImage = useEdit(store, state => state.image);
   const shapeStyle = useEdit(store, state => state.shapeStyle);
@@ -90,24 +93,24 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
   const lineShape = shapeSelected ? !!shapeSelected.line : tool === 'line' || tool === 'arrow';
   const modifier = isMac ? '⌘' : 'Ctrl+';
 
-  return <div className="edit-toolbar" role="toolbar" aria-label="Herramientas de edición">
+  return <div className="edit-toolbar" role="toolbar" aria-label="Herramientas de edición" data-committing={committing}>
     <div className="tool-group">
       {TOOLS.map(([key, label, shortcut, Icon], index) => <span key={key} style={{ display: 'contents' }}>
         {index === 3 && <span className="edit-divider" />}
-        <button type="button" className={`icon-button ${tool === key ? 'active' : ''}`} aria-label={`${label} (${shortcut})`} title={`${label} (${shortcut})`} aria-pressed={tool === key} disabled={committing} onMouseDown={keep} onClick={() => chooseTool(key)}><Icon size={18} /></button>
+        <button type="button" className={`icon-button ${tool === key ? 'active' : ''}`} aria-label={`${label} (${shortcut})`} title={`${label} (${shortcut})`} aria-pressed={tool === key} onMouseDown={keep} onClick={() => chooseTool(key)}><Icon size={18} /></button>
       </span>)}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg" className="sr-only" tabIndex={-1} onChange={event => { void pickImage(event.target.files?.[0]); event.target.value = ''; }} />
     </div>
     {(style || selection?.kind === 'image' || selection?.kind === 'graphic' || shapeSelected || shapeTool) && <span className="edit-divider" />}
     {style && <div className="edit-properties" aria-label="Formato del texto">
-      <select aria-label="Fuente" value={style.family} disabled={committing} onChange={event => void setStyle({ family: event.target.value })}>
+      <select aria-label="Fuente" value={style.family} onChange={event => void setStyle({ family: event.target.value })}>
         {sourceName && <option value="original">Original · {parseFontName(sourceName).family}</option>}
         <option value="helvetica">Helvetica / Arial</option><option value="times">Times</option><option value="courier">Courier</option><option value="dm-sans">DM Sans</option>
         {!!families.length && <optgroup label="En este equipo">{families.map(family => <option key={family} value={`system:${family}`}>{family}</option>)}</optgroup>}
       </select>
-      <input type="number" aria-label="Tamaño de letra" title="Tamaño de letra" min={4} max={200} step={.5} value={style.size} disabled={committing} onChange={event => { const size = Number(event.target.value); if (size >= 4 && size <= 200) void setStyle({ size }); }} />
-      <Toggle label={`Negrita (${modifier}B)`} pressed={style.bold} disabled={committing} onClick={() => void setStyle({ bold: !style.bold })}><Bold size={16} /></Toggle>
-      <Toggle label={`Cursiva (${modifier}I)`} pressed={style.italic} disabled={committing} onClick={() => void setStyle({ italic: !style.italic })}><Italic size={16} /></Toggle>
+      <input type="number" aria-label="Tamaño de letra" title="Tamaño de letra" min={4} max={200} step={.5} value={style.size} onChange={event => { const size = Number(event.target.value); if (size >= 4 && size <= 200) void setStyle({ size }); }} />
+      <Toggle label={`Negrita (${modifier}B)`} pressed={style.bold} onClick={() => void setStyle({ bold: !style.bold })}><Bold size={16} /></Toggle>
+      <Toggle label={`Cursiva (${modifier}I)`} pressed={style.italic} onClick={() => void setStyle({ italic: !style.italic })}><Italic size={16} /></Toggle>
       <ColorField label="Color del texto" value={style.color} onChange={color => void setStyle({ color })} />
       <Toggle label="Alinear a la izquierda" pressed={style.align === 'left'} onClick={() => void setStyle({ align: 'left' })}><AlignLeft size={16} /></Toggle>
       <Toggle label="Centrar" pressed={style.align === 'center'} onClick={() => void setStyle({ align: 'center' })}><AlignCenter size={16} /></Toggle>
@@ -115,22 +118,22 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       <select aria-label="Interlineado" title="Interlineado" value={String(style.lineHeight)} onChange={event => void setStyle({ lineHeight: Number(event.target.value) })}>
         {[...new Set([1, 1.15, 1.25, 1.5, 2, style.lineHeight])].sort((a, b) => a - b).map(value => <option key={value} value={String(value)}>{value.toLocaleString('es')}</option>)}
       </select>
-      {textItem && <Toggle label="Eliminar texto (Supr)" onClick={() => void deleteSelection(store)} disabled={committing}><Trash2 size={16} /></Toggle>}
+      {textItem && <Toggle label="Eliminar texto (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>}
     </div>}
     {selection?.kind === 'image' && <div className="edit-properties" aria-label="Imagen">
-      <button type="button" className="edit-toggle" disabled={committing} onMouseDown={keep} onClick={() => replaceInput.current?.click()}>Reemplazar…</button>
+      <button type="button" className="edit-toggle" onMouseDown={keep} onClick={() => replaceInput.current?.click()}>Reemplazar…</button>
       <input ref={replaceInput} type="file" accept="image/png,image/jpeg" className="sr-only" tabIndex={-1} onChange={async event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; try { void replaceImage(store, (await readImage(file)).bytes); } catch (error) { store.actions?.notify((error as Error).message, 'error'); } }} />
-      <Toggle label="Girar 90°" onClick={() => rotateSelection(store)} disabled={committing}><RotateCw size={16} /></Toggle>
-      <label>Opacidad<input type="range" aria-label="Opacidad de la imagen" min={0} max={100} value={Math.round((opacity ?? selection.item.opacity ?? 1) * 100)} disabled={committing}
+      <Toggle label="Girar 90°" onClick={() => rotateSelection(store)}><RotateCw size={16} /></Toggle>
+      <label>Opacidad<input type="range" aria-label="Opacidad de la imagen" min={0} max={100} value={Math.round((opacity ?? selection.item.opacity ?? 1) * 100)}
         onChange={event => setOpacity(Number(event.target.value) / 100)} onPointerUp={() => { if (opacity !== null) fadeSelection(store, opacity); }} onKeyUp={() => { if (opacity !== null) fadeSelection(store, opacity); }} /></label>
-      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)} disabled={committing}><Copy size={16} /></Toggle>
-      <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)} disabled={committing}><Trash2 size={16} /></Toggle>
+      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
+      <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
     </div>}
     {selection?.kind === 'graphic' && <div className="edit-properties" aria-label="Dibujo">
       {selection.item.fill !== undefined && <ColorField label="Color de relleno" value={picked.fill ?? selection.item.fill ?? null} onChange={fill => { setPicked(colors => ({ ...colors, fill })); recolorSelection(store, { fill }); }} />}
       {selection.item.stroke !== undefined && <ColorField label="Color del borde" value={picked.stroke ?? selection.item.stroke ?? null} onChange={stroke => { setPicked(colors => ({ ...colors, stroke })); recolorSelection(store, { stroke }); }} />}
-      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)} disabled={committing}><Copy size={16} /></Toggle>
-      <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)} disabled={committing}><Trash2 size={16} /></Toggle>
+      <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle>
+      <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle>
     </div>}
     {(shapeSelected || shapeTool) && <div className="edit-properties" aria-label="Forma">
       <ColorField label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
@@ -145,7 +148,7 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
       {shapeSelected && <><Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}><Copy size={16} /></Toggle><Toggle label="Eliminar forma (Supr)" onClick={() => void deleteSelection(store)}><Trash2 size={16} /></Toggle></>}
     </div>}
     <span className={`edit-status${notice ? ' notice' : ''}`} role="status" aria-live="polite">
-      {committing ? <><LoaderCircle size={14} className="spin" />Guardando el cambio…</> : notice || (tool === 'image' && pendingImage ? `Haz clic o arrastra en la página para colocar «${pendingImage.name}».`
+      {slow ? <><LoaderCircle size={14} className="spin" />Guardando el cambio…</> : notice || (tool === 'image' && pendingImage ? `Haz clic o arrastra en la página para colocar «${pendingImage.name}».`
         : draft ? `Haz clic fuera o ${modifier}Intro para terminar · Esc cancela`
         : selection?.kind === 'text' ? 'Arrastra para moverlo · clic otra vez para escribir · Supr lo elimina'
         : selection?.kind === 'image' ? 'Arrastra para moverla · las esquinas cambian el tamaño (Mayús: libre)'
@@ -153,6 +156,6 @@ export default function EditToolbar({ store, doc, onDone }: { store: EditStore; 
         : selection?.kind === 'shape' ? 'Arrastra para moverla · los tiradores cambian el tamaño'
         : HINTS[tool])}
     </span>
-    <button className="text-button" disabled={committing} onMouseDown={keep} onClick={onDone}><Check size={16} />Listo</button>
+    <button className="text-button" onMouseDown={keep} onClick={onDone}><Check size={16} />Listo</button>
   </div>;
 }

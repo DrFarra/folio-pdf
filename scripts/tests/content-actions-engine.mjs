@@ -141,13 +141,16 @@ await check('shared-image-removal-affects-only-one-instance-and-reveals-original
   return { selectedInstanceRemoved: true, sharedResourceOtherInstanceAndPageIntact: true, greenBackgroundRevealed: true, staleIdsRejected: true };
 });
 
-await check('tiny-image-overlaps-and-invisible-overlapping-instances-block-deletion', async () => {
+await check('removing-an-image-keeps-touching-and-invisible-overlapping-instances', async () => {
   for (const opacity of [0, 1]) {
     const pdf = await PDFDocument.create(), image = await pdf.embedPng(png), page = pdf.addPage([320, 320]); page.drawImage(image, { x: 20, y: 20, width: 100, height: 50 }); page.drawImage(image, { x: opacity ? 119.8 : 40, y: 20, width: 100, height: 50, opacity });
     const source = await pdf.save(), before = hash(source), first = content(source).items.find(item => item.kind === 'image'); assert(first.editable);
-    assert.throws(() => remove(source, first), /Otra imagen toca/); assert.equal(hash(source), before);
+    // Removal marks a spot of the image no other image covers, so the other instance stays.
+    const other = content(source).items.filter(item => item.kind === 'image').find(item => item !== first && item.id !== first.id);
+    const left = content(remove(source, first)).items.filter(item => item.kind === 'image');
+    assert.deepEqual(left.map(item => item.rect.map(Math.round)), [other.rect.map(Math.round)]); assert.equal(hash(source), before);
   }
-  return { subHalfPointOverlapRejected: true, invisibleInstanceNotAccidentallyRemoved: true };
+  return { touchingInstanceKept: true, invisibleInstanceNotAccidentallyRemoved: true };
 });
 
 await check('masked-or-cropped-images-cannot-bypass-the-safe-selection-gate', async () => {

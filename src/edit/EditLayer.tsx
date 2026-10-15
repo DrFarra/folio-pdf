@@ -17,7 +17,8 @@ type Gesture =
   | { mode: 'move'; target: Target; start: Point; now: Point; moved: boolean; wasSelected: boolean }
   | { mode: 'resize'; target: Target; handle: Handle; start: Point; now: Point; free: boolean }
   | { mode: 'create'; tool: 'text' | 'image' | ShapeKind; start: Point; now: Point; free: boolean };
-type Props = { store: EditStore; doc: LoadedDocument; number: number; viewport: PageViewport; page: PDFPageProxy; canvas: React.RefObject<HTMLCanvasElement | null>; shapes: Annotation[] };
+/** `drawn`: the canvas shows this revision of the page, not the previous one. */
+type Props = { store: EditStore; doc: LoadedDocument; number: number; viewport: PageViewport; page: PDFPageProxy; canvas: React.RefObject<HTMLCanvasElement | null>; shapes: Annotation[]; drawn: boolean };
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const area = (box: Box) => box.w * box.h;
@@ -71,23 +72,29 @@ function Snapshot({ canvas, viewport, from, to, rotation = 0, opacity }: { canva
   return <canvas ref={ref} className="edit-snapshot" style={{ left: to.x + (to.w - w) / 2, top: to.y + (to.h - h) / 2, width: w, height: h, transform: rotation ? `rotate(${rotation}deg)` : undefined, opacity }} aria-hidden="true" />;
 }
 
-/** The colour just outside a box, to cover content that has moved away. */
-function background(canvas: HTMLCanvasElement | null, viewport: PageViewport, box: Box) {
+/** The colour just outside a box, to cover content that has moved away. With
+ * `plain`, null unless all around it is that one colour: a patch over other
+ * content would show as an empty box, so the content stays visible instead. */
+function background(canvas: HTMLCanvasElement | null, viewport: PageViewport, box: Box, plain: boolean) {
   try {
-    if (!canvas?.width) return '#fff';
-    const k = canvas.width / viewport.width, x = Math.max(0, Math.round((box.x - 3) * k)), y = Math.max(0, Math.round((box.y - 3) * k));
-    const [r, g, b] = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(x, y, 1, 1).data;
+    if (!canvas?.width) return plain ? null : '#fff';
+    const k = canvas.width / viewport.width, context = canvas.getContext('2d', { willReadFrequently: true })!;
+    const at = (x: number, y: number) => context.getImageData(Math.max(0, Math.min(canvas.width - 1, Math.round(x * k))), Math.max(0, Math.min(canvas.height - 1, Math.round(y * k))), 1, 1).data;
+    const [r, g, b] = at(box.x - 3, box.y - 3);
+    if (plain) {
+      const { x, y, w, h } = box, edges = [[x + w / 2, y - 3], [x + w + 3, y - 3], [x - 3, y + h / 2], [x + w + 3, y + h / 2], [x - 3, y + h + 3], [x + w / 2, y + h + 3], [x + w + 3, y + h + 3]];
+      if (edges.some(([px, py]) => { const c = at(px, py); return Math.abs(c[0] - r) > 10 || Math.abs(c[1] - g) > 10 || Math.abs(c[2] - b) > 10; })) return null;
+    }
     return `rgb(${r}, ${g}, ${b})`;
-  } catch { return '#fff'; }
+  } catch { return plain ? null : '#fff'; }
 }
 
-export default function EditLayer({ store, doc, number, viewport, page, canvas, shapes }: Props) {
+export default function EditLayer({ store, doc, number, viewport, page, canvas, shapes, drawn }: Props) {
   const tool = useEdit(store, state => state.tool);
   const selection = useEdit(store, state => state.selection?.page === number ? state.selection : null);
   const draft = useEdit(store, state => state.draft?.page === number ? state.draft : null);
   const ghost = useEdit(store, state => state.ghost?.page === number ? state.ghost : null);
   const reselect = useEdit(store, state => state.reselect?.page === number ? state.reselect : null);
-  const committing = useEdit(store, state => state.committing);
   const pendingImage = useEdit(store, state => state.image);
   const shapeStyle = useEdit(store, state => state.shapeStyle);
   const layer = useRef<HTMLDivElement>(null);
@@ -124,13 +131,32 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     store.items(doc, number).then(info => { if (alive) setLoaded({ revision: doc.revision, items: info.items }); }).catch(error => { if (alive) store.set({ notice: errorMessage(error, 'No se pudo leer el contenido de esta página.') }); });
     return () => { alive = false; };
   }, [store, doc, number, need, items]);
-  // After a commit the moved, written or added content is selected again.
+  // After a commit the moved, written or added content is selected again. What
+  // stood in for it stays until the page has drawn the result: no jump back.
   useEffect(() => {
-    if (!reselect || !items || reselect.from === doc.revision) return;
+    if (!reselect || !items || reselect.from === doc.revision || !drawn) return;
     const best = items.filter(item => item.kind === reselect.kind && (item.kind !== 'text' || item.level === 'paragraph'))
       .map(item => ({ item, score: overlap(item.rect, reselect.rect) })).sort((a, b) => b.score - a.score)[0];
     store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: best && best.score > .2 ? { kind: reselect.kind, page: number, item: best.item } : null });
-  }, [store, items, reselect, number, doc.revision]);
+  }, [store, items, reselect, number, doc.revision, drawn]);
+  // What lies under the selected item is drawn ahead of time, to show at its old
+  // place while it is dragged, written elsewhere or removed.
+  const [plate, setPlate] = useState<{ id: string; itemRect: Rect; url: string; rect: Rect } | null>(null);
+  const plateScale = Math.round(viewport.scale * Math.min(window.devicePixelRatio || 1, 2) * 100) / 100;
+  useEffect(() => {
+    if (!selection || selection.kind === 'shape') return;
+    let alive = true; const { item } = selection;
+    void store.plate(doc, number, item, plateScale).then(found => { if (alive && found) setPlate({ id: item.id, itemRect: item.rect, ...found }); });
+    return () => { alive = false; };
+  }, [store, doc, number, selection, plateScale]);
+  const plateFor = (item: PageContentItem) => plate && plate.id === item.id && plate.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null;
+  // Where an item was: what lies under it if drawn, else the page's plain colour, else nothing.
+  const vacated = (item: PageContentItem) => {
+    const under = plateFor(item), from = toBox(item.rect);
+    if (under) { const box = toBox(under.rect); return <img className="edit-mask" src={under.url} alt="" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />; }
+    const color = pageBackground(from);
+    return color ? <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: color }} /> : null;
+  };
   // A selection from an older revision no longer matches the page.
   const revision = useRef(doc.revision);
   useEffect(() => {
@@ -159,8 +185,8 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     return () => window.removeEventListener('folio:edit-place-image', place);
   }, [store, number]);
 
-  /** Everything under a point, top first: Folio's shapes, the text, editable
-   * images, then the PDF's drawings, smallest first, so a box's empty part picks the box. */
+  /** Everything under a point, top first: Folio's shapes, the text, images, then
+   * the PDF's drawings, smallest first so a box's empty part picks the box; locked content last. */
   function hitAll(p: Point): Target[] {
     const hits: Target[] = [];
     for (const shape of [...shapes].reverse()) {
@@ -169,14 +195,14 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     }
     if (!items) return hits;
     const under = (kind: ContentKind, pad = 0) => items.filter(item => item.kind === kind && (kind !== 'text' || item.level === 'paragraph') && inside(toBox(item.rect), p, pad)).sort((a, b) => area(toBox(a.rect)) - area(toBox(b.rect)));
-    const paragraph = under('text', 1)[0];
-    if (paragraph) {
-      const line = !paragraph.editable && items.find(item => item.kind === 'text' && item.level === 'line' && item.editable && item.id.startsWith(paragraph.id.replace('paragraph', 'line') + '-') && inside(toBox(item.rect), p, 1));
-      hits.push({ kind: 'text', item: line || paragraph });
-    }
-    const images = under('image');
+    const paragraph = under('text', 1)[0], images = under('image');
+    const line = paragraph && !paragraph.editable && items.find(item => item.kind === 'text' && item.level === 'line' && item.editable && item.id.startsWith(paragraph.id.replace('paragraph', 'line') + '-') && inside(toBox(item.rect), p, 1));
+    const text: Target | null = paragraph ? { kind: 'text', item: line || paragraph } : null;
+    // What can be edited comes before what cannot: an image over locked text picks the image.
+    if (text?.item.editable) hits.push(text);
     for (const item of images) if (item.editable) hits.push({ kind: 'image', item });
     for (const item of under('graphic', 2)) hits.push({ kind: 'graphic', item });
+    if (text && !text.item.editable) hits.push(text);
     for (const item of images) if (!item.editable) hits.push({ kind: 'image', item });
     return hits;
   }
@@ -323,16 +349,16 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   const live = gesture && (gesture.mode !== 'move' || gesture.moved) ? preview(gesture) : null;
   const liveTarget = gesture && gesture.mode !== 'create' ? gesture.target : null;
   // Reading pixels back from the page is slow, so each spot is sampled once per revision.
-  const sampled = useRef(new Map<string, string>());
-  const pageBackground = (box: Box) => {
-    const key = `${doc.revision}:${Math.round(box.x)}:${Math.round(box.y)}`;
+  const sampled = useRef(new Map<string, string | null>());
+  const pageBackground = (box: Box, plain = true) => {
+    const key = `${doc.revision}:${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.w)}:${Math.round(box.h)}:${plain}`;
     let value = sampled.current.get(key);
-    if (!value) { if (sampled.current.size > 50) sampled.current.clear(); value = background(canvas.current, viewport, box); sampled.current.set(key, value); }
+    if (value === undefined) { if (sampled.current.size > 50) sampled.current.clear(); value = background(canvas.current, viewport, box, plain); sampled.current.set(key, value); }
     return value;
   };
-  const cursor = tool === 'select' ? (gesture?.mode === 'move' && gesture.moved ? 'grabbing' : hover && (hover.kind === 'shape' || hover.item.editable) ? 'move' : 'default') : tool === 'text' ? 'text' : tool === 'image' && !pendingImage ? 'default' : 'crosshair';
+  const cursor = tool === 'select' ? (gesture?.mode === 'move' && gesture.moved ? 'grabbing' : hover && (hover.kind === 'shape' || hover.item.editable) ? 'move' : 'default') : tool === 'text' ? 'text' : tool === 'image' ? (pendingImage ? 'var(--cursor-image)' : 'default') : `var(--cursor-${tool})`;
 
-  return <div ref={layer} className={`edit-layer${committing ? ' committing' : ''}`} style={{ cursor }} data-edit-page={number} data-edit-state={items ? 'ready' : need ? 'loading' : 'idle'}
+  return <div ref={layer} className="edit-layer" style={{ cursor }} data-edit-page={number} data-edit-state={items ? 'ready' : need ? 'loading' : 'idle'}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => update(null)} onPointerLeave={() => { if (!gestureRef.current) setHover(null); }} onDoubleClick={doubleClick} onClick={event => event.stopPropagation()}>
     {hover && !gesture && !same(hover, selected) && !draft && (() => {
       const box = targetBox(hover), editable = hover.kind === 'shape' || hover.item.editable;
@@ -341,16 +367,18 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     {ghost && (() => {
       const from = toBox(ghost.item.rect), to = toBox(ghost.rect);
       return <>
-        {!ghost.copy && <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: pageBackground(from) }} />}
+        {!ghost.copy && vacated(ghost.item)}
         {!ghost.removed && <Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} rotation={ghost.rotation} opacity={ghost.opacity} />}
-        <div className="edit-progress" style={{ left: to.x, top: to.y, width: to.w, height: to.h }} />
+        {!ghost.removed && <div className={`edit-selection edit-ghost kind-${ghost.kind}`} style={{ left: to.x, top: to.y, width: to.w, height: to.h }}>
+          {(ghost.kind === 'image' ? HANDLES : ghost.kind === 'text' ? ['w', 'e'] : []).map(handle => <span key={handle} className={`edit-handle handle-${handle}`} />)}
+        </div>}
       </>;
     })()}
     {live && liveTarget && liveTarget.kind !== 'shape' && (() => {
       const from = targetBox(liveTarget);
       return <>
         {liveTarget.kind === 'image' || gesture?.mode === 'move' ? <>
-          <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: pageBackground(from) }} />
+          {vacated(liveTarget.item)}
           <Snapshot canvas={canvas.current} viewport={viewport} from={from} to={live.box} />
         </> : null}
         <div className="edit-selection dragging" style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }} />
@@ -369,7 +397,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
         {line && line.map((end, i) => <span key={i} className="edit-handle handle-end" data-handle={i ? 'end' : 'start'} style={{ left: end.x - box.x, top: end.y - box.y }} />)}
       </div>;
     })()}
-    {draft && <DraftBox key={`${draft.source?.id || 'new'}`} store={store} draft={draft} page={page} viewport={viewport} toBox={toBox} toRect={toRect} background={pageBackground} />}
+    {draft && <DraftBox key={`${draft.source?.id || 'new'}`} store={store} draft={draft} page={page} viewport={viewport} toBox={toBox} toRect={toRect} background={box => pageBackground(box, false) ?? '#fff'} />}
   </div>;
 }
 

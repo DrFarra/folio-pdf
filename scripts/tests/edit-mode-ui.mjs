@@ -47,7 +47,7 @@ await page.addInitScript(() => new MutationObserver(() => { const toast = docume
 const pageBox = number => page.locator(`.pdf-page-wrap[data-page-number="${number}"] .page-content`).boundingBox();
 const toScreen = async (number, x, y) => { const box = await pageBox(number), scale = box.width / 595; return { x: box.x + x * scale, y: box.y + (842 - y) * scale }; };
 const settle = async () => {
-  await page.waitForFunction(() => !document.querySelector('.edit-status')?.textContent?.includes('Guardando') && !document.querySelector('.edit-snapshot') && !document.querySelector('.edit-progress'));
+  await page.waitForFunction(() => !document.querySelector('.edit-toolbar[data-committing=true]') && !document.querySelector('.edit-snapshot') && !document.querySelector('.edit-ghost'));
   await page.waitForFunction(() => [...document.querySelectorAll('.pdf-page-wrap canvas:not(.page-detail)')].every(canvas => canvas.dataset.rendering !== 'true'));
 };
 // Each change is kept as a draft in the browser; read it rather than downloading

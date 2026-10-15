@@ -77,8 +77,9 @@ export async function commitDraft(store: EditStore, rect: Rect, room: Rect) {
 }
 
 async function removeItem(store: EditStore, page: number, kind: ContentKind, item: PageContentItem) {
-  store.set({ selection: null, ghost: { page, kind, item, rect: item.rect, removed: true } });
-  if (await run(store, kind === 'graphic' ? { operation: 'remove-graphic', page, sourceId: item.id, sourceRect: item.rect, rect: item.rect } : { operation: 'remove-content', page, id: item.id, kind, rect: item.rect })) store.set({ reselect: null });
+  // Nothing is selected afterwards; the reselect only keeps the mask until the page is redrawn.
+  store.set({ selection: null, ghost: { page, kind, item, rect: item.rect, removed: true }, reselect: reselectAt(store, page, kind, [0, 0, 0, 0]) });
+  await run(store, kind === 'graphic' ? { operation: 'remove-graphic', page, sourceId: item.id, sourceRect: item.rect, rect: item.rect } : { operation: 'remove-content', page, id: item.id, kind, rect: item.rect });
 }
 
 export async function deleteSelection(store: EditStore) {

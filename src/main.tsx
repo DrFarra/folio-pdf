@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles.css';
+import './cursors.css';
 import { isDesktop, isNative } from './platform';
 
 // iOS WebKit reports focus moved by the app (a dialog focusing its close

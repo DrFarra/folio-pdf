@@ -6,6 +6,8 @@ export type PageContentItem = { id: string; kind: 'text' | 'image' | 'graphic'; 
   /** Graphic: the colours it paints with (null for a pattern), and whether its path also clips. */
   fill?: string | null; stroke?: string | null; clip?: boolean };
 export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
+/** A PNG of the page around an item, drawn without it, and the PDF area it covers. */
+export type PagePlate = { png: Uint8Array; rect: Area['rect'] };
 /** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
 export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
 export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; fontFamily?: string; fontIndex?: number; originalFont?: boolean; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; sourceId?: string; baselineOffset?: number };
@@ -17,6 +19,7 @@ export type Operation =
   | ({ operation: 'area-info' } & Area)
   | { operation: 'page-content'; page: number; graphics?: boolean }
   | { operation: 'page-image'; page: number; id: string }
+  | ({ operation: 'page-plate'; id: string; kind: 'text' | 'image' | 'graphic'; scale: number } & Area)
   | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
   | { operation: 'split'; parts: PageEntry[][] }
   | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
@@ -33,4 +36,4 @@ export type Operation =
   | ({ operation: 'recolor-graphic'; sourceId: string; sourceRect: Area['rect']; fill?: string; stroke?: string } & Area)
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
-export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo;
+export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate;

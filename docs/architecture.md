@@ -35,6 +35,8 @@ rules that break things when ignored. Read the files named before changing them.
 - Shapes are Folio annotations (Square/Circle/Line), editable only when created by Folio (`NM` starts with `Folio:`).
 - The PDF's own drawings (boxes, rules) are read from the page's content streams (`pageDrawings`) and edited by rewriting their operators in place (`editDrawing`), so stacking order is kept; paths inside Form XObjects are not listed. Ids `graphic-N` are positional like the others.
 - Editar's saves use `QUICK` (no object deduplication): deduplicating a PDF with thousands of objects takes seconds per edit.
+- Images Folio placed are a Form each, drawn by its own `q … cm /FolioN Do Q` stream (`folioImages`): moving, resizing, turning or removing one rewrites that stream, with no redaction.
+- While an edit is written, the item's old place shows `page-plate` (MuPDF's drawing of that area without the item, requested when it is selected) and the result is swapped in only once the page has drawn it (`drawn` in `EditLayer`).
 - Binary IPC: Android sends base64 in 2 MiB slices; the bridge cap is 128 MiB (`binary_ipc.rs`).
 - Layout: `useDeviceLayout` — web is desktop unless a narrow coarse pointer; tablet needs an Android/iPad UA. The desktop app is always desktop.
 - CI builds with `cargo --locked`; there is no Rust toolchain on the Windows dev PC, so Rust only compiles in CI.

@@ -537,11 +537,13 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
       }
       if (candidate.item.reason) warnings.add(candidate.item.reason);
     }
+    const placed = folioImages(page);
     const imageItems = images.map((image, i) => {
       const [a, b, c, d] = image.matrix, orthogonal = (Math.abs(b) < .01 && Math.abs(c) < .01) || (Math.abs(a) < .01 && Math.abs(d) < .01);
-      // Moving an image draws it again on top: text or drawings above it would end up
-      // below, and removal takes every image it touches. What lies below is kept.
-      const overlaps = images.some(other => other !== image && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && overlap(image.box, candidate.box) && textPaint.some(event => !event.hidden && event.order > image.order && overlap(event.box, candidate.box))) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box));
+      // Moving an image draws it again on top: anything above it would end up below.
+      // What lies below is kept. An image Folio placed is edited where it is.
+      const own = !!folioImage(placed, mupdf.Rect.transform(image.box, inverse));
+      const overlaps = !own && (images.some(other => other.order > image.order && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && overlap(image.box, candidate.box) && textPaint.some(event => !event.hidden && event.order > image.order && overlap(event.box, candidate.box))) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box)));
       const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos.' : a * d - b * c <= 0 ? 'Imagen reflejada.' : !orthogonal ? 'Imagen inclinada.' : overlaps ? 'Imagen con contenido superpuesto.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
       if (reason) warnings.add(reason);
       const rotation = ((Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
@@ -567,8 +569,12 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         // IMAGE_REMOVE tests the complete painted image, even when it is hidden
         // by alpha or clipping. The picker deliberately tolerates tiny overlaps;
         // deletion must not use that tolerance or remove a second instance.
-        if (imagePaint.some(other => other !== image && intersects(image.fullBox, other.fullBox))) fail('Otra imagen toca el área seleccionada; no se puede eliminar solo esta instancia con seguridad.');
-        return { boxes: [image.fullBox], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()), info: image, image: selectedImage && new mupdf.Image(selectedImage.pointer) };
+        // Removal takes every image the mark touches: mark a spot of this one that no other image covers.
+        const [x0, y0, x1, y1] = image.fullBox, spots = [];
+        for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) spots.push([x0 + (x1 - x0) * i / 8, y0 + (y1 - y0) * j / 8]);
+        const spot = spots.map(([x, y]) => [x - .2, y - .2, x + .2, y + .2]).find(box => !imagePaint.some(other => other !== image && intersects(box, other.fullBox)));
+        if (!spot) fail('Otra imagen cubre por completo esta; no se puede eliminar solo esta instancia con seguridad.');
+        return { boxes: [spot], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()), info: image, image: selectedImage && new mupdf.Image(selectedImage.pointer) };
       }
       const candidate = candidates.find(candidate => candidate.item === item), selected = new Set(candidate.rows.flatMap(row => row.glyphs));
       if (selected.size > 5000) fail('Hay demasiados caracteres para modificar esta selección automáticamente. Selecciona menos líneas.');
@@ -957,6 +963,53 @@ function redactPage(doc, page, boxes, { black = true, images = true, imageMethod
   }
 }
 
+// An image Folio placed is a Form holding only that image, drawn by its own
+// `q <matrix> cm /FolioN Do Q` stream. Moving, resizing, turning, copying or
+// removing it rewrites that one stream: nothing is redacted and stacking stays.
+function folioImages(page) {
+  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found = [];
+  if (!contents.isArray() || !xobjects.isDictionary()) return found;
+  const read = stream => { const buffer = stream.readStream(); try { return buffer.asString(); } finally { buffer.destroy(); } };
+  for (let index = 0; index < contents.length; index++) {
+    const match = /^q ((?:[-\d.e]+ ){6})cm \/(Folio\d+) Do Q\n$/.exec(read(contents.get(index)));
+    const form = match && xobjects.get(match[2]);
+    if (!form?.isStream() || form.get('Subtype').asName() !== 'Form' || !form.get('Matrix').isNull()) continue;
+    const wrapper = match[1].trim().split(' ').map(Number);
+    let matrix = wrapper, images = 0, plain = true;
+    for (const { op, args } of contentOperators(read(form))) {
+      if (op === 'cm' && args.length === 6) matrix = mupdf.Matrix.concat(args.map(Number), matrix);
+      else if (op === 'Do' && form.get('Resources').get('XObject').get(args[0]?.slice(1) ?? '').get('Subtype').asName() === 'Image') images++;
+      else plain = false;
+    }
+    if (plain && images === 1) found.push({ index, name: match[2], wrapper, box: mupdf.Rect.transform([0, 0, 1, 1], matrix) });
+  }
+  return found;
+}
+// Only an unambiguous match: two placed images on exactly the same spot take the general path.
+const folioImage = (placed, box) => { const matches = placed.filter(image => image.box.every((value, i) => Math.abs(value - box[i]) < .05)); return matches.length === 1 ? matches[0] : null; };
+
+function editFolioImage(doc, page, image, options) {
+  const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
+  let replacement = null;
+  if (options.operation === 'move-image') {
+    const turn = options.rotation ?? 0;
+    if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
+    // Fit the image's box to the target, then turn it clockwise about the target's centre.
+    const from = image.box, target = rect(options.rect), turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
+    const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
+    const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
+    const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
+    const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(-turn)), mupdf.Matrix.translate(cx, cy));
+    replacement = doc.addStream(`q ${mupdf.Matrix.concat(mupdf.Matrix.concat(image.wrapper, fit), spin).map(number).join(' ')} cm /${image.name} Do Q\n`, {});
+  }
+  for (let i = 0; i < contents.length; i++) {
+    if (i !== image.index || options.copy) list.push(contents.get(i));
+    if (i === image.index && replacement) list.push(replacement);
+  }
+  object.put('Contents', list);
+  return save(doc, QUICK);
+}
+
 // Move, resize, turn or duplicate a text block or an image without rewriting it:
 // text keeps its own glyphs, fonts and mixed styles, and an image keeps its
 // compressed data and transparency. The original is removed like remove-content.
@@ -966,6 +1019,8 @@ function moveContent(doc, page, index, target, options, password) {
   const source = rect(options.sourceRect), sourceBox = mupdf.Rect.transform(source, page.getTransform());
   const text = options.operation === 'move-text';
   if (typeof options.sourceId !== 'string' || !(text ? /^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/ : /^image-\d{1,5}$/).test(options.sourceId)) fail('La selección de contenido no es válida.');
+  const placed = !text && options.opacity === undefined && folioImage(folioImages(page), source);
+  if (placed) return editFolioImage(doc, page, placed, options);
   const selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: text ? 'text' : 'image', rect: source });
   let captured, draw, expected = [];
   try {
@@ -1045,6 +1100,23 @@ export function operateDocument(bytes, options, password = '', onPart) {
       try { return pageContent(doc, page, operation === 'page-image' ? options.id : undefined, undefined, options.graphics === true); }
       finally { page.destroy(); }
     }
+    if (operation === 'page-plate') {
+      // The page around one item as it looks without it: shown where the item was
+      // while it is dragged, moved, or removed, until the page shows the result.
+      const area = rect(options.rect), scale = Number(options.scale);
+      if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
+      const removed = operateDocument(bytes, options.kind === 'graphic' ? { operation: 'remove-graphic', page: options.page, sourceId: options.id, sourceRect: area, rect: area } : { operation: 'remove-content', page: options.page, id: options.id, kind: options.kind, rect: area }, password);
+      const plate = open(removed, password); let page, pixmap, device;
+      try {
+        page = plate.loadPage(pageIndex(plate, options.page));
+        const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom);
+        const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
+        if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
+        pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, false); pixmap.clear(255);
+        device = new mupdf.DrawDevice(zoom, pixmap); page.run(device, mupdf.Matrix.identity); device.close();
+        return { png: new Uint8Array(pixmap.asPNG()), rect: mupdf.Rect.transform(box, mupdf.Matrix.invert(toDevice)) };
+      } finally { device?.destroy(); pixmap?.destroy(); page?.destroy(); plate.destroy(); }
+    }
     if (operation === 'area-info') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       const page = doc.loadPage(pageIndex(doc, options.page));
@@ -1062,6 +1134,8 @@ export function operateDocument(bytes, options, password = '', onPart) {
       if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
       const index = pageIndex(doc, options.page), page = doc.loadPage(index); let selection;
       try {
+        const placed = options.kind === 'image' && folioImage(folioImages(page), rect(options.rect));
+        if (placed) return editFolioImage(doc, page, placed, options);
         selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: rect(options.rect) });
         redactPage(doc, page, selection.boxes, { black: false, images: options.kind === 'image', imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text: options.kind === 'text', preserveAnnotations: true });
       } finally { page.destroy(); }

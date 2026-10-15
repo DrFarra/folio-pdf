@@ -1,8 +1,7 @@
 /* Editar inside the reader: nothing is outlined at rest; hover draws a hairline,
    the selection a frame with handles. */
 .edit-layer{position:absolute;inset:0;z-index:6;user-select:none;-webkit-user-select:none;touch-action:none}
-.edit-layer.committing{cursor:progress!important}
-.edit-hover,.edit-selection,.edit-progress{position:absolute;pointer-events:none;box-sizing:border-box;border-radius:2px}
+.edit-hover,.edit-selection{position:absolute;pointer-events:none;box-sizing:border-box;border-radius:2px}
 .edit-hover{outline:1px solid color-mix(in srgb,var(--accent) 75%,transparent);outline-offset:2px}
 .edit-hover.locked{outline:1px dashed color-mix(in srgb,var(--muted) 70%,transparent)}
 .edit-selection{outline:1.5px solid var(--accent);outline-offset:2px}
@@ -19,9 +18,7 @@
 .edit-handle.handle-end{border-radius:50%;cursor:move}
 .kind-text>.edit-handle{width:6px;height:18px;margin:-9px 0 0 -3px;border-radius:3px}
 .edit-mask,.edit-snapshot{position:absolute;pointer-events:none}
-.edit-progress{outline:1.5px solid var(--accent);outline-offset:2px;animation:edit-pulse 1s ease-in-out infinite alternate}
-@keyframes edit-pulse{from{outline-color:color-mix(in srgb,var(--accent) 30%,transparent)}to{outline-color:var(--accent)}}
-@media(prefers-reduced-motion:reduce){.edit-progress{animation:none}}
+.edit-ghost>.edit-handle{pointer-events:none}
 .edit-draft{position:absolute;z-index:2}
 .edit-draft>.edit-mask{z-index:0}
 .edit-draft>textarea{position:relative;z-index:1;display:block;width:100%;box-sizing:border-box;margin:0;padding:0;border:0;border-radius:0;resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;outline:1.5px solid var(--accent);outline-offset:2px;caret-color:var(--accent);font-kerning:normal}

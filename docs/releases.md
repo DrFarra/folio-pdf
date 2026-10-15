@@ -10,6 +10,14 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.10
+
+- Editar se siente sólido: al soltar un elemento queda en su sitio, seleccionado, y donde estaba se ve al instante lo que hay debajo; ya no aparecen cuadros vacíos, copias duplicadas ni saltos, y la barra no se atenúa en cada cambio.
+- Las imágenes colocadas se mueven, cambian de tamaño, giran y se borran al instante, aunque se toquen con otras imágenes.
+- Un clic sobre una imagen que tapa un texto selecciona la imagen.
+- Las notas se escriben en una tarjeta junto a la propia nota, con su color, sin oscurecer la página, y se pueden arrastrar para moverlas.
+- Cada herramienta tiene su propio cursor: nota, resaltador, lápiz, goma, formas, imagen y áreas.
+
 ## Cambios en 0.9.9
 
 - Corregido el cierre «Folio encontró un error» al volver a una página ya vista después de editar el PDF.

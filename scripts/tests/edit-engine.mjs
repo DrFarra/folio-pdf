@@ -113,6 +113,15 @@ await check('shape-annotations-round-trip-move-and-restyle', async () => {
   return { created: 3, movedAndRestyled: true };
 });
 
+await check('a-moved-note-keeps-its-new-place-in-the-pdf', () => {
+  const blank = new mupdf.PDFDocument(); blank.insertPage(-1, blank.addPage([0, 0, 595, 842], 0, {}, ''));
+  const note = { id: 'n1', page: 1, kind: 'note', rect: [100, 700, 100, 700], color: '#8bbaf0', text: 'Mover', created: 1 };
+  const written = writeAnnotations(blank.saveToBuffer('').asUint8Array(), [note]);
+  const moved = inspectDocument(writeAnnotations(written, [{ ...note, rect: [300, 400, 300, 400] }])).annotations.find(a => a.id === 'n1');
+  assert.deepEqual(moved.rect.map(Math.round), [300, 400, 300, 400]);
+  return { moved: true };
+});
+
 await check('pdf-drawings-move-recolour-copy-and-remove-in-place', () => {
   const doc = new mupdf.PDFDocument(), font = doc.addSimpleFont(new mupdf.Font('Helvetica'));
   doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, [

@@ -11,6 +11,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail, inView } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
 import DocumentLibrary from './components/DocumentLibrary';
+import NotePopover from './components/NotePopover';
 import { DriveBrowser, TransferCard, advance, type Transfer } from './components/DriveBrowser';
 import { driveLookup, driveOpen, driveStage, driveStageNative, driveStatus as readDriveStatus, driveSync, type DriveBinding, type DriveOpened } from './drive';
 import DocumentSwitcher from './components/DocumentSwitcher';
@@ -220,6 +221,21 @@ export default function App() {
   const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null);
   const noteOrigin = useRef<'document' | 'list'>('document');
   const [noteText, setNoteText] = useState('');
+  // Where the note card opens: beside the note's marker, or where a new note was clicked.
+  const [noteAnchor, setNoteAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const lastPointer = useRef({ x: 0, y: 0 });
+  useEffect(() => {
+    const remember = (event: PointerEvent) => { lastPointer.current = { x: event.clientX, y: event.clientY }; };
+    document.addEventListener('pointerdown', remember, true);
+    return () => document.removeEventListener('pointerdown', remember, true);
+  }, []);
+  const noteKey = noteDraft ? noteDraft.id ?? 'new' : null;
+  useLayoutEffect(() => {
+    if (!noteKey) return;
+    const marker = noteKey !== 'new' ? document.querySelector(`.note-marker[data-note-id="${CSS.escape(noteKey)}"]`)?.getBoundingClientRect() : null;
+    const { x, y } = lastPointer.current;
+    setNoteAnchor(marker ? (marker.bottom > 0 && marker.top < innerHeight ? marker : null) : x || y ? { left: x, top: y, right: x + 26, bottom: y + 27 } : null);
+  }, [noteKey]);
   const [activeNote, setActiveNote] = useState<string | null>(null);
   const [password, setPassword] = useState<{ name: string; retry: boolean; submit: (value: string) => void } | null>(null);
   const passwordRef = useRef(password); passwordRef.current = password;
@@ -1953,7 +1969,7 @@ export default function App() {
     if (touchRef.current) closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(true); setTool('select');
   }
   function editNote(annotation: Annotation, origin: 'document' | 'list') { noteOrigin.current = origin; setNoteDraft(annotation); setNoteText(annotation.text); }
-  const updateAnnotation = useCallback((id: string, patch: Partial<Pick<Annotation, 'color' | 'text'>>) => {
+  const updateAnnotation = useCallback((id: string, patch: Partial<Pick<Annotation, 'color' | 'text' | 'rect'>>) => {
     if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current) return;
     commitAnnotations(annotationRef.current.map(item => item.id === id ? { ...item, ...patch } : item));
   }, [commitAnnotations]);
@@ -2407,7 +2423,9 @@ export default function App() {
     {driveRefresh && <TransferCard transfer={driveRefresh} />}
     {deleteTarget && <Modal title={isDesktop ? 'Quitar de la biblioteca' : 'Eliminar de la biblioteca'} onClose={() => setDeleteTarget(null)}><p className="modal-description">{isDesktop ? `Se quitará «${deleteTarget.name}» de la biblioteca junto con sus anotaciones, marcadores y cambios guardados en este equipo.` : `Se eliminarán de ${here} la copia de «${deleteTarget.name}», sus anotaciones, marcadores y cambios guardados.`} El archivo original no se modifica.{tabs.some(tab => tab.doc.id === deleteTarget.id) && ' El documento abierto se cerrará y perderás los cambios que no hayas guardado en un PDF.'}</p><div className="modal-actions"><button className="secondary-button" onClick={() => setDeleteTarget(null)}>Cancelar</button><button className="primary-button destructive-button" disabled={!!busy || loading} onClick={() => void forgetRecent(deleteTarget)}>{isDesktop ? 'Quitar de la biblioteca' : 'Eliminar copia y cambios'}</button></div></Modal>}
     {!inlineEditing && workbenchPanel}
-    {noteDraft && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {pageName(noteDraft.page)}</div><textarea autoFocus data-autofocus aria-label="Texto de la nota" placeholder="Escribe una nota…" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && noteText.trim()) { e.preventDefault(); saveNote(); } }} /><div className="note-modal-footer"><span>{noteText.length} / 5000{!touchLayout && <> · <kbd className="note-shortcut">{shortcutLabel('↵')}</kbd> guarda</>}</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
+    {noteDraft && touchLayout && <Modal title={noteDraft.id ? 'Editar nota' : 'Añadir nota'} onClose={() => setNoteDraft(null)} className="note-modal"><div className="note-page-label"><StickyNote size={16} />Página {pageName(noteDraft.page)}</div><textarea autoFocus data-autofocus aria-label="Texto de la nota" placeholder="Escribe una nota…" value={noteText} maxLength={5000} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && noteText.trim()) { e.preventDefault(); saveNote(); } }} /><div className="note-modal-footer"><span>{noteText.length} / 5000{!touchLayout && <> · <kbd className="note-shortcut">{shortcutLabel('↵')}</kbd> guarda</>}</span><button className="secondary-button" onClick={() => setNoteDraft(null)}>Cancelar</button><button className="primary-button" disabled={!noteText.trim()} onClick={saveNote}><Check size={16} />Guardar nota</button></div></Modal>}
+    {noteDraft && !touchLayout && <NotePopover anchor={noteAnchor} page={pageName(noteDraft.page)} text={noteText} color={noteDraft.color} isNew={!noteDraft.id} shortcut={shortcutLabel('↵')} onText={setNoteText}
+      onColor={color => setNoteDraft(draft => draft && { ...draft, color })} onSave={saveNote} onCancel={() => setNoteDraft(null)} onRemove={noteDraft.id ? () => { removeAnnotation(noteDraft.id!); setNoteDraft(null); } : undefined} />}
     {password && <Modal title="Este PDF tiene contraseña" onClose={cancelPassword} className="password-modal"><p className="modal-description">Introduce la contraseña para abrir «{password.name}».</p><form onSubmit={e => { e.preventDefault(); if (passwordText) { password.submit(passwordText); setPassword(null); } }}><label htmlFor="pdf-password">Contraseña</label><input autoFocus data-autofocus id="pdf-password" type="password" value={passwordText} onChange={e => setPasswordText(e.target.value)} autoComplete="off" />{password.retry && <p className="password-error">La contraseña anterior no es correcta. Inténtalo de nuevo.</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={cancelPassword}>Cancelar</button><button className="primary-button" disabled={!passwordText}><LockKeyhole size={15} />Abrir PDF</button></div></form></Modal>}
     {info && doc && <Modal title="Información del documento" onClose={() => setInfo(false)} className="info-modal"><div className="info-file"><FileText size={30} /><strong>{doc.name}</strong></div><dl className="document-details"><div><dt>Páginas</dt><dd>{doc.pdf.numPages}</dd></div><div><dt>Tamaño</dt><dd>{formatSize(doc.size)}</dd></div><div><dt>Anotaciones de Folio</dt><dd>{annotations.length}</dd></div><div><dt>Marcadores</dt><dd>{bookmarks.length}</dd></div></dl></Modal>}
     {settings && <ReadingSettings layout={layout} theme={theme} onTheme={chooseTheme} zoom={defaultZoom} onZoom={setDefaultZoom} preferences={readingPreferences} onPreferences={setReadingPreferences} rememberRecent={rememberRecent} onRemember={setRememberRecent} openDocuments={tabs.length} confirmClear={confirmClear} onClear={() => void clearLibrary()} onCancelClear={() => setConfirmClear(false)} onClose={() => setSettings(false)} />}

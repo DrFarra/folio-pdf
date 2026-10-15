@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { getPageContent } from '../engine/client';
+import { getPageContent, readPagePlate } from '../engine/client';
 import type { Area, Operation, PageContentInfo, PageContentItem } from '../engine/operations.mjs';
 import type { Annotation, LoadedDocument } from '../types';
 
@@ -57,13 +57,14 @@ export class EditStore {
   private listeners = new Set<() => void>();
   private cache = new Map<string, Promise<PageContentInfo>>();
   private queue: Promise<unknown> = Promise.resolve();
+  private plates = new Map<string, Promise<{ url: string; rect: Rect } | null>>();
 
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   set(patch: Partial<EditState> | ((state: EditState) => Partial<EditState>)) {
     this.state = { ...this.state, ...(typeof patch === 'function' ? patch(this.state) : patch) };
     for (const listener of [...this.listeners]) listener();
   }
-  reset() { this.cache.clear(); this.state = { ...initial, shapeStyle: this.state.shapeStyle }; for (const listener of [...this.listeners]) listener(); }
+  reset() { this.dropPlates(); this.cache.clear(); this.state = { ...initial, shapeStyle: this.state.shapeStyle }; for (const listener of [...this.listeners]) listener(); }
 
   /** Editable regions of a page of the current revision. Requests run one at a
    * time: each copies the document into the engine. */
@@ -80,6 +81,21 @@ export class EditStore {
     }
     return request;
   }
+
+  /** The page around an item without it, for the item's old place while it moves. */
+  plate(doc: LoadedDocument, page: number, item: PageContentItem, scale: number) {
+    const key = `${doc.id}:${doc.revision}:${page}:${item.id}:${scale}`;
+    let request = this.plates.get(key);
+    if (!request) {
+      if (![...this.plates.keys()].every(old => old.startsWith(`${doc.id}:${doc.revision}:`))) this.dropPlates();
+      request = readPagePlate(doc.bytes, page, { id: item.id, kind: item.kind, rect: item.rect }, scale, doc.password)
+        .then(plate => ({ url: URL.createObjectURL(new Blob([plate.png as Uint8Array<ArrayBuffer>], { type: 'image/png' })), rect: plate.rect }))
+        .catch(() => null);
+      this.plates.set(key, request);
+    }
+    return request;
+  }
+  private dropPlates() { for (const request of this.plates.values()) void request.then(plate => { if (plate) URL.revokeObjectURL(plate.url); }); this.plates.clear(); }
 }
 
 export function useEdit<T>(store: EditStore, select: (state: EditState) => T): T {

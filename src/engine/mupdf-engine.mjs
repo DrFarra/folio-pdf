@@ -204,6 +204,10 @@ export function writeAnnotations(bytes, annotations, password = '', incremental 
           let changed = false;
           if (existing.getContents() !== value.text) { existing.setContents(value.text); changed = true; }
           if (colorHex(existing.getColor()) !== value.color.toLowerCase()) { existing.setColor(colorRgb(value.color)); changed = true; }
+          if (value.kind === 'note' && !sameRect(read(existing, index + 1, page.getTransform()).rect, value.rect)) {
+            const p = point(value.rect[0], value.rect[1], page.getTransform()), size = existing.getRect();
+            existing.setRect([p[0], p[1], p[0] + size[2] - size[0], p[1] + size[3] - size[1]]); changed = true;
+          }
           if (value.opacity !== undefined && Math.abs(existing.getOpacity() - value.opacity) > .001) { existing.setOpacity(value.opacity); changed = true; }
           // Shapes move and change style; rewrite their geometry when anything differs.
           if (value.kind === 'shape' && JSON.stringify(shapeData(existing, existing.getType(), mupdf.Matrix.invert(page.getTransform()))) !== JSON.stringify({ shape: value.shape, fill: value.fill ?? null, strokeWidth: value.strokeWidth, ...(value.line ? { line: value.line } : {}) })

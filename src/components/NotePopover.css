@@ -1,0 +1,18 @@
+/* A note being written: a card beside its marker, tinted by the note's colour. */
+.note-popover{position:fixed;z-index:30;width:300px;display:flex;flex-direction:column;border:1px solid var(--line);border-top:3px solid var(--note);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 12px 32px #0003,0 2px 6px #0001;animation:note-popover-in .12s ease-out}
+@keyframes note-popover-in{from{opacity:0;transform:translateY(-3px)}}
+@media(prefers-reduced-motion:reduce){.note-popover{animation:none}}
+.note-popover-heading{display:flex;align-items:center;gap:7px;padding:7px 6px 2px 12px;font-size:11px;color:var(--muted)}
+.note-popover-heading>svg{color:color-mix(in srgb,var(--note) 60%,var(--text))}
+.note-popover-heading>span{flex:1}
+.note-popover-heading .icon-button{width:26px;height:26px}
+.note-popover textarea{min-height:110px;max-height:320px;margin:0;padding:6px 12px 10px;border:0;outline:0;resize:vertical;background:transparent;color:var(--text);font-size:13px;line-height:1.6;field-sizing:content}
+.note-popover textarea::placeholder{color:var(--muted)}
+.note-popover-footer{display:flex;align-items:center;gap:6px;padding:8px 10px;border-top:1px solid var(--line)}
+.note-popover-footer>[role=radiogroup]{display:flex;gap:2px;margin-right:auto}
+.note-popover-footer [role=radio]{width:24px;height:24px;display:grid;place-items:center;border-radius:50%}
+.note-popover-footer [role=radio]>span{width:14px;height:14px;border-radius:50%;border:1px solid #0002}
+.note-popover-footer [role=radio][aria-checked=true]>span{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--accent)}
+@media(hover:hover){.note-popover-footer [role=radio]:hover{background:var(--hover)}}
+.note-popover-footer .icon-button{width:30px;height:30px}
+.note-popover-footer .primary-button{padding:7px 14px;font-size:12px}
