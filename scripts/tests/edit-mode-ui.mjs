@@ -1,7 +1,9 @@
 // Editar inside the reader on desktop: the pages stay (with their zoom), content
 // is selected, moved, typed over, deleted and added on the page itself, each
-// change written to the PDF without a loading screen or a jump.
+// change made in Editar's live document without a loading screen or a jump, and
+// the reader opening the written PDF once Editar closes.
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -22,7 +24,9 @@ const first = pdf.addPage([595, 842]);
 first.drawText('Informe trimestral', { x: 60, y: 760, size: 22, font, color: rgb(.1, .1, .1) });
 ['Las ventas crecieron un doce por ciento respecto', 'al trimestre anterior gracias a la nueva tienda.'].forEach((line, i) => first.drawText(line, { x: 60, y: 700 - i * 16, size: 12, font }));
 first.drawImage(await pdf.embedPng(swatch.asPNG()), { x: 360, y: 420, width: 160, height: 120 });
-pdf.addPage([595, 842]).drawText('Segunda página', { x: 60, y: 760, size: 16, font });
+const second = pdf.addPage([595, 842]); second.drawText('Segunda página', { x: 60, y: 760, size: 16, font });
+// A box the PDF draws itself, to recolour.
+second.drawRectangle({ x: 300, y: 600, width: 120, height: 40, color: rgb(.48, .18, .36) });
 // Pages far enough to leave the reader's view.
 for (let i = 3; i <= 14; i++) pdf.addPage([595, 842]).drawText(`Página ${i}`, { x: 60, y: 760, size: 16, font });
 const fixture = path.join(output, 'edit-mode.pdf'); fs.writeFileSync(fixture, await pdf.save());
@@ -41,6 +45,8 @@ async function check(id, run) {
 const context = await browser.newContext({ viewport: { width: 1360, height: 900 }, acceptDownloads: true });
 const page = await context.newPage(); page.setDefaultTimeout(20000);
 page.on('pageerror', error => console.log('pageerror', error.message));
+// Editar's live documents: each opens a worker of its own.
+let liveWorkers = 0; page.on('worker', worker => { if (worker.url().includes('session.worker')) liveWorkers++; });
 await page.exposeFunction('folioToast', text => toasts.push(text));
 await page.addInitScript(() => new MutationObserver(() => { const toast = document.querySelector('.toast'); if (toast && toast.dataset.seen !== toast.textContent) { toast.dataset.seen = toast.textContent; window.folioToast(toast.textContent); } }).observe(document, { subtree: true, childList: true, characterData: true }));
 
@@ -96,11 +102,13 @@ try {
     await page.evaluate(() => new MutationObserver(() => { if (document.querySelector('.loading-overlay')) window.sawOverlay(); }).observe(document.body, { subtree: true, childList: true }));
     await page.mouse.move(start.x, start.y); await page.locator('.edit-hover').waitFor();
     await page.mouse.down(); await page.mouse.move(start.x + 20, start.y + 40, { steps: 4 }); await page.mouse.move(start.x + 40, start.y + 120, { steps: 6 });
-    assert(await page.locator('.edit-snapshot').count(), 'A snapshot follows the pointer');
+    // The paragraph alone (a sprite drawn by the live document) follows the pointer; WebKit may paint it a frame after the last move.
+    await page.locator('.edit-sprite').first().waitFor({ timeout: 2000 });
     await page.mouse.up(); await settle();
     await page.locator('.edit-selection.kind-text').waitFor();
     assert.equal(await page.locator('.reading-area').evaluate(node => node.scrollTop), scroll);
     assert(!overlay, 'No loading screen');
+    assert.equal(await page.locator('.pdf-page-wrap[data-page-number="1"] canvas[data-live]').count(), 1, 'The page is drawn from the live document, not reopened');
     const bytes = await exported('edit-moved.pdf'), moved = textAt(bytes, 'Las ventas');
     assert(moved.rect[0] > 70 && moved.rect[1] < 700, `Moved: ${moved.rect}`);
     return { moved: moved.rect.map(Math.round), scrollKept: true, reselected: true };
@@ -129,7 +137,11 @@ try {
     assert.equal(items(await exported('edit-deleted.pdf')).filter(item => item.kind === 'image').length, 0);
     await page.keyboard.press('Control+z'); await settle();
     assert.equal(items(await exported('edit-undone.pdf')).filter(item => item.kind === 'image').length, 1);
-    return { deleted: true, undone: true };
+    await page.keyboard.press('Control+y'); await settle();
+    assert.equal(items(await exported('edit-redone.pdf')).filter(item => item.kind === 'image').length, 0);
+    await page.keyboard.press('Control+z'); await settle();
+    assert.equal(items(await exported('edit-undone-again.pdf')).filter(item => item.kind === 'image').length, 1);
+    return { deleted: true, undone: true, redone: true };
   });
 
   await check('add-an-image-and-a-shape', async () => {
@@ -202,6 +214,21 @@ try {
     return { arrowDrawn: true, restyled: true, deleted: true };
   });
 
+  await check('recolouring-a-drawing-shows-at-once-and-is-written-after', async () => {
+    const box = page.locator('.pdf-page-wrap[data-page-number="2"]'); await box.scrollIntoViewIfNeeded();
+    const spot = await toScreen(2, 360, 620); await page.mouse.move(spot.x, spot.y); await page.locator('.edit-layer[data-edit-page="2"][data-edit-state=ready]').waitFor();
+    await page.mouse.click(spot.x, spot.y); await page.locator('.edit-selection.kind-graphic').waitFor();
+    await page.getByLabel('Color de relleno').fill('#00aa00');
+    // Shown in its new colour before anything is written.
+    await page.locator('.edit-layer[data-edit-page="2"] .edit-sprite').waitFor({ timeout: 2000 });
+    await settle();
+    const drawings = operateDocument(await exported('edit-recoloured.pdf'), { operation: 'page-content', page: 2, graphics: true }).items.filter(item => item.kind === 'graphic');
+    assert(drawings.some(item => item.fill === '#00aa00'), JSON.stringify(drawings));
+    await page.keyboard.press('Escape');
+    await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
+    return { previewed: true, written: true };
+  });
+
   await check('a-page-of-an-older-revision-is-not-reused', async () => {
     // A page shown before an edit and out of view since comes back with the new revision's page.
     const far = page.locator('.pdf-page-wrap[data-page-number="14"]');
@@ -214,9 +241,92 @@ try {
     assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
     return { farPageShown: true };
   });
+
+  await check('leaving-opens-the-written-pdf-and-one-undo-returns-to-before', async () => {
+    const reopened = () => page.waitForFunction(() => !document.querySelector('.edit-toolbar') && !document.querySelector('canvas[data-live]') && !document.querySelector('[aria-label="Modo lectura"]:disabled'));
+    await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
+    await page.getByRole('button', { name: 'Listo' }).click(); await reopened(); await settle();
+    // The draft once the last change and the reader's reopening have written it.
+    for (let value = ''; value !== lastDraft; await page.waitForTimeout(300)) { value = lastDraft; lastDraft = await readStore('drafts', 'bytes'); }
+    const before = textAt(new Uint8Array(Buffer.from(lastDraft, 'base64')), 'Informe trimestral');
+    // Another visit to Editar: one change, then back to reading.
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
+    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await page.keyboard.press('Shift+ArrowRight'); await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(600); await settle();
+    const moved = textAt(await exported('edit-second-visit.pdf'), 'Informe trimestral');
+    assert(Math.abs(moved.rect[0] - before.rect[0] - 20) < 1.5, `Moved 20 pt: ${before.rect[0]} → ${moved.rect[0]}`);
+    await page.getByRole('button', { name: 'Listo' }).click(); await reopened(); await settle();
+    // The visit's change undoes back to the PDF as it was before it.
+    await page.keyboard.press('Control+z'); await settle();
+    const restored = textAt(await exported('edit-visit-undone.pdf'), 'Informe trimestral');
+    assert(Math.abs(restored.rect[0] - before.rect[0]) < .5, `Back: ${restored.rect[0]}`);
+    assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
+    return { reopenedOnce: true, visitUndoneAtOnce: true };
+  });
+  await check('after-leaving-changes-undo-one-by-one-and-editar-reopens-at-once', async () => {
+    const reopened = () => page.waitForFunction(() => !document.querySelector('.edit-toolbar') && !document.querySelector('canvas[data-live]') && !document.querySelector('[aria-label="Modo lectura"]:disabled'));
+    const x = bytes => textAt(bytes, 'Informe trimestral').rect[0], workers = liveWorkers;
+    // The document stayed live after the last visit: Editar opens it again without another copy.
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
+    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    const start = x(new Uint8Array(Buffer.from(lastDraft, 'base64')));
+    await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(600); await settle();
+    assert(Math.abs(x(await exported('edit-step-1.pdf')) - start - 10) < 1.5, 'First step');
+    await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(600); await settle();
+    assert(Math.abs(x(await exported('edit-step-2.pdf')) - start - 20) < 1.5, 'Second step');
+    await page.getByRole('button', { name: 'Listo' }).click(); await reopened(); await settle();
+    // Outside Editar each change still undoes on its own.
+    await page.keyboard.press('Control+z');
+    assert(Math.abs(x(await exported('edit-step-undone.pdf')) - start - 10) < 1.5, 'One step back');
+    await reopened(); await settle();
+    await page.keyboard.press('Control+z');
+    assert(Math.abs(x(await exported('edit-steps-undone.pdf')) - start) < 1.5, 'Two steps back');
+    await reopened(); await settle();
+    assert.equal(liveWorkers, workers, 'The same live document throughout');
+    assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
+    return { reenteredWithoutCopy: true, undoneOneByOne: true };
+  });
+
+  await check('a-change-not-yet-written-survives-opening-another-document', async () => {
+    // The draft of this document, by its id (the SHA-256 of the file).
+    const id = crypto.createHash('sha256').update(fs.readFileSync(fixture)).digest('hex');
+    const draft = () => page.evaluate(id => new Promise((resolve, reject) => {
+      const request = indexedDB.open('folio-library');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => { const get = request.result.transaction('drafts', 'readonly').objectStore('drafts').get(id); get.onsuccess = () => resolve(btoa(Array.from(new Uint8Array(get.result), c => String.fromCharCode(c)).join(''))); get.onerror = () => reject(get.error); };
+    }), id);
+    const before = await draft(), x = bytes => textAt(new Uint8Array(Buffer.from(bytes, 'base64')), 'Informe trimestral').rect[0];
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
+    const title = await toScreen(1, 100, 765); await page.mouse.move(title.x, title.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+    await page.mouse.click(title.x, title.y); await page.locator('.edit-selection.kind-text').waitFor();
+    await page.keyboard.press('Shift+ArrowRight'); await page.waitForTimeout(450); await settle();
+    // Another document opens before the change is written (800 ms after it).
+    const other = await PDFDocument.create(); other.addPage([595, 842]).drawText('Otro documento', { x: 60, y: 760, size: 16, font: await other.embedFont(StandardFonts.Helvetica) });
+    await page.locator('input[type=file][accept="application/pdf,.pdf"]').first().setInputFiles({ name: 'otro.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await other.save()) });
+    await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'otro.pdf');
+    // Back to the first document: it shows the change, and its draft holds it.
+    await page.locator('.document-tab [role=tab][aria-label="edit-mode.pdf"]').click();
+    await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'edit-mode.pdf' && !document.querySelector('canvas[data-live]') && !document.querySelector('[aria-label="Modo lectura"]:disabled'));
+    await settle();
+    let written = before; for (let i = 0; i < 50 && written === before; i++) { await page.waitForTimeout(100); written = await draft(); }
+    assert(Math.abs(x(written) - x(before) - 10) < 1.5, `Moved 10 pt: ${x(before)} → ${x(written)}`);
+    const shown = await page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span', { hasText: 'Informe' }).first().boundingBox(), box = await pageBox(1);
+    assert(Math.abs((shown.x - box.x) / (box.width / 595) - x(written)) < 3, 'The reader shows the moved title');
+    // Closing the live document folded its changes into one step back to the PDF it was opened from (the original).
+    const original = textAt(new Uint8Array(fs.readFileSync(fixture)), 'Informe trimestral').rect[0];
+    let restored = written;
+    for (let i = 0; i < 12 && Math.abs(x(restored) - original) > .5; i++) {
+      await page.keyboard.press('Control+z'); await page.waitForFunction(() => !document.querySelector('[aria-label="Modo lectura"]:disabled')); await page.waitForTimeout(300); restored = await draft();
+    }
+    assert(Math.abs(x(restored) - original) < .5, `Back to the original: ${x(restored)}`);
+    assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
+    return { writtenBeforeSwitching: true, readerReloaded: true, foldedToOriginal: true };
+  });
 } finally {
   for (const result of results) console.log(JSON.stringify(result));
   fs.writeFileSync(path.join(output, 'edit-mode-ui-results.json'), JSON.stringify({ browser: useWebKit ? 'WebKit' : 'Chromium', results }, null, 2));
   await browser.close(); server.kill();
 }
-process.exitCode = results.length === 9 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 13 && results.every(result => result.status === 'passed') ? 0 : 1;

@@ -81,7 +81,9 @@ export async function readDraft(id: string): Promise<Uint8Array | null> {
 }
 export async function storeDraft(id: string, bytes: Uint8Array): Promise<void> {
   if (isNative) { await invokeBinary('store_draft', bytes, { headers: { 'x-folio-draft-id': id } }); return; }
-  await transact('drafts', 'readwrite', tx => { tx.objectStore('drafts').put(new Uint8Array(bytes).buffer, id); });
+  // put() copies what it stores; a view of part of a buffer is cut out first.
+  const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
+  await transact('drafts', 'readwrite', tx => { tx.objectStore('drafts').put(whole, id); });
 }
 export async function discardDraft(id: string): Promise<void> {
   if (isNative) { await invoke('discard_draft', { id }); return; }

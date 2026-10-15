@@ -17,7 +17,7 @@
 .edit-handle.handle-n,.edit-handle.handle-s{cursor:ns-resize}.edit-handle.handle-e,.edit-handle.handle-w{cursor:ew-resize}
 .edit-handle.handle-end{border-radius:50%;cursor:move}
 .kind-text>.edit-handle{width:6px;height:18px;margin:-9px 0 0 -3px;border-radius:3px}
-.edit-mask,.edit-snapshot{position:absolute;pointer-events:none}
+.edit-mask,.edit-snapshot,.edit-sprite{position:absolute;pointer-events:none}
 .edit-ghost>.edit-handle{pointer-events:none}
 .edit-draft{position:absolute;z-index:2}
 .edit-draft>.edit-mask{z-index:0}

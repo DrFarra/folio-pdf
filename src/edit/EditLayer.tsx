@@ -3,7 +3,7 @@ import type { PageViewport, PDFPageProxy } from 'pdfjs-dist';
 import type { PageContentItem } from '../engine/operations.mjs';
 import type { Annotation, LoadedDocument } from '../types';
 import { errorMessage } from '../errors';
-import { useEdit, type ContentKind, type EditStore, type Rect, type ShapeKind, type TextDraft } from './store';
+import { useEdit, type Colors, type ContentKind, type EditStore, type Picture, type Rect, type ShapeKind, type TextDraft } from './store';
 import { commitDraft, defaultStyle, editText, moveSelection, placeImage } from './actions';
 import { parseFontName } from './fonts';
 import { ShapeSvg } from './ShapeLayer';
@@ -17,7 +17,7 @@ type Gesture =
   | { mode: 'move'; target: Target; start: Point; now: Point; moved: boolean; wasSelected: boolean }
   | { mode: 'resize'; target: Target; handle: Handle; start: Point; now: Point; free: boolean }
   | { mode: 'create'; tool: 'text' | 'image' | ShapeKind; start: Point; now: Point; free: boolean };
-/** `drawn`: the canvas shows this revision of the page, not the previous one. */
+/** `drawn`: the canvas shows this state of the page, not the previous one. */
 type Props = { store: EditStore; doc: LoadedDocument; number: number; viewport: PageViewport; page: PDFPageProxy; canvas: React.RefObject<HTMLCanvasElement | null>; shapes: Annotation[]; drawn: boolean };
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -72,6 +72,27 @@ function Snapshot({ canvas, viewport, from, to, rotation = 0, opacity }: { canva
   return <canvas ref={ref} className="edit-snapshot" style={{ left: to.x + (to.w - w) / 2, top: to.y + (to.h - h) / 2, width: w, height: h, transform: rotation ? `rotate(${rotation}deg)` : undefined, opacity }} aria-hidden="true" />;
 }
 
+/** The item alone, drawn by Editar's live document on transparent pixels, shown
+ * where it is going (resized, turned, faded, recoloured); `fallback` (the page's
+ * own pixels) until it arrives, or without a live document. */
+function Sprite({ store, doc, number, item, scale, toBox, to, rotation = 0, opacity, colors, fallback }: { store: EditStore; doc: LoadedDocument; number: number; item: PageContentItem; scale: number; toBox: (rect: Rect) => Box; to: Box; rotation?: number; opacity?: number; colors?: Colors; fallback: React.ReactNode }) {
+  const want = `${item.id}:${item.rect}:${scale}:${colors?.fill}:${colors?.stroke}`;
+  const [sprite, setSprite] = useState<Picture & { for: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void store.sprite(doc, number, item, scale, colors).then(found => { if (alive) setSprite(found && { ...found, for: want }); });
+    return () => { alive = false; };
+    // The wanted sprite is named by `want`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, doc, number, want]);
+  if (sprite?.for !== want) return fallback;
+  const from = toBox(item.rect), box = toBox(sprite.rect), turned = rotation === 90 || rotation === 270;
+  const sx = (turned ? to.h : to.w) / from.w, sy = (turned ? to.w : to.h) / from.h, w = box.w * sx, h = box.h * sy;
+  // Turned about the centre of its new place; otherwise its margin keeps its offset.
+  const left = turned ? to.x + (to.w - w) / 2 : to.x + (box.x - from.x) * sx, top = turned ? to.y + (to.h - h) / 2 : to.y + (box.y - from.y) * sy;
+  return <img className="edit-sprite" src={sprite.url} alt="" draggable={false} style={{ left, top, width: w, height: h, transform: rotation ? `rotate(${rotation}deg)` : undefined, opacity }} />;
+}
+
 /** The colour just outside a box, to cover content that has moved away. With
  * `plain`, null unless all around it is that one colour: a patch over other
  * content would show as an empty box, so the content stays visible instead. */
@@ -98,9 +119,11 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   const pendingImage = useEdit(store, state => state.image);
   const shapeStyle = useEdit(store, state => state.shapeStyle);
   const layer = useRef<HTMLDivElement>(null);
-  // Items belong to the revision they were read from; a newer one reads them again.
-  const [loaded, setLoaded] = useState<{ revision: string; items: PageContentItem[] } | null>(null);
-  const items = loaded?.revision === doc.revision ? loaded.items : null;
+  // Items belong to the state of the page they were read from (a revision, or a
+  // change in the live document); a newer one reads them again.
+  const key = useEdit(store, () => store.key(doc, number));
+  const [loaded, setLoaded] = useState<{ key: string; items: PageContentItem[] } | null>(null);
+  const items = loaded?.key === key ? loaded.items : null;
   const [wanted, setWanted] = useState(false);
   const [hover, setHover] = useState<Target | null>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
@@ -122,23 +145,23 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     return { x: Math.max(0, Math.min(viewport.width, event.clientX - box.left)), y: Math.max(0, Math.min(viewport.height, event.clientY - box.top)) };
   };
 
-  // Content is read for the current revision once the page is used in Editar.
-  useEffect(() => { setHover(null); }, [doc.revision]);
+  // Content is read for the page as it is now, once the page is used in Editar.
+  useEffect(() => { setHover(null); }, [key]);
   const need = wanted || !!reselect || !!selection;
   useEffect(() => {
     if (!need || items) return;
     let alive = true;
-    store.items(doc, number).then(info => { if (alive) setLoaded({ revision: doc.revision, items: info.items }); }).catch(error => { if (alive) store.set({ notice: errorMessage(error, 'No se pudo leer el contenido de esta página.') }); });
+    store.items(doc, number).then(info => { if (alive) setLoaded({ key, items: info.items }); }).catch(error => { if (alive) store.set({ notice: errorMessage(error, 'No se pudo leer el contenido de esta página.') }); });
     return () => { alive = false; };
-  }, [store, doc, number, need, items]);
+  }, [store, doc, number, need, items, key]);
   // After a commit the moved, written or added content is selected again. What
   // stood in for it stays until the page has drawn the result: no jump back.
   useEffect(() => {
-    if (!reselect || !items || reselect.from === doc.revision || !drawn) return;
+    if (!reselect || !items || reselect.from === key || !drawn) return;
     const best = items.filter(item => item.kind === reselect.kind && (item.kind !== 'text' || item.level === 'paragraph'))
       .map(item => ({ item, score: overlap(item.rect, reselect.rect) })).sort((a, b) => b.score - a.score)[0];
     store.set({ reselect: null, ghost: null, ...(store.state.draft?.written ? { draft: null } : {}), selection: best && best.score > .2 ? { kind: reselect.kind, page: number, item: best.item } : null });
-  }, [store, items, reselect, number, doc.revision, drawn]);
+  }, [store, items, reselect, number, key, drawn]);
   // What lies under the selected item is drawn ahead of time, to show at its old
   // place while it is dragged, written elsewhere or removed.
   const [plate, setPlate] = useState<{ id: string; itemRect: Rect; url: string; rect: Rect } | null>(null);
@@ -149,6 +172,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     void store.plate(doc, number, item, plateScale).then(found => { if (alive && found) setPlate({ id: item.id, itemRect: item.rect, ...found }); });
     return () => { alive = false; };
   }, [store, doc, number, selection, plateScale]);
+  useEffect(() => { if (hover && hover.kind !== 'shape' && hover.item.editable) void store.sprite(doc, number, hover.item, plateScale); }, [store, doc, number, hover, plateScale]);
   const plateFor = (item: PageContentItem) => plate && plate.id === item.id && plate.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null;
   // Where an item was: what lies under it if drawn, else the page's plain colour, else nothing.
   const vacated = (item: PageContentItem) => {
@@ -157,15 +181,15 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     const color = pageBackground(from);
     return color ? <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: color }} /> : null;
   };
-  // A selection from an older revision no longer matches the page.
-  const revision = useRef(doc.revision);
+  // A selection from an older state of the page no longer matches it.
+  const revision = useRef(key);
   useEffect(() => {
-    if (revision.current === doc.revision) return;
-    revision.current = doc.revision;
+    if (revision.current === key) return;
+    revision.current = key;
     const state = store.state;
     if (state.selection?.page === number && state.selection.kind !== 'shape' && !state.reselect) store.set({ selection: null });
     if (state.ghost?.page === number && !state.reselect && !state.committing) store.set({ ghost: null });
-  }, [store, doc.revision, number]);
+  }, [store, key, number]);
 
   /** A click places an image at its own size, at most half the page, centred on the click. */
   function naturalBox(p: Point, image: { width: number; height: number }): Box {
@@ -348,12 +372,12 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
 
   const live = gesture && (gesture.mode !== 'move' || gesture.moved) ? preview(gesture) : null;
   const liveTarget = gesture && gesture.mode !== 'create' ? gesture.target : null;
-  // Reading pixels back from the page is slow, so each spot is sampled once per revision.
+  // Reading pixels back from the page is slow, so each spot is sampled once per state of the page.
   const sampled = useRef(new Map<string, string | null>());
   const pageBackground = (box: Box, plain = true) => {
-    const key = `${doc.revision}:${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.w)}:${Math.round(box.h)}:${plain}`;
-    let value = sampled.current.get(key);
-    if (value === undefined) { if (sampled.current.size > 50) sampled.current.clear(); value = background(canvas.current, viewport, box, plain); sampled.current.set(key, value); }
+    const spot = `${key}:${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.w)}:${Math.round(box.h)}:${plain}`;
+    let value = sampled.current.get(spot);
+    if (value === undefined) { if (sampled.current.size > 50) sampled.current.clear(); value = background(canvas.current, viewport, box, plain); sampled.current.set(spot, value); }
     return value;
   };
   const cursor = tool === 'select' ? (gesture?.mode === 'move' && gesture.moved ? 'grabbing' : hover && (hover.kind === 'shape' || hover.item.editable) ? 'move' : 'default') : tool === 'text' ? 'text' : tool === 'image' ? (pendingImage ? 'var(--cursor-image)' : 'default') : `var(--cursor-${tool})`;
@@ -368,7 +392,8 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       const from = toBox(ghost.item.rect), to = toBox(ghost.rect);
       return <>
         {!ghost.copy && vacated(ghost.item)}
-        {!ghost.removed && <Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} rotation={ghost.rotation} opacity={ghost.opacity} />}
+        {!ghost.removed && <Sprite store={store} doc={doc} number={number} item={ghost.item} scale={plateScale} toBox={toBox} to={to} rotation={ghost.rotation} opacity={ghost.opacity} colors={ghost.colors}
+          fallback={<Snapshot canvas={canvas.current} viewport={viewport} from={from} to={to} rotation={ghost.rotation} opacity={ghost.opacity} />} />}
         {!ghost.removed && <div className={`edit-selection edit-ghost kind-${ghost.kind}`} style={{ left: to.x, top: to.y, width: to.w, height: to.h }}>
           {(ghost.kind === 'image' ? HANDLES : ghost.kind === 'text' ? ['w', 'e'] : []).map(handle => <span key={handle} className={`edit-handle handle-${handle}`} />)}
         </div>}
@@ -379,7 +404,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       return <>
         {liveTarget.kind === 'image' || gesture?.mode === 'move' ? <>
           {vacated(liveTarget.item)}
-          <Snapshot canvas={canvas.current} viewport={viewport} from={from} to={live.box} />
+          <Sprite store={store} doc={doc} number={number} item={liveTarget.item} scale={plateScale} toBox={toBox} to={live.box} fallback={<Snapshot canvas={canvas.current} viewport={viewport} from={from} to={live.box} />} />
         </> : null}
         <div className="edit-selection dragging" style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }} />
       </>;

@@ -53,7 +53,8 @@ export function hasSignature(doc) {
   return walk(fields);
 }
 
-function editable(annotation) {
+/** An annotation Folio reads and draws itself (highlights, notes, ink, its own shapes). */
+export function folioAnnotation(annotation) {
   const type = annotation.getType();
   return supported.has(type) && !(annotation.getFlags() & LOCKED) && (!shapes[type] || annotation.getObject().get('NM').asString().startsWith('Folio:'));
 }
@@ -129,7 +130,7 @@ export function inspectDocument(bytes, password = '') {
       for (let i = 0; i < annots.length; i++) { const [num, gen] = annots.get(i).toString().split(' '); generations.set(Number(num), gen); }
       const page = doc.loadPage(index);
       try {
-        for (const annotation of [...page.getAnnotations()]) if (editable(annotation)) {
+        for (const annotation of [...page.getAnnotations()]) if (folioAnnotation(annotation)) {
           const value = read(annotation, index + 1, page.getTransform()), gen = generations.get(value.sourceRef) || '0';
           annotations.push(value); hidden.push(gen === '0' ? `${value.sourceRef}R` : `${value.sourceRef}R${gen}`);
           page.deleteAnnotation(annotation);
@@ -195,7 +196,7 @@ export function writeAnnotations(bytes, annotations, password = '', incremental 
       try {
         const pending = new Map((byPage.get(index + 1) || []).map(a => [a.id, a]));
         for (const existing of [...page.getAnnotations()]) {
-          if (!editable(existing)) continue;
+          if (!folioAnnotation(existing)) continue;
           const id = identity(existing, index + 1), value = pending.get(id);
           if (!value) { page.deleteAnnotation(existing); continue; }
           pending.delete(id);

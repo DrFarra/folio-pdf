@@ -1,13 +1,13 @@
 import type { Operation, PageContentItem } from '../engine/operations.mjs';
 import type { Annotation } from '../types';
-import type { ContentKind, EditStore, Rect, TextDraft, TextStyle } from './store';
+import type { Colors, ContentKind, EditStore, Rect, TextDraft, TextStyle } from './store';
 import { fontFields, originalCovers, parseFontName } from './fonts';
 
 // Every change made in Editar goes through here: content edits are written to
 // the PDF (one undo step each), shapes change Folio's annotations at once.
 
 // After a commit the page selects whatever now covers this rect.
-const reselectAt = (store: EditStore, page: number, kind: ContentKind, rect: Rect) => ({ page, kind, rect, from: store.doc?.revision ?? '' });
+const reselectAt = (store: EditStore, page: number, kind: ContentKind, rect: Rect) => ({ page, kind, rect, from: store.doc ? store.key(store.doc, page) : '' });
 export const shift = (rect: Rect, dx: number, dy: number): Rect => [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy];
 const round = (value: number) => Math.round(value * 10) / 10;
 export const defaultStyle: TextStyle = { family: 'helvetica', bold: false, italic: false, size: 12, color: '#202020', align: 'left', lineHeight: 1.25 };
@@ -127,18 +127,20 @@ export function nudgeSelection(store: EditStore, dx: number, dy: number) {
   nudge = { rect, timer: setTimeout(() => { nudge = null; void moveSelection(store, rect); }, 400) };
 }
 
-// Colour picks arrive while the picker is dragged: the last one is written once they pause.
-let recolor: { timer: ReturnType<typeof setTimeout>; colors: { fill?: string; stroke?: string } } | null = null;
-export function recolorSelection(store: EditStore, colors: { fill?: string; stroke?: string }) {
-  if (store.state.selection?.kind !== 'graphic') return;
+// Colour picks arrive while the picker is dragged: each shows at once, drawn by
+// the live document without changing it, and the last is written once they pause.
+let recolor: { timer: ReturnType<typeof setTimeout>; colors: Colors; selection: { page: number; item: PageContentItem } } | null = null;
+export function recolorSelection(store: EditStore, colors: Colors) {
+  const current = store.state.selection;
+  if (current?.kind !== 'graphic' && !recolor) return;
   if (recolor) clearTimeout(recolor.timer);
-  const next = { ...recolor?.colors, ...colors };
-  recolor = { colors: next, timer: setTimeout(() => {
+  const selection = recolor?.selection ?? current as { page: number; item: PageContentItem }, next = { ...recolor?.colors, ...colors }, { page, item } = selection;
+  store.set({ ghost: { page, kind: 'graphic', item, rect: item.rect, colors: next } });
+  recolor = { colors: next, selection, timer: setTimeout(() => {
+    if (store.state.committing) { recolorSelection(store, {}); return; }
     recolor = null;
-    const selection = store.state.selection; if (selection?.kind !== 'graphic') return;
-    if (store.state.committing) { recolorSelection(store, next); return; }
-    store.set({ reselect: reselectAt(store, selection.page, 'graphic', selection.item.rect) });
-    void run(store, { operation: 'recolor-graphic', page: selection.page, sourceId: selection.item.id, sourceRect: selection.item.rect, rect: selection.item.rect, ...next });
+    store.set({ reselect: reselectAt(store, page, 'graphic', item.rect) });
+    void run(store, { operation: 'recolor-graphic', page, sourceId: item.id, sourceRect: item.rect, rect: item.rect, ...next });
   }, 300) };
 }
 

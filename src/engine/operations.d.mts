@@ -37,3 +37,11 @@ export type Operation =
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
 export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate;
+export const EDITS: Set<string>;
+/** Applies one Editar change to an open document, checked in place; the caller discards or undoes it on failure. */
+export function editDocument(doc: import('mupdf').PDFDocument, options: Operation): void;
+export function readPage(doc: import('mupdf').PDFDocument, options: Extract<Operation, { operation: 'page-content' | 'page-image' }>): PageContentInfo | PageImageInfo;
+export function pagePlate(doc: import('mupdf').PDFDocument, options: Extract<Operation, { operation: 'page-plate' }>): PagePlate;
+export function renderPage(page: import('mupdf').PDFPage, matrix: import('mupdf').Matrix, box: import('mupdf').Rect, alpha?: boolean): import('mupdf').Pixmap;
+/** One editable item drawn alone on transparent pixels (a drawing optionally in other colours); the document is not changed. */
+export function itemSprite(doc: import('mupdf').PDFDocument, options: { page: number; id: string; kind: 'text' | 'image' | 'graphic'; rect: Area['rect']; scale: number; fill?: string; stroke?: string }): PagePlate;

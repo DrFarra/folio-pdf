@@ -1,5 +1,5 @@
 import * as mupdf from 'mupdf';
-import { open, hasSignature, save } from './mupdf-engine.mjs';
+import { open, hasSignature, save, folioAnnotation } from './mupdf-engine.mjs';
 import { jpegOrientation, orientationMatrix } from './jpeg-orientation.mjs';
 
 const fail = message => { throw new Error(message); };
@@ -727,14 +727,37 @@ function drawingItems(page) {
   return { tooMany, items: drawings.map((drawing, i) => ({ id: `graphic-${i}`, kind: 'graphic', rect: drawing.box, editable: true, ...(drawing.fill !== undefined ? { fill: drawing.fill } : {}), ...(drawing.stroke !== undefined ? { stroke: drawing.stroke } : {}), ...(drawing.clip ? { clip: true } : {}) })) };
 }
 
-/** Move, duplicate, recolour or remove one drawing by rewriting its operators. */
-function editDrawing(doc, page, index, options, password) {
-  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+/** The drawing `sourceId` names, checked against where it was selected. */
+function drawingAt(page, options) {
   if (typeof options.sourceId !== 'string' || !/^graphic-\d{1,5}$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
   const found = pageDrawings(page), drawing = found.drawings[Number(options.sourceId.slice(8))], source = rect(options.sourceRect);
   if (!drawing || !drawing.box.every((value, i) => Math.abs(value - source[i]) <= .02)) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');
+  return { found, drawing, source };
+}
+
+const pdfColor = hex => rgb(hex).map(number).join(' ');
+/** Edits to a drawing's own stream that paint it in new colours. */
+function recolorEdits(drawing, { fill, stroke }) {
+  if (!fill && !stroke) fail('Elige un color.');
+  if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede cambiar su color.');
+  const set = `${fill ? `${pdfColor(fill)} rg ` : ''}${stroke ? `${pdfColor(stroke)} RG ` : ''}`, edits = [];
+  // A lone path is wrapped with its new colours; a group gets them after its
+  // own q, and each colour it sets is replaced.
+  for (const part of drawing.parts) {
+    if (part.lone) edits.push([part.start, part.start, `q ${set}\n`], [part.end, part.end, '\nQ']);
+    else edits.push([part.start + 1, part.start + 1, ` ${set}`]);
+  }
+  if (fill) for (const op of drawing.fills) edits.push([op.start, op.end, `${pdfColor(fill)} rg`]);
+  if (stroke) for (const op of drawing.strokes) edits.push([op.start, op.end, `${pdfColor(stroke)} RG`]);
+  return edits;
+}
+const applyEdits = (text, edits) => { let next = text; for (const [from, to, value] of [...edits].sort((a, b) => b[0] - a[0])) next = next.slice(0, from) + value + next.slice(to); return next; };
+
+/** Move, duplicate, recolour or remove one drawing by rewriting its operators. */
+function editDrawing(doc, page, index, options) {
+  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+  const { found, drawing, source } = drawingAt(page, options);
   const text = found.texts[drawing.si], edits = [], operation = options.operation;
-  const color = hex => rgb(hex).map(number).join(' ');
   let expected;
   if (operation === 'move-graphic') {
     if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede mover.');
@@ -749,34 +772,18 @@ function editDrawing(doc, page, index, options, password) {
     expected = [source[0] + dx, source[1] + dy, source[2] + dx, source[3] + dy];
   } else if (operation === 'remove-graphic') {
     for (const paint of drawing.paints) edits.push([paint.start, paint.end, 'n']);
-  } else {
-    const { fill, stroke } = options;
-    if (!fill && !stroke) fail('Elige un color.');
-    if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede cambiar su color.');
-    const set = `${fill ? `${color(fill)} rg ` : ''}${stroke ? `${color(stroke)} RG ` : ''}`;
-    // A lone path is wrapped with its new colours; a group gets them after its
-    // own q, and each colour it sets is replaced.
-    for (const part of drawing.parts) {
-      if (part.lone) edits.push([part.start, part.start, `q ${set}\n`], [part.end, part.end, '\nQ']);
-      else edits.push([part.start + 1, part.start + 1, ` ${set}`]);
-    }
-    if (fill) for (const op of drawing.fills) edits.push([op.start, op.end, `${color(fill)} rg`]);
-    if (stroke) for (const op of drawing.strokes) edits.push([op.start, op.end, `${color(stroke)} RG`]);
-  }
-  let next = text;
-  for (const [from, to, value] of edits.sort((a, b) => b[0] - a[0])) next = next.slice(0, from) + value + next.slice(to);
+  } else edits.push(...recolorEdits(drawing, options));
+  const next = applyEdits(text, edits);
   const glyphs = contentGlyphs(page), object = page.getObject(), stream = doc.addStream(Uint8Array.from(next, c => c.charCodeAt(0)), {});
   // A new stream rather than the old one rewritten: another page may share it.
   if (!object.get('Contents').isArray()) object.put('Contents', stream);
   else { const list = doc.newArray(); found.streams.forEach((value, i) => list.push(i === drawing.si ? stream : value)); object.put('Contents', list); }
-  const output = save(doc, QUICK);
-  verifyRetainedGlyphs(output, index, glyphs, password, 'No se pudo cambiar este dibujo sin afectar al texto. El original permanece intacto.');
+  verifyRetainedGlyphs(doc, index, glyphs, 'No se pudo cambiar este dibujo sin afectar al texto. El original permanece intacto.');
   if (expected) {
-    const check = open(output, password); let after;
-    try { const moved = check.loadPage(index); try { after = pageDrawings(moved).drawings; } finally { moved.destroy(); } } finally { check.destroy(); }
+    const moved = doc.loadPage(index); let after;
+    try { after = pageDrawings(moved).drawings; } finally { moved.destroy(); }
     if (!after.some(other => other.box.every((value, i) => Math.abs(value - expected[i]) < .5))) fail('El dibujo quedaría recortado en esa posición. El original permanece intacto.');
   }
-  return output;
 }
 
 function contentGlyphs(page, whitespace = false) {
@@ -852,7 +859,7 @@ function glyphDrawing(device, glyphs, dx, dy) {
 
 // Redaction removes every glyph whose font box touches a mark, and with ordinary
 // leading those boxes overlap the adjacent lines. Mark only the middle band of
-// each selected glyph; verifyRetainedGlyphs then checks the saved result.
+// each selected glyph; verifyRetainedGlyphs then checks the edited page.
 function textRemoval(selected, retainedGlyphs, conflict) {
   const marks = selected.map(({ quad, origin }) => {
     if (!finite(quad) || !finite(origin)) fail('Los límites del texto no permiten una eliminación segura.');
@@ -888,10 +895,10 @@ function areaRemoval(page, box) {
   return textRemoval(glyphs.filter(inside), glyphs.filter(glyph => !inside(glyph) && glyph.c.trim()), 'El área corta letras de otro texto. Ajústala para incluirlas completas o dejarlas fuera.');
 }
 
-function verifyRetainedGlyphs(output, index, expected, password, message = 'La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.') {
-  const verification = open(output, password); let page, actual;
-  try { page = verification.loadPage(index); actual = contentGlyphs(page); }
-  finally { page?.destroy(); verification.destroy(); }
+// Checks the edited document itself: a failed check is undone by the caller, never written.
+function verifyRetainedGlyphs(doc, index, expected, message = 'La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.') {
+  const page = doc.loadPage(index); let actual;
+  try { actual = contentGlyphs(page); } finally { page.destroy(); }
   const key = glyph => JSON.stringify([glyph.c, glyph.fontName, glyph.color.map(n => Math.round(n * 255))]);
   const sort = (a, b) => key(a).localeCompare(key(b)) || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0] || a.size - b.size;
   expected.sort(sort); actual.sort(sort);
@@ -1007,13 +1014,12 @@ function editFolioImage(doc, page, image, options) {
     if (i === image.index && replacement) list.push(replacement);
   }
   object.put('Contents', list);
-  return save(doc, QUICK);
 }
 
 // Move, resize, turn or duplicate a text block or an image without rewriting it:
 // text keeps its own glyphs, fonts and mixed styles, and an image keeps its
 // compressed data and transparency. The original is removed like remove-content.
-function moveContent(doc, page, index, target, options, password) {
+function moveContent(doc, page, index, target, options) {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
   if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
   const source = rect(options.sourceRect), sourceBox = mupdf.Rect.transform(source, page.getTransform());
@@ -1022,13 +1028,35 @@ function moveContent(doc, page, index, target, options, password) {
   const placed = !text && options.opacity === undefined && folioImage(folioImages(page), source);
   if (placed) return editFolioImage(doc, page, placed, options);
   const selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: text ? 'text' : 'image', rect: source });
-  let captured, draw, expected = [];
+  const { draw, expected, release } = movedDrawing(page, selection, text, sourceBox, target, options);
   try {
-    if (text) {
-      // Text is moved, not scaled: a new size means retyping it.
-      if (Math.abs((target[2] - target[0]) - (sourceBox[2] - sourceBox[0])) > .5 || Math.abs((target[3] - target[1]) - (sourceBox[3] - sourceBox[1])) > .5) fail('Para cambiar el tamaño del texto, edítalo.');
-      captured = captureGlyphs(page);
-      const dx = target[0] - sourceBox[0], dy = target[1] - sourceBox[1], used = new Set(), moved = [];
+    if (!options.copy) {
+      redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
+      verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
+    }
+    appendDrawing(doc, page, draw);
+    if (expected.length) {
+      // Every glyph must appear where it was moved. A rewritten font may name an
+      // odd glyph differently (a bullet as a middle dot, a TeX brace as a letter), so almost all must read the same.
+      const moved = doc.loadPage(index); let found;
+      try { found = contentGlyphs(moved); } finally { moved.destroy(); }
+      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .05 && Math.abs(other.origin[1] - glyph.origin[1]) < .05);
+      if (expected.some(glyph => !at(glyph).length) || expected.filter(glyph => !at(glyph).some(other => other.c === glyph.c)).length > Math.max(3, expected.length * .05))
+        fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
+    }
+  } finally { release(); }
+}
+
+/** What moving a selected text or image to `target` (device space) draws: the
+ * text's own glyphs, or the image fitted and turned there, with where each moved
+ * character must end up. `release` frees the fonts or image it holds. */
+function movedDrawing(page, selection, text, sourceBox, target, options) {
+  if (text) {
+    // Text is moved, not scaled: a new size means retyping it.
+    if (Math.abs((target[2] - target[0]) - (sourceBox[2] - sourceBox[0])) > .5 || Math.abs((target[3] - target[1]) - (sourceBox[3] - sourceBox[1])) > .5) fail('Para cambiar el tamaño del texto, edítalo.');
+    const captured = captureGlyphs(page);
+    try {
+      const dx = target[0] - sourceBox[0], dy = target[1] - sourceBox[1], used = new Set(), moved = [], expected = [];
       const near = (a, b) => Math.abs(a[0] - b[0]) < .02 && Math.abs(a[1] - b[1]) < .02;
       for (const glyph of selection.selected) {
         const matches = captured.glyphs.filter(g => !used.has(g) && near(g.origin, glyph.origin));
@@ -1040,43 +1068,186 @@ function moveContent(doc, page, index, target, options, password) {
         if (!matches.length && glyph.c.trim() && !ligature) fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
         if (matches.length && glyph.c.trim()) expected.push({ c: glyph.c, origin: [glyph.origin[0] + dx, glyph.origin[1] + dy] });
       }
-      draw = device => glyphDrawing(device, moved, dx, dy);
+      return { draw: device => glyphDrawing(device, moved, dx, dy), expected, release: captured.release };
+    } catch (error) { captured.release(); throw error; }
+  }
+  const { image, info } = selection;
+  if (!image) fail('La imagen seleccionada ya no existe en esta página.');
+  try {
+    const turn = options.rotation ?? 0, alpha = options.opacity ?? info.alpha;
+    if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
+    if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
+    // Fit the painted box to the target, then turn it clockwise about the target's centre.
+    const from = info.fullBox, turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
+    const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
+    const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
+    const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
+    const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(turn)), mupdf.Matrix.translate(cx, cy));
+    const matrix = mupdf.Matrix.concat(mupdf.Matrix.concat(info.matrix, fit), spin);
+    // On screen an image's own soft mask is a clip, as the PDF interpreter draws it; a PDF writer keeps it with the image.
+    const draw = (device, screen = false) => {
+      const mask = screen ? image.getMask() : null;
+      try { if (mask) device.clipImageMask(mask, matrix); device.fillImage(image, matrix, alpha); if (mask) device.popClip(); } finally { mask?.destroy(); }
+    };
+    return { draw, expected: [], release: () => image.destroy() };
+  } catch (error) { image.destroy(); throw error; }
+}
+
+// What the page paints besides drawings: text, XObjects (images, forms), shadings, inline images.
+const SHOWN = new Set(['Tj', 'TJ', "'", '"', 'Do', 'sh', 'BI', 'ID']);
+
+/** One editable item drawn alone, on transparent pixels, as moving it would draw
+ * it: a text's own glyphs, an image, or a drawing's own operators with the state
+ * around them. `fill`/`stroke` show a drawing in other colours. The document is
+ * not changed. Returns a PNG and the area it covers, in PDF coordinates. */
+export function itemSprite(doc, options) {
+  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
+  const index = pageIndex(doc, options.page), area = rect(options.rect), scale = Number(options.scale);
+  if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
+  if (!['text', 'image', 'graphic'].includes(options.kind)) fail('La selección de contenido no es válida.');
+  const page = doc.loadPage(index); let pixmap, device, scratch, release = () => {};
+  try {
+    const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom), sourceBox = mupdf.Rect.transform(area, page.getTransform());
+    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
+    if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
+    pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, true); pixmap.clear();
+    device = new mupdf.DrawDevice(zoom, pixmap);
+    if (options.kind === 'graphic') {
+      // The page's streams with every other paint left out, on a page of its own
+      // in a scratch document that shares the page's geometry and graphics resources.
+      const { found, drawing } = drawingAt(page, { sourceId: options.id, sourceRect: area });
+      const keep = new Set(drawing.paints.map(paint => paint.start)), colors = options.fill || options.stroke ? recolorEdits(drawing, options) : [];
+      const content = found.texts.map((text, si) => applyEdits(text, [...contentOperators(text).flatMap(({ op, start, end }) =>
+        PAINT.has(op) && !(si === drawing.si && keep.has(start)) ? [[start, end, 'n']] : SHOWN.has(op) ? [[start, end, '']] : []), ...(si === drawing.si ? colors : [])])).join('\n');
+      scratch = new mupdf.PDFDocument();
+      const object = page.getObject(), resources = scratch.newDictionary();
+      object.getInheritable('Resources').forEach((value, key) => { if (key !== 'XObject' && key !== 'Font') resources.put(key, scratch.graftObject(value)); });
+      const copy = scratch.addPage(object.getInheritable('MediaBox').asJS(), object.getInheritable('Rotate').asNumber(), resources, Uint8Array.from(content, c => c.charCodeAt(0)));
+      const crop = object.getInheritable('CropBox'); if (!crop.isNull()) copy.put('CropBox', crop.asJS());
+      scratch.insertPage(-1, copy);
+      const alone = scratch.loadPage(0);
+      try { alone.runPageContents(device, mupdf.Matrix.identity); } finally { alone.destroy(); }
     } else {
-      const { image, info } = selection;
-      if (!image) fail('La imagen seleccionada ya no existe en esta página.');
-      captured = { release: () => image.destroy() };
-      const turn = options.rotation ?? 0, alpha = options.opacity ?? info.alpha;
-      if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
-      if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
-      // Fit the painted box to the target, then turn it clockwise about the target's centre.
-      const from = info.fullBox, turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
-      const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
-      const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
-      const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
-      const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(turn)), mupdf.Matrix.translate(cx, cy));
-      const matrix = mupdf.Matrix.concat(mupdf.Matrix.concat(info.matrix, fit), spin);
-      draw = device => device.fillImage(image, matrix, alpha);
+      const selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: area });
+      const drawn = movedDrawing(page, selection, options.kind === 'text', sourceBox, sourceBox, {});
+      release = drawn.release; drawn.draw(device, true);
     }
-    if (!options.copy) redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
-    const removed = save(doc, QUICK);
-    if (!options.copy) verifyRetainedGlyphs(removed, index, selection.retainedGlyphs, password, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
-    const next = open(removed, password); let output;
+    device.close();
+    return { png: new Uint8Array(pixmap.asPNG()), rect: mupdf.Rect.transform(box, mupdf.Matrix.invert(toDevice)) };
+  } finally { release(); device?.destroy(); pixmap?.destroy(); scratch?.destroy(); page.destroy(); }
+}
+
+// The changes Editar makes. Each one edits an open document and checks it there:
+// operateDocument saves the result, a live session (session.worker.ts) keeps it.
+export const EDITS = new Set(['add-text', 'replace-text', 'add-image', 'replace-image', 'move-text', 'move-image', 'remove-content', 'move-graphic', 'remove-graphic', 'recolor-graphic']);
+
+/** Applies one change in place. A failure can leave `doc` half changed: the caller discards or undoes it. */
+export function editDocument(doc, options) {
+  const operation = options.operation;
+  if (!EDITS.has(operation)) fail('Operación desconocida.');
+  allowed(doc, 'edit');
+  const index = pageIndex(doc, options.page), page = doc.loadPage(index);
+  try {
+    if (['move-graphic', 'remove-graphic', 'recolor-graphic'].includes(operation)) return editDrawing(doc, page, index, options);
+    if (operation === 'remove-content') {
+      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+      if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
+      const placed = options.kind === 'image' && folioImage(folioImages(page), rect(options.rect));
+      if (placed) return editFolioImage(doc, page, placed, options);
+      const selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: rect(options.rect) });
+      redactPage(doc, page, selection.boxes, { black: false, images: options.kind === 'image', imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text: options.kind === 'text', preserveAnnotations: true });
+      // Redaction uses font character bounds rather than the picker's quads:
+      // nearby text must survive with its original glyphs and positions, including other lines in the block.
+      return verifyRetainedGlyphs(doc, index, selection.retainedGlyphs);
+    }
+    const box = mupdf.Rect.transform(rect(options.rect), page.getTransform());
+    if (operation === 'move-text' || operation === 'move-image') return moveContent(doc, page, index, box, options);
+    if (operation === 'add-image' || operation === 'replace-image') {
+      const image = new mupdf.Image(options.image);
+      try {
+        const placement = imagePlacement(image, box, options, options.image instanceof Uint8Array ? jpegOrientation(options.image) : 1);
+        // Image editing removes pixels in the source area; text and annotations remain.
+        if (operation === 'replace-image') redactPage(doc, page, [mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform())], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
+        return appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
+      } finally { image.destroy(); }
+    }
+    if (operation === 'add-text') return appendDrawing(doc, page, device => textDrawing(device, box, options));
+    // replace-text. Fit validation happens before redaction.
+    if (options.originalFont !== undefined && typeof options.originalFont !== 'boolean') fail('Opción de fuente inválida.');
+    if (!options.originalFont) textDrawing({ fillText() {} }, box, options);
+    const source = rect(options.sourceRect ?? options.rect);
+    // A selected line or paragraph removes exactly its glyphs, like remove-content.
+    let selection, glyphFont;
+    if (options.sourceId !== undefined) {
+      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
+      if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
+      selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
+    } else if (options.originalFont) fail('La fuente original necesita un texto seleccionado.');
+    else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
     try {
-      const nextPage = next.loadPage(index);
-      try { appendDrawing(next, nextPage, draw); } finally { nextPage.destroy(); }
-      output = save(next, QUICK);
-    } finally { next.destroy(); }
-    if (expected.length) {
-      // Every glyph must appear where it was moved. A rewritten font may name an
-      // odd glyph differently (a bullet as a middle dot, a TeX brace as a letter), so almost all must read the same.
-      const verification = open(output, password); let found;
-      try { const moved = verification.loadPage(index); try { found = contentGlyphs(moved); } finally { moved.destroy(); } } finally { verification.destroy(); }
-      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .05 && Math.abs(other.origin[1] - glyph.origin[1]) < .05);
-      if (expected.some(glyph => !at(glyph).length) || expected.filter(glyph => !at(glyph).some(other => other.c === glyph.c)).length > Math.max(3, expected.length * .05))
-        fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
-    }
-    return output;
-  } finally { captured?.release(); if (!captured) selection.image?.destroy(); }
+      if (options.originalFont) {
+        // The predominant font of the selection, with every glyph it painted on this page.
+        const counts = new Map();
+        for (const glyph of selection.selected) if (glyph.c.trim()) counts.set(glyph.fontName, (counts.get(glyph.fontName) || 0) + 1);
+        const fontName = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0], captured = captureGlyphs(page);
+        try {
+          const painted = captured.glyphs.find(glyph => glyph.fontName === fontName);
+          if (!painted) fail('La fuente original no está disponible.');
+          // A subset font has only what it painted; a whole or standard font has its full map.
+          glyphFont = { font: new mupdf.Font(painted.font.pointer), glyphs: fontCensus(captured.glyphs, fontName), complete: !/^[A-Z]{6}\+/.test(fontName) };
+        } finally { captured.release(); }
+        textDrawing({ fillText() {} }, box, { ...options, glyphFont });
+      }
+      if (selection.boxes.length) {
+        redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
+        verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
+      }
+      try { appendDrawing(doc, page, device => textDrawing(device, box, { ...options, glyphFont })); }
+      catch (error) { throw glyphFont && !/no incluye|no cabe/.test(error?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
+    } finally { glyphFont?.font.destroy(); }
+  } finally { page.destroy(); }
+}
+
+/** A page's editable items (page-content) or one image's pixels (page-image). */
+export function readPage(doc, options) {
+  if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
+  const image = options.operation === 'page-image';
+  if (image && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
+  const page = doc.loadPage(pageIndex(doc, options.page));
+  try { return pageContent(doc, page, image ? options.id : undefined, undefined, options.graphics === true); }
+  finally { page.destroy(); }
+}
+
+/** Paints a page as the reader shows it, on white: contents, then annotations
+ * and fields, leaving out the annotations Folio draws itself. `box` is in device
+ * space; with `alpha` the pixels are RGBA, still opaque. */
+export function renderPage(page, matrix, box, alpha = false) {
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, alpha); let device;
+  try {
+    pixmap.clear(255); device = new mupdf.DrawDevice(matrix, pixmap);
+    page.runPageContents(device, mupdf.Matrix.identity);
+    for (const annotation of page.getAnnotations()) if (!folioAnnotation(annotation)) annotation.run(device, mupdf.Matrix.identity);
+    page.runPageWidgets(device, mupdf.Matrix.identity);
+    device.close();
+    return pixmap;
+  } catch (error) { pixmap.destroy(); throw error; } finally { device?.destroy(); }
+}
+
+/** The page around one item as it looks without it: shown where the item was
+ * while it is dragged, moved, or removed, until the page shows the result.
+ * Removes the item from `doc`, which the caller discards or undoes. */
+export function pagePlate(doc, options) {
+  const area = rect(options.rect), scale = Number(options.scale);
+  if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
+  editDocument(doc, options.kind === 'graphic' ? { operation: 'remove-graphic', page: options.page, sourceId: options.id, sourceRect: area, rect: area } : { operation: 'remove-content', page: options.page, id: options.id, kind: options.kind, rect: area });
+  const page = doc.loadPage(pageIndex(doc, options.page)); let pixmap;
+  try {
+    const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom);
+    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
+    if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
+    pixmap = renderPage(page, zoom, box);
+    return { png: new Uint8Array(pixmap.asPNG()), rect: mupdf.Rect.transform(box, mupdf.Matrix.invert(toDevice)) };
+  } finally { pixmap?.destroy(); page.destroy(); }
 }
 
 export function operateDocument(bytes, options, password = '', onPart) {
@@ -1093,58 +1264,15 @@ export function operateDocument(bytes, options, password = '', onPart) {
   try {
     const operation = options.operation;
     if (operation === 'fields') return fields(doc);
-    if (operation === 'page-content' || operation === 'page-image') {
-      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
-      if (operation === 'page-image' && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
-      const page = doc.loadPage(pageIndex(doc, options.page));
-      try { return pageContent(doc, page, operation === 'page-image' ? options.id : undefined, undefined, options.graphics === true); }
-      finally { page.destroy(); }
-    }
-    if (operation === 'page-plate') {
-      // The page around one item as it looks without it: shown where the item was
-      // while it is dragged, moved, or removed, until the page shows the result.
-      const area = rect(options.rect), scale = Number(options.scale);
-      if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
-      const removed = operateDocument(bytes, options.kind === 'graphic' ? { operation: 'remove-graphic', page: options.page, sourceId: options.id, sourceRect: area, rect: area } : { operation: 'remove-content', page: options.page, id: options.id, kind: options.kind, rect: area }, password);
-      const plate = open(removed, password); let page, pixmap, device;
-      try {
-        page = plate.loadPage(pageIndex(plate, options.page));
-        const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom);
-        const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
-        if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
-        pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, false); pixmap.clear(255);
-        device = new mupdf.DrawDevice(zoom, pixmap); page.run(device, mupdf.Matrix.identity); device.close();
-        return { png: new Uint8Array(pixmap.asPNG()), rect: mupdf.Rect.transform(box, mupdf.Matrix.invert(toDevice)) };
-      } finally { device?.destroy(); pixmap?.destroy(); page?.destroy(); plate.destroy(); }
-    }
+    if (operation === 'page-content' || operation === 'page-image') return readPage(doc, options);
+    if (operation === 'page-plate') return pagePlate(doc, options);
     if (operation === 'area-info') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       const page = doc.loadPage(pageIndex(doc, options.page));
       try { return areaContent(page, mupdf.Rect.transform(rect(options.rect), page.getTransform())); }
       finally { page.destroy(); }
     }
-    if (['move-graphic', 'remove-graphic', 'recolor-graphic'].includes(operation)) {
-      allowed(doc, 'edit');
-      const index = pageIndex(doc, options.page), page = doc.loadPage(index);
-      try { return editDrawing(doc, page, index, options, password); } finally { page.destroy(); }
-    }
-    if (operation === 'remove-content') {
-      allowed(doc, 'edit');
-      if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
-      if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
-      const index = pageIndex(doc, options.page), page = doc.loadPage(index); let selection;
-      try {
-        const placed = options.kind === 'image' && folioImage(folioImages(page), rect(options.rect));
-        if (placed) return editFolioImage(doc, page, placed, options);
-        selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: rect(options.rect) });
-        redactPage(doc, page, selection.boxes, { black: false, images: options.kind === 'image', imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text: options.kind === 'text', preserveAnnotations: true });
-      } finally { page.destroy(); }
-      // Redaction uses font character bounds rather than the picker's quads.
-      // Verify the saved result before returning it; nearby text must survive
-      // with its original glyphs/positions, including other lines in the block.
-      const output = save(doc, QUICK); verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password);
-      return output;
-    }
+    if (EDITS.has(operation)) { editDocument(doc, options); return save(doc, QUICK); }
     if (operation === 'text') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       return Array.from({ length: doc.countPages() }, (_, i) => {
@@ -1325,7 +1453,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
           } finally { page.destroy(); }
         }
       } finally { font.destroy(); }
-    } else if (['add-text', 'replace-text', 'move-text', 'move-image', 'add-image', 'replace-image', 'remove-image', 'redact', 'crop'].includes(operation)) {
+    } else if (['remove-image', 'redact', 'crop'].includes(operation)) {
       allowed(doc, 'edit');
       if (operation === 'redact') {
         if (!Array.isArray(options.areas) || !options.areas.length) fail('Selecciona al menos un área.');
@@ -1345,61 +1473,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
         try {
           const box = mupdf.Rect.transform(rect(options.rect), page.getTransform());
           if (operation === 'crop') page.setPageBox('CropBox', box);
-          else if (operation === 'add-image' || operation === 'replace-image') {
-            const image = new mupdf.Image(options.image);
-            let replacement;
-            try {
-              const placement = imagePlacement(image, box, options, options.image instanceof Uint8Array ? jpegOrientation(options.image) : 1);
-              if (operation === 'replace-image') {
-                const source = mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform());
-                // Image editing removes pixels in the source area; text and annotations remain.
-                redactPage(doc, page, [source], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
-                replacement = save(doc, QUICK);
-              } else appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
-            } finally { image.destroy(); }
-            if (replacement) return operateDocument(replacement, { ...options, operation: 'add-image' }, password);
-          } else if (operation === 'move-text' || operation === 'move-image') {
-            return moveContent(doc, page, pageIndex(doc, options.page), box, options, password);
-          } else if (operation === 'remove-image') {
-            redactPage(doc, page, [box], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
-          } else {
-            // Fit validation happens before redaction; errors never return a modified PDF.
-            if (operation === 'replace-text') {
-              if (options.originalFont !== undefined && typeof options.originalFont !== 'boolean') fail('Opción de fuente inválida.');
-              if (!options.originalFont) textDrawing({ fillText() {} }, box, options);
-              const source = rect(options.sourceRect ?? options.rect), index = pageIndex(doc, options.page);
-              // A selected line or paragraph removes exactly its glyphs, like remove-content.
-              let selection, glyphFont;
-              if (options.sourceId !== undefined) {
-                if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
-                if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
-                selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
-              } else if (options.originalFont) fail('La fuente original necesita un texto seleccionado.');
-              else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
-              try {
-                if (options.originalFont) {
-                  // The predominant font of the selection, with every glyph it painted on this page.
-                  const counts = new Map();
-                  for (const glyph of selection.selected) if (glyph.c.trim()) counts.set(glyph.fontName, (counts.get(glyph.fontName) || 0) + 1);
-                  const fontName = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0], captured = captureGlyphs(page);
-                  try {
-                    const painted = captured.glyphs.find(glyph => glyph.fontName === fontName);
-                    if (!painted) fail('La fuente original no está disponible.');
-                    // A subset font has only what it painted; a whole or standard font has its full map.
-                    glyphFont = { font: new mupdf.Font(painted.font.pointer), glyphs: fontCensus(captured.glyphs, fontName), complete: !/^[A-Z]{6}\+/.test(fontName) };
-                  } finally { captured.release(); }
-                  textDrawing({ fillText() {} }, box, { ...options, glyphFont });
-                }
-                if (selection.boxes.length) redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
-                const output = save(doc, QUICK);
-                if (selection.boxes.length) verifyRetainedGlyphs(output, index, selection.retainedGlyphs, password, 'No se pudo reemplazar el texto sin afectar al texto cercano. El original permanece intacto.');
-                // MuPDF's redaction save pass rewrites Form streams; commit it before adding a new one.
-                try { return operateDocument(output, { ...options, operation: 'add-text', glyphFont }, password); }
-                catch (error) { throw glyphFont && !/no incluye|no cabe/.test(error?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
-              } finally { glyphFont?.font.destroy(); }
-            }
-            appendDrawing(doc, page, device => textDrawing(device, box, options));
-          }
+          else redactPage(doc, page, [box], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
         } finally { page.destroy(); }
       }
     } else if (operation === 'sanitize') { allowed(doc, 'edit'); clearPrivateData(doc); }
@@ -1419,7 +1493,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
       return save(doc, 'garbage=4,compress=yes,encrypt=no');
     } else fail('Operación desconocida.');
     // OCR draws the same font on every page: deduplication merges those copies.
-    const output = operation === 'ocr' ? saveDrawnDocument(doc, password) : save(doc, ['add-text', 'add-image', 'remove-image'].includes(operation) ? QUICK : undefined);
+    const output = operation === 'ocr' ? saveDrawnDocument(doc, password) : save(doc, operation === 'remove-image' ? QUICK : undefined);
     return operation === 'compress' && output.length >= bytes.length ? new Uint8Array(bytes) : output;
   } finally { doc.destroy(); mupdf.emptyStore(); }
 }

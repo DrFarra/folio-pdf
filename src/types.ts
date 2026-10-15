@@ -72,6 +72,8 @@ export type LoadedDocument = {
   revision: string;
   savedAnnotations: string;
   draftSource: boolean;
+  /** `pdf` shows an older state than `bytes`: Editar wrote them while the tab was in the background. Showing the tab reloads it. */
+  outdated?: boolean;
 };
 export type RecentDocument = {
   id: string;

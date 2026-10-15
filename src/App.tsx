@@ -102,7 +102,11 @@ const nativeReadingThreshold = 32 * 1024 * 1024;
 const MAX_ZOOM = 8;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
 type OpenContext = { drive?: DriveBinding; savedCopy?: boolean; keepEditing?: boolean; draftSource?: boolean; id?: string; password?: string; modified?: boolean; useSession?: boolean; preserveHistory?: boolean; page?: number; bookmarks?: BookmarkNode[]; quiet?: boolean };
-type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[] };
+// A live document is kept after leaving Editar up to this size (one more copy of it stays in memory).
+const PARK_LIMIT = 512 * 1024 * 1024;
+/** `session`: a change in Editar's live document, undone there; `base` marks the
+ * first one, which becomes a return to the PDF before Editar once it closes. */
+type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[]; session?: true; base?: true };
 type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single' | 'spread'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[] | null; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
 type DocumentTab = TabView & { key: string; doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[]; undo: History[]; redo: History[]; scrollTop: number; scrollLeft: number };
 
@@ -119,6 +123,12 @@ export default function App() {
   const [editing, setEditing] = useState(false);
   const editingRef = useRef(editing); editingRef.current = editing;
   const editStore = useMemo(() => new EditStore(), []);
+  // Editar's live document (see openEditSession): the document it was opened for and
+  // its latest written copy, the PDF before it, its depth in its own undo steps, and its writes.
+  const sessionStart = useRef<LoadedDocument | null>(null), sessionDoc = useRef<LoadedDocument | null>(null), sessionBase = useRef<History | null>(null), sessionDepth = useRef(0);
+  const sessionPending = useRef(false), sessionTimer = useRef<ReturnType<typeof setTimeout>>(undefined), sessionWrite = useRef<Promise<void>>(Promise.resolve()), sessionClosing = useRef<Promise<void> | null>(null);
+  // Parking (see the session effect), and the reader reopening the parked document's PDF.
+  const sessionParking = useRef<Promise<void> | null>(null), rebinding = useRef(false);
   const [readerChromeHidden, setReaderChromeHidden] = useState(false);
   const [doc, setDoc] = useState<LoadedDocument | null>(null);
   const [loading, setLoading] = useState(true);
@@ -360,6 +370,7 @@ export default function App() {
     setRedactions(tab.redactions); setEditArea(tab.editArea); setSessionFailed(tab.sessionFailed); setDraftFailed(tab.draftFailed); setBookmarkEditingId(null);
     setWorkBenchClosed(); setHistoryTick(v => v + 1); window.getSelection()?.removeAllRanges();
     if (focusSelectedTab) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.document-tab[data-tab-key="${CSS.escape(tab.key)}"] [role=tab]`)?.focus({ preventScroll: true }));
+    if (tab.doc.outdated) void reopenWritten(tab.doc);
   }
   function setWorkBenchClosed() { setWorkbench(null); setInfo(false); setLibrary(false); setNoteDraft(null); setPageJump(false); setViewSettings(false); setAnnotationOptions(false); setCapabilityNotice(false); }
   function ensureDraft(document: LoadedDocument): Promise<void> {
@@ -367,6 +378,8 @@ export default function App() {
     const existing = draftWrites.current.get(document); if (existing) return existing;
     const operation = draftSave.current.catch(() => {}).then(async () => {
       if (forgottenIds.current.has(document.id)) return;
+      // A revision already replaced (Editar writes one per pause) is not written: the newer one, queued after it, is.
+      if (docRef.current !== document && !tabsRef.current.some(tab => tab.doc === document)) return;
       await storeDraft(document.id, document.bytes);
       if (document.draftSource && !forgottenIds.current.has(document.id)) {
         await rememberDocument({ id: document.id, name: document.name, size: document.size, pages: document.pdf.numPages, openedAt: Date.now(), draft: true });
@@ -425,6 +438,7 @@ export default function App() {
     if (key === activeTabRef.current || busyRef.current || loadingRef.current || document.querySelector('dialog[open]')) return;
     const next = tabsRef.current.find(tab => tab.key === key); if (!next) return;
     if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
+    if (editStore.session) { setEditing(false); editingRef.current = false; await closeEditSession(); }
     const focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab';
     const current = captureTab();
     retainCurrentTab(); activateTab(next, focusSelectedTab); publishTabs();
@@ -439,6 +453,7 @@ export default function App() {
     if (busyRef.current || loadingRef.current || document.querySelector('dialog[open]')) return;
     const index = tabsRef.current.findIndex(tab => tab.key === key); if (index < 0) return;
     if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench();
+    if (editStore.session && key === activeTabRef.current) { setEditing(false); editingRef.current = false; await closeEditSession(); }
     retainCurrentTab();
     const closed = tabsRef.current[index];
     if (!discardSession) {
@@ -694,6 +709,18 @@ export default function App() {
 
   // Each document starts Editar afresh; leaving it drops the selection and any pending image.
   useEffect(() => { editStore.reset(); }, [doc?.id, editStore]);
+  // Editar on desktop keeps its document open in a worker of its own (EditSession):
+  // each change is made there and its page drawn from there, with nothing copied or
+  // reopened. The PDF is written out after a pause, before saving or switching
+  // documents, and when Editar closes, which is when the reader opens it again.
+  // Leaving Editar parks a document up to PARK_LIMIT: it stays live, so its changes
+  // still undo one by one and Editar opens again at once; switching documents closes it.
+  useEffect(() => {
+    if (editing && liveEditable(doc)) { if (!sessionClosing.current && !sessionParking.current) openEditSession(doc!); }
+    else if (editStore.session && doc && !touchLayout && editStore.state.live?.pdf === doc.pdf && doc.bytes.length <= PARK_LIMIT) void parkEditSession();
+    else if (!rebinding.current) void closeEditSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, doc, touchLayout]);
   useEffect(() => { if (!editing) editStore.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, editStore]);
   // A pasted screenshot or image lands in the middle of the view, on the page
   // shown there; with no page in view, the next click places it.
@@ -876,6 +903,7 @@ export default function App() {
         // A closed Drive tab whose edit could not be prepared keeps Folio open, with its notice.
         if (closingStages.current.size) { notify('Guardando en Drive…'); if ((await Promise.all(closingStages.current)).includes(false)) return; }
         // Every tab is stored; the first one that fails is shown, so the dialog saves that document.
+        await writeEditSession().catch(() => {});
         retainCurrentTab();
         let failed: DocumentTab | undefined, cause: unknown;
         for (const tab of tabsRef.current) { try { await persistTab(tab); } catch (error) { if (!failed) { failed = tab; cause = error; } } }
@@ -1402,8 +1430,9 @@ export default function App() {
 
   // At most 50 steps, 20 of them PDF snapshots, within a memory budget. Trimming
   // starts at the oldest step: earlier steps never outlive a later snapshot.
+  const historyBudget = () => (phoneRef.current ? 40 : 200) * 1024 * 1024;
   function trimHistory(stack: History[]) {
-    const budget = (phoneRef.current ? 40 : 200) * 1024 * 1024, snapshots = () => stack.filter(item => item.bytes);
+    const budget = historyBudget(), snapshots = () => stack.filter(item => item.bytes);
     while (stack.length > 50 || snapshots().length > 20 || snapshots().reduce((total, item) => total + item.bytes!.length, 0) > budget) stack.shift();
   }
   const annotationGesture = useRef<string | undefined>(undefined);
@@ -1416,10 +1445,13 @@ export default function App() {
     annotationRef.current = next; setAnnotations(next); setHistoryTick(v => v + 1);
   }, []);
   const undo = useCallback(() => {
-    if (editorDraftRef.current || busyRef.current || loadingRef.current) return;
+    if (editorDraftRef.current || busyRef.current || loadingRef.current || editStore.state.committing || sessionClosing.current || sessionParking.current) return;
     const previous = undoStack.current.pop();
     if (!previous) return;
     annotationGesture.current = undefined;
+    if (previous.session) { redoStack.current.push(previous); stepEditSession('undo'); return; }
+    // The PDF before Editar replaces the live document's: what it holds now is written first, to redo.
+    if (previous.bytes && editStore.session) { void writeEditSession().catch(() => {}).then(() => { redoStack.current.push(snapshot()); trimHistory(redoStack.current); return restoreHistory(previous, undoStack.current, redoStack.current); }); return; }
     redoStack.current.push(previous.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
     trimHistory(redoStack.current);
     if (previous.bytes) { void restoreHistory(previous, undoStack.current, redoStack.current); return; }
@@ -1428,10 +1460,11 @@ export default function App() {
     setAnnotations(previous.annotations); setHistoryTick(v => v + 1);
   }, [openDocument]);
   const redo = useCallback(() => {
-    if (editorDraftRef.current || busyRef.current || loadingRef.current) return;
+    if (editorDraftRef.current || busyRef.current || loadingRef.current || editStore.state.committing || sessionClosing.current || sessionParking.current) return;
     const next = redoStack.current.pop();
     if (!next) return;
     annotationGesture.current = undefined;
+    if (next.session) { undoStack.current.push(next); stepEditSession('redo'); return; }
     undoStack.current.push(next.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
     trimHistory(undoStack.current);
     if (next.bytes) { void restoreHistory(next, redoStack.current, undoStack.current); return; }
@@ -1675,6 +1708,101 @@ export default function App() {
       if (keepEditing) setWorkbench('edit-pdf');
     } finally { setBusy(null); setHistoryTick(v => v + 1); }
   }
+  const liveEditable = (current: LoadedDocument | null) => !!current && !touchRef.current && current.canEdit && !isNativePdfDocument(current.pdf);
+  function openEditSession(current: LoadedDocument) {
+    if (editStore.session && !editStore.session.broken && editStore.state.live?.pdf === current.pdf) return;
+    // The reader opened another copy under Editar (a save, an undo past its start): the old live document is closed first.
+    if (editStore.session) { void closeEditSession(); return; }
+    const session = editStore.open(current);
+    sessionStart.current = sessionDoc.current = current; sessionDepth.current = 0; sessionPending.current = false;
+    // Too large a PDF is not kept to undo, as with any change (trimHistory).
+    sessionBase.current = current.bytes.length <= historyBudget() ? snapshot() : null;
+    session.ready.catch(error => notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'));
+  }
+  function scheduleSessionWrite() {
+    sessionPending.current = true; clearTimeout(sessionTimer.current);
+    sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, 800);
+  }
+  /** Writes the live document's PDF and makes it the document's bytes (and its draft). The reader keeps its copy. */
+  function writeEditSession(): Promise<void> {
+    clearTimeout(sessionTimer.current);
+    const session = editStore.session;
+    if (!session || !sessionPending.current) return sessionWrite.current;
+    sessionPending.current = false;
+    const write = sessionWrite.current.catch(() => {}).then(async () => {
+      const { bytes, revision } = await session.save();
+      const previous = sessionDoc.current;
+      if (editStore.session !== session || !previous) return;
+      const next: LoadedDocument = { ...previous, bytes, revision, size: bytes.length, modified: true };
+      sessionDoc.current = next;
+      tabsRef.current = tabsRef.current.map(tab => tab.doc === previous ? { ...tab, doc: next } : tab);
+      if (docRef.current === previous) { docRef.current = next; setDoc(next); }
+    });
+    sessionWrite.current = write;
+    write.catch(error => { if (editStore.session === session) sessionPending.current = true; notify(errorMessage(error, 'No se pudieron guardar los cambios de Editar.'), 'error'); });
+    return write;
+  }
+  function stepEditSession(direction: 'undo' | 'redo') {
+    setHistoryTick(v => v + 1);
+    const session = editStore.session; if (!session) return;
+    sessionDepth.current += direction === 'undo' ? -1 : 1;
+    void session[direction]().then(page => {
+      if (!page) return;
+      editStore.changed(page); scheduleSessionWrite();
+      // Outside Editar the reader opens the result at once.
+      if (!editingRef.current) void parkEditSession();
+    },
+      error => notify(errorMessage(error, direction === 'undo' ? 'No se pudo deshacer el cambio.' : 'No se pudo rehacer el cambio.'), 'error'));
+  }
+  /** Keeps Editar's live document open outside Editar: writes it, and the reader
+   * opens what was written and draws its pages again. */
+  function parkEditSession(): Promise<void> {
+    return sessionParking.current ??= (async () => {
+      try {
+        await writeEditSession().catch(() => {});
+        const current = sessionDoc.current;
+        if (!current || current === sessionStart.current || docRef.current !== current) return;
+        rebinding.current = true;
+        try { await reopenWritten(current); } finally { rebinding.current = false; }
+        const shown = docRef.current;
+        if (editStore.session && shown && shown !== current && shown.id === current.id) { editStore.rebind(shown.pdf); sessionStart.current = sessionDoc.current = shown; }
+      } finally { sessionParking.current = null; }
+    })();
+  }
+  /** Closes Editar's live document: writes it, folds its steps into one return to
+   * the PDF before Editar, and has the reader open what was written. */
+  function closeEditSession(): Promise<void> {
+    if (!editStore.session) return Promise.resolve();
+    if (sessionParking.current) return sessionParking.current.then(closeEditSession);
+    return sessionClosing.current ??= (async () => {
+      try {
+        await writeEditSession().catch(() => {});
+        const current = sessionDoc.current, owner = tabsRef.current.find(tab => tab.doc === current);
+        const active = !owner || owner.key === activeTabRef.current, base = sessionBase.current;
+        for (const [stack, keepBase] of [[active ? undoStack.current : owner.undo, true], [active ? redoStack.current : owner.redo, false]] as const) {
+          stack.splice(0, stack.length, ...stack.flatMap(entry => !entry.session ? [entry] : keepBase && entry.base && base ? [{ ...base, annotations: entry.annotations }] : []));
+          trimHistory(stack);
+        }
+        setHistoryTick(v => v + 1);
+        if (!current || current === sessionStart.current) return;
+        if (docRef.current === current) await reopenWritten(current);
+        // A document left in the background reloads when its tab is shown again.
+        else if (owner) { const tab = { ...owner, doc: { ...current, outdated: true } }; tabsRef.current = tabsRef.current.map(item => item === owner ? tab : item); persistInBackground(tab); }
+      } finally {
+        editStore.close(); editStore.set({ live: null }); sessionClosing.current = null;
+        // Editar may be open on another copy or document by now: it gets its own live document.
+        if (editingRef.current && liveEditable(docRef.current)) openEditSession(docRef.current!);
+      }
+    })();
+  }
+  /** The reader opens the PDF Editar wrote, keeping the annotations and the view. */
+  async function reopenWritten(current: LoadedDocument) {
+    const annotations = annotationRef.current; setBusy('edit');
+    try {
+      if (await openDocument(current.bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password: current.password, modified: true,
+        useSession: false, preserveHistory: true, page: readingState.current.page, bookmarks: readingState.current.bookmarks, quiet: true })) { annotationRef.current = annotations; setAnnotations(annotations); }
+    } finally { setBusy(null); }
+  }
   async function applyOperation(operation: Operation, signal?: AbortSignal, context?: { keepEditing?: boolean; page?: number; quiet?: boolean }) {
     const current = docRef.current; if (!current) return;
     if (isNativePdfDocument(current.pdf)) throw new Error('Esta herramienta no está disponible para PDF tan grandes.');
@@ -1808,6 +1936,7 @@ export default function App() {
   }
   async function download(options?: { keepEditing?: boolean; copy?: boolean }) {
     if (editorDraftRef.current) { notify('Aplica o descarta la edición antes de guardar el PDF.'); return; }
+    if (editStore.session && !saving.current) await writeEditSession().catch(() => {});
     const current = docRef.current;
     if (!current || busyRef.current || loadingRef.current || saving.current) return;
     const keepEditing = !!options?.keepEditing && workbenchRef.current === 'edit-pdf' && !phoneRef.current;
@@ -2168,7 +2297,17 @@ export default function App() {
   // Editar writes content edits to the PDF in place and keeps shapes as Folio annotations.
   editStore.doc = doc;
   editStore.actions = {
-    commit: async operation => { try { await applyOperation(operation, undefined, { quiet: true }); return null; } catch (error) { return errorMessage(error, 'No se pudo aplicar el cambio.'); } },
+    commit: async operation => {
+      try {
+        const session = editStore.session;
+        if (!session) { await applyOperation(operation, undefined, { quiet: true }); return null; }
+        const page = await session.edit(operation);
+        undoStack.current.push({ annotations: annotationRef.current, session: true, ...(sessionDepth.current === 0 ? { base: true as const } : {}) });
+        sessionDepth.current++; trimHistory(undoStack.current); redoStack.current = []; setHistoryTick(v => v + 1);
+        editStore.changed(page); scheduleSessionWrite();
+        return null;
+      } catch (error) { return errorMessage(error, 'No se pudo aplicar el cambio.'); }
+    },
     shapes: () => annotationRef.current.filter(annotation => annotation.kind === 'shape'),
     addShape: shape => {
       if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current) { notify('Los permisos de este PDF no permiten añadir formas.'); return undefined; }
@@ -2190,7 +2329,7 @@ export default function App() {
   // pages are not re-rendered on every page change.
   const stackPage = readingMode === 'single' ? page : 0;
   const editEnvironment = useMemo(() => editing && doc && !touchLayout ? { store: editStore, doc } : undefined, [editing, doc, touchLayout, editStore]);
-  const pageStack = useMemo(() => doc && <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.id} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={number} pdf={doc.pdf} edit={editEnvironment} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div>, [doc, spread, readingPreferences.pageGap, readingMode, stackPage, pages, pageLabels, scale, rotation, dimensions, annotationPages, tool, color, inkStyle, eraserSize, penOnly, searchOpen, searchQuery, touchLayout, sidebar, results, resultIndex, busy, loading, removeAnnotation, updateAnnotation, redactions, pageHandlers, editEnvironment]);
+  const pageStack = useMemo(() => doc && <div className={`pdf-stack${spread ? ' spread' : ''}`} key={doc.id} style={{ gap: readingPreferences.pageGap }}>{doc.sample && <div className="sample-hint"><BookOpen size={13} /><span>PDF de ejemplo</span></div>}{(readingMode === 'single' ? [page] : pages).map(number => <PDFPage key={number} pdf={doc.pdf} edit={editEnvironment} live={editStore} number={number} pageLabel={pageName(number)} scale={scale} rotation={rotation} dimensions={dimensions} annotations={annotationPages.get(number) || NO_ANNOTATIONS} tool={tool} color={color} inkColor={inkStyle.color} inkWidth={inkStyle.width} inkOpacity={inkStyle.opacity} eraserSize={eraserSize} penOnly={penOnly} query={searchOpen ? searchQuery : ''} activeSearch={searchOpen && (!touchLayout || !sidebar) ? results[resultIndex] : null} canCopy={doc.canCopy} canAnnotate={doc.canAnnotate && !busy && !loading} onRemoveAnnotation={removeAnnotation} onUpdateAnnotation={updateAnnotation} redactions={redactions} {...pageHandlers} />)}</div>, [doc, spread, readingPreferences.pageGap, readingMode, stackPage, pages, pageLabels, scale, rotation, dimensions, annotationPages, tool, color, inkStyle, eraserSize, penOnly, searchOpen, searchQuery, touchLayout, sidebar, results, resultIndex, busy, loading, removeAnnotation, updateAnnotation, redactions, pageHandlers, editEnvironment, editStore]);
   const annotationSettings = tool === 'highlight' ? <HighlightColorPicker color={color} onChange={setColor} disabled={!doc?.canAnnotate || !doc?.canCopy || !!busy || loading} /> : (tool === 'draw' || tool === 'eraser') ? <DrawingSettings mode={tool} kind={inkKind} style={inkStyle} recentColors={inkRecentColors} eraserSize={eraserSize} penOnly={penOnly} showFingerOption={isMobile || penDetected} onKind={setInkKind} onStyle={change => setInkStyles(styles => ({ ...styles, [inkKind]: { ...styles[inkKind], ...change } }))} onCustomColor={value => setInkRecentColors(colors => [value, ...colors.filter(item => item !== value)].slice(0, 5))} onEraserSize={setEraserSize} onPenOnly={choosePenOnly} disabled={!doc?.canAnnotate || !!busy || loading} /> : null;
   // On touch, tools without options keep their slot so no button moves under the finger.
   const annotationSlot = annotationSettings || <span className="drawing-settings-trigger" aria-hidden="true" style={{ visibility: 'hidden' }} />;

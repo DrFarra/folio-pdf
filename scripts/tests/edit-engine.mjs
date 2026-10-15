@@ -1,13 +1,15 @@
 // Editing inside the reader: moving text keeps its own glyphs, fonts and styles;
 // images move, turn, fade and duplicate without being re-encoded; replaced text
 // can keep the PDF's original font; added drawings do not nest q/Q per edit;
-// shapes are Folio annotations that move and change style.
+// shapes are Folio annotations that move and change style. Editar's live
+// document takes those changes in place, each one a step it can undo, and
+// draws any item alone (a sprite) to move it on screen before it is written.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as mupdf from 'mupdf';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { operateDocument } from '../../src/engine/operations.mjs';
-import { writeAnnotations, inspectDocument } from '../../src/engine/mupdf-engine.mjs';
+import { operateDocument, editDocument, pagePlate, itemSprite, readPage } from '../../src/engine/operations.mjs';
+import { writeAnnotations, inspectDocument, open } from '../../src/engine/mupdf-engine.mjs';
 
 const results = [];
 async function check(id, run) {
@@ -149,6 +151,74 @@ await check('pdf-drawings-move-recolour-copy-and-remove-in-place', () => {
   assert.deepEqual([drawings(removed).length, label(removed)], [1, label(bytes)]);
   assert.throws(() => operateDocument(bytes, { operation: 'remove-graphic', page: 1, sourceId: badge.id, sourceRect: [0, 0, 10, 10], rect: [0, 0, 10, 10] }), /selección cambió/);
   return { listed: 2, movedTogether: true, recoloured: true, copied: true, removed: true, textKept: true };
+});
+
+await check('a-live-document-takes-changes-in-place-and-undoes-them', () => {
+  // As session.worker.ts does: one open document, each change a journal step,
+  // written with garbage=1 (deeper collection renumbers objects and breaks the journal).
+  const doc = open(tracemonkey); doc.enableJournal();
+  const write = () => { const buffer = doc.saveToBuffer('garbage=1,compress=yes,encrypt=keep'); try { return new Uint8Array(buffer.asUint8Array()); } finally { buffer.destroy(); } };
+  const step = options => { doc.beginOperation(`${options.operation}:${options.page}`); try { editDocument(doc, options); doc.endOperation(); } catch (error) { doc.abandonOperation(); throw error; } };
+  const layout = bytes => [1, 2].map(page => paragraphs(bytes, page).map(p => `${p.text.slice(0, 12)}@${p.rect.map(Math.round)}`).join('|')).join('\n');
+  const [title] = paragraphs(tracemonkey, 1), r = title.rect;
+  const move = { operation: 'move-text', page: 1, sourceId: title.id, sourceRect: r, rect: [r[0] + 40, r[1] - 10, r[2] + 40, r[3] - 10] };
+  step(move);
+  const moved = write();
+  assert.equal(layout(moved), layout(operateDocument(tracemonkey, move)), 'Same result as writing the change at once');
+  // The next change reads the page as it is now.
+  const [second] = paragraphs(moved, 2);
+  step({ operation: 'remove-content', page: 2, id: second.id, kind: 'text', rect: second.rect });
+  const removed = write();
+  assert(!paragraphs(removed, 2).some(p => p.text === second.text), 'Removed from the live page');
+  // A change refused by its checks, or abandoned halfway, leaves the document as it was.
+  assert.throws(() => step(move), /selección cambió/);
+  doc.beginOperation('plate'); const plate = pagePlate(doc, { operation: 'page-plate', page: 1, id: paragraphs(removed, 1)[1].id, kind: 'text', rect: paragraphs(removed, 1)[1].rect, scale: 1 }); doc.abandonOperation();
+  assert(plate.png.length > 100, 'A plate is drawn');
+  assert.deepEqual([layout(write()), doc.getJournal().position], [layout(removed), 2]);
+  doc.undo(); doc.undo();
+  assert.equal(layout(write()), layout(tracemonkey), 'Undone in the journal');
+  doc.redo();
+  assert.equal(layout(write()), layout(moved), 'Redone');
+  doc.destroy();
+  return { inPlace: true, sameAsOneShot: true, failedChangeKept: false, undoRedo: true };
+});
+
+await check('sprites-draw-one-item-alone-without-changing-the-document', () => {
+  // A badge (fill and border) with a white label above it, a rule, and a paragraph.
+  const doc = new mupdf.PDFDocument(), font = doc.addSimpleFont(new mupdf.Font('Helvetica'));
+  doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, [
+    'q .48 .18 .36 rg 100 600 120 30 re f Q', '.3 .1 .2 RG', 'q 2 w 100 600 120 30 re S Q',
+    'BT /F1 12 Tf 1 1 1 rg 110 610 Td (Dolor) Tj ET', '0 0 0 RG 1 w 50 500 m 300 500 l S',
+    'BT /F1 14 Tf 0 0 0 rg 60 760 Td (Informe trimestral) Tj ET',
+  ].join('\n')));
+  const bytes = doc.saveToBuffer('').asUint8Array(), live = open(bytes);
+  const found = operateDocument(bytes, { operation: 'page-content', page: 1, graphics: true }).items;
+  const badge = found.find(item => item.kind === 'graphic' && item.fill), title = found.find(item => item.level === 'paragraph' && item.text.startsWith('Informe'));
+  // The pixel at a PDF point of a sprite drawn at scale 2: [r, g, b, alpha].
+  const pixels = sprite => {
+    const pixmap = new mupdf.Image(sprite.png).toPixmap(), n = pixmap.getStride() / pixmap.getWidth();
+    return { pixmap, at: (x, y) => { const px = Math.round((x - sprite.rect[0]) * 2), py = Math.round((sprite.rect[3] - y) * 2); return [...pixmap.getPixels().slice(py * pixmap.getStride() + px * n, py * pixmap.getStride() + px * n + n)]; } };
+  };
+
+  const text = pixels(itemSprite(live, { page: 1, id: title.id, kind: 'text', rect: title.rect, scale: 2 }));
+  assert.equal(text.at(title.rect[0] - 2, title.rect[1] - 2).at(-1), 0, 'Transparent around the text');
+  assert(text.pixmap.getPixels().some((value, i) => i % 4 === 3 && value === 255), 'Opaque on its glyphs');
+  const shape = pixels(itemSprite(live, { page: 1, id: badge.id, kind: 'graphic', rect: badge.rect, scale: 2 }));
+  const close = (actual, expected) => actual.length === expected.length && actual.every((value, i) => Math.abs(value - expected[i]) <= 1);
+  assert(close(shape.at(115, 615), [122, 46, 92, 255]), 'The badge alone: its fill where the label was');
+  assert.equal(shape.at(96.5, 596.5).at(-1), 0, 'Transparent around it');
+  const recoloured = pixels(itemSprite(live, { page: 1, id: badge.id, kind: 'graphic', rect: badge.rect, scale: 2, fill: '#00ff00' }));
+  assert.deepEqual(recoloured.at(160, 615), [0, 255, 0, 255], 'Shown in its new colour');
+  const after = readPage(live, { operation: 'page-content', page: 1, graphics: true }).items;
+  assert.deepEqual(after.map(item => [item.id, item.fill]), found.map(item => [item.id, item.fill]), 'The document is unchanged');
+  // An image keeps its pixels and its transparency.
+  const swatch = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 4, 4], true); swatch.clear(); for (let i = 0; i < 8; i++) swatch.getPixels().set([200, 30, 30, 255], i * 4);
+  const pictured = new mupdf.PDFDocument(), image = pictured.addImage(new mupdf.Image(swatch));
+  pictured.insertPage(-1, pictured.addPage([0, 0, 300, 300], 0, { XObject: { Im: image } }, 'q 100 0 0 100 50 50 cm /Im Do Q'));
+  const picture = open(pictured.saveToBuffer('').asUint8Array()), item = readPage(picture, { operation: 'page-content', page: 1 }).items.find(entry => entry.kind === 'image');
+  const drawn = pixels(itemSprite(picture, { page: 1, id: item.id, kind: 'image', rect: item.rect, scale: 2 }));
+  assert.deepEqual([drawn.at(100, 140), drawn.at(100, 60).at(-1)], [[200, 30, 30, 255], 0], 'Its colour, and transparent where it is');
+  return { text: true, drawingAlone: true, recolouredPreview: true, image: true, documentUnchanged: true };
 });
 
 for (const result of results) console.log(JSON.stringify(result));
