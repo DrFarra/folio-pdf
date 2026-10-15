@@ -25,11 +25,12 @@ if (!fs.existsSync(scanPdf)) {
 
 // FOLIO_PERF_HUGE=1 adds a ~1 GB, 3000-page textbook-like file (a scan and a
 // line of text per page), written directly so no library holds it in memory.
-const hugePdf = path.join(output, 'huge.pdf');
+// v2: huge.pdf declared wrong image sizes, so MuPDF drew its scans black.
+const hugePdf = path.join(output, 'huge-v2.pdf');
 if (process.env.FOLIO_PERF_HUGE && !fs.existsSync(hugePdf)) {
   const source = mupdf.Document.openDocument(fs.readFileSync(textPdf), 'application/pdf');
-  const jpegs = Array.from({ length: 8 }, (_, i) => Buffer.from(source.loadPage(30 + i * 40).toPixmap(mupdf.Matrix.scale(2.8, 2.8), mupdf.ColorSpace.DeviceRGB, false).asJPEG(75)));
-  const size = jpegs.map(j => [j.readUInt16BE(j.indexOf(Buffer.from([0xff, 0xc0])) + 7), j.readUInt16BE(j.indexOf(Buffer.from([0xff, 0xc0])) + 5)]);
+  const scans = Array.from({ length: 8 }, (_, i) => source.loadPage(30 + i * 40).toPixmap(mupdf.Matrix.scale(2.8, 2.8), mupdf.ColorSpace.DeviceRGB, false));
+  const jpegs = scans.map(s => Buffer.from(s.asJPEG(75))), size = scans.map(s => [s.getWidth(), s.getHeight()]);
   const pages = 3000, fd = fs.openSync(hugePdf, 'w'), offsets = [];
   let at = 0; const put = data => { const b = Buffer.isBuffer(data) ? data : Buffer.from(data, 'latin1'); fs.writeSync(fd, b); at += b.length; };
   const obj = (n, body, stream) => { offsets[n] = at; put(`${n} 0 obj\n${body}\n`); if (stream) { put('stream\n'); put(stream); put('\nendstream'); } put('\nendobj\n'); };
