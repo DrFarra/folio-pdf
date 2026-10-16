@@ -1,14 +1,17 @@
 // Moving an image Folio placed, in Editar: from releasing the mouse until the
 // moved image is selected again; the frames that still show it at its old place
 // (a ghost: the images lie over a scan, where no plain colour can hide them);
-// and the longest the interface stops (the longest gap between frames) in the
-// 3 s after the drop, which covers writing the PDF.
+// and, in the seconds after the drop, which cover writing the PDF and its draft,
+// the longest the page stops (the longest gap between its frames) and, in the
+// desktop app, the longest a trivial command waits: the window's own thread
+// answers every command, and can stop answering while the page still draws.
 // Run after a build:  node scripts/tests/edit-image-perf.mjs
 //   FOLIO_EDIT_PERF_PAGES=600 (the heavy PDF, ~250 MB, written by edit-perf.mjs; 0 for a light one)
 //   FOLIO_EDIT_PERF_CPU=4 (slows the CPU four times, as a slower laptop)
 //   FOLIO_EDIT_PERF_DPR=2 and FOLIO_EDIT_PERF_ZOOM=width: a sharp screen, the page at full width (bigger pages to draw)
 //   FOLIO_EDIT_PERF_EXE=path/to/folio-pdf.exe: in a QA build of the desktop app (identifier org.folio.pdf.qa,
 //     its own data), which opens the PDF; the page is reached through WebView2's debugging port.
+//   FOLIO_EDIT_PERF_WATCH=ms after each drop (3000; 15000 in the desktop app)
 //   FOLIO_EDIT_PERF_LABEL=before|after names the report.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -42,7 +45,7 @@ const port = process.env.FOLIO_EDIT_PERF_PORT || '4262', origin = `http://127.0.
 const exe = process.env.FOLIO_EDIT_PERF_EXE;
 const server = exe ? spawn(path.resolve(exe), [book], { stdio: 'ignore', env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9367' } })
   : spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
-const debug = 'http://127.0.0.1:9367';
+const debug = 'http://127.0.0.1:9367', watch = Number(process.env.FOLIO_EDIT_PERF_WATCH || (exe ? 15000 : 3000));
 if (exe) for (let i = 0; i < 300; i++) { try { if ((await fetch(`${debug}/json/version`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
 const browser = exe ? await chromium.connectOverCDP(debug) : await chromium.launch({ executablePath: findChrome(), headless: true });
 const report = { desktop: !!exe, pages, cpu, dpr, zoom, sizeMB: Math.round(fs.statSync(book).size / 1048576), moves: [] };
@@ -76,7 +79,7 @@ try {
       // image is still seen at its old place (the page's pixels there are its red,
       // with nothing drawn over them).
       await page.evaluate(old => {
-        const probe = window.folioProbe = { gaps: [], ghost: [], last: performance.now(), start: 0, red: false };
+        const probe = window.folioProbe = { gaps: [], ghost: [], last: performance.now(), start: 0, red: false, ipc: 0 };
         const canvas = document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas:not(.page-detail)'), context = canvas.getContext('2d');
         const covered = () => [...document.querySelectorAll('.edit-layer[data-edit-page="1"] :is(.edit-mask, .edit-sprite, .edit-snapshot)')].some(node => {
           const box = node.getBoundingClientRect();
@@ -90,6 +93,8 @@ try {
           if (!probe.stop) requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        if (invoke) (async () => { while (!probe.stop) { const t = performance.now(); await invoke('plugin:app|version'); if (probe.start) probe.ipc = Math.max(probe.ipc, performance.now() - t); await new Promise(r => setTimeout(r, 50)); } })();
       }, old);
       assert(await page.evaluate(() => window.folioProbe.red), `The ${image.name} image is on the page before moving`);
       if (cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpu });
@@ -101,11 +106,11 @@ try {
       while (!done && Date.now() - dropped < 20000) {
         if (await page.evaluate(() => !document.querySelector('.edit-ghost') && !!document.querySelector('.edit-selection.kind-image') && !document.querySelector('.edit-toolbar[data-committing=true]'))) done = Date.now() - dropped;
       }
-      await page.waitForTimeout(Math.max(0, 3000 - (Date.now() - dropped)));
-      const { gaps, ghost } = await page.evaluate(() => { window.folioProbe.stop = true; return window.folioProbe; });
+      await page.waitForTimeout(Math.max(0, watch - (Date.now() - dropped)));
+      const { gaps, ghost, ipc } = await page.evaluate(() => { window.folioProbe.stop = true; return window.folioProbe; });
       if (cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
       await settle();
-      report.moves.push({ image: image.name, moveMs: done, ghostMs: ghost, longestFrameMs: Math.round(Math.max(...gaps)), framesOver100: gaps.filter(gap => gap > 100).length });
+      report.moves.push({ image: image.name, moveMs: done, ghostMs: ghost, longestFrameMs: Math.round(Math.max(...gaps)), framesOver100: gaps.filter(gap => gap > 100).length, ...(exe ? { commandLateMs: Math.round(ipc) } : {}) });
       console.log(JSON.stringify(report.moves.at(-1)));
       await page.waitForTimeout(1200);
     }
