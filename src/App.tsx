@@ -572,11 +572,15 @@ export default function App() {
           const existing = tabsRef.current.find(tab => tab.doc.id === id);
           if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
         }
+        let draftId: string | undefined;
         if (!context) {
-          const draft = await readDraft(id);
-          if (draft) { bytes = draft; modified = true; notify('Se recuperaron tus cambios sin guardar.'); }
+          // A native draft is read in slices, as an opened PDF (one response of hundreds of MB stops
+          // the page on Windows), and its id is already the SHA-256 of its bytes.
+          const native = isNative ? await nativeDraftDocument(id, name) : null;
+          const draft = native ? await readNativeDocument(native) : isNative ? null : await readDraft(id);
+          if (draft) { bytes = draft; modified = true; draftId = native?.id; notify('Se recuperaron tus cambios sin guardar.'); }
         }
-        revision = bytes === originalBytes && (nativeInput?.id || contentId) || await digest(bytes); size = bytes.length;
+        revision = bytes === originalBytes && (nativeInput?.id || contentId) || draftId || await digest(bytes); size = bytes.length;
         const task = getDocument({ data: new Uint8Array(bytes), password: documentPassword, ...pdfAssetSettings() });
         taskRef.current = task;
         task.onPassword = (submit: (value: string) => void, reason: number) => { if (request === loadRequest.current) { setPassword({ name, retry: reason === 2, submit: value => { documentPassword = value; submit(value); } }); setPasswordText(''); } };
@@ -617,6 +621,9 @@ export default function App() {
       if (!context && !readingPreferencesRef.current.restorePage) session.lastPage = 1;
       if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
       const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), bytesAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isNative), name, size, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
+      // A recovered draft is already on disk: writing it back sends the whole PDF to Folio again,
+      // which on Windows holds the window for seconds (238 MB: it stopped answering and closed).
+      if (!context && modified) draftWrites.current.set(loaded, Promise.resolve());
       const replacing = !!context?.preserveHistory || !!context?.savedCopy;
       // Opening a document again after deleting its local copy starts a new record.
       if (!replacing) forgottenIds.current.delete(id);
