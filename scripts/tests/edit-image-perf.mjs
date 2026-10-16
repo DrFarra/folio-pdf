@@ -7,6 +7,7 @@
 // answers every command, and can stop answering while the page still draws.
 // Run after a build:  node scripts/tests/edit-image-perf.mjs
 //   FOLIO_EDIT_PERF_PAGES=600 (the heavy PDF, ~250 MB, written by edit-perf.mjs; 0 for a light one)
+//   FOLIO_EDIT_PERF_FILE=some.pdf and FOLIO_EDIT_PERF_PAGE=25: a real book at one of its pages (with FOLIO_EDIT_PERF_PASTE)
 //   FOLIO_EDIT_PERF_CPU=4 (slows the CPU four times, as a slower laptop)
 //   FOLIO_EDIT_PERF_DPR=2 and FOLIO_EDIT_PERF_ZOOM=width: a sharp screen, the page at full width (bigger pages to draw)
 //   FOLIO_EDIT_PERF_EXE=path/to/folio-pdf.exe: in a QA build of the desktop app (identifier org.folio.pdf.qa,
@@ -29,9 +30,11 @@ import { findChrome } from './browser.mjs';
 const root = process.cwd(), output = path.join(root, 'test-results', 'edit-perf');
 fs.mkdirSync(output, { recursive: true });
 const pages = Number(process.env.FOLIO_EDIT_PERF_PAGES ?? 600), cpu = Number(process.env.FOLIO_EDIT_PERF_CPU || 1), dpr = Number(process.env.FOLIO_EDIT_PERF_DPR || 1), zoom = process.env.FOLIO_EDIT_PERF_ZOOM || 'page';
-let book = path.join(output, `book-${pages}-v2.pdf`);
+let book = process.env.FOLIO_EDIT_PERF_FILE || path.join(output, `book-${pages}-v2.pdf`);
+const n = Number(process.env.FOLIO_EDIT_PERF_PAGE || 1);
 // The light PDF has a grey chequer where the images go: no plain colour, as over a photo.
-if (!pages) {
+if (process.env.FOLIO_EDIT_PERF_FILE) assert(fs.existsSync(book), book);
+else if (!pages) {
   const light = await PDFDocument.create(), sheet = light.addPage([612, 792]);
   for (let y = 300; y < 560; y += 3) for (let x = 40; x < 570; x += 3) sheet.drawRectangle({ x, y, width: 3, height: 3, color: rgb(.4 + (x * 7 + y * 13) % 41 / 100, .45, .45) });
   book = path.join(output, 'light.pdf'); fs.writeFileSync(book, await light.save());
@@ -54,7 +57,7 @@ const server = exe ? spawn(path.resolve(exe), [book], { stdio: 'ignore', env: { 
 const debug = 'http://127.0.0.1:9367', gap = Number(process.env.FOLIO_EDIT_PERF_GAP || 0), watch = gap || Number(process.env.FOLIO_EDIT_PERF_WATCH || (exe ? 15000 : 3000));
 if (exe) for (let i = 0; i < 300; i++) { try { if ((await fetch(`${debug}/json/version`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
 const browser = exe ? await chromium.connectOverCDP(debug) : await chromium.launch({ executablePath: findChrome(), headless: true });
-const report = { desktop: !!exe, pages, cpu, dpr, zoom, paste, gap, sizeMB: Math.round(fs.statSync(book).size / 1048576), moves: [] };
+const report = { desktop: !!exe, file: path.basename(book), page: n, pages, cpu, dpr, zoom, paste, gap, sizeMB: Math.round(fs.statSync(book).size / 1048576), moves: [] };
 try {
   if (!exe) for (let i = 0; i < 120; i++) { try { if ((await fetch(origin)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
   const context = exe ? browser.contexts()[0] : await browser.newContext({ viewport: { width: 1360, height: 900 }, deviceScaleFactor: dpr });
@@ -65,9 +68,10 @@ try {
   const cdp = await context.newCDPSession(page);
   if (!exe) { await page.goto(origin); await page.locator('input[type=file][accept="application/pdf,.pdf"]').first().setInputFiles(book); }
   await page.locator('.pdf-page-wrap[data-page-number="1"] canvas[data-rendering="false"]').waitFor();
+  if (n > 1) { await page.getByLabel('Número de página').fill(String(n)); await page.getByLabel('Número de página').press('Enter'); await page.locator(`.pdf-page-wrap[data-page-number="${n}"] canvas[data-rendering="false"]`).waitFor(); }
   await page.getByRole('button', { name: 'Editar contenido del PDF' }).click(); await page.locator('.edit-toolbar').waitFor();
   await page.getByLabel('Nivel de zoom').selectOption(zoom); await page.waitForTimeout(500);
-  const pageBox = () => page.locator('.pdf-page-wrap[data-page-number="1"] .page-content').boundingBox();
+  const pageBox = () => page.locator(`.pdf-page-wrap[data-page-number="${n}"] .page-content`).boundingBox();
   const toScreen = async (x, y) => { const box = await pageBox(), k = box.width / 612; return { x: box.x + x * k, y: box.y + (792 - y) * k }; };
   const settle = () => page.waitForFunction(() => !document.querySelector('.edit-toolbar[data-committing=true]') && !document.querySelector('.edit-snapshot') && !document.querySelector('.edit-ghost')
     && [...document.querySelectorAll('.pdf-page-wrap canvas:not(.page-detail)')].every(canvas => canvas.dataset.rendering !== 'true'));
@@ -90,7 +94,7 @@ try {
       // what lies under an item, as when its drawing has not arrived yet on a busy machine.
       if (move === 3) {
         await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Control+z'); await settle();
-        await page.mouse.move(back.x, back.y); await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+        await page.mouse.move(back.x, back.y); await page.locator(`.edit-layer[data-edit-page="${n}"][data-edit-state=ready]`).waitFor();
         await page.mouse.move(back.x + 1, back.y); await page.locator('.edit-hover').waitFor(); await page.mouse.click(back.x + 1, back.y);
         await page.locator('.edit-selection.kind-image').waitFor();
       }
@@ -100,10 +104,10 @@ try {
       // On each frame from the drop on: the gap since the last one, and whether the
       // image is still seen at its old place (the page's pixels there are its red,
       // with nothing drawn over them).
-      await page.evaluate(old => {
+      await page.evaluate(([old, n]) => {
         const probe = window.folioProbe = { gaps: [], ghost: [], last: performance.now(), start: 0, red: false, ipc: 0 };
-        const canvas = document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas:not(.page-detail)'), detail = document.querySelector('.pdf-page-wrap[data-page-number="1"] canvas.page-detail');
-        const covered = () => [...document.querySelectorAll('.edit-layer[data-edit-page="1"] :is(.edit-mask, .edit-sprite, .edit-snapshot)')].some(node => {
+        const canvas = document.querySelector(`.pdf-page-wrap[data-page-number="${n}"] canvas:not(.page-detail)`), detail = document.querySelector(`.pdf-page-wrap[data-page-number="${n}"] canvas.page-detail`);
+        const covered = () => [...document.querySelectorAll(`.edit-layer[data-edit-page="${n}"] :is(.edit-mask, .edit-sprite, .edit-snapshot)`)].some(node => {
           const box = node.getBoundingClientRect();
           return old.x >= box.left && old.x <= box.right && old.y >= box.top && old.y <= box.bottom && (node.tagName !== 'IMG' || node.complete && node.naturalWidth > 0);
         });
@@ -123,7 +127,7 @@ try {
         requestAnimationFrame(tick);
         const invoke = window.__TAURI_INTERNALS__?.invoke;
         if (invoke) (async () => { while (!probe.stop) { const t = performance.now(); await invoke('plugin:app|version'); if (probe.start) probe.ipc = Math.max(probe.ipc, performance.now() - t); await new Promise(r => setTimeout(r, 50)); } })();
-      }, old);
+      }, [old, n]);
       assert(await page.evaluate(() => window.folioProbe.red), `The ${image.name} image is on the page before moving`);
       if (cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpu });
       // Clear of its old place, within the page as shown: sideways, back on the next move, else down or up.

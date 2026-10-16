@@ -126,6 +126,8 @@ export default function App() {
   // Editar's live document (see openEditSession): the document it was opened for and
   // its latest written copy, the PDF before it, its depth in its own undo steps, and its writes.
   const sessionStart = useRef<LoadedDocument | null>(null), sessionDoc = useRef<LoadedDocument | null>(null), sessionBase = useRef<History | null>(null), sessionDepth = useRef(0);
+  // How long the live document's last write took (ms).
+  const sessionWriteMs = useRef(0);
   const sessionPending = useRef(false), sessionTimer = useRef<ReturnType<typeof setTimeout>>(undefined), sessionWrite = useRef<Promise<void>>(Promise.resolve()), sessionClosing = useRef<Promise<void> | null>(null);
   // Parking (see the session effect), and the reader reopening the parked document's PDF.
   const sessionParking = useRef<Promise<void> | null>(null), rebinding = useRef(false);
@@ -1726,13 +1728,14 @@ export default function App() {
     if (editStore.session) { void closeEditSession(); return; }
     const session = editStore.open(current);
     sessionStart.current = sessionDoc.current = current; sessionDepth.current = 0; sessionPending.current = false;
+    // Until a write is timed, about a millisecond per MB (a 238 MB book: ~250 ms here, longer on a laptop).
+    sessionWriteMs.current = current.bytes.length / 1048576;
     // Too large a PDF is not kept to undo, as with any change (trimHistory).
     sessionBase.current = current.bytes.length <= historyBudget() ? snapshot() : null;
     session.ready.catch(error => notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'));
   }
   // Writing holds the live document, so a change made meanwhile waits for it («Guardando el
   // cambio…»): a book that takes seconds to write waits for a longer pause than a short PDF.
-  const sessionWriteMs = useRef(0);
   function scheduleSessionWrite() {
     sessionPending.current = true; clearTimeout(sessionTimer.current);
     sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, Math.min(15000, Math.max(800, sessionWriteMs.current * 4)));
