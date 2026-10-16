@@ -10,6 +10,15 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.16
+
+- En Editar, una imagen que mueves desaparece al instante de su sitio anterior, y mover imágenes ya no deja la ventana trabada, tampoco en PDF muy grandes ni en equipos más lentos (Windows).
+- Abrir un PDF muy grande con cambios sin guardar ya no cuelga ni cierra la ventana en Windows (necesita WebView2 de 2023 o posterior, el que trae Windows actualizado).
+- «Texto buscable» puede rehacer el OCR que otro programa dejó mal leído: quita su capa invisible y escribe la nueva, sin tocar la imagen ni las marcas de agua.
+- «Texto editable» mejora en libros escaneados a baja resolución: conserva la letra con serifa en todo el texto, las etiquetas de los dibujos ya no salen en negrita, los títulos en cursiva como «Vía endógena:» salen en cursiva y no se borran palabras de los dibujos que el OCR no leyó.
+- El enderezado ya no curva páginas con fotos, dibujos o tablas.
+- Las palabras técnicas (lisosomales, lipoproteína, citosol…), los títulos en mayúsculas sin tilde y las palabras partidas a final de línea se reescriben como texto en vez de quedarse como imagen.
+
 ## Cambios en 0.9.15
 
 - «Reconocer texto (OCR)» con «Texto editable» reconstruye la página escaneada mucho más parecida al original: la misma familia de letra en toda la página y en todo el libro (Palatino, Gill Sans…), el grosor de la tinta del libro, y las negritas y cursivas donde las tiene el original (títulos de tabla, «Fig. 4-9.», términos en cursiva, cabeceras).
