@@ -190,10 +190,11 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   useEffect(() => { if (hover && hover.kind !== 'shape' && hover.item.editable) { void store.sprite(doc, number, hover.item, plateScale); void store.plate(doc, number, hover.item, plateScale); } }, [store, doc, number, hover, plateScale]);
   const plateFor = (item: PageContentItem) => { const plate = plates[item.id]; return plate?.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null; };
   // Where an item was: what lies under it if drawn, else the page's plain colour, else nothing.
+  // An image is covered by the colour around it even on a busy page: a second copy is worse.
   const vacated = (item: PageContentItem) => {
     const under = plateFor(item), from = toBox(item.rect);
     if (under) { const box = toBox(under.rect); return <img className="edit-mask" src={under.url} alt="" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />; }
-    const color = pageBackground(from);
+    const color = pageBackground(from, item.kind !== 'image');
     return color ? <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: color }} /> : null;
   };
   // A selection from an older state of the page no longer matches it.

@@ -1730,9 +1730,12 @@ export default function App() {
     sessionBase.current = current.bytes.length <= historyBudget() ? snapshot() : null;
     session.ready.catch(error => notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'));
   }
+  // Writing holds the live document, so a change made meanwhile waits for it («Guardando el
+  // cambio…»): a book that takes seconds to write waits for a longer pause than a short PDF.
+  const sessionWriteMs = useRef(0);
   function scheduleSessionWrite() {
     sessionPending.current = true; clearTimeout(sessionTimer.current);
-    sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, 800);
+    sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, Math.min(15000, Math.max(800, sessionWriteMs.current * 4)));
   }
   /** Writes the live document's PDF and makes it the document's bytes (and its draft). The reader keeps its copy. */
   function writeEditSession(): Promise<void> {
@@ -1741,7 +1744,8 @@ export default function App() {
     if (!session || !sessionPending.current) return sessionWrite.current;
     sessionPending.current = false;
     const write = sessionWrite.current.catch(() => {}).then(async () => {
-      const { bytes, revision } = await session.save();
+      const started = performance.now(), { bytes, revision } = await session.save();
+      sessionWriteMs.current = performance.now() - started;
       const previous = sessionDoc.current;
       if (editStore.session !== session || !previous) return;
       const next: LoadedDocument = { ...previous, bytes, revision, size: bytes.length, modified: true };
