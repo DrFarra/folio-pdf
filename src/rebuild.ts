@@ -403,8 +403,10 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
   // Where a kept line's box overlaps this one, each stroke goes with the line it belongs to: a
   // connected piece of ink stays when its middle is nearer the kept line's middle than this one's
   // (a descender of the line above, an accent of the line below), with its halo.
+  // And a piece of ink that lies mostly past this line's own rows, its middle beyond them, is not
+  // this line's at all (a word under a figure's label that the OCR did not read): it stays too.
   const keep = new Uint8Array(cw * ch), overlapping = kept.filter(b => b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0);
-  if (overlapping.length) {
+  {
     const label = new Int32Array(cw * ch).fill(-1), stack: number[] = [];
     for (let start = 0; start < label.length; start++) {
       if (label[start] >= 0 || tone(start % cw, Math.floor(start / cw)) <= halo) continue;
@@ -414,7 +416,8 @@ function erase(image: Pixels, { x0, x1, y0, y1, toward, band, ground, edge, grow
         for (const j of [x > 0 ? i - 1 : -1, x < cw - 1 ? i + 1 : -1, y > 0 ? i - cw : -1, y < ch - 1 ? i + cw : -1]) if (j >= 0 && label[j] < 0 && tone(j % cw, Math.floor(j / cw)) > halo) { label[j] = start; stack.push(j); }
       }
       const cy = top + piece.reduce((t, i) => t + Math.floor(i / cw), 0) / piece.length, cx = left + piece.reduce((t, i) => t + i % cw, 0) / piece.length;
-      const owner = overlapping.find(b => cx >= b[0] && cx < b[2] && Math.abs(cy - (b[1] + b[3]) / 2) < Math.abs(cy - (y0 + y1) / 2));
+      const outside = (cy < y0 || cy >= y1) && piece.filter(i => { const y = top + Math.floor(i / cw); return y >= y0 && y < y1; }).length < piece.length * .25;
+      const owner = outside || overlapping.find(b => cx >= b[0] && cx < b[2] && Math.abs(cy - (b[1] + b[3]) / 2) < Math.abs(cy - (y0 + y1) / 2));
       if (owner) for (const i of piece) { const x = i % cw, y = (i - x) / cw; for (let yy = Math.max(0, y - grow); yy <= Math.min(ch - 1, y + grow); yy++) keep.fill(1, yy * cw + Math.max(0, x - grow), yy * cw + Math.min(cw, x + grow + 1)); }
     }
   }
