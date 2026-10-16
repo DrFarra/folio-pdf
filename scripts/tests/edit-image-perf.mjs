@@ -11,6 +11,7 @@
 //   FOLIO_EDIT_PERF_DPR=2 and FOLIO_EDIT_PERF_ZOOM=width: a sharp screen, the page at full width (bigger pages to draw)
 //   FOLIO_EDIT_PERF_EXE=path/to/folio-pdf.exe: in a QA build of the desktop app (identifier org.folio.pdf.qa,
 //     its own data), which opens the PDF; the page is reached through WebView2's debugging port.
+//     A draft of the PDF left by an earlier run reopens with its images: clear the QA data's drafts first.
 //   FOLIO_EDIT_PERF_WATCH=ms after each drop (3000; 15000 in the desktop app)
 //   FOLIO_EDIT_PERF_LABEL=before|after names the report.
 import assert from 'node:assert/strict';
@@ -114,8 +115,8 @@ try {
       console.log(JSON.stringify(report.moves.at(-1)));
       await page.waitForTimeout(1200);
     }
-    // Out of the way of the next one.
-    await page.keyboard.press('Delete'); await settle(); await page.locator('.edit-selection.kind-image').waitFor({ state: 'detached' });
+    // Out of the way of the next one (the key goes to the page, not to a field a saved state left focused).
+    await page.evaluate(() => (document.activeElement)?.blur?.()); await page.keyboard.press('Delete'); await settle(); await page.locator('.edit-selection.kind-image').waitFor({ state: 'detached' });
   }
   report.errors = errors;
   fs.writeFileSync(path.join(output, `image-${process.env.FOLIO_EDIT_PERF_LABEL || 'run'}-${pages}-cpu${cpu}-dpr${dpr}-${zoom}${exe ? '-desktop' : ''}.json`), JSON.stringify(report, null, 2));
