@@ -115,7 +115,7 @@ try {
       console.log(JSON.stringify(report.moves.at(-1)));
       await page.waitForTimeout(1200);
     }
-    // Out of the way of the next one (the key goes to the page, not to a field a saved state left focused).
+    // Out of the way of the next one. The key goes to the page: a QA build's own check (native_qa.js) searches once the text is ready, leaving the search field focused.
     await page.evaluate(() => (document.activeElement)?.blur?.()); await page.keyboard.press('Delete'); await settle(); await page.locator('.edit-selection.kind-image').waitFor({ state: 'detached' });
   }
   report.errors = errors;
