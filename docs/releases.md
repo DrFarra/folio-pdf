@@ -10,6 +10,10 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.17
+
+- En Editar, mover una imagen en un PDF muy grande ya no deja una copia en su sitio anterior ni se traba con «Guardando el cambio…» en equipos más lentos: el PDF se reescribe cuando dejas de editar un momento, no después de cada movimiento.
+
 ## Cambios en 0.9.16
 
 - En Editar, una imagen que mueves desaparece al instante de su sitio anterior, y mover imágenes ya no deja la ventana trabada, tampoco en PDF muy grandes ni en equipos más lentos (Windows).
