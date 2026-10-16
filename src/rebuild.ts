@@ -30,9 +30,13 @@ export function wordChecker(list: string): (word: string) => boolean {
     while (low <= high) { const mid = (low + high) >> 1, here = at(mid); if (here === word) return true; if (here < word) low = mid + 1; else high = mid - 1; }
     return false;
   };
+  // A word in capitals often goes without its accent (HIGADO, EXOGENA): known with one put back.
+  // (Not an abbreviation, LDL: a misread «KTT.» looks just like one, and the scan shows it right.)
+  const accents: Record<string, string> = { a: 'á', e: 'é', i: 'í', o: 'ó', u: 'ú' };
+  const capital = (part: string) => [...part].some((c, k) => accents[c] && has(part.slice(0, k) + accents[c] + part.slice(k + 1)));
   return word => {
-    const core = word.normalize('NFC').toLowerCase().replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
-    return !core || core.split('-').every(part => !part || has(part));
+    const core = word.normalize('NFC').replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    return !core || core.split('-').every(part => !part || has(part.toLowerCase()) || (!/\p{Ll}/u.test(part) && capital(part.toLowerCase())));
   };
 }
 
@@ -66,7 +70,12 @@ export function rebuildLines(image: Pixels, lines: LineArea[], known?: (word: st
     const misread = (word: string) => /(?<![-.,;:])([-.,;:])\1(?![-.,;:])/u.test(word) || /\p{Ll}\d+\p{Ll}|^\d+\p{Ll}%$/u.test(word) || /\p{Ll}{2}\p{Lu}\p{Ll}/u.test(word);
     // A word of letters not in the word list, read with any doubt, is a misreading more often than
     // a term the list lacks (a term the recogniser is sure of is rewritten).
-    const unknown = (word: { text?: string; score: number }) => !!known && !!word.text && /^\P{N}*$/u.test(word.text) && /\p{L}{3}/u.test(word.text) && word.score < .995 && !known(word.text);
+    // A word broken at the line's end («endóge-», its hyphen often read as a point) is known when it
+    // and the start of the line below make one («endógeno»): it is written with its hyphen.
+    const last = words[words.length - 1], below = lines.filter(other => other.box[1] > y0 + (y1 - y0) * .5 && other.box[1] - y1 < y1 - y0 && Math.min(other.box[2], x1) > Math.max(other.box[0], x0)).sort((p, q) => p.box[1] - q.box[1])[0];
+    const head = below?.text.match(/^\p{Ll}+/u)?.[0], broken = !!known && !!last?.text && !!head && /\p{L}{2}[-.]$/u.test(last.text) && !known(last.text) && known(last.text.slice(0, -1) + head);
+    if (broken) last.text = last.text!.slice(0, -1) + '-';
+    const unknown = (word: { text?: string; score: number }) => !!known && !!word.text && !(broken && word === last) && /^\P{N}*$/u.test(word.text) && /\p{L}{3}/u.test(word.text) && word.score < .995 && !known(word.text);
     const kept = words.flatMap((word, n) => word.score < .8 || misread(word.text ?? '') || unknown(word) || (n === 0 && words.length > 1 && /^[-–—•·▪■◆►▸○●*]$/u.test(text.split(/\s+/)[0] ?? '')) ? [n] : []);
     if (kept.length * 2 > words.length) return null;
     // A box taller than its text reaches into the next line: drawn in to its own letters, the

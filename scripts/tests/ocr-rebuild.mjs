@@ -86,7 +86,15 @@ await check('a-word-not-in-the-word-list-stays-as-scanned', () => {
   assert.deepEqual(run('descrihe', .98).kept, [n]);
   assert.deepEqual(run('describe', .98).kept, []);
   assert.deepEqual(run('descrihe', .999).kept, []);
-  return { kept: 'descrihe' };
+  // A textbook's terms and capitals without their accent are known; misreadings are not.
+  for (const word of ['lisosomales', 'lipoproteína.', 'HIGADO', 'EXOGENA']) assert(known(word), `${word} not known`);
+  for (const word of ['ADPOSO', 'CAPLAR', 'tejídos']) assert(!known(word), `${word} known`);
+  // A word broken at the line's end, its hyphen read as a point, is rewritten with its hyphen.
+  const last = line.words.length - 1, below = { text: 'no de la', box: [line.box[0], line.box[3] + 2, line.box[2], line.box[3] + 2 + line.box[3] - line.box[1]], score: 1 };
+  const broken = { ...line, words: line.words.map((word, k) => k === last ? { ...word, text: 'endóge.', score: .98 } : word) };
+  assert.deepEqual(rebuildLines(unerased(), [broken, below], known)[0].kept, []);
+  assert.equal(broken.words[last].text, 'endóge-');
+  return { kept: 'descrihe', joined: 'endóge-' };
 });
 
 await check('the-page-comes-back-as-editable-text', () => {

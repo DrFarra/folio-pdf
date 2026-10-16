@@ -1,9 +1,19 @@
-public/ocr/words.bin — word forms OCR checks rebuilt words against, expanded by scripts/build-wordlist.py from:
+public/ocr/words.bin — word forms OCR checks rebuilt words against, built by scripts/build-wordlist.py from:
 
 1. RLA-ES Spanish dictionary «es» v2.9 (https://github.com/sbosio/rla-es), offered under GNU GPL v3+, GNU LGPL v3+ or MPL 1.1+;
    used here under the GNU LGPL version 3 or later, whose text follows the SCOWL notice.
 
-2. SCOWL en_US Hunspell dictionary 2020.12.07 (http://wordlist.aspell.net):
+2. wordfreq 3.1.1 (https://github.com/rspeer/wordfreq) by Robyn Speer: the words of five letters
+   or more in its large Spanish and English lists. wordfreq's code is under the Apache License 2.0;
+   its word lists are under Creative Commons Attribution-ShareAlike 4.0
+   (https://creativecommons.org/licenses/by-sa/4.0/), and so is this list's part taken from them.
+   They are derived from Wikipedia (https://www.wikipedia.org), OPUS OpenSubtitles 2018
+   (http://opus.nlpl.eu/OpenSubtitles.php, from http://www.opensubtitles.org), Google Books Ngrams
+   (http://books.google.com/ngrams), the Leeds Internet Corpus (http://corpus.leeds.ac.uk/list.html),
+   ParaCrawl (https://paracrawl.eu) and the SUBTLEX word lists by Marc Brysbaert et al.
+   (http://crr.ugent.be/programs-data/subtitle-frequencies), which are freely available data.
+
+3. SCOWL en_US Hunspell dictionary 2020.12.07 (http://wordlist.aspell.net):
 
 COPYRIGHT, SOURCES, and CREDITS:
 

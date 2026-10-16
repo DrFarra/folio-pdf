@@ -5,7 +5,12 @@ The forms come from Hunspell dictionaries, expanded here by their affix rules (p
 suffixes, their cross products and one level of continuation classes):
   - Spanish: RLA-ES «es» (https://github.com/sbosio/rla-es), used under the GNU LGPL v3.
   - English: SCOWL en_US (http://wordlist.aspell.net), under its BSD-style licence.
+Spell-checking dictionaries leave out most of a textbook's vocabulary (lisosomales, lipoproteína,
+citosol), so the words wordfreq's large Spanish and English lists hold are added too
+(https://github.com/rspeer/wordfreq, data under CC BY-SA 4.0: Wikipedia, OpenSubtitles, Google
+Books Ngrams, SUBTLEX and others). A misreading is rare enough to be in none of them.
 
+  pip install wordfreq
   python scripts/build-wordlist.py <es.dic> <es.aff> <en_US.dic> <en_US.aff>
 """
 import gzip
@@ -111,7 +116,11 @@ def key(word):
 
 if __name__ == '__main__':
     es_dic, es_aff, en_dic, en_aff = sys.argv[1:5]
+    from wordfreq import top_n_list
     words = {key(w) for w in expand(es_dic, es_aff) | expand(en_dic, en_aff)}
+    # (Five letters or more: short tokens there include abbreviations and junk, «ktt», «yia», that
+    # a misreading of a short word can match; the spelling dictionaries cover short words.)
+    words |= {key(w) for lang in ('es', 'en') for w in top_n_list(lang, 10 ** 7, wordlist='large') if len(w) >= 5}
     words = sorted(w for w in words if w and re.fullmatch(r"[\w'-]+", w))
     out = Path(__file__).resolve().parent.parent / 'public' / 'ocr' / 'words.bin'
     with gzip.open(out, 'wb', compresslevel=9) as f:
