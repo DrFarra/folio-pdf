@@ -9,7 +9,7 @@ const BRIDGE_MAX: usize = 128 * 1024 * 1024;
 static UPLOADS: LazyLock<Mutex<HashMap<String, (Instant, Vec<u8>)>>> = LazyLock::new(Default::default);
 
 /// Starts a chunked upload. Uploads abandoned for a minute are dropped.
-#[cfg(any(target_os = "android", test))]
+#[cfg(any(not(target_os = "ios"), test))]
 #[tauri::command]
 pub fn upload_begin() -> Result<String, String> {
     let id = uuid::Uuid::new_v4().to_string();
@@ -22,12 +22,27 @@ pub fn upload_begin() -> Result<String, String> {
 #[cfg(any(target_os = "android", test))]
 #[tauri::command]
 pub fn upload_chunk(id: String, base64: String) -> Result<(), String> {
-    let mut uploads = UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?;
     let decoded = base64::engine::general_purpose::STANDARD.decode(&base64).map_err(|_| "El archivo contiene bytes inválidos.");
-    let (touched, staged) = uploads.get_mut(&id).ok_or("El envío del archivo se interrumpió. Vuelve a intentarlo.")?;
-    match decoded {
-        Ok(chunk) if staged.len() + chunk.len() <= BRIDGE_MAX => { staged.extend_from_slice(&chunk); *touched = Instant::now(); Ok(()) }
-        result => { uploads.remove(&id); Err(result.err().unwrap_or("Este PDF supera 128 MB y no se puede guardar en este dispositivo.").into()) }
+    stage(&id, decoded, BRIDGE_MAX, "Este PDF supera 128 MB y no se puede guardar en este dispositivo.")
+}
+
+// Windows' WebView stops the page while one request carries tens of MB (64 MB:
+// half a second), so a large PDF goes in raw slices, the page running between them.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command(async)]
+pub fn upload_part(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let id = request.headers().get("x-folio-upload").and_then(|id| id.to_str().ok()).ok_or("El envío del archivo se interrumpió. Vuelve a intentarlo.")?;
+    let chunk = match request.body() { InvokeBody::Raw(data) => Ok(data.clone()), _ => Err("El archivo contiene bytes inválidos.") };
+    stage(id, chunk, folio_core::MAX_OUTPUT_BYTES, "El archivo supera 1 GB y no se puede guardar.")
+}
+
+/// Adds a slice to an upload; a slice that fails drops the whole upload.
+fn stage(id: &str, chunk: Result<Vec<u8>, &str>, limit: usize, too_large: &str) -> Result<(), String> {
+    let mut uploads = UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?;
+    let (touched, staged) = uploads.get_mut(id).ok_or("El envío del archivo se interrumpió. Vuelve a intentarlo.")?;
+    match chunk {
+        Ok(chunk) if staged.len() + chunk.len() <= limit => { staged.extend_from_slice(&chunk); *touched = Instant::now(); Ok(()) }
+        result => { uploads.remove(id); Err(result.err().unwrap_or(too_large).into()) }
     }
 }
 
