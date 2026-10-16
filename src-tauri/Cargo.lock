@@ -1059,6 +1059,8 @@ dependencies = [
  "tauri-plugin-folio-ios",
  "tauri-plugin-single-instance",
  "uuid",
+ "webview2-com",
+ "windows-core",
 ]
 
 [[package]]
