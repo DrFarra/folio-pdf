@@ -223,9 +223,878 @@ const folioDrawing = object => {
   catch { return false; } finally { buffer?.destroy(); }
 };
 
+// Turns a page's content about the centre of its visible area, clockwise as seen by
+// `degrees`: the original drawing is kept, only its placement changes.
+function turnContent(doc, page, degrees) {
+  if (!Number.isFinite(degrees) || Math.abs(degrees) > 20) fail('Ángulo inválido.');
+  const t = degrees * Math.PI / 180, cos = Math.cos(t), sin = Math.sin(t);
+  const area = mupdf.Rect.transform(page.getBounds(), mupdf.Matrix.invert(page.getTransform())), cx = (area[0] + area[2]) / 2, cy = (area[1] + area[3]) / 2;
+  const matrix = [cos, -sin, sin, cos, cx - cos * cx - sin * cy, cy + sin * cx - cos * cy];
+  const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
+  list.push(doc.addStream(`q ${matrix.map(v => +v.toFixed(6)).join(' ')} cm\n`, {}));
+  if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
+  else if (!contents.isNull()) list.push(contents);
+  list.push(doc.addStream('Q\n', {}));
+  object.put('Contents', list);
+}
+// A scan flattened by Folio takes the page's place: the image shows the page as it
+// was seen, so the page becomes upright and exactly that size.
+function replaceWithImage(doc, index, bytes, size) {
+  if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
+  const [width, height] = Array.isArray(size) ? size.map(Number) : [];
+  if (!(width > 0 && height > 0 && width <= 14400 && height <= 14400)) fail('Tamaño de página inválido.');
+  const image = new mupdf.Image(bytes);
+  try {
+    const object = doc.findPage(index), resources = doc.newDictionary(), xobjects = doc.newDictionary();
+    xobjects.put('FolioScan', doc.addImage(image)); resources.put('XObject', xobjects);
+    for (const box of ['TrimBox', 'BleedBox', 'ArtBox']) object.delete(box);
+    object.put('MediaBox', [0, 0, width, height]); object.put('CropBox', [0, 0, width, height]); object.put('Rotate', 0);
+    object.put('Resources', resources);
+    object.put('Contents', doc.addStream(`q ${width} 0 0 ${height} 0 0 cm /FolioScan Do Q\n`, {}));
+  } finally { image.destroy(); }
+}
+// The faces a rebuilt line can take: the standard fonts, and the open fonts the caller
+// brings that resemble books' own (Palatino, Century, Garamond, Calibri...). Each is
+// measured: how far its capitals reach above the baseline, and its descenders below.
+// Families with serifs; the rest are sans.
+const SERIF = new Set(['Times', 'Caladea', 'Pagella', 'Schola', 'Bonum', 'EBGaramond', 'Arvo', 'Crimson', 'Rokkitt']);
+// Slab serifs draw their strokes as evenly as a sans: stroke contrast cannot set them apart from one.
+const SLAB = new Set(['Arvo', 'Rokkitt']);
+const STANDARD_FACES = [
+  ['Helvetica', 'Helvetica', false, false], ['Helvetica', 'Helvetica-Bold', true, false], ['Helvetica', 'Helvetica-Oblique', false, true],
+  ['Times', 'Times-Roman', false, false], ['Times', 'Times-Bold', true, false], ['Times', 'Times-Italic', false, true],
+];
+function measured(font) {
+  // Drawn at 100 px with the baseline at row 150, where its ink starts and ends (a font's
+  // own bounds are its whole box, not the letter's).
+  const reach = (c, top) => {
+    const gid = font.encodeCharacter(c); if (!gid) return 0;
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, [0, 0, 200, 200], false), device = new mupdf.DrawDevice(mupdf.Matrix.identity, pix), text = new mupdf.Text();
+    try {
+      pix.clear(255); text.showGlyph(font, [100, 0, 0, -100, 40, 150], gid, c.codePointAt(0));
+      device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); device.close();
+      const data = pix.getPixels(), rows = [];
+      for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) if (data[y * 200 + x] < 128) { rows.push(y); break; }
+      if (!rows.length) return 0;
+      return top ? (150 - rows[0]) / 100 : (rows[rows.length - 1] + 1 - 150) / 100;
+    } finally { text.destroy(); device.destroy(); pix.destroy(); }
+  };
+  return { cap: reach('H', true) || .7, xheight: reach('x', true) || .5, descender: reach('p', false) || .2 };
+}
+function loadFaces(extra = []) {
+  if (!Array.isArray(extra) || extra.length > 64) fail('Fuentes inválidas.');
+  const faces = STANDARD_FACES.map(([family, name, bold, italic]) => ({ family, name, bold, italic, font: new mupdf.Font(name) }));
+  try {
+    for (const face of extra) {
+      if (typeof face?.family !== 'string' || typeof face.name !== 'string' || face.name.length > 100 || !(face.file instanceof Uint8Array) || face.file.length > 4 * 1024 * 1024) fail('Fuente inválida.');
+      faces.push({ family: face.family, name: face.name, bold: !!face.bold, italic: !!face.italic, font: new mupdf.Font(face.name, face.file) });
+    }
+    for (const face of faces) Object.assign(face, measured(face.font));
+    return faces;
+  } catch (error) { for (const face of faces) face.font.destroy(); throw error; }
+}
+
+/** The scan of a rebuilt page, in grey, and its pixels per point. */
+function scanOf(bytes, width) {
+  if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
+  const image = new mupdf.Image(bytes), pix = image.toPixmap();
+  try {
+    const w = pix.getWidth(), h = pix.getHeight(), n = pix.getNumberOfComponents(), source = pix.getPixels(), gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) gray[i] = n >= 3 ? (source[i * n] * 299 + source[i * n + 1] * 587 + source[i * n + 2] * 114) / 1000 : source[i * n];
+    return { gray, w, h, k: w / width };
+  } finally { pix.destroy(); image.destroy(); }
+}
+
+/**
+ * Where and how big a line's text goes in a face: its size from the words' widths in
+ * that face (bounded by the ink's height), its baseline from the ink's bottom (lower when
+ * letters reach below it).
+ */
+// The letters' size from the words' widths in a font: steadier than the ink's height, which takes
+// in a neighbour's accents and stray marks (0 without words to measure).
+function widthSize(font, line) {
+  // Words of small letters when the line has them: a word in capitals may be letter-spaced («C A P Í T U L O»).
+  const long = (line.words ?? []).filter(word => [...word.text].length >= 3), small = long.filter(word => /\p{Ll}/u.test(word.text));
+  const widths = (small.length ? small : long).map(word => {
+    const [a, , b] = word.box, wordUnits = [...word.text].reduce((n, c) => { const gid = font.encodeCharacter(c); return n + (gid ? font.advanceGlyph(gid) : 0); }, 0);
+    return wordUnits ? (b - a) / wordUnits : 0;
+  }).filter(Boolean).sort((p, q) => p - q);
+  return widths.length ? widths[widths.length >> 1] : 0;
+}
+function placeIn(face, line, { size: fixed = 0, baseline = 0 } = {}) {
+  const { font, cap, descender } = face, [x0, top, x1, bottom] = line.box;
+  const glyphs = [...line.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
+  const units = glyphs.reduce((n, { c, gid }) => n + (gid ? font.advanceGlyph(gid) : /\s/.test(c) ? .25 : 0), 0);
+  const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
+  const byHeight = (bottom - top) / ((tall ? cap : cap * .7) + (deep ? descender : 0));
+  // The width is the surer measure (the ink's height takes in stray marks); the height only bounds it.
+  const byWidth = widthSize(font, line) || (units ? (x1 - x0) / units : byHeight);
+  // `fixed`: the size of the line's whole style, which one line's measure only wobbles around.
+  const size = fixed || (line.text.trim().length >= 4 ? Math.min(byHeight * 1.4, Math.max(byHeight * .6, byWidth)) : byHeight);
+  return { glyphs, size, baseline: baseline || bottom - (deep ? descender * size : 0), x: x0 };
+}
+/**
+ * Each word drawn where the scan has it, across its own box: letters land where the
+ * scan's letters are (a whole line in another face drifts along its length). A space
+ * follows each word, so copied and searched text keeps its spaces.
+ */
+// A character the face lacks (a Greek letter, a symbol) comes from the fallback face of its kind.
+const glyphsOf = (chars, font, fallback) => [...chars].map(c => {
+  const gid = font.encodeCharacter(c);
+  if (gid || !fallback) return { c, gid, font };
+  // A list of fallbacks is tried in turn (a made face lends from the face it stands for, then Times).
+  for (const other of Array.isArray(fallback) ? fallback : [fallback]) { const found = other.encodeCharacter(c); if (found) return { c, gid: found, font: other }; }
+  return { c, gid: 0, font };
+});
+// `width`: how much wider the scan's letters run than the face's, across the page; each word
+// then keeps within 5% of it (a word's box is a pixel or two off, its letters are not).
+function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fallback = null, width = 0) {
+  const text = new mupdf.Text();
+  for (const [n, word] of words.entries()) {
+    font = fonts[n] ?? font;
+    const space = font.encodeCharacter(' '), [a, , b] = word.box, glyphs = glyphsOf(word.text, font, fallback);
+    const units = glyphs.reduce((n, { gid, font }) => n + (gid ? font.advanceGlyph(gid) : 0), 0);
+    if (!units) continue;
+    // Never into the next word's place: a space's worth before it stays clear.
+    // A word of one letter is mostly its letter's side bearings, which its inked box leaves out: it takes the page's measure (or the face's own).
+    const own = glyphs.filter(({ gid }) => gid).length < 2 ? width || 1 : (b - a) / (units * size), room = n + 1 < words.length ? (words[n + 1].box[0] - size * .2 - a) / (units * size) : Infinity;
+    // The page's measure holds a word only near it: a heading or a title runs wider or narrower.
+    // Within a tenth of it each word fills its own place (justified text sets its spaces, our face its letters).
+    const held = width && Math.abs(own - width) > width * .1 && Math.abs(own - width) <= width * .2 ? Math.min(width * 1.1, Math.max(width * .9, own)) : own;
+    // Into its room it always goes (a condensed title is narrower than any face we have).
+    // A word of capitals may be a condensed or wide title face's: it may stretch further.
+    const reach = /\p{Ll}/u.test(word.text) ? limit : Math.max(limit, .6), shown = glyphs.filter(({ gid }) => gid);
+    // A word far wider than its letters would be is set with space between its letters
+    // («C A P Í T U L O», mostly capitals): the letters keep their shape and the word its width.
+    const spaced = own > (width || 1) * (/[a-zà-ÿ]/.test(word.text) ? 1.4 : 1.15) && shown.length >= 3;
+    // Up to .06 em between letters (a reader of the text takes each letter for a word past about
+    // a tenth: «C A P Í T U L O», unfound by search); the letters widen for the rest.
+    const tracking = spaced ? Math.min(size * .06, Math.max(0, ((b - a) - units * size * (width || 1)) / (shown.length - 1))) : 0;
+    const stretch = spaced ? Math.min(1 + reach, Math.max(width || 1, ((b - a) - tracking * (shown.length - 1)) / (units * size))) : Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
+    let x = a;
+    for (const { c, gid, font } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += font.advanceGlyph(gid) * size * stretch + tracking; } }
+    x -= tracking;
+    if (space) text.showGlyph(font, [size, 0, 0, -size, x, baseline], space, 32);
+  }
+  return text;
+}
+function textOf(font, { glyphs, size, baseline, x }, fallback = null) {
+  const text = new mupdf.Text();
+  for (const { c } of glyphs) { const [{ gid, font: from }] = glyphsOf(c, font, fallback); if (gid) text.showGlyph(from, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += (gid ? from.advanceGlyph(gid) : .25) * size; }
+  return text;
+}
+const grey = rgb => rgb.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255;
+
+/**
+ * How thick a line's strokes are, in ems: the typical width of the ink crossed
+ * horizontally at full scan resolution, at half contrast (where a blurred edge still
+ * sits), against the size of its letters.
+ */
+// How strongly a line's ink stands off its background: nearly its darkest (a thin stroke
+// never reaches the ink's full colour, so the line's colour is not it).
+function contrastOf(scan, line) {
+  const [x0, top, x1, bottom] = line.box, k = scan.k, ground = grey(line.background ?? [1, 1, 1]), counts = new Uint32Array(256);
+  let total = 0;
+  for (let y = Math.max(0, Math.floor(top * k)); y < Math.min(scan.h, Math.ceil(bottom * k)); y++) for (let x = Math.max(0, Math.floor(x0 * k)); x < Math.min(scan.w, Math.ceil(x1 * k)); x++) { counts[Math.min(255, Math.round(Math.abs(scan.gray[y * scan.w + x] - ground)))]++; total++; }
+  let v = 255; for (let seen = 0; v > 0 && seen < total * .02; v--) seen += counts[v];
+  return Math.max(40, v);
+}
+// The width of each stroke the rows of an area cross, in pixels: the ink summed across it, the
+// line's full contrast counting as one pixel (a pale or coloured line's strokes are no thinner). A blur spreads a stroke without changing its sum, so a thin
+// stroke stays thinner than a bold one however soft the scan (counting dark pixels does not:
+// at 3 pixels per point a stroke is 2 or 3 of them).
+function strokes(scan, a, b, y0, y1, ground, contrast) {
+  const runs = [];
+  for (let y = y0; y < y1; y++) {
+    let sum = 0, peak = 0, previous = 0;
+    for (let x = a; x <= b; x++) {
+      const v = x < b ? Math.min(1, Math.abs(scan.gray[y * scan.w + x] - ground) / contrast) : 0;
+      if (v <= .2) { if (sum) runs.push(sum); sum = peak = previous = 0; continue; }
+      // Small letters' strokes run together where the blur fills the gap between them: a clear dip parts them.
+      if (sum && v > previous && previous < peak * .75) { runs.push(sum - previous / 2); sum = previous / 2; peak = previous; }
+      sum += v; peak = Math.max(peak, v); previous = v;
+    }
+  }
+  return runs;
+}
+function strokeWidth(scan, line, size, contrast) {
+  const [x0, top, x1, bottom] = line.box, k = scan.k, ground = grey(line.background ?? [1, 1, 1]);
+  const runs = strokes(scan, Math.max(0, Math.floor(x0 * k)), Math.min(scan.w, Math.ceil(x1 * k)), Math.max(0, Math.floor(top * k)), Math.min(scan.h, Math.ceil(bottom * k)), ground, contrast);
+  if (runs.length < 20) return 0;
+  runs.sort((p, q) => p - q);
+  return runs[runs.length >> 1] / (size * k);
+}
+
+/**
+ * Where a line's letters stand, in page points: the bottom of the band its small letters fill,
+ * read from the ink. The box's bottom also takes in descenders and stray marks, and a box can
+ * reach into the next line: of the bands of ink in it, the line's own is the one as tall as
+ * small letters of its size (`size`, from the words' widths) and the fullest of those.
+ */
+function inkBand(scan, line, size) {
+  const k = scan.k, [x0f, top, x1f, bottom] = line.box, text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]);
+  const x0 = Math.max(0, Math.floor(x0f * k)), x1 = Math.min(scan.w, Math.ceil(x1f * k)), y0 = Math.max(0, Math.floor(top * k)), y1 = Math.min(scan.h, Math.ceil(bottom * k));
+  if (x1 - x0 < 10 || y1 - y0 < 6 || !size) return null;
+  const counts = Array.from({ length: y1 - y0 }, (_, y) => { let n = 0; for (let x = x0; x < x1; x++) if (Math.abs(scan.gray[(y0 + y) * scan.w + x] - ground) > Math.abs(text - ground) / 2) n++; return n; });
+  const peak = Math.max(...counts), expect = size * .48 * k, capitals = !/[a-zà-ÿ]/.test(line.text);
+  const bands = [];
+  for (let a = 0; a < counts.length; a++) {
+    if (counts[a] < peak * .45) continue;
+    let b = a, sum = 0; while (b < counts.length && counts[b] >= peak * .45) sum += counts[b++];
+    // In a line of capitals (or figures) the band is the capitals' height, whatever the size
+    // guessed from the widths (a condensed title is far taller than its width says).
+    const height = b - a, fits = capitals ? height > expect * .5 : Math.abs(height - expect) < expect * .4;
+    if (fits) bands.push({ a, b, sum, height });
+    a = b;
+  }
+  // Of the bands with ink enough (a box overlapping the next line's holds its band too), the one
+  // whose foot is nearest where the box puts the baseline (above its descenders).
+  const deep = /[gjpqyQ,;()]/.test(line.text), guess = (y1 - y0) - (deep ? size * .21 * k : 0), most = Math.max(0, ...bands.map(band => band.sum));
+  const best = bands.filter(band => band.sum >= most * .5).sort((p, q) => Math.abs(p.b - guess) - Math.abs(q.b - guess))[0] ?? null;
+  if (best && capitals) {
+    // Capitals' rows are not all full (an A's apex, the bowls of R and S thin out, a serif row
+    // peaks): against the band's typical row, its top is the first row with a good share of it,
+    // its bottom the last before it falls away (the next line's tops may follow).
+    const rows = counts.slice(best.a, best.b).sort((p, q) => p - q), typical = rows[rows.length >> 1];
+    let a = best.a, b = best.a;
+    while (a > 0 && counts[a - 1] >= typical * .3) a--;
+    while (b < counts.length && counts[b] >= typical * .6) b++;
+    Object.assign(best, { a, b, height: b - a });
+  }
+  if (best) best.capitals = capitals;
+  return best && { baseline: (y0 + best.b) / k, height: best.height / k, capitals: best.capitals };
+}
+
+/**
+ * How much thicker a line's upright strokes are than its horizontal ones: the ink summed across
+ * the stems (rows through its small letters) against the ink summed down through its bars and
+ * curves (short runs down its columns). Serif faces are drawn with a broad pen, about twice as
+ * thick upright as across; sans faces, Gill and Helvetica alike, are nearly even (under 1.5).
+ */
+function strokeContrast(scan, line, baseline, size, contrast) {
+  const k = scan.k, ground = grey(line.background ?? [1, 1, 1]), base = baseline || line.box[3];
+  const x0 = Math.max(0, Math.floor(line.box[0] * k)), x1 = Math.min(scan.w, Math.ceil(line.box[2] * k)), top = Math.max(1, Math.round((base - size * .45) * k)), bottom = Math.min(scan.h - 2, Math.round(base * k));
+  if (bottom - top < 4 || x1 - x0 < 10) return 0;
+  const ink = (x, y) => Math.min(1, Math.abs(scan.gray[y * scan.w + x] - ground) / contrast), across = [], down = [];
+  for (let y = top + 1; y < bottom - 1; y++) for (let x = x0, sum = 0; x <= x1; x++) { const v = x < x1 ? ink(x, y) : 0; if (v > .25) sum += v; else if (sum) { across.push(sum); sum = 0; } }
+  for (let x = x0; x < x1; x++) for (let y = top - 2, sum = 0, length = 0; y <= bottom + 2; y++) { const v = y < bottom + 2 ? ink(x, y) : 0; if (v > .25) { sum += v; length++; } else if (sum) { if (length < (bottom - top) * .4) down.push(sum); sum = length = 0; } }
+  if (across.length < 20 || down.length < 20) return 0;
+  const middle = values => values.sort((p, q) => p - q)[values.length >> 1];
+  return middle(across) / middle(down);
+}
+
+/** The scan's ink around a line, in shades, at up to 4 pixels per point and 40 across its height (a title's shapes show at less). */
+function inkAround(scan, line) {
+  const [x0, top, x1, bottom] = line.box, k = Math.min(scan.k, 4, 40 / Math.max(1, bottom - top)), step = scan.k / k, margin = (bottom - top) * .4;
+  const bx0 = Math.max(0, Math.floor((x0 - margin) * k)), by0 = Math.max(0, Math.floor((top - margin) * k));
+  const bx1 = Math.min(Math.floor(scan.w / step), Math.ceil((x1 + margin) * k)), by1 = Math.min(Math.floor(scan.h / step), Math.ceil((bottom + margin) * k));
+  const cw = bx1 - bx0, ch = by1 - by0;
+  if (cw < 4 || ch < 4) return null;
+  // How much ink each pixel holds: 0 on the background, 1 at the letters' own colour.
+  const text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]), tone = new Float32Array(cw * ch), span = text - ground || 1;
+  // On a band of its own (a table's dark row), above and below it is another colour, not ink.
+  const inBand = y => !line.band || ((by0 + y) / k >= top && (by0 + y) / k < bottom);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) tone[y * cw + x] = !inBand(y) ? 0 : (scan.gray[Math.min(scan.h - 1, Math.round((by0 + y) * step)) * scan.w + Math.min(scan.w - 1, Math.round((bx0 + x) * step))] - ground) / span;
+  return { k, box: [bx0, by0, bx1, by1], cw, ch, tone };
+}
+
+/**
+ * A word's own style, measured on the scan at full resolution: how thick its strokes
+ * are (against the line's height) and how far they lean. The lean is the shear that
+ * stacks its ink into the sharpest columns: upright letters' stems stand at 0°, italics
+ * lean 9–20°.
+ */
+function wordStyle(scan, line, word, contrast) {
+  const k = scan.k, [, top, , bottom] = line.box, [a, , b] = word.box, text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]);
+  const x0 = Math.max(0, Math.floor(a * k) - 2), x1 = Math.min(scan.w, Math.ceil(b * k) + 2), y0 = Math.max(0, Math.floor(top * k)), y1 = Math.min(scan.h, Math.ceil(bottom * k));
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 6 || h < 6 || [...word.text].length < 3) return null;
+  // How much ink each pixel holds (a blurred scan's letters are shades, not shapes).
+  const ink = new Float32Array(w * h), runs = strokes(scan, x0, x1, y0, y1, ground, contrast);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) ink[y * w + x] = Math.max(0, Math.min(1, (scan.gray[(y0 + y) * scan.w + x0 + x] - ground) / ((text - ground) || 1)));
+  if (runs.length < 8) return null;
+  runs.sort((p, q) => p - q);
+  const sharpness = degrees => {
+    const t = Math.tan(degrees * Math.PI / 180), columns = new Float64Array(w + h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) columns[Math.round(x + (y - h) * t + h)] += ink[y * w + x];
+    let sum = 0; for (const c of columns) sum += c * c; return sum;
+  };
+  let lean = 0, best = sharpness(0); const upright = best;
+  for (let degrees = -6; degrees <= 24; degrees += 3) { const v = sharpness(degrees); if (v > best) { best = v; lean = degrees; } }
+  // Against the letters' size, not the ink's height: a line with no descender is shorter in ink, not smaller.
+  const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
+  return { stroke: runs[runs.length >> 1] / (h / ((tall ? .7 : .5) + (deep ? .21 : 0))), italic: lean >= 9 && best > upright * 1.08, lean, gain: best / upright };
+}
+
+/**
+ * How well a face's letters match a line's ink: the face's text drawn over the line's place,
+ * word by word, softened like the scan and compared shade for shade (a correlation, -1 to 1),
+ * nudged a few pixels each way; the best match, its nudge and the softening that fit.
+ */
+function faceScore(around, line, face, fixed = {}) {
+  if (!around) return { dy: 0, score: 0 };
+  const { k, box, cw, ch, tone } = around, pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, box, false), device = new mupdf.DrawDevice(mupdf.Matrix.scale(k, k), pix);
+  let text, best = { dy: 0, score: -1 };
+  try {
+    pix.clear(255); const placed = placeIn(face, line, fixed); text = line.words?.length ? wordsText(face.font, placed, line.words, .35, [], fixed.fallback) : textOf(face.font, placed, fixed.fallback);
+    device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1);
+    // Thickened as the page writes it (see `thicken` in pageFaces): an outline around each letter.
+    if (fixed.thicken) { const stroke = new mupdf.StrokeState({ lineCap: 'Round', lineJoin: 'Round', lineWidth: fixed.thicken * placed.size, miterLimit: 10 }); try { device.strokeText(text, stroke, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); } finally { stroke.destroy(); } }
+    device.close();
+    const drawn = pix.getPixels(), mark = new Float32Array(drawn.length);
+    for (let i = 0; i < drawn.length; i++) mark[i] = 1 - drawn[i] / 255;
+    // Only the rows of this line's own letters, from the top of its tallest to the bottom of its
+    // deepest and a little more: close lines' boxes overlap, and their letters are not this face's.
+    const rows = []; for (let y = 0; y < ch; y++) { for (let x = 0; x < cw; x++) if (mark[y * cw + x] > .3) { rows.push(y); break; } }
+    const spare = Math.max(2, Math.round(placed.size * k * .12)), from = rows.length ? Math.max(0, rows[0] - spare) : 0, to = rows.length ? Math.min(ch, rows[rows.length - 1] + 1 + spare) : ch;
+    const match = (soft, dy, dx) => {
+      let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+      for (let y = Math.max(from, -dy); y < Math.min(to, ch - dy); y++) for (let x = Math.max(0, -dx); x < Math.min(cw, cw - dx); x++) {
+        const a = soft[y * cw + x], b = tone[(y + dy) * cw + x + dx];
+        n++; sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
+      }
+      return (sab - sa * sb / n) / Math.sqrt(Math.max(1e-9, (saa - sa * sa / n) * (sbb - sb * sb / n)));
+    };
+    // The face's letters softened as the scan softened its own (the blur is not known: the
+    // closer of two, unless given), then matched shade for shade, nudged a pixel or two each way.
+    const softened = r => blur(blur(mark, cw, ch, r), cw, ch, r);
+    let r = fixed.blur, soft = r && softened(r);
+    if (!r) {
+      const options = [Math.max(1, Math.round(k / 4)), Math.max(2, Math.round(k / 2))].map(r => ({ r, soft: softened(r) })).map(option => ({ ...option, score: match(option.soft, 0, 0) }));
+      ({ r, soft } = options[0].score >= options[1].score ? options[0] : options[1]);
+    }
+    // The best nudge, climbed to from no nudge (the match rises smoothly toward it): a pixel at a
+    // time while a neighbour matches better.
+    const tried = new Map(), at = (dy, dx) => { const key = dy * 8 + dx; if (!tried.has(key)) tried.set(key, match(soft, dy, dx)); return tried.get(key); };
+    // Up and down by up to a tenth of the line's height (a baseline read off by a few pixels in big text).
+    const reachY = Math.max(3, Math.round(ch * .1));
+    let y = 0, x = 0;
+    for (;;) {
+      let next = null;
+      for (const [sy, sx] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { const ny = y + sy, nx = x + sx; if (Math.abs(ny) <= reachY && Math.abs(nx) <= 3 && at(ny, nx) > (next ? at(...next) : at(y, x))) next = [ny, nx]; }
+      if (!next) break;
+      [y, x] = next;
+    }
+    // How much ink the face puts down against the scan's own, at half ink and that nudge: a face
+    // too light or too heavy for the letters is off by it, whatever its shapes.
+    let drawnInk = 0, scanInk = 0;
+    for (let row = Math.max(from, -y); row < Math.min(to, ch - y); row++) for (let col = Math.max(0, -x); col < Math.min(cw, cw - x); col++) { if (soft[row * cw + col] > .5) drawnInk++; if (tone[(row + y) * cw + col + x] > .5) scanInk++; }
+    best = { dy: y / k, score: at(y, x), blur: r, weight: scanInk ? drawnInk / scanInk : 1 };
+    return best;
+  } finally { text?.destroy(); device.destroy(); pix.destroy(); }
+}
+// A box blur of radius r, across then down.
+function blur(values, w, h, r) {
+  const across = new Float32Array(values.length), out = new Float32Array(values.length);
+  for (let y = 0; y < h; y++) { let sum = 0; for (let x = -r; x < w + r; x++) { if (x + r < w && x + r >= 0) sum += values[y * w + x + r]; if (x - r - 1 >= 0 && x - r - 1 < w) sum -= values[y * w + x - r - 1]; if (x >= 0 && x < w) across[y * w + x] = sum / (2 * r + 1); } }
+  for (let x = 0; x < w; x++) { let sum = 0; for (let y = -r; y < h + r; y++) { if (y + r < h && y + r >= 0) sum += across[(y + r) * w + x]; if (y - r - 1 >= 0 && y - r - 1 < h) sum -= across[(y - r - 1) * w + x]; if (y >= 0 && y < h) out[y * w + x] = sum / (2 * r + 1); } }
+  return out;
+}
+
+/**
+ * The face of each line of a page. Lines of one size, colour, weight and family are one
+ * style and take one face. The family comes first, from a few of the style's longest
+ * lines in every family's regular face; then the two closest families' regular, bold and
+ * italic faces are tried on all of the style's lines.
+ */
+function pageFaces(scan, lines, faces) {
+  if (!scan) return lines.map(() => ({ face: faces[0], dy: 0 }));
+  const named = name => faces.find(face => face.name === name);
+  // Each word's box drawn in to its own ink, left and right (the recogniser's boxes run into the
+  // spaces): read across the middle of the line, clear of the lines above and below. Two words the
+  // recogniser ran together («26Tumores», «laLTA») are parted at the space between them.
+  for (const line of lines) {
+    const k = scan.k, [, top, , bottom] = line.box, ground = grey(line.background ?? [1, 1, 1]), half = Math.abs(grey(line.color) - ground) / 2;
+    const y0 = Math.max(0, Math.round((top + (bottom - top) * .25) * k)), y1 = Math.min(scan.h, Math.round((bottom - (bottom - top) * .2) * k));
+    const inked = x => { for (let y = y0; y < y1; y++) if (Math.abs(scan.gray[y * scan.w + x] - ground) > half) return true; return false; };
+    const tighten = ([a, t, b, u]) => {
+      const x0 = Math.max(0, Math.floor(a * k)), x1 = Math.min(scan.w, Math.ceil(b * k));
+      let first = x0, last = x1 - 1;
+      while (first < last && !inked(first)) first++;
+      while (last > first && !inked(last)) last--;
+      // Out to ink the box cut off (a slanted letter's foot, a box set a little short), within a
+      // fifth of the line's height and up to a clear column.
+      if (first === x0) { const stop = Math.max(0, x0 - Math.round((bottom - top) * .2 * k)); while (first > stop && inked(first - 1)) first--; }
+      if (last === x1 - 1) { const stop = Math.min(scan.w - 1, x1 - 1 + Math.round((bottom - top) * .2 * k)); while (last < stop && inked(last + 1)) last++; }
+      return last - first >= 2 && (last + 1 - first) / k > (b - a) * .5 ? [first / k, t, (last + 1) / k, u] : [a, t, b, u];
+    };
+    // A word set letter-spaced in capitals («C A P Í T U L O») is read as several: three or more
+    // runs of one to three capitals in a row, as far apart as their letters, are one word.
+    const merged = [];
+    for (let n = 0; n < (line.words ?? []).length;) {
+      const caps = word => /^[\p{Lu}]{1,3}$/u.test(word.text);
+      let end = n; while (end < line.words.length && caps(line.words[end]) && (end === n || line.words[end].box[0] - line.words[end - 1].box[2] < (bottom - top) * .8)) end++;
+      if (end - n >= 3) {
+        const run = line.words.slice(n, end);
+        merged.push({ ...run[0], text: run.map(word => word.text).join(''), box: [run[0].box[0], run[0].box[1], run[run.length - 1].box[2], run[0].box[3]], letters: run.every(word => word.letters) ? run.flatMap(word => word.letters) : undefined });
+        n = end;
+      } else merged.push(line.words[n++]);
+    }
+    line.words = merged;
+    line.words = (line.words ?? []).flatMap(word => {
+      const box = tighten(word.box), joined = /^(\d+|\p{Ll}+)(\p{Lu}.*)$/u.exec(word.text);
+      if (!joined) return [{ ...word, box }];
+      // The widest blank run of columns inside the word, a space's width at least.
+      let best = null;
+      for (let x = Math.ceil(box[0] * k), run = 0; x <= Math.floor(box[2] * k); x++) {
+        if (x < Math.floor(box[2] * k) && !inked(x)) { run++; continue; }
+        if (run && (!best || run > best.run)) best = { run, at: x - run };
+        run = 0;
+      }
+      if (!best || best.run / k < (bottom - top) * .15) return [{ ...word, box }];
+      const cut = [...joined[1]].length;
+      return [{ ...word, text: joined[1], box: tighten([box[0], box[1], best.at / k, box[3]]), letters: word.letters?.slice(0, cut) }, { ...word, text: joined[2], box: tighten([(best.at + best.run) / k, box[1], box[2], box[3]]), letters: word.letters?.slice(cut) }];
+    });
+    // The words' places from the ink itself when it parts plainly into as many runs as there are
+    // words (gaps a space wide): the recogniser's boxes can sit a few pixels off and narrow.
+    if (line.words.length >= 2) {
+      const from = Math.max(0, Math.floor((line.words[0].box[0] - 1) * k)), to = Math.min(scan.w, Math.ceil((line.words[line.words.length - 1].box[2] + 1) * k)), space = (bottom - top) * .18 * k;
+      const runs = []; let start = -1, blank = 0;
+      for (let x = from; x <= to; x++) {
+        if (x < to && inked(x)) { if (start < 0 || blank >= space) { if (start >= 0) runs[runs.length - 1][1] = x - blank; runs.push([x, x + 1]); start = x; } blank = 0; runs[runs.length - 1][1] = x + 1; }
+        else if (start >= 0) blank++;
+      }
+      if (runs.length === line.words.length && runs.every(([a, b], n) => Math.abs((a + b) / 2 / k - (line.words[n].box[0] + line.words[n].box[2]) / 2) < (bottom - top))) line.words = line.words.map((word, n) => ({ ...word, box: [runs[n][0] / k, word.box[1], runs[n][1] / k, word.box[3]] }));
+    }
+    if (line.words.length) line.text = line.words.map(word => word.text).join(' ');
+  }
+  // Each line's letter size, from its words' widths in Times (the same yardstick for every line);
+  // from the ink's height only when it has no words to measure.
+  const sizes = lines.map(line => {
+    const tall = /[A-ZÁÉÍÓÚÜÑ0-9bdfhklt()¿¡?!áéíóúüñ'"]/.test(line.text), deep = /[gjpqyQ,;()]/.test(line.text);
+    return widthSize(named('Times-Roman').font, line) || (line.box[3] - line.box[1]) / ((tall ? .7 : .5) + (deep ? .21 : 0));
+  });
+  const arounds = lines.map(line => inkAround(scan, line)), strips = lines.map((line, i) => inkBand(scan, line, sizes[i])), baselines = strips.map(strip => strip?.baseline ?? 0), contrasts = lines.map(line => contrastOf(scan, line)), strokes = lines.map((line, i) => strokeWidth(scan, line, sizes[i], contrasts[i]));
+  const scored = lines.map(() => new Map());
+  // How much the scan softened its letters, once for the page, from a few of its longest lines in
+  // Times: every face is then weighed at that blur (a thin face blurred more would pass for bold).
+  const blurs = [...lines.keys()].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 8).map(i => faceScore(arounds[i], lines[i], named('Times-Roman'), { baseline: baselines[i] }).blur ?? 0).sort((p, q) => p - q);
+  const blur = blurs[blurs.length >> 1] || 0;
+  // Serif or sans, read from the strokes themselves (0 when there is too little ink to tell). Even
+  // strokes say sans anywhere; uneven ones say serif in running text only (a bold heading's stems
+  // are thick for its bars too).
+  // (Only where small letters are some seven pixels tall in the scan itself: below, the blur evens out every stroke and
+  // a serif reads as a sans; the shapes say it then.)
+  const detail = Math.min(scan.k, scan.native || scan.k), penned = lines.map((line, i) => sizes[i] * .48 * detail >= 7 ? strokeContrast(scan, line, baselines[i], sizes[i], contrasts[i]) : 0);
+  const kindOf = (value, sure) => !value ? null : value > (sure ? 2 : 1.75) ? 'serif' : value < (sure ? 1.45 : 1.55) ? 'sans' : null;
+  // A line of capitals is drawn as tall as its capitals for the comparison (its widths tell its
+  // size badly when its face is condensed or wide).
+  // A line's size in a face: its letters as tall as the scan's, from the words' widths (unbounded by
+  // the box's height, which can take in a neighbour) scaled to the ink's height; a line of capitals
+  // by its capitals' height alone (a condensed or wide title face is far from ours in width).
+  // The ink's height is read to a pixel (a sixth of a small letter here), the widths over a whole
+  // line far closer: so a face's size is its widths' measure times one ratio for the page, how much
+  // taller (or shorter) the scan's small letters are than the face's at that width.
+  const ratios = new Map(), ratioOf = face => {
+    if (!ratios.has(face)) {
+      const found = lines.flatMap((line, i) => { const strip = strips[i], wide = (line.words?.length ?? 0) >= 4 && widthSize(face.font, line); return strip && !strip.capitals && wide ? [strip.height / face.xheight / wide] : []; }).sort((p, q) => p - q);
+      // Too few lines in a bold or italic face (an italic's slanted rows read its height badly): its family's regular's.
+      const regular = faces.find(other => other.family === face.family && !other.bold && !other.italic);
+      ratios.set(face, found.length >= 3 && !face.italic ? Math.min(1.35, Math.max(.75, found[found.length >> 1])) : regular && regular !== face ? ratioOf(regular) : 1);
+    }
+    return ratios.get(face);
+  };
+  const measure = (i, face) => {
+    const wide = widthSize(face.font, lines[i]), strip = strips[i];
+    if (strip?.capitals) return strip.height / face.cap;
+    // An italic by its height: italics differ in width far more than romans (ours run wider than Palatino's).
+    if (face.italic && strip) return strip.height / face.xheight;
+    if (wide) return wide * ratioOf(face);
+    return strip ? strip.height / face.xheight : placeIn(face, lines[i]).size;
+  };
+  const score = (i, face) => { if (!scored[i].has(face.name)) scored[i].set(face.name, faceScore(arounds[i], lines[i], face, { baseline: baselines[i], blur, size: measure(i, face) })); return scored[i].get(face.name); };
+  const groups = [];
+  lines.forEach((line, i) => {
+    const height = sizes[i], stroke = strokes[i];
+    const group = groups.find(g => Math.abs(g.height - height) <= g.height * .15 && Math.hypot(...g.color.map((v, c) => v - line.color[c])) < .15 && Math.abs(g.stroke - stroke) <= g.stroke * .18);
+    if (group) group.members.push(i); else groups.push({ height, color: line.color, stroke, members: [i] });
+  });
+  // A group splits by family when several of its lines clearly prefer each (serif text and a
+  // sans note of one size), or when a line of it plainly is the other kind (one family's lines
+  // differ by a few hundredths, two families' by a tenth); a line with no clear preference
+  // follows the group's majority.
+  const leaning = i => score(i, named('Times-Roman')).score - score(i, named('Helvetica')).score;
+  for (const group of [...groups]) {
+    const serif = group.members.filter(i => leaning(i) > .03), sans = group.members.filter(i => leaning(i) < -.03), toSerif = serif.length >= sans.length;
+    const moved = serif.length >= 2 && sans.length >= 2 ? group.members.filter(i => toSerif ? leaning(i) < -.03 : leaning(i) > .03) : group.members.filter(i => toSerif ? leaning(i) < -.1 : leaning(i) > .1);
+    if (!moved.length || moved.length === group.members.length) continue;
+    group.members = group.members.filter(i => !moved.includes(i));
+    groups.push({ ...group, members: moved });
+  }
+  // Weight by stroke thickness, against the page's own text: how thick a regular stroke
+  // looks depends on the scan's blur, so bold is a style clearly heavier than most of the page.
+  const median = values => { const sorted = values.filter(v => v > 0).sort((p, q) => p - q); return sorted.length ? sorted[sorted.length >> 1] : 0; };
+  const usual = median(lines.flatMap((line, i) => Array(line.text.length).fill(strokes[i])));
+  const regulars = faces.filter(face => !face.bold && !face.italic), chosen = [];
+  // Ink varies across a scan (a darker band, a lighter corner): weight is judged against the
+  // lines around a line, in its own column, not against the whole page.
+  const near = lines.map((line, i) => lines.flatMap((other, j) => {
+    const h = line.box[3] - line.box[1], gap = Math.abs((other.box[1] + other.box[3]) / 2 - (line.box[1] + line.box[3]) / 2);
+    return j !== i && gap < h * 5 && Math.min(line.box[2], other.box[2]) > Math.max(line.box[0], other.box[0]) ? [j] : [];
+  }));
+  const wordStyles = lines.map((line, i) => (line.words ?? []).map(word => wordStyle(scan, line, word, contrasts[i])));
+  // A whole line's lean, from all its ink at once: surer than a word's (a heading set in italic;
+  // a line of capitals, with fewer upright stems, sharpens less as it is sheared upright; a line of
+  // small letters with a few italic words in it leans a little too).
+  const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && ((style.lean >= 6 && style.gain >= 1.05) || (!!strips[i]?.capitals && style.lean >= 9 && style.gain >= 1.03)); });
+  const mean = (face, among) => among.reduce((t, i) => t + score(i, face).score, 0) / among.length;
+  // How evenly a face's widths match a set of lines' words: each word's width in the scan over its
+  // width in the face is one size; in the face the text was set in, every word gives about the same
+  // one, in another face they scatter (its letters are each wider or narrower in their own way).
+  // Positions, not shapes: it holds where letters are a dozen pixels tall. The middle deviation,
+  // with how many words gave it (null under 8: too few to tell).
+  const scatter = (face, among) => {
+    const ratios = among.flatMap(i => (lines[i].words ?? []).filter(word => /^[\p{L}]{4,}[.,;:]?$/u.test(word.text)).map(word => {
+      const units = [...word.text].reduce((t, c) => { const gid = face.font.encodeCharacter(c); return t + (gid ? face.font.advanceGlyph(gid) : 0); }, 0);
+      return units ? (word.box[2] - word.box[0]) / units : 0;
+    }).filter(Boolean));
+    if (ratios.length < 8) return null;
+    const middle = median(ratios);
+    return median(ratios.map(r => Math.abs(r - middle) / middle + 1e-9));
+  };
+  // The family whose widths fit a set of lines clearly best (a quarter less scattered than the
+  // next), among `families`; null when none stands out or there are too few words.
+  const widest = (among, families) => {
+    const ranked = families.map(family => [family, scatter(regulars.find(face => face.family === family), among)]).filter(([, v]) => v !== null).sort((p, q) => p[1] - q[1]);
+    return ranked.length >= 2 && ranked[0][1] < ranked[1][1] * .8 ? ranked[0][0] : null;
+  };
+  // Each style's families, ranked on a few of its longest lines in each family's regular or bold
+  // face (a bold heading's family shows in its bold); the page's family is the one that fits its
+  // text best overall (weighted by lines), so close faces do not alternate.
+  const ranked = groups.map(({ members }) => {
+    const sample = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 4), fits = new Map();
+    for (const face of faces) if (!face.italic) fits.set(face.family, Math.max(fits.get(face.family) ?? -1, mean(face, sample)));
+    return fits;
+  });
+  const overall = new Map(regulars.map(face => [face.family, groups.reduce((t, g, k) => t + ranked[k].get(face.family) * g.members.length, 0) / lines.length]));
+  // Serif or sans is the surer call (Times against Helvetica); a closer family of that kind
+  // (Garamond, Palatino, Calibri, a slab...) only when it fits clearly better than the plain one.
+  const pick = (scores, kind) => {
+    const plain = kind === 'serif' ? 'Times' : 'Helvetica', [family, value] = [...scores].filter(([family]) => SERIF.has(family) === (kind === 'serif')).sort((a, b) => b[1] - a[1])[0];
+    return value - scores.get(plain) > .015 ? family : plain;
+  };
+  const main = pick(overall, overall.get('Times') > overall.get('Helvetica') ? 'serif' : 'sans');
+  // The body text: the style with the most letters.
+  const body = groups.reduce((best, g) => { const letters = g.members.reduce((t, i) => t + lines[i].text.length, 0); return letters > best.letters ? { ...g, letters } : best; }, { letters: -1 });
+  const bodySize = median(body.members.map(i => sizes[i]));
+  for (const [k, { members, color }] of groups.entries()) {
+    const height = median(members.map(i => sizes[i]));
+    // A style keeps the page's family unless it is clearly of the other kind (a sans heading on a
+    // serif page): Helvetica fits it clearly better than Times, or the best sans family fits it
+    // better than any serif one (a humanist sans such as Gill or Myriad is far from Helvetica).
+    const lean = ranked[k].get('Times') - ranked[k].get('Helvetica'), kind = SERIF.has(main) ? 'serif' : 'sans';
+    const best = serif => Math.max(...[...ranked[k]].filter(([family]) => SERIF.has(family) === serif).map(([, v]) => v));
+    const other = kind === 'serif' ? lean < -.04 || best(false) - best(true) > .012 : lean > .04 || best(true) - best(false) > .012;
+    // The words' widths, where there are enough of them, name the family outright.
+    const families = [widest(members, [...new Set(regulars.map(face => face.family))]) ?? (other ? pick(ranked[k], kind === 'serif' ? 'sans' : 'serif') : main)];
+    const candidates = faces.filter(face => families.includes(face.family)), total = new Map(candidates.map(face => [face, mean(face, members)]));
+    const sum = filter => [...total].filter(([face]) => filter(face)).reduce((t, [, v]) => t + v, 0);
+    const around = i => median(near[i].filter(j => !members.includes(j)).map(j => strokes[j])) || usual;
+    // A whole style in bold is a heading or a label: it also differs from the body text in size
+    // or colour (a body line printed a little darker is not bold), or it is a line or two,
+    // clearly heavier, set apart from the body (a run-in heading).
+    const ratio = median(members.map(i => strokes[i] / around(i)));
+    const distinct = Math.abs(height - bodySize) > bodySize * .12 || Math.hypot(...color.map((v, c) => v - body.color[c])) > .15 || (members.length <= 2 && ratio > 1.25);
+    // The bold face's shapes fitting the letters better, with strokes heavier than the text around,
+    // or fitting them much better, with strokes at least not clearly thinner (stroke widths are a
+    // pixel or two in a scan, a fit is noisy where lines crowd one another).
+    const bolder = (sum(face => face.bold) - sum(face => !face.bold && !face.italic)) / families.length;
+    const bold = usual > 0 && distinct && ((bolder > .008 && ratio > 1.1) || (bolder > .03 && ratio > .8));
+    // Italic must win clearly, and more so in small text, where the blur blunts every shape.
+    const margin = height < 11 ? .05 : .03;
+    // A style is a guess (lines of one size and ink): each line still takes its own family, weight
+    // and slant when its letters plainly say so (a sans table row among serif text of one size, a
+    // bold paragraph, a heading set in italic).
+    const home = families[0], away = pick(overall, SERIF.has(home) ? 'sans' : 'serif'), kinds = [...new Set(regulars.map(face => face.family))];
+    const set = family => { const of = (bold, italic) => faces.find(face => face.family === family && face.bold === bold && face.italic === italic); return { regular: of(false, false) ?? faces[0], heavy: of(true, false), slant: of(false, true) }; };
+    const fit = (i, family) => { const { regular, heavy } = set(family); return Math.max(score(i, regular).score, heavy ? score(i, heavy).score : -2); };
+    members.forEach(i => {
+      // The closest family of the other kind for this line (a humanist sans box on a serif page is
+      // far from Helvetica). A heading or a label of a few words has little to tell its family by;
+      // running text plenty, so it takes another family than its style's only when that one fits it
+      // clearly better.
+      // (A slab only on a page set in one: an even-stroked serif passes for a sans elsewhere.)
+      // Uneven strokes say serif in a short line too when it is no heavier than the text around
+      // (a bold heading's stems are thick for its bars too; an italic running head's are not). When
+      // the strokes agree with the style's family, the line keeps it.
+      const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home) && (!SLAB.has(f) || SLAB.has(main))).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
+      const sure = kindOf(penned[i], true), level = strokes[i] / (median(near[i].map(j => strokes[j])) || usual || 1), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 || level < 1.1 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
+      const family = against || (!plainly && fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03)) ? rival : home, { regular, heavy, slant } = set(family);
+      const plain = score(i, regular).score, thick = heavy ? score(i, heavy).score : -2, leaning = slant ? score(i, slant).score : -2;
+      // Bold: the strokes are clearly heavier than the text around and the bold face fits about as
+      // well, or the bold face fits better than the upright and the italic ones, with strokes at
+      // least a little heavier in running text (where a word or two in italic tips the fit), not
+      // thin for the text around in a heading, label or band (a few words: a paragraph of another
+      // size, a box's text, is running text all the same).
+      const heavier = strokes[i] / (median(near[i].map(j => strokes[j])) || usual || 1), shape = thick - Math.max(plain, leaning);
+      const apart = lines[i].band || (lines[i].words?.length ?? 0) <= 6;
+      // A title in capitals (too few shapes, a face unlike ours) is weighed by its ink: the bold face
+      // when it lays down nearer the scan's ink than the regular, its shapes not clearly worse.
+      const inkCloser = strips[i]?.capitals && heavy && shape > -.03 && Math.abs(Math.log(score(i, heavy).weight || 1)) + .15 < Math.abs(Math.log(score(i, regular).weight || 1));
+      // Small text (a figure's labels) reads heavy by its strokes alone: a scan's blur adds about the
+      // same pixels to any stroke, a far larger share of a small letter's size. There only the bold's
+      // shapes, clearly better, say bold.
+      const small = sizes[i] < bodySize * .85;
+      const lineBold = !!heavy && (bold || (small ? shape > .015 : inkCloser || (shape > .008 && (apart ? heavier > 1.05 || lines[i].band : heavier > 1.13)) || (heavier >= 1.15 && shape > -.03) || (apart && heavier >= 1.3 && shape > -.06)));
+      // On a band (white letters on a dark row), the OCR's word boxes sit a little off the letters
+      // and a slanted face can make up for it: italic there only as its letters' own lean shows.
+      const leans = lines[i].band ? wordStyles[i].filter(style => style?.italic).length * 2 > wordStyles[i].filter(Boolean).length : true;
+      // Slant before weight: an italic's strokes run heavier than its roman's at one size, a bold face
+      // fits it better than the roman, yet the italic fits it better still.
+      const slanting = slant && leans && (leaning - Math.max(plain, thick) > (apart ? Math.min(margin, .02) : margin) || (tilted[i] && leaning > Math.max(plain, thick) - .04));
+      const face = slanting ? slant : lineBold ? heavy : regular;
+      // Within the line, each word keeps its own weight and slant (a bold «Fig. 4-9.», an
+      // italic name).
+      const sibling = (bold, italic) => faces.find(other => other.family === face.family && other.bold === bold && other.italic === italic && !(bold && italic)) ?? face;
+      // How much better one face draws a word than another, on the word's own ink.
+      const fits = (n, one, other) => {
+        const word = lines[i].words[n], line = { ...lines[i], text: word.text, words: [word], box: [word.box[0], lines[i].box[1], word.box[2], lines[i].box[3]] }, around = inkAround(scan, line);
+        const fixed = { baseline: baselines[i], size: measure(i, face), blur };
+        return faceScore(around, line, one, fixed).score - faceScore(around, line, other, fixed).score;
+      };
+      // A line set in italic shows it in its letters' shapes even where the lean is too blurred to measure.
+      const slanted = sibling(false, true), italicLine = !face.italic && slanted !== face && score(i, slanted).score - score(i, face).score > .025;
+      // A word's weight against the other words of its own line (ink varies from line to line).
+      // Bold comes in runs (a phrase, «Fig. 4-9.»): two or more heavier words side by side, which
+      // the bold face draws better than the regular one taken together (one word's shape alone
+      // says little in a soft scan, and a lone heavy word is the scan's ink).
+      // Words in their own colour (a blue link) are weighed apart: their strokes read thinner against the line's ink.
+      const plainWord = n => !lines[i].words?.[n]?.color;
+      const own = wordStyles[i].filter((style, n) => style && plainWord(n)), common = own.length >= 3 ? median(own.map(style => style.stroke)) : 0;
+      // Heavier: past the line's usual stroke by a good margin, or, in a line plainly of two weights
+      // (half bold, half not), on the heavy side of the split that parts them most.
+      const sorted = own.map(style => style.stroke).sort((p, q) => p - q), average = list => list.reduce((t, v) => t + v, 0) / list.length;
+      let cut = common * 1.22, widest = 1.25;
+      for (let k = 2; k <= sorted.length - 2; k++) { const low = average(sorted.slice(0, k)), high = average(sorted.slice(k)); if (high / low > widest) { widest = high / low; cut = Math.sqrt(low * high); } }
+      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds = [], slants = [];
+      for (let m = 0; m < measured.length;) {
+        let end = m; while (end < measured.length && !face.bold && common > 0 && wordStyles[i][measured[end]].stroke > cut) end++;
+        const run = measured.slice(m, end);
+        // (One of them plainly leaning: a run-in heading in italic, whose strokes read heavy too.)
+        if (run.length >= 2 && run.some(n => wordStyles[i][n].italic)) run.forEach(n => slants[n] = true);
+        else if (run.length >= 2 && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > 0) run.forEach(n => bolds[n] = true);
+        m = Math.max(end, m + 1);
+      }
+      // Words in their own colour are weighed as a run against the rest of the line: far heavier
+      // (past what another ink alone makes: a black «Tabla 35-5» before a teal title) and drawn
+      // about as well by the bold, they are bold.
+      const words_ = lines[i].words ?? [], tinted = n => words_[n]?.color, alike = (p, q) => !!p === !!q && (!p || p.every((v, c) => Math.abs(v - q[c]) < .08));
+      if (!face.bold) for (let m = 0; m < words_.length;) {
+        let end = m + 1; while (end < words_.length && alike(tinted(end), tinted(m))) end++;
+        const run = Array.from({ length: end - m }, (_, k) => m + k).filter(n => wordStyles[i][n]), rest = wordStyles[i].flatMap((style, n) => style && (n < m || n >= end) ? [style.stroke] : []);
+        if (tinted(m) && run.length >= 2 && rest.length >= 2 && run.every(n => wordStyles[i][n].stroke > median(rest) * 1.5) && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > -.03 * run.length) run.forEach(n => bolds[n] = true);
+        m = end;
+      }
+      // Italic: a word that leans, or one in a line set in italic, or one of small letters whose
+      // strokes are clearly thinner than the line's other upright words (an italic is lighter than
+      // its roman; capitals measure differently), leaning a little, and which the italic face
+      // draws clearly better.
+      const upright = median(wordStyles[i].flatMap((style, n) => style && !bolds[n] ? [style.stroke] : []));
+      const measuredFaces = (lines[i].words ?? []).map((word, n) => {
+        const style = wordStyles[i][n];
+        if (!style) return null;
+        const thin = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.stroke < upright * .92 && style.lean >= 3 && fits(n, slanted, face) > .01;
+        // Three signs at once (a plain lean, lighter strokes, a lean that sharpens the letters) need no
+        // shape fit, which a word in parentheses or of soft letters can tip the wrong way.
+        const marked = !lines[i].band && slanted !== face && /[a-zà-ÿ]{3}/.test(word.text) && upright > 0 && style.lean >= 9 && style.gain >= 1.05 && style.stroke < upright * .92;
+        // A sans italic is as heavy as its roman: there a word that plainly leans and that the italic draws clearly better.
+        const sloped = !lines[i].band && slanted !== face && !SERIF.has(face.family) && /[a-zà-ÿ]{3}/.test(word.text) && style.lean >= 6 && style.gain >= 1.05 && fits(n, slanted, face) > .04;
+        // A line set bold that plainly holds two weights (a bold phrase, then text): its light words are regular.
+        const light = face.bold && widest > 1.25 && style.stroke < cut && plainWord(n);
+        const bold = (face.bold && !light) || !!bolds[n], italic = !bold && (face.italic || style.italic || !!slants[n] || thin || sloped || marked || (italicLine && !lines[i].band && fits(n, slanted, face) > .01));
+        return sibling(bold, italic);
+      });
+      // A short word («de», «y», too short to measure) takes the style around it: of the words on
+      // both sides when they share one, of the word before at the line's end, of the word after at
+      // its start, else the line's own.
+      const words = measuredFaces.map((known, n) => {
+        if (known) return known;
+        const before = measuredFaces.slice(0, n).reverse().find(Boolean), after = measuredFaces.slice(n + 1).find(Boolean);
+        // Between two styles, the one after (a word opens the phrase it belongs to: «… azoemia. La nefritis»).
+        const taken = before ? (!after || after === before ? before : after) : after ?? face;
+        // (Not an italic one: a sentence's capitalised «La» before an italic term is roman, where a
+        // bold run-in heading takes its article along.)
+        return taken !== before && taken.italic && !taken.bold && !face.italic && /^\p{Lu}/u.test(lines[i].words[n].text) ? before ?? face : taken;
+      });
+      // A line most of whose words are italic is an italic line (sized and placed in the italic).
+      const italicWords = words.filter(other => other.italic).length;
+      if (!face.italic && italicWords * 2 > words.length && slanted !== face) { chosen[i] = { face: slanted, dy: score(i, slanted).dy, size: 0, baseline: baselines[i], words: words.map(other => other.italic ? other : slanted), fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font }; return; }
+      // A line of capitals stands on the foot of its capitals as read from the ink: no nudge.
+      chosen[i] = { face, dy: strips[i]?.capitals && baselines[i] ? 0 : score(i, face).dy, size: 0, baseline: baselines[i], words, fallback: named(SERIF.has(face.family) ? 'Times-Roman' : 'Helvetica').font };
+    });
+  }
+  // A paragraph is set in one family: its lines (each joined to the next below it in its column,
+  // of its size) take the family most of them have, keeping their own weight and slant.
+  const swapTo = (i, family) => {
+    const swap = face => faces.find(other => other.family === family && other.bold === face.bold && other.italic === face.italic) ?? face;
+    chosen[i] = { ...chosen[i], face: swap(chosen[i].face), words: chosen[i].words.map(swap), fallback: named(SERIF.has(family) ? 'Times-Roman' : 'Helvetica').font };
+  };
+  const neighbour = (i, below) => {
+    const [x0, top, x1, bottom] = lines[i].box, h = bottom - top;
+    return lines.map((line, j) => ({ line, j })).filter(({ line, j }) => j !== i && chosen[j] && Math.min(line.box[2], x1) > Math.max(line.box[0], x0) && Math.abs(sizes[j] - sizes[i]) < sizes[i] * .15
+      && (below ? line.box[1] >= top + h * .5 && line.box[1] - bottom < h : line.box[3] <= bottom - h * .5 && top - line.box[3] < h))
+      .sort((p, q) => below ? p.line.box[1] - q.line.box[1] : q.line.box[3] - p.line.box[3])[0]?.j;
+  };
+  // Running text only: a heading, a label or a band's few words keep the family they showed.
+  const running = i => !lines[i].band && (lines[i].words?.length ?? 0) > 6;
+  const paragraph = lines.map((_, i) => i), root = i => paragraph[i] === i ? i : (paragraph[i] = root(paragraph[i]));
+  lines.forEach((_, i) => { const under = neighbour(i, true); if (under !== undefined && running(i) && running(under)) paragraph[root(under)] = root(i); });
+  const members = new Map();
+  lines.forEach((_, i) => members.set(root(i), [...(members.get(root(i)) ?? []), i]));
+  // A paragraph of three lines or more holds far more letters than a line: its family is the one
+  // that fits all of them best, which a line alone tells only faintly (at 15 pixels a humanist sans
+  // and Times differ by a hundredth); else the family most of its lines took.
+  const kinds = [...new Set(regulars.map(face => face.family))];
+  for (const group of members.values()) {
+    if (group.length < 3) continue;
+    const count = family => group.filter(i => chosen[i].face.family === family).length;
+    const usual = group.map(i => chosen[i].face.family).sort((a, b) => count(b) - count(a))[0];
+    const together = family => { const face = regulars.find(other => other.family === family); return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
+    // Of the kind the paragraph's strokes show, when they show it plainly.
+    // (Strokes too few pixels to read: the kind most of its lines already took, by their shapes.)
+    const kind = kindOf(median(group.map(i => penned[i])), false) ?? (group.filter(i => SERIF.has(chosen[i].face.family)).length * 2 > group.length ? 'serif' : 'sans'), allowed = kinds.filter(family => (!SLAB.has(family) || SLAB.has(main)) && (!kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family))));
+    const start = allowed.includes(usual) ? usual : allowed[0];
+    const best = widest(group, allowed) ?? allowed.reduce((best, family) => together(family) > together(best) ? family : best, start);
+    // The best fit, unless the family most lines took fits about as well (then that one).
+    const family = allowed.includes(usual) && together(best) - together(usual) <= .008 ? usual : best;
+    if (family) for (const i of group) if (chosen[i].face.family !== family) swapTo(i, family);
+  }
+  // A book sets its text in one serif family and one sans (a slide in one typeface): the page's
+  // lines of each kind take the family that fits all of them best together, keeping their own
+  // weight and slant (a line alone tells close families apart only faintly).
+  const plainKinds = new Set(lines.flatMap((line, i) => strips[i]?.capitals ? [] : [kindOf(penned[i], true)]).filter(Boolean));
+  const page = lines.reduce((t, line) => t + line.text.length, 0) < 1200 && plainKinds.size < 2 ? [null] : [true, false];
+  for (const kind of page) {
+    const members = lines.flatMap((_, i) => chosen[i] && !lines[i].band && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
+    if (members.length < 2) continue;
+    const candidates = [...new Set(regulars.filter(face => kind === null || SERIF.has(face.family) === kind).map(face => face.family))];
+    // Judged on its longest lines (a table's short cells and stray fragments fit any face about as
+    // well, and tip close families the wrong way when they are many),
+    const longest = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 10);
+    // Each line at the softening that suits it best (the page's one softening, fixed to weigh bold
+    // fairly, blunts the shapes that tell close families apart).
+    const together = family => { const regular = regulars.find(face => face.family === family); return longest.reduce((t, i) => t + faceScore(arounds[i], lines[i], regular, { baseline: baselines[i], size: measure(i, regular) }).score, 0); };
+    const best = candidates.reduce((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
+    if (best) for (const i of members) if (chosen[i].face.family !== best) swapTo(i, best);
+  }
+  // On a slide (few letters) a list's items share one weight and one size: each line takes those
+  // most of the lines of its family and about its size have (one line's weight and size, read alone
+  // from a few large soft letters, wobble).
+  if (page.length === 1) lines.forEach((line, i) => {
+    if (!chosen[i] || line.band || strips[i]?.capitals) return;
+    const size = chosen[i].size || measure(i, chosen[i].face), family = chosen[i].face.family;
+    const peers = lines.flatMap((other, j) => chosen[j] && !other.band && !strips[j]?.capitals && chosen[j].face.family === family && Math.abs((chosen[j].size || measure(j, chosen[j].face)) - size) <= size * .2 ? [j] : []);
+    if (peers.length < 3) return;
+    // Not a line plainly heavier or lighter than the rest (a bold heading among its items).
+    const stroke = j => strokes[j] / (median(near[j].map(n => strokes[n])) || usual || 1);
+    if (stroke(i) > 1.28 || stroke(i) < .75) return;
+    const heavy = peers.filter(j => chosen[j].face.bold).length * 2 > peers.length, italic = chosen[i].face.italic;
+    const face = faces.find(other => other.family === family && other.bold === heavy && other.italic === italic && !(heavy && italic)) ?? chosen[i].face;
+    const sizes = peers.map(j => chosen[j].size || measure(j, chosen[j].face)).sort((p, q) => p - q);
+    // (Words in a style of their own keep it: a bold «Fig. 4-9.», an italic title after it.)
+    chosen[i] = { ...chosen[i], face, words: chosen[i].words.map(other => other === chosen[i].face ? face : other), size: sizes[sizes.length >> 1] };
+  });
+  // Light letters on a dark band fit heavier, rounder faces than they are (the light spreads into
+  // the dark): a band takes the family of the text around it (the rest of its table).
+  lines.forEach((line, i) => {
+    if (!line.band || !chosen[i]) return;
+    const families = near[i].filter(j => !lines[j].band && chosen[j]).map(j => chosen[j].face.family);
+    const family = families.sort((a, b) => families.filter(f => f === b).length - families.filter(f => f === a).length)[0];
+    if (!family || family === chosen[i].face.family) return;
+    swapTo(i, family);
+    // Its weight from that family's own faces: the first family's were weighed on other shapes.
+    const regular = faces.find(face => face.family === family && !face.bold && !face.italic), heavy = faces.find(face => face.family === family && face.bold && !face.italic);
+    if (regular && heavy) { const bold = score(i, heavy).score > score(i, regular).score, face = bold ? heavy : regular; chosen[i] = { ...chosen[i], face, words: chosen[i].words.map(() => face) }; }
+  });
+  // One size per face across the page: lines of one paragraph that a shade of ink set in two
+  // styles still share their letters' size (each line's own measure only wobbles around it).
+  for (const face of new Set(chosen.map(choice => choice.face))) {
+    const members = chosen.flatMap((choice, i) => choice.face === face ? [i] : []), own = members.map(i => measure(i, face));
+    // Lines of about one size are one size (each line's own measure is a pixel or two off); a
+    // table's smaller text in the same face is another.
+    members.forEach((i, m) => { chosen[i].size = median(members.flatMap((_, p) => Math.abs(own[p] - own[m]) <= own[m] * .1 ? [own[p]] : [])); });
+    const widths = members.flatMap(i => (lines[i].words ?? []).flatMap((word, n) => {
+      if (chosen[i].words[n] !== face || [...word.text].length < 3) return [];
+      const units = glyphsOf(word.text, face.font, chosen[i].fallback).reduce((t, { gid, font }) => t + (gid ? font.advanceGlyph(gid) : 0), 0);
+      return units ? [(word.box[2] - word.box[0]) / (units * (chosen[i].size || own[members.indexOf(i)]))] : [];
+    }));
+    const width = median(widths);
+    if (widths.length >= 5) members.forEach(i => { chosen[i].width = width; });
+  }
+  // One ink for the lines of a face and colour: each line's printed ink, read from its darkest
+  // strokes, wobbles with the scan's blur (one line would print darker than the next).
+  const inked = lines.flatMap((line, i) => chosen[i] && line.ink ? [i] : []);
+  for (const i of inked) {
+    const close = inked.filter(j => chosen[j].face === chosen[i].face && Math.hypot(...lines[j].color.map((v, c) => v - lines[i].color[c])) < .12);
+    if (close.length >= 3) lines[i].ink = [0, 1, 2].map(c => close.map(j => lines[j].ink[c]).sort((p, q) => p - q)[close.length >> 1]);
+  }
+  // An italic line set among roman lines of its family takes their size (italics are measured on
+  // fewer, slanted letters): the roman line just above or below, when within a sixth of it.
+  lines.forEach((_, i) => {
+    if (!chosen[i]?.face.italic) return;
+    const [x0, top, x1, bottom] = lines[i].box, h = bottom - top;
+    const near = lines.flatMap((line, j) => j !== i && chosen[j] && Math.min(line.box[2], x1) > Math.max(line.box[0], x0) && Math.abs((line.box[1] + line.box[3]) / 2 - (top + bottom) / 2) < h * 1.6 ? [j] : []);
+    for (const j of near) {
+      if (chosen[j].face.italic || chosen[j].face.family !== chosen[i].face.family || !chosen[j].size || !chosen[i].size) continue;
+      if (Math.abs(chosen[j].size - chosen[i].size) <= chosen[j].size * .17) { chosen[i].size = chosen[j].size; break; }
+    }
+  });
+  // Our faces are often lighter than the book's (Gillius beside Gill Sans): a face whose letters lay
+  // down less ink than the scan's, on the page's longest lines in it, is written with an outline
+  // that brings its ink up to the scan's (in ems of the size; a scan's blur spreads ink alike in both).
+  for (const face of new Set(chosen.map(choice => choice?.face))) {
+    const members = chosen.flatMap((choice, i) => choice?.face === face && !lines[i].band ? [i] : []);
+    const longest = members.sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 6);
+    if (longest.length < 2) continue;
+    const off = thicken => median(longest.map(i => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) + 1e-9 : 0; }));
+    let best = 0, least = off(0);
+    for (const thicken of [.01, .02, .03, .04, .05]) { const value = off(thicken); if (value < least - .01) { least = value; best = thicken; } }
+    // Each line still keeps whichever lays down ink nearer its own (a running head in a light
+    // weight, letter-spaced, is already as dark as the scan without it).
+    const near = (i, thicken) => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) : Infinity; };
+    if (best) members.forEach(i => { if (near(i, best) <= near(i, 0)) chosen[i].thicken = best; });
+  }
+  return chosen;
+}
+
+// A line of OCR text written as real text where the scan showed it, in `face`, its
+// baseline nudged by `dy`. `box` is the ink of the line in page points (y down).
+function checkLine(line) {
+  if (typeof line?.text !== 'string' || !line.text.trim() || line.text.length > 2000) fail('Línea OCR inválida.');
+  const color = line.color;
+  if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
+  if (line.background !== undefined && !(Array.isArray(line.background) && line.background.length === 3 && line.background.every(v => v >= 0 && v <= 1))) fail('Color de fondo inválido.');
+  if (line.band !== undefined && typeof line.band !== 'boolean') fail('Línea OCR inválida.');
+  if (line.ink !== undefined && !(Array.isArray(line.ink) && line.ink.length === 3 && line.ink.every(v => v >= 0 && v <= 1))) fail('Color de línea inválido.');
+  if (line.words !== undefined && !(Array.isArray(line.words) && line.words.length <= 500 && line.words.every(word => typeof word?.text === 'string' && word.text.length <= 500))) fail('Palabras OCR inválidas.');
+  const colour = value => Array.isArray(value) && value.length === 3 && value.every(v => v >= 0 && v <= 1) ? value : undefined;
+  // Each letter's span across the page (x from, x to), when the recogniser gives them: one per character.
+  const spans = (letters, text) => Array.isArray(letters) && letters.length === [...text].length && letters.every(span => Array.isArray(span) && span.length === 2 && span.every(Number.isFinite)) ? letters : undefined;
+  return { ...line, box: rect(line.box), words: line.words?.map(word => ({ text: word.text, box: rect(word.box), color: colour(word.color), letters: spans(word.letters, word.text) })) };
+}
+function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 0, words: wordFaces = [], fallback = null, thicken = 0 }) {
+  const placed = placeIn(face, line, { size, baseline });
+  if (!(placed.size >= 2 && placed.size <= 400)) return;
+  placed.baseline += dy;
+  appendDrawing(doc, page, device => {
+    // Words at their own places when the line has them, letters up to nearly half narrower or wider
+    // than the face's own (a condensed title; across a page, the face's own measure holds them).
+    // A run of words in their own colour (a link, a term in red) is drawn in it, runs in reading order.
+    if (!line.words?.length) { const text = textOf(face.font, placed, fallback); try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, line.ink ?? line.color, 1); } finally { text.destroy(); } return; }
+    const colourOf = word => word.color ?? line.ink ?? line.color, same = (p, q) => p.every((v, c) => v === q[c]);
+    for (let start = 0; start < line.words.length;) {
+      let end = start + 1; while (end < line.words.length && same(colourOf(line.words[end]), colourOf(line.words[start]))) end++;
+      const text = wordsText(face.font, placed, line.words.slice(start, end), .35, wordFaces.slice(start, end).map(other => other.font), fallback, width);
+      try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, colourOf(line.words[start]), 1); } finally { text.destroy(); }
+      start = end;
+    }
+  }, line.text, thicken * placed.size);
+}
+
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 // `own` marks text Folio writes: true, or the text it stands for.
-function appendDrawing(doc, page, draw, own = false) {
+// `outline`: a width (pt) its text is also stroked at, in its own colour (fill then stroke, one text).
+function appendDrawing(doc, page, draw, own = false, outline = 0) {
   const bounds = page.getBounds();
   const buffer = new mupdf.Buffer(), writer = new mupdf.DocumentWriter(buffer, 'pdf', 'compress=yes');
   let generated, closed = false;
@@ -236,10 +1105,11 @@ function appendDrawing(doc, page, draw, own = false) {
     // A system or CJK font would otherwise be embedded whole on every edit.
     generated.subsetFonts();
     const object = generated.findPage(0);
-    const content = object.get('Contents').readStream();
+    let content = object.get('Contents').readStream();
+    if (outline) { const thick = content.asString().replace(/\bBT\b/g, `BT 2 Tr ${outline.toFixed(3)} w 1 j`).replace(/([-\d.]+) ([-\d.]+) ([-\d.]+) rg/g, '$& $1 $2 $3 RG'); content.destroy(); content = thick; }
     let form;
     try { form = doc.addStream(content, { Type: 'XObject', Subtype: 'Form', BBox: object.get('MediaBox').asJS(), Resources: doc.graftObject(object.get('Resources')) }); }
-    finally { content.destroy(); }
+    finally { if (typeof content !== 'string') content.destroy(); }
     const target = page.getObject(), inherited = target.getInheritable('Resources');
     const resources = doc.newDictionary();
     if (!inherited.isNull()) inherited.forEach((value, key) => resources.put(key, value));
@@ -1008,6 +1878,23 @@ function pageImagePixels(image, info, jpeg) {
   } finally { rgb?.destroy(); decoded?.destroy(); }
 }
 
+// The invisible text on a page (an OCR layer, 3 Tr) removed where it lies, word by word: the
+// image, drawings and any text that is painted (a watermark over a scan) stay.
+function removeHiddenText(doc, page) {
+  const boxes = [];
+  const device = new mupdf.Device({ ignoreText: (text, ctm) => {
+    let run = null;
+    text.walk({ showGlyph: (font, trm) => {
+      const box = mupdf.Rect.transform([0, -.25, .6, 1], mupdf.Matrix.concat(trm, ctm)), size = box[3] - box[1];
+      // Glyphs of one word or line, side by side on one baseline, make one box.
+      if (run && Math.abs(box[3] - run[3]) < size * .3 && box[0] - run[2] < size * 1.5 && box[2] > run[0]) { run[0] = Math.min(run[0], box[0]); run[1] = Math.min(run[1], box[1]); run[2] = Math.max(run[2], box[2]); run[3] = Math.max(run[3], box[3]); }
+      else { if (run) boxes.push(run); run = [...box]; }
+    } });
+    if (run) boxes.push(run);
+  } });
+  try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); }
+  if (boxes.length) redactPage(doc, page, boxes, { black: false, images: false, graphics: false, text: true, preserveAnnotations: true });
+}
 function redactPage(doc, page, boxes, { black = true, images = true, imageMethod = mupdf.PDFPage.REDACT_IMAGE_PIXELS, graphics = true, text = true, preserveAnnotations = false } = {}) {
   // Editing content must retain comments, links, widgets and pending redaction marks.
   const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
@@ -1403,6 +2290,24 @@ export function operateDocument(bytes, options, password = '', onPart) {
     if (operation === 'fields') return fields(doc);
     if (operation === 'page-content' || operation === 'page-image') return readPage(doc, options);
     if (operation === 'page-plate') return pagePlate(doc, options);
+    if (operation === 'text-layers') {
+      // How much of each page's text is painted and how much is invisible (an OCR layer, 3 Tr),
+      // and whether the page is a scan: an image over nearly all of it, with at most a little
+      // text drawn on top (a watermark, a stamp). Text drawn under the scan is covered by it.
+      if (!Array.isArray(options.pages) || options.pages.length > 100000) fail('Páginas inválidas.');
+      return options.pages.map(number => {
+        const page = doc.loadPage(pageIndex(doc, number)), bounds = page.getBounds(), area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]);
+        let visible = 0, hidden = 0, covered = false, above = 0;
+        const letters = text => { let n = 0; text.walk({ showGlyph: () => { n++; } }); return n; };
+        const painted = text => { visible++; if (covered) above += letters(text); };
+        const device = new mupdf.Device({
+          fillText: painted, strokeText: painted, ignoreText: () => { hidden++; },
+          fillImage: (image, ctm) => { const box = mupdf.Rect.transform([0, 0, 1, 1], ctm); if ((box[2] - box[0]) * (box[3] - box[1]) >= area * .8) { covered = true; above = 0; } },
+        });
+        try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); }
+        return { page: number, visible, hidden, scan: covered && above < 120 };
+      });
+    }
     if (operation === 'area-info') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       const page = doc.loadPage(pageIndex(doc, options.page));
@@ -1569,11 +2474,31 @@ export function operateDocument(bytes, options, password = '', onPart) {
     } else if (operation === 'ocr') {
       allowed(doc, 'edit');
       const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font('Helvetica');
+      let faces = null;
       try {
         for (const result of options.pages) {
-          const page = doc.loadPage(pageIndex(doc, result.page));
+          const index = pageIndex(doc, result.page);
+          // The scan's own resolution, before its image is replaced (the page is read from a render
+          // that can be finer than the scan, which adds no detail).
+          let native = 0;
+          { const page = doc.loadPage(index), device = new mupdf.Device({ fillImage: (image, ctm) => { native = Math.max(native, image.getWidth() / (Math.hypot(ctm[0], ctm[1]) || 1)); } }); try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); } }
+          // Straightened before OCR: a flattened image replaces the scan, or a tilt turns the content.
+          if (result.image) replaceWithImage(doc, index, result.image, result.size);
+          else if (result.angle) { const page = doc.loadPage(index); try { turnContent(doc, page, result.angle); } finally { page.destroy(); } }
+          const page = doc.loadPage(index);
           try {
-            appendDrawing(doc, page, device => {
+            // A rebuilt page: its letters were erased from the image and are written again as
+            // real text, one Folio text per line, so Editar can change each line.
+            const scan = result.lines?.length && result.original ? { ...scanOf(result.original, page.getBounds()[2] - page.getBounds()[0]), native } : null;
+            const lines = (result.lines ?? []).map(checkLine);
+            if (lines.length) {
+              faces ??= loadFaces(options.faces);
+              const chosen = pageFaces(scan, lines, faces);
+              lines.forEach((line, i) => writeLine(doc, page, line, chosen[i]));
+            }
+            // An earlier OCR's invisible words go first (read wrong, they would sit under the new ones).
+            if (result.words.length) removeHiddenText(doc, page);
+            if (result.words.length) appendDrawing(doc, page, device => {
               const text = new mupdf.Text();
               try {
                 for (const word of result.words) {
@@ -1589,7 +2514,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
             });
           } finally { page.destroy(); }
         }
-      } finally { font.destroy(); }
+      } finally { font.destroy(); for (const face of faces ?? []) face.font.destroy(); }
     } else if (['remove-image', 'redact', 'crop'].includes(operation)) {
       allowed(doc, 'edit');
       if (operation === 'redact') {

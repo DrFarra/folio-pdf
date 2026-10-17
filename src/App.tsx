@@ -126,6 +126,8 @@ export default function App() {
   // Editar's live document (see openEditSession): the document it was opened for and
   // its latest written copy, the PDF before it, its depth in its own undo steps, and its writes.
   const sessionStart = useRef<LoadedDocument | null>(null), sessionDoc = useRef<LoadedDocument | null>(null), sessionBase = useRef<History | null>(null), sessionDepth = useRef(0);
+  // How long the live document's last write took (ms).
+  const sessionWriteMs = useRef(0);
   const sessionPending = useRef(false), sessionTimer = useRef<ReturnType<typeof setTimeout>>(undefined), sessionWrite = useRef<Promise<void>>(Promise.resolve()), sessionClosing = useRef<Promise<void> | null>(null);
   // Parking (see the session effect), and the reader reopening the parked document's PDF.
   const sessionParking = useRef<Promise<void> | null>(null), rebinding = useRef(false);
@@ -572,11 +574,15 @@ export default function App() {
           const existing = tabsRef.current.find(tab => tab.doc.id === id);
           if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
         }
+        let draftId: string | undefined;
         if (!context) {
-          const draft = await readDraft(id);
-          if (draft) { bytes = draft; modified = true; notify('Se recuperaron tus cambios sin guardar.'); }
+          // A native draft is read in slices, as an opened PDF (one response of hundreds of MB stops
+          // the page on Windows), and its id is already the SHA-256 of its bytes.
+          const native = isNative ? await nativeDraftDocument(id, name) : null;
+          const draft = native ? await readNativeDocument(native) : isNative ? null : await readDraft(id);
+          if (draft) { bytes = draft; modified = true; draftId = native?.id; notify('Se recuperaron tus cambios sin guardar.'); }
         }
-        revision = bytes === originalBytes && (nativeInput?.id || contentId) || await digest(bytes); size = bytes.length;
+        revision = bytes === originalBytes && (nativeInput?.id || contentId) || draftId || await digest(bytes); size = bytes.length;
         const task = getDocument({ data: new Uint8Array(bytes), password: documentPassword, ...pdfAssetSettings() });
         taskRef.current = task;
         task.onPassword = (submit: (value: string) => void, reason: number) => { if (request === loadRequest.current) { setPassword({ name, retry: reason === 2, submit: value => { documentPassword = value; submit(value); } }); setPasswordText(''); } };
@@ -617,6 +623,9 @@ export default function App() {
       if (!context && !readingPreferencesRef.current.restorePage) session.lastPage = 1;
       if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
       const loaded: LoadedDocument = { pdf, bytes, id, revision, modified, savedAnnotations: annotationFingerprint(inspection.annotations), bytesAnnotations: annotationFingerprint(inspection.annotations), draftSource: context?.draftSource || (!nativeSource && modified && isNative), name, size, sample: sample || source === 'sample', password: documentPassword, nativeSource, canAnnotate: inspection.canAnnotate, canEdit: inspection.canEdit, canAssemble: inspection.canAssemble, canFill: inspection.canFill, canCopy: inspection.canCopy, canPrint: inspection.canPrint, signed: inspection.signed, initialPage: session.lastPage, hadAnnotations: inspection.annotations.length > 0 };
+      // A recovered draft is already on disk: writing it back sends the whole PDF to Folio again,
+      // which on Windows holds the window for seconds (238 MB: it stopped answering and closed).
+      if (!context && modified) draftWrites.current.set(loaded, Promise.resolve());
       const replacing = !!context?.preserveHistory || !!context?.savedCopy;
       // Opening a document again after deleting its local copy starts a new record.
       if (!replacing) forgottenIds.current.delete(id);
@@ -1719,13 +1728,17 @@ export default function App() {
     if (editStore.session) { void closeEditSession(); return; }
     const session = editStore.open(current);
     sessionStart.current = sessionDoc.current = current; sessionDepth.current = 0; sessionPending.current = false;
+    // Until a write is timed, about a millisecond per MB (a 238 MB book: ~250 ms here, longer on a laptop).
+    sessionWriteMs.current = current.bytes.length / 1048576;
     // Too large a PDF is not kept to undo, as with any change (trimHistory).
     sessionBase.current = current.bytes.length <= historyBudget() ? snapshot() : null;
     session.ready.catch(error => notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'));
   }
+  // Writing holds the live document, so a change made meanwhile waits for it («Guardando el
+  // cambio…»): a book that takes seconds to write waits for a longer pause than a short PDF.
   function scheduleSessionWrite() {
     sessionPending.current = true; clearTimeout(sessionTimer.current);
-    sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, 800);
+    sessionTimer.current = setTimeout(() => { void writeEditSession().catch(() => {}); }, Math.min(15000, Math.max(800, sessionWriteMs.current * 4)));
   }
   /** Writes the live document's PDF and makes it the document's bytes (and its draft). The reader keeps its copy. */
   function writeEditSession(): Promise<void> {
@@ -1734,7 +1747,8 @@ export default function App() {
     if (!session || !sessionPending.current) return sessionWrite.current;
     sessionPending.current = false;
     const write = sessionWrite.current.catch(() => {}).then(async () => {
-      const { bytes, revision } = await session.save();
+      const started = performance.now(), { bytes, revision } = await session.save();
+      sessionWriteMs.current = performance.now() - started;
       const previous = sessionDoc.current;
       if (editStore.session !== session || !previous) return;
       const next: LoadedDocument = { ...previous, bytes, revision, size: bytes.length, modified: true };

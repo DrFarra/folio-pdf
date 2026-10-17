@@ -10,6 +10,31 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.17
+
+- En Editar, mover una imagen en un PDF muy grande ya no deja una copia en su sitio anterior ni se traba con «Guardando el cambio…» en equipos más lentos: el PDF se reescribe cuando dejas de editar un momento, no después de cada movimiento.
+
+## Cambios en 0.9.16
+
+- En Editar, una imagen que mueves desaparece al instante de su sitio anterior, y mover imágenes ya no deja la ventana trabada, tampoco en PDF muy grandes ni en equipos más lentos (Windows).
+- Abrir un PDF muy grande con cambios sin guardar ya no cuelga ni cierra la ventana en Windows (necesita WebView2 de 2023 o posterior, el que trae Windows actualizado).
+- «Texto buscable» puede rehacer el OCR que otro programa dejó mal leído: quita su capa invisible y escribe la nueva, sin tocar la imagen ni las marcas de agua.
+- «Texto editable» mejora en libros escaneados a baja resolución: conserva la letra con serifa en todo el texto, las etiquetas de los dibujos ya no salen en negrita, los títulos en cursiva como «Vía endógena:» salen en cursiva y no se borran palabras de los dibujos que el OCR no leyó.
+- El enderezado ya no curva páginas con fotos, dibujos o tablas.
+- Las palabras técnicas (lisosomales, lipoproteína, citosol…), los títulos en mayúsculas sin tilde y las palabras partidas a final de línea se reescriben como texto en vez de quedarse como imagen.
+
+## Cambios en 0.9.15
+
+- «Reconocer texto (OCR)» con «Texto editable» reconstruye la página escaneada mucho más parecida al original: la misma familia de letra en toda la página y en todo el libro (Palatino, Gill Sans…), el grosor de la tinta del libro, y las negritas y cursivas donde las tiene el original (títulos de tabla, «Fig. 4-9.», términos en cursiva, cabeceras).
+- Los fondos de color se respetan al borrar las letras escaneadas: sin franjas blancas en los recuadros de color, y las rayas gruesas y las viñetas se conservan enteras.
+- Una palabra que el OCR leyó con dudas y que no está en el diccionario español o inglés se deja tal como se escaneó en lugar de reescribirse mal.
+
+## Cambios en 0.9.14
+
+- Nuevo motor de OCR propio de Folio (modelos PP-OCRv5 de PaddleOCR): lee bien el 98 % de las palabras frente al 93 % del anterior, comete un tercio de los errores por letra y lee las columnas de los artículos en su orden. Con tarjeta gráfica (WebGPU) tarda alrededor de medio segundo por página; sin ella reparte el trabajo entre varios núcleos. Funciona sin conexión.
+- «Reconocer texto (OCR)» puede enderezar las páginas: una página torcida se gira sin perder calidad, y si sus líneas se curvan (cerca del lomo de un libro o en una foto) se aplana para que quede recta como un PDF digital.
+- Las palabras reconocidas se ajustan a su tinta, así que resaltar y seleccionar texto escaneado encaja mejor.
+
 ## Cambios en 0.9.13
 
 - En Editar, el texto que ya moviste se puede volver a mover aunque quede encima de otro texto, y el recuadro de selección toma todo lo que queda al menos a medias dentro.

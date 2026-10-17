@@ -148,15 +148,16 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     return { x: Math.max(0, Math.min(viewport.width, event.clientX - box.left)), y: Math.max(0, Math.min(viewport.height, event.clientY - box.top)) };
   };
 
-  // Content is read for the page as it is now, once the page is used in Editar.
+  // Content is read for the page as it is now, once the page is used in Editar,
+  // after the page is drawn: the live document answers in order, and the drawing is what shows.
   useEffect(() => { setHover(null); }, [key]);
   const need = wanted || !!reselect || !!selection;
   useEffect(() => {
-    if (!need || items) return;
+    if (!need || items || !drawn) return;
     let alive = true;
     store.items(doc, number).then(info => { if (alive) setLoaded({ key, items: info.items }); }).catch(error => { if (alive) store.set({ notice: errorMessage(error, 'No se pudo leer el contenido de esta página.') }); });
     return () => { alive = false; };
-  }, [store, doc, number, need, items, key]);
+  }, [store, doc, number, need, items, key, drawn]);
   // After a commit the moved, written or added content is selected again. What
   // stood in for it stays until the page has drawn the result: no jump back.
   useEffect(() => {
@@ -173,19 +174,27 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   // place while it is dragged, written elsewhere or removed.
   const [plates, setPlates] = useState<Record<string, { itemRect: Rect; url: string; rect: Rect }>>({});
   const plateScale = Math.round(viewport.scale * Math.min(window.devicePixelRatio || 1, 2) * 100) / 100;
-  useEffect(() => { setPlates({}); }, [key]);
+  // A plate belongs to one state of the page, but those under a ghost stay until
+  // the page has drawn the change: without them the old content shows through.
+  const ghostRef = useRef(ghost); ghostRef.current = ghost;
+  useEffect(() => {
+    const shown = ghostRef.current, kept = shown ? [shown.item.id, ...(shown.others ?? []).map(other => other.item.id)] : [];
+    setPlates(all => Object.fromEntries(Object.entries(all).filter(([id]) => kept.includes(id))));
+  }, [key]);
   useEffect(() => {
     let alive = true;
     for (const item of groupItems(selection)) void store.plate(doc, number, item, plateScale).then(found => { if (alive && found) setPlates(all => ({ ...all, [item.id]: { itemRect: item.rect, ...found } })); });
     return () => { alive = false; };
   }, [store, doc, number, selection, plateScale]);
-  useEffect(() => { if (hover && hover.kind !== 'shape' && hover.item.editable) void store.sprite(doc, number, hover.item, plateScale); }, [store, doc, number, hover, plateScale]);
+  // What a drag shows is drawn ahead, while the pointer rests on the item.
+  useEffect(() => { if (hover && hover.kind !== 'shape' && hover.item.editable) { void store.sprite(doc, number, hover.item, plateScale); void store.plate(doc, number, hover.item, plateScale); } }, [store, doc, number, hover, plateScale]);
   const plateFor = (item: PageContentItem) => { const plate = plates[item.id]; return plate?.itemRect.every((value, i) => Math.abs(value - item.rect[i]) < .01) ? plate : null; };
   // Where an item was: what lies under it if drawn, else the page's plain colour, else nothing.
+  // An image is covered by the colour around it even on a busy page: a second copy is worse.
   const vacated = (item: PageContentItem) => {
     const under = plateFor(item), from = toBox(item.rect);
     if (under) { const box = toBox(under.rect); return <img className="edit-mask" src={under.url} alt="" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />; }
-    const color = pageBackground(from);
+    const color = pageBackground(from, item.kind !== 'image');
     return color ? <div className="edit-mask" style={{ left: from.x - 1, top: from.y - 1, width: from.w + 2, height: from.h + 2, background: color }} /> : null;
   };
   // A selection from an older state of the page no longer matches it.

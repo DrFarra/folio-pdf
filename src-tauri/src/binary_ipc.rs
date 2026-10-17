@@ -7,6 +7,7 @@ use std::{collections::HashMap, sync::{LazyLock, Mutex}, time::Instant};
 // here, each one a small message.
 const BRIDGE_MAX: usize = 128 * 1024 * 1024;
 static UPLOADS: LazyLock<Mutex<HashMap<String, (Instant, Vec<u8>)>>> = LazyLock::new(Default::default);
+const INTERRUPTED: &str = "El envío del archivo se interrumpió. Vuelve a intentarlo.";
 
 /// Starts a chunked upload. Uploads abandoned for a minute are dropped.
 #[cfg(any(target_os = "android", test))]
@@ -22,12 +23,84 @@ pub fn upload_begin() -> Result<String, String> {
 #[cfg(any(target_os = "android", test))]
 #[tauri::command]
 pub fn upload_chunk(id: String, base64: String) -> Result<(), String> {
-    let mut uploads = UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?;
     let decoded = base64::engine::general_purpose::STANDARD.decode(&base64).map_err(|_| "El archivo contiene bytes inválidos.");
-    let (touched, staged) = uploads.get_mut(&id).ok_or("El envío del archivo se interrumpió. Vuelve a intentarlo.")?;
-    match decoded {
-        Ok(chunk) if staged.len() + chunk.len() <= BRIDGE_MAX => { staged.extend_from_slice(&chunk); *touched = Instant::now(); Ok(()) }
-        result => { uploads.remove(&id); Err(result.err().unwrap_or("Este PDF supera 128 MB y no se puede guardar en este dispositivo.").into()) }
+    stage(&id, decoded, BRIDGE_MAX, "Este PDF supera 128 MB y no se puede guardar en este dispositivo.")
+}
+
+// Windows' WebView hands Folio a request's body only as fast as its main process
+// lets go of it, on the window's thread: a PDF of 238 MB sent in 4 MiB requests held
+// the window for seconds at a time until the WebView closed. A large PDF goes instead
+// through memory Folio shares with the page, which writes it there in slices.
+#[cfg(windows)]
+#[tauri::command(async)]
+pub fn upload_shared(id: String, size: u64, webview: tauri::Webview) -> Result<(), String> {
+    uuid::Uuid::parse_str(&id).map_err(|_| INTERRUPTED)?;
+    if size > folio_core::MAX_OUTPUT_BYTES as u64 { return Err("El archivo supera 1 GB y no se puede guardar.".into()); }
+    shared::post(&webview, id, size)
+}
+
+/// The page has written the shared memory: its bytes become an upload the next command takes.
+#[cfg(windows)]
+#[tauri::command(async)]
+pub fn upload_shared_end(id: String, webview: tauri::Webview) -> Result<(), String> {
+    let bytes = shared::take(&webview, &id)?;
+    UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?.insert(id, (Instant::now(), bytes));
+    Ok(())
+}
+
+#[cfg(windows)]
+mod shared {
+    use super::*;
+    use webview2_com::Microsoft::Web::WebView2::Win32::*;
+    use windows_core::{Interface, HSTRING};
+
+    // The buffer's object belongs to the window's thread; its memory, mapped until
+    // the buffer is closed, is read from any thread.
+    struct Shared { buffer: ICoreWebView2SharedBuffer, data: *const u8, size: usize, posted: Instant }
+    unsafe impl Send for Shared {}
+    static SHARED: LazyLock<Mutex<HashMap<String, Shared>>> = LazyLock::new(Default::default);
+
+    fn on_window_thread<T: Send + 'static>(webview: &tauri::Webview, f: impl FnOnce(tauri::webview::PlatformWebview) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        webview.with_webview(move |platform| { let _ = sender.send(f(platform)); }).map_err(|_| INTERRUPTED)?;
+        receiver.recv().map_err(|_| INTERRUPTED)?
+    }
+
+    /// Shares `size` bytes with the page, which receives them as `sharedbufferreceived` with `{folioUpload: id}`.
+    pub fn post(webview: &tauri::Webview, id: String, size: u64) -> Result<(), String> {
+        on_window_thread(webview, move |platform| unsafe {
+            let mut shared = SHARED.lock().map_err(|_| "No se pudo preparar el archivo.")?;
+            // Memory a page never handed back is released after a minute.
+            shared.retain(|_, old| old.posted.elapsed().as_secs() < 60 || { let _ = old.buffer.Close(); false });
+            let created = (|| -> windows_core::Result<(ICoreWebView2SharedBuffer, ICoreWebView2_17, *mut u8)> {
+                let buffer = platform.environment().cast::<ICoreWebView2Environment12>()?.CreateSharedBuffer(size)?;
+                let mut data = std::ptr::null_mut(); buffer.Buffer(&mut data)?;
+                Ok((buffer, platform.controller().CoreWebView2()?.cast::<ICoreWebView2_17>()?, data))
+            })();
+            let (buffer, core, data) = created.map_err(|_| "No se pudo preparar el archivo. Actualiza Microsoft Edge WebView2.")?;
+            shared.insert(id.clone(), Shared { buffer: buffer.clone(), data, size: size as usize, posted: Instant::now() });
+            core.PostSharedBufferToScript(&buffer, COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_WRITE, &HSTRING::from(format!(r#"{{"folioUpload":"{id}"}}"#)))
+                .map_err(|_| { if let Some(failed) = shared.remove(&id) { let _ = failed.buffer.Close(); } "No se pudo preparar el archivo.".to_string() })
+        })
+    }
+
+    /// Copies what the page wrote and closes the buffer.
+    pub fn take(webview: &tauri::Webview, id: &str) -> Result<Vec<u8>, String> {
+        let shared = SHARED.lock().map_err(|_| "No se pudo preparar el archivo.")?.remove(id).ok_or(INTERRUPTED)?;
+        let bytes = unsafe { std::slice::from_raw_parts(shared.data, shared.size) }.to_vec();
+        let _ = webview.with_webview(move |_| { let shared = shared; unsafe { let _ = shared.buffer.Close(); } });
+        Ok(bytes)
+    }
+}
+
+/// Adds a slice to an upload; a slice that fails drops the whole upload.
+#[cfg(any(target_os = "android", test))]
+fn stage(id: &str, chunk: Result<Vec<u8>, &str>, limit: usize, too_large: &str) -> Result<(), String> {
+    let mut uploads = UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?;
+    let (touched, staged) = uploads.get_mut(id).ok_or(INTERRUPTED)?;
+    match chunk {
+        Ok(chunk) if staged.len() + chunk.len() <= limit => { staged.extend_from_slice(&chunk); *touched = Instant::now(); Ok(()) }
+        result => { uploads.remove(id); Err(result.err().unwrap_or(too_large).into()) }
     }
 }
 
@@ -41,7 +114,7 @@ pub fn bytes(body: &InvokeBody) -> Result<Cow<'_, [u8]>, String> {
         InvokeBody::Json(serde_json::Value::Object(value)) if value.len() == 1 && value.get("upload").is_some_and(|id| id.is_string()) => {
             let id = value["upload"].as_str().unwrap_or_default();
             UPLOADS.lock().map_err(|_| "No se pudo preparar el archivo.")?.remove(id).map(|(_, data)| Cow::Owned(data))
-                .ok_or_else(|| "El envío del archivo se interrumpió. Vuelve a intentarlo.".into())
+                .ok_or_else(|| INTERRUPTED.into())
         }
         InvokeBody::Json(serde_json::Value::Object(value)) => {
             let encoded = value.get("base64").and_then(|value| value.as_str())

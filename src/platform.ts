@@ -60,8 +60,9 @@ export async function pickNativeDocuments(): Promise<NativeDocument[]> {
 export async function readNativeDocument(document: NativeDocument): Promise<Uint8Array> {
   // Android's JSON response bridge must never materialize the entire PDF as
   // millions of numbers at once. On desktop, one response holding a large book is
-  // buffered again by the webview; bounded reads keep it to the one copy filled here.
-  if (isAndroid || document.size > 64 * 1024 * 1024) {
+  // buffered again by the webview, and on Windows it stops the page (238 MB: 5.7 s
+  // without a frame); bounded reads keep it to the one copy filled here.
+  if (isAndroid || document.size > 4 * 1024 * 1024) {
     const bytes = new Uint8Array(document.size);
     for (let offset = 0; offset < bytes.length;) {
       const length = Math.min(isAndroid ? 256 * 1024 : 4 * 1024 * 1024, bytes.length - offset);

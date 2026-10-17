@@ -1,6 +1,6 @@
 [package]
 name = "folio-pdf"
-version = "0.9.13"
+version = "0.9.17"
 description = "Folio: lector PDF local con anotaciones estándar"
 edition = "2021"
 license = "AGPL-3.0-or-later"
@@ -25,6 +25,10 @@ base64 = "0.22"
 
 [target.'cfg(any(target_os="windows", target_os="macos"))'.dependencies]
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 tauri-plugin-dialog = "2"

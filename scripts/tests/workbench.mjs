@@ -222,14 +222,32 @@ try {
     const bytes = await save(page, 'ui-redacted.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(!text[0].includes('SECRET')); assert(text[0].includes('PRESERVE')); return { dataRemoved: true };
   });
   await check('ocr-local-searchable-pdf', async page => {
-    const externalRequests = []; page.on('request', request => { if (!request.url().startsWith(origin) && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) externalRequests.push(request.url()); });
+    const externalRequests = [], assets = []; page.on('request', request => { assets.push(request.url()); if (!request.url().startsWith(origin) && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) externalRequests.push(request.url()); });
     await open(page, path.join(output, 'scan.pdf')); await tools(page, 'Reconocer texto (OCR)'); await page.getByLabel('Idioma', { exact: true }).selectOption('eng'); await page.getByRole('button', { name: 'Reconocer texto', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached', timeout: 120000 });
-    const bytes = await save(page, 'ui-ocr.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('FOLIO OCR TEST'), text[0]); assert.equal(externalRequests.length, 0, externalRequests.join('\n')); return { realOcr: true, networkRequestsOutsideApp: 0 };
+    const bytes = await save(page, 'ui-ocr.pdf'), text = operateDocument(bytes, { operation: 'text' }); assert(text[0].includes('FOLIO OCR TEST'), text[0]); assert.equal(externalRequests.length, 0, externalRequests.join('\n')); assert(assets.some(url => url.includes('/ocr/ppocr/det.onnx')) && !assets.some(url => url.includes('/ocr/worker.min.js')), "Folio's engine read the page, not Tesseract"); return { realOcr: true, networkRequestsOutsideApp: 0 };
   });
   await check('word-and-image-conversion', async page => {
     await tools(page, 'Convertir PDF'); await page.getByLabel('Páginas a exportar', { exact: true }).selectOption('range'); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('0'); assert(await page.getByRole('button', { name: 'Convertir a Word', exact: true }).isDisabled()); await page.getByRole('textbox', { name: 'Intervalo de páginas' }).fill('1-2'); const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Convertir a Word', exact: true }).click(); const file = await download; await file.saveAs(path.join(output, 'ui-converted.docx')); await page.locator('.workbench').waitFor({ state: 'detached' });
     const files = unzipSync(fs.readFileSync(path.join(output, 'ui-converted.docx'))); assert(strFromU8(files['word/document.xml']).includes('PRESERVE THIS TEXT'));
     await tools(page, 'Convertir PDF'); await page.getByLabel('Formato de exportación', { exact: true }).selectOption('png'); await page.getByLabel('Resolución PNG', { exact: true }).selectOption('300'); await page.getByLabel('Fondo PNG', { exact: true }).selectOption('transparent'); const images = page.waitForEvent('download'); await page.getByRole('button', { name: 'Convertir a PNG', exact: true }).click(); const zip = await images; await zip.saveAs(path.join(output, 'ui-pages.zip')); const pngFiles = unzipSync(fs.readFileSync(path.join(output, 'ui-pages.zip'))); assert.equal(Object.keys(pngFiles).length, 1); const image = Object.values(pngFiles)[0], view = new DataView(image.buffer, image.byteOffset, image.byteLength); assert.equal(view.getUint32(16), 1667); assert.equal(view.getUint32(20), 2084); return { editableWordText: true, actualPngExport: true, dpi300: true, invalidRangeBlocked: true };
+  });
+  await check('ocr-rebuilds-an-ocred-scan-as-editable-text', async page => {
+    // The searchable PDF just made: its OCR layer is invisible, so the page can be rebuilt.
+    await open(page, path.join(output, 'ui-ocr.pdf')); await tools(page, 'Reconocer texto (OCR)');
+    await page.getByLabel('Resultado del OCR', { exact: true }).selectOption('edit');
+    await page.getByRole('button', { name: 'Reconocer texto', exact: true }).click(); await page.locator('.workbench').waitFor({ state: 'detached', timeout: 120000 });
+    const bytes = await save(page, 'ui-ocr-rebuilt.pdf'), [layers] = operateDocument(bytes, { operation: 'text-layers', pages: [1] });
+    assert(layers.visible > 0 && layers.hidden === 0, JSON.stringify(layers));
+    const text = operateDocument(bytes, { operation: 'text' })[0]; assert(text.includes('FOLIO OCR TEST') && text.includes('Paraguay'), text);
+    const lines = operateDocument(bytes, { operation: 'page-content', page: 1 }).items.filter(item => item.kind === 'text' && item.editable);
+    assert(lines.some(item => item.text?.includes('FOLIO OCR TEST')), JSON.stringify(lines.map(item => item.text)));
+    // A page with printed text is never rebuilt.
+    await open(page, source); await tools(page, 'Reconocer texto (OCR)'); await page.getByLabel('Resultado del OCR', { exact: true }).selectOption('edit');
+    await page.getByLabel('Páginas a procesar', { exact: true }).selectOption('current');
+    await page.getByRole('button', { name: 'Reconocer texto', exact: true }).click();
+    assert.equal(await page.locator('.workbench .operation-error').innerText(), 'Esta página ya tiene texto impreso: no es un escaneo.');
+    await page.locator('dialog[open]').getByRole('button', { name: 'Cerrar diálogo', exact: true }).click();
+    return { oldLayerReplaced: true, realText: true, editableLines: lines.length, printedPagesKept: true };
   });
   await check('visual-and-text-comparison', async page => {
     await tools(page, 'Comparar documentos'); await page.locator('.compare-documents input[type=file]').setInputFiles(path.join(output, 'comparison-after.pdf')); await page.getByRole('button', { name: 'Comparar', exact: true }).click(); await page.locator('.visual-comparison img').first().waitFor(); assert.equal(await page.locator('.visual-comparison img').count(), 3);

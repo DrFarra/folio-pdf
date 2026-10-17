@@ -4,13 +4,13 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, PageViewport, RenderTask
 import Modal from './Modal';
 import FilePicker from './FilePicker';
 import { Thumbnail } from './PDFPage';
-import { inspectPdf, processPdf, readFields, splitPdf } from '../engine/client';
+import { inspectPdf, processPdf, readFields, readTextLayers, splitPdf } from '../engine/client';
 import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.mjs';
 import type { LoadedDocument, Tool } from '../types';
 import { formatSize, getDocument, plural } from '../pdf';
 import { errorMessage } from '../errors';
 import { pdfAssetSettings } from '../assets';
-import { recognizePdf } from '../ocr';
+import { recognizePdf, type OcrResult } from '../ocr';
 import { convertPdf } from '../conversion';
 import { saveExport, choosePartsFolder, savePartsZip, isNative, isAndroid, isDesktop, isMac } from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
@@ -140,6 +140,8 @@ export default function Workbench(props: Props) {
   const [fieldOptions, setFieldOptions] = useState('');
   const [language, setLanguage] = useState<'spa' | 'eng' | 'spa+eng'>('spa+eng');
   const [ocrScope, setOcrScope] = useState<'current' | 'all' | 'range'>(doc.pdf.numPages > 1 ? 'all' : 'current');
+  const [straightenPages, setStraightenPages] = useState(true);
+  const [ocrResult, setOcrResult] = useState<OcrResult>('search');
   const [pageRange, setPageRange] = useState(String(props.page));
   const [progress, setProgress] = useState('');
   const [pfx, setPfx] = useState<Uint8Array | null>(null);
@@ -464,15 +466,22 @@ export default function Workbench(props: Props) {
     {section === 'ocr' && <>
       <div className="security-form"><label>Páginas<select aria-label="Páginas a procesar" value={ocrScope} onChange={e => setOcrScope(e.target.value as typeof ocrScope)} disabled={busy}><option value="current">Página actual ({props.page})</option><option value="all">Todas ({plural(doc.pdf.numPages, 'página', 'páginas')})</option><option value="range">Un intervalo o varias páginas</option></select></label>
       {ocrScope === 'range' && <label>Intervalo<input aria-label="Intervalo de páginas" value={pageRange} onChange={e => setPageRange(e.target.value)} placeholder="1-3, 6" disabled={busy} /></label>}
-      <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label></div>
-      <p className="modal-description">Permite buscar y copiar el texto de las páginas escaneadas; las que ya tienen texto se omiten. Funciona sin conexión. Revisa el resultado: puede contener errores.</p>
+      <label>Resultado<select aria-label="Resultado del OCR" value={ocrResult} onChange={e => setOcrResult(e.target.value as OcrResult)} disabled={busy}><option value="search">Texto buscable (la página queda igual)</option><option value="edit">Texto editable (reconstruye la página)</option></select></label>
+      <label>Idioma<select aria-label="Idioma" value={language} onChange={e => setLanguage(e.target.value as typeof language)} disabled={busy}><option value="spa+eng">Español e inglés</option><option value="spa">Español</option><option value="eng">Inglés</option></select></label>
+      <label className="check-option"><input type="checkbox" checked={straightenPages} disabled={busy} onChange={e => setStraightenPages(e.target.checked)} />Enderezar páginas torcidas o con líneas curvas</label></div>
+      <p className="modal-description">{ocrResult === 'edit'
+        ? 'Convierte las páginas escaneadas en texto real: borra las letras de la imagen, conserva el fondo y los recuadros, y escribe el texto con su tamaño, color y negrita para cambiarlo en Editar. Rehace también el OCR que otro programa dejó; las páginas con texto impreso se omiten.'
+        : 'Permite buscar y copiar el texto de las páginas escaneadas. Si ya tenían el OCR de otro programa, lo reemplaza; las páginas con texto impreso se omiten.'} Funciona sin conexión. Revisa el resultado: puede contener errores.</p>
+      {straightenPages && <p className="modal-description">Una página torcida se gira sin perder calidad. Si sus líneas se curvan, como cerca del lomo de un libro o en una foto, se reemplaza por una imagen aplanada.</p>}
       <div className="operation-actions"><button className="primary-button" disabled={busy} onClick={() => void task(async signal => {
         const pages = selectedPages();
-        const content = await Promise.all(pages.map(async number => (await (await doc.pdf.getPage(number)).getTextContent()).items));
-        // Recognizing a page that already has text would duplicate it.
-        const scanned = pages.filter((_, index) => !content[index].some(item => 'str' in item && item.str.trim()));
-        if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto seleccionable.' : 'Las páginas elegidas ya tienen texto seleccionable.');
-        await onApply(await recognizePdf(doc.pdf, scanned, language, setProgress, signal), signal);
+        // A scan, or a page whose only text is an earlier OCR's invisible layer, never printed text.
+        // Rebuilding replaces the page (that layer and a watermark go with it); searchable text
+        // replaces that layer (the engine removes it first, and keeps painted text).
+        const layers = await readTextLayers(doc.bytes, pages, doc.password, signal);
+        const scanned = layers.filter(layer => layer.scan || !layer.visible).map(layer => layer.page);
+        if (!scanned.length) throw new Error(pages.length === 1 ? 'Esta página ya tiene texto impreso: no es un escaneo.' : 'Las páginas elegidas ya tienen texto impreso: no son escaneos.');
+        await onApply(await recognizePdf(doc.pdf, scanned, language, setProgress, signal, straightenPages, ocrResult), signal);
       })}>Reconocer texto</button></div>
     </>}
     {compareVisited && <div hidden={section !== 'compare'}><CompareDocuments doc={doc} getBytes={props.getBytes} onBusyChange={setCompareBusy} /></div>}

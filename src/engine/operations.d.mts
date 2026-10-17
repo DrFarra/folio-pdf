@@ -8,6 +8,12 @@ export type PageContentItem = { id: string; kind: 'text' | 'image' | 'graphic'; 
 export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
 /** A PNG of the page around an item, drawn without it, and the PDF area it covers. */
 export type PagePlate = { png: Uint8Array; rect: Area['rect'] };
+/** A line of a rebuilt scan, written as real text: its ink box in page points (y down), and its ink and background colours (0–1). */
+export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; ink?: [number, number, number]; background?: [number, number, number]; band?: boolean; words?: { text: string; box: [number, number, number, number]; color?: [number, number, number]; letters?: [number, number][] }[] };
+/** An open font a rebuilt line can be written in: its family, PostScript-like name, style and file. */
+export type RebuildFace = { family: string; name: string; bold: boolean; italic: boolean; file: Uint8Array };
+/** How many text runs a page paints and how many it keeps invisible (an OCR layer), and whether it is a scan (an image over nearly all of it, little text on top). */
+export type TextLayers = { page: number; visible: number; hidden: number; scan: boolean };
 /** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
 export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
 export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; fontFamily?: string; fontIndex?: number; originalFont?: boolean; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; sourceId?: string; baselineOffset?: number };
@@ -23,7 +29,9 @@ export type Operation =
   | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
   | { operation: 'split'; parts: PageEntry[][] }
   | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
-  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[] }[]; font?: Uint8Array }
+  /** angle turns the page clockwise first (degrees); image replaces it with a flattened scan of size [width, height] points. */
+  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[]; angle?: number; image?: Uint8Array; size?: [number, number]; lines?: RebuiltLine[]; original?: Uint8Array }[]; font?: Uint8Array; faces?: RebuildFace[] }
+  | { operation: 'text-layers'; pages: number[] }
   | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
   | ({ operation: 'add-text' | 'replace-text' } & TextOptions & Area)
   | ({ operation: 'add-image' | 'replace-image' } & ImageOptions & Area)
@@ -36,7 +44,7 @@ export type Operation =
   | ({ operation: 'recolor-graphic'; sourceId: string; sourceRect: Area['rect']; fill?: string; stroke?: string } & Area)
   | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
   | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
-export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate;
+export function operateDocument(bytes: Uint8Array, options: Operation, password?: string, onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate | TextLayers[];
 export const EDITS: Set<string>;
 /** Several Editar changes to one page as one, each item found again by kind and place. */
 export function editDocumentAll(doc: import('mupdf').PDFDocument, operations: Operation[]): void;
