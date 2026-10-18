@@ -559,23 +559,28 @@ export default function App() {
         inspection = { ...opened.metadata.permissions, canEdit: false, canAssemble: false, canFill: false,
           signed: opened.metadata.signed, pages: opened.metadata.numPages, annotations: await nativePdfPageAnnotations(pdf, 1) };
       } else {
+        // A native file's id is already the SHA-256 of its bytes.
+        const knownId = context?.id || driveId || nativeInput?.id;
+        // Its draft replaces it, so the draft is looked for first: reading a book's
+        // original over IPC only to discard it doubled the time to open it.
+        const nativeDraft = !context && isNative && knownId ? await nativeDraftDocument(knownId, name) : null;
+        let draftId: string | undefined;
         if (source === 'sample') {
           const response = await fetch(assetUrl('/sample.pdf'));
           if (!response.ok) throw new Error('No se pudo abrir el documento de ejemplo.');
           bytes = new Uint8Array(await response.arrayBuffer());
-        } else if (nativeFile) bytes = await readNativeDocument(nativeFile);
+        } else if (nativeDraft) { bytes = await readNativeDocument(nativeDraft); modified = true; draftId = nativeDraft.id; notify('Se recuperaron tus cambios sin guardar.'); }
+        else if (nativeFile) bytes = await readNativeDocument(nativeFile);
         else bytes = source instanceof Uint8Array ? source : new Uint8Array(await (source as Blob).arrayBuffer());
         if (request !== loadRequest.current) return;
-        // A native file's id is already the SHA-256 of its bytes.
-        originalBytes = bytes;
-        const contentId = context?.id || driveId || nativeInput?.id ? undefined : await digest(bytes);
-        id = context?.id || driveId || nativeInput?.id || contentId!;
+        if (!nativeDraft) originalBytes = bytes;
+        const contentId = knownId ? undefined : await digest(bytes);
+        id = knownId || contentId!;
         if (!context) {
           const existing = tabsRef.current.find(tab => tab.doc.id === id);
           if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
         }
-        let draftId: string | undefined;
-        if (!context) {
+        if (!context && !(isNative && knownId)) {
           // A native draft is read in slices, as an opened PDF (one response of hundreds of MB stops
           // the page on Windows), and its id is already the SHA-256 of its bytes.
           const native = isNative ? await nativeDraftDocument(id, name) : null;

@@ -56,9 +56,23 @@ struct Desktop { files: Mutex<Files>, store: Mutex<()>, data: PathBuf }
 #[derive(Default)]
 struct EarlyOpenPaths(Mutex<Vec<PathBuf>>);
 
+/// Library entries remember their file's digest. recent.json is read without the
+/// store lock (some callers hold it); it is always replaced whole.
 fn register(desktop: &Desktop, path: PathBuf) -> Result<DocumentInfo, String> {
-    let file = inspect_pdf_file(&path)?;
+    let known = read_recents(desktop).into_iter().find(|entry| entry.path == path).and_then(|entry| entry.known?.unchanged(&path));
+    let file = match known { Some(file) => file, None => inspect_pdf_file(&path)? };
     register_file(desktop, path, file)
+}
+/// A file's SHA-256 when Folio last read it. Hashing is most of opening a book
+/// (396 MB: ~4 s), so a file reopened with the same size and modification time keeps it.
+#[derive(Clone, Serialize, Deserialize)]
+struct KnownFile { size: u64, modified: std::time::SystemTime, digest: String }
+impl KnownFile {
+    fn of(snapshot: &FileSnapshot, digest: &str) -> Option<Self> { Some(Self { size: snapshot.size, modified: snapshot.modified?, digest: digest.into() }) }
+    fn unchanged(&self, path: &Path) -> Option<PdfFileInfo> {
+        let snapshot = file_snapshot(path).ok()?;
+        (snapshot.size == self.size && snapshot.modified == Some(self.modified)).then(|| PdfFileInfo { snapshot, digest: self.digest.clone() })
+    }
 }
 fn register_file(desktop: &Desktop, path: PathBuf, file: PdfFileInfo) -> Result<DocumentInfo, String> {
     let token = uuid::Uuid::new_v4().to_string();
@@ -133,6 +147,16 @@ fn read_document(token: String, desktop: State<'_, Desktop>) -> Result<tauri::ip
     // read_pdf refuses a file that changes while it reads; this, one changed since it was opened.
     if file_snapshot(&path)? != snapshot { return Err("El archivo cambió en disco. Vuelve a abrirlo.".into()); }
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Windows: the whole PDF in one go, read from disk into memory shared with the page.
+/// 4 MiB commands pass through the WebView at ~80 MB/s (a 396 MB book: 5 s).
+#[cfg(windows)]
+#[tauri::command(async)]
+fn read_document_shared(token: String, id: String, webview: tauri::Webview, desktop: State<'_, Desktop>) -> Result<(), String> {
+    uuid::Uuid::parse_str(&id).map_err(|_| "Vuelve a abrir el PDF.")?;
+    let (path, snapshot) = source_file(&desktop, &token, "Vuelve a elegir el archivo para abrirlo.")?;
+    binary_ipc::deliver(&webview, id, snapshot.size, |target| folio_core::read_pdf_into(&path, &snapshot, target))
 }
 
 #[tauri::command(async)]
@@ -406,7 +430,15 @@ fn native_draft_document(id: String, name: String, desktop: State<'_, Desktop>) 
     let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
     let path = draft_path(&desktop, &id)?;
     if !path.exists() { return Ok(None); }
-    let mut info = register(&desktop, path)?;
+    // A draft is not always in the library: its digest is kept beside it, and each write of the draft outdates it.
+    let known_path = path.with_extension("json");
+    let known = fs::read(&known_path).ok().and_then(|bytes| serde_json::from_slice::<KnownFile>(&bytes).ok()).and_then(|known| known.unchanged(&path));
+    let file = match known { Some(file) => file, None => {
+        let file = inspect_pdf_file(&path)?;
+        if let Some(known) = KnownFile::of(&file.snapshot, &file.digest) { let _ = serde_json::to_vec(&known).map(|bytes| write_private(&known_path, &bytes)); }
+        file
+    } };
+    let mut info = register_file(&desktop, path, file)?;
     info.name = Path::new(&name).file_name().ok_or("Nombre de borrador inválido.")?.to_string_lossy().into();
     if let Some(source) = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.sources.get_mut(&info.token) { source.info.name = info.name.clone(); }
     Ok(Some(info))
@@ -425,6 +457,7 @@ fn store_draft(request: tauri::ipc::Request<'_>, desktop: State<'_, Desktop>) ->
 fn discard_draft(id: String, desktop: State<'_, Desktop>) -> Result<(), String> {
     let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
     let path = draft_path(&desktop, &id)?;
+    let _ = fs::remove_file(path.with_extension("json"));
     if path.exists() { fs::remove_file(path).map_err(|_| "No se pudo borrar el borrador.")?; }
     let mut entries = read_recents(&desktop); entries.retain(|r| !(r.draft && r.id == id)); save_recents(&desktop, &entries)?;
     Ok(())
@@ -457,7 +490,8 @@ fn store_session(id: String, session: Value, desktop: State<'_, Desktop>) -> Res
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Recent { id: String, name: String, size: u64, pages: usize, opened_at: u64, path: PathBuf, #[serde(default)] draft: bool, #[serde(default)] hidden: bool }
+struct Recent { id: String, name: String, size: u64, pages: usize, opened_at: u64, path: PathBuf, #[serde(default)] draft: bool, #[serde(default)] hidden: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")] known: Option<KnownFile> }
 /// None when recent.json exists but cannot be read: it may still name any copy.
 fn stored_recents(desktop: &Desktop) -> Option<Vec<Recent>> {
     let entries: Vec<Recent> = match fs::read(desktop.data.join("recent.json")) {
@@ -576,7 +610,7 @@ fn remember_document(id: String, token: String, pages: usize, opened_at: u64, de
     let record = {
         let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
         let source = files.sources.get(&token).ok_or("El documento ya no está disponible.")?;
-        Recent { id, name: source.info.name.clone(), size: source.info.size, pages, opened_at, path: source.path.clone(), draft: false, hidden: false }
+        Recent { id, name: source.info.name.clone(), size: source.info.size, pages, opened_at, path: source.path.clone(), draft: false, hidden: false, known: KnownFile::of(&source.snapshot, &source.digest) }
     };
     remember_catalog_entry(&desktop, record)
 }
@@ -586,7 +620,7 @@ fn remember_draft(id: String, name: String, pages: usize, opened_at: u64, deskto
     let path = draft_path(&desktop, &id)?;
     let size = file_snapshot(&path)?.size;
     let name = Path::new(&name).file_name().ok_or("Nombre inválido.")?.to_string_lossy().into_owned();
-    let record = Recent { id, name, size, pages, opened_at, path, draft: true, hidden: false };
+    let record = Recent { id, name, size, pages, opened_at, path, draft: true, hidden: false, known: None };
     remember_catalog_entry(&desktop, record)
 }
 #[tauri::command(async)]
@@ -596,6 +630,7 @@ fn forget_document(id: String, desktop: State<'_, Desktop>) -> Result<(), String
     let path = session_path(&desktop, &id)?;
     if path.exists() { fs::remove_file(path).map_err(|_| "No se pudo borrar la sesión.")?; }
     let draft = draft_path(&desktop, &id)?;
+    let _ = fs::remove_file(draft.with_extension("json"));
     if draft.exists() { fs::remove_file(draft).map_err(|_| "No se pudo borrar el borrador.")?; }
     Ok(())
 }
@@ -771,7 +806,7 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, #[cfg(windows)] read_document_shared, #[cfg(windows)] binary_ipc::release_shared, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
     let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
@@ -805,6 +840,10 @@ pub fn run() {
             Ok(())
         })
         .on_page_load(|webview, payload| {
+            // Windows and Linux create the window hidden: shown at once, it is a black frame
+            // while it maximizes and the page loads.
+            #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
+            if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Finished { show_main_window(webview.app_handle()); }
             if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Started {
                 if let Some(desktop) = webview.app_handle().try_state::<Desktop>() {
                     if let Ok(mut files) = desktop.files.lock() { files.frontend_ready = false; }
@@ -861,7 +900,22 @@ mod tests {
         }
     }
     fn catalog_record(desktop: &Desktop, number: usize) -> Recent {
-        Recent { id: format!("{number:064x}"), name: format!("Documento {number}.pdf"), size: 42, pages: 2, opened_at: number as u64, path: desktop.data.join(format!("original-{number}.pdf")), draft: false, hidden: false }
+        Recent { id: format!("{number:064x}"), name: format!("Documento {number}.pdf"), size: 42, pages: 2, opened_at: number as u64, path: desktop.data.join(format!("original-{number}.pdf")), draft: false, hidden: false, known: None }
+    }
+
+    #[test]
+    fn a_library_file_keeps_its_digest_only_while_unchanged() {
+        let store = TestLibrary::new();
+        let path = store.0.data.join("Libro.pdf");
+        fs::write(&path, b"%PDF-1.7\nuno\n%%EOF\n").unwrap();
+        let file = inspect_pdf_file(&path).unwrap();
+        let known = KnownFile::of(&file.snapshot, "conocido").unwrap();
+        save_recents(&store.0, &[Recent { path: path.clone(), known: Some(known.clone()), ..catalog_record(&store.0, 1) }]).unwrap();
+        assert_eq!(register(&store.0, path.clone()).unwrap().id, "conocido");
+        // Same size, another time: it is read again.
+        fs::write(&path, b"%PDF-1.7\ndos\n%%EOF\n").unwrap();
+        fs::File::options().write(true).open(&path).unwrap().set_modified(known.modified + std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(register(&store.0, path.clone()).unwrap().id, folio_core::digest(b"%PDF-1.7\ndos\n%%EOF\n"));
     }
 
     #[test]

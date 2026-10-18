@@ -49,7 +49,7 @@ fn keep_recovered(app: &tauri::AppHandle, path: PathBuf) -> Result<(), String> {
     let pages = read_recents(&desktop).into_iter().find(|r| r.id == file.digest).map_or(0, |r| r.pages);
     // A separate id leaves the document's own entry and draft untouched.
     let id = folio_core::digest(format!("recovered:{}", path.display()).as_bytes());
-    remember_catalog_entry(&desktop, Recent { id, name, size: file.snapshot.size, pages, opened_at, path, draft: false, hidden: false })
+    remember_catalog_entry(&desktop, Recent { id, name, size: file.snapshot.size, pages, opened_at, path, draft: false, hidden: false, known: None })
 }
 
 async fn mobile_call(app: tauri::AppHandle, command: &str, args: Value) -> Result<Value, String> {

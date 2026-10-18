@@ -28,7 +28,8 @@ pub fn inspect_pdf_file(path: &Path) -> Result<PdfFileInfo, String> {
     let count = file.read(&mut header).map_err(|_| UNREADABLE)?;
     if !header[..count].windows(5).any(|s| s == b"%PDF-") { return Err("El archivo no es un PDF válido.".into()); }
     let mut hash = Sha256::new(); hash.update(&header[..count]);
-    let mut chunk = [0u8; 64 * 1024];
+    // Large reads: Google Drive's virtual disk serves a 396 MB book in 64 KB reads in ~7 s, in 4 MiB reads in under 1 s.
+    let mut chunk = vec![0u8; MAX_RANGE_BYTES];
     loop { let count = file.read(&mut chunk).map_err(|_| UNREADABLE)?; if count == 0 { break; } hash.update(&chunk[..count]); }
     if file_snapshot(path)? != snapshot { return Err("El archivo cambió mientras se abría. Vuelve a elegirlo.".into()); }
     Ok(PdfFileInfo { snapshot, digest: format!("{:x}", hash.finalize()) })
@@ -44,6 +45,14 @@ pub fn read_pdf_range(path: &Path, snapshot: &FileSnapshot, offset: u64, length:
     let mut bytes = vec![0; count]; file.read_exact(&mut bytes).map_err(|_| UNREADABLE)?;
     if file_snapshot(path)? != *snapshot { return Err("El archivo cambió durante la lectura.".into()); }
     Ok(bytes)
+}
+
+/// Reads the whole file into `target`, refusing one that changed since `snapshot`.
+pub fn read_pdf_into(path: &Path, snapshot: &FileSnapshot, target: &mut [u8]) -> Result<(), String> {
+    if file_snapshot(path)? != *snapshot || target.len() as u64 != snapshot.size { return Err("El archivo cambió en disco. Vuelve a abrirlo.".into()); }
+    fs::File::open(path).map_err(|_| UNREADABLE)?.read_exact(target).map_err(|_| UNREADABLE)?;
+    if file_snapshot(path)? != *snapshot { return Err("El archivo cambió durante la lectura.".into()); }
+    Ok(())
 }
 
 pub fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
