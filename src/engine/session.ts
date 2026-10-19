@@ -75,8 +75,9 @@ export class EditSession {
     item: { id: string; kind: 'text' | 'image' | 'graphic'; rect: [number, number, number, number] },
     scale: number,
     colors?: { fill?: string; stroke?: string },
+    opaque = false,
   ) {
-    return this.call<PagePlate>({ type: 'sprite', page, ...item, scale, ...colors });
+    return this.call<PagePlate>({ type: 'sprite', page, ...item, scale, ...colors, opaque });
   }
   /** Applies a change, or several to one page as one; resolves with the page it changed. A change that fails leaves the document as it was. */
   edit(operation: Operation | Operation[]) {

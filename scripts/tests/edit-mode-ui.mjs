@@ -710,18 +710,285 @@ try {
     const shown = await span.boundingBox(),
       box = await pageBox(1);
     assert(Math.abs((shown.x - box.x) / (box.width / 595) - x(written)) < 3, 'The reader shows the moved title');
-    // Closing the live document folded its changes into one step back to the PDF it was opened from (the original).
+    // Closing the live document folded its changes into one step back to the PDF it was opened from (the original):
+    // undoing them all returns to the file itself, so its draft is discarded and nothing is left to save.
     const original = textAt(new Uint8Array(fs.readFileSync(fixture)), 'Informe trimestral').rect[0];
     let restored = written;
-    for (let i = 0; i < 12 && Math.abs(x(restored) - original) > 0.5; i++) {
+    for (let i = 0; i < 12 && restored; i++) {
       await page.keyboard.press('Control+z');
       await page.waitForFunction(() => !document.querySelector('[aria-label="Modo lectura"]:disabled'));
       await page.waitForTimeout(300);
       restored = await draft();
     }
-    assert(Math.abs(x(restored) - original) < 0.5, `Back to the original: ${x(restored)}`);
+    assert.equal(restored, '', 'The draft is discarded once every change is undone');
+    await settle();
+    const back = await span.boundingBox(),
+      page1 = await pageBox(1);
+    assert(Math.abs((back.x - page1.x) / (page1.width / 595) - original) < 3, 'The reader shows the original title');
+    assert.equal(await page.locator('.download-button.pending').count(), 0, 'Nothing left to save');
     assert.equal(await page.getByText('Folio encontró un error').count(), 0, 'No error screen');
-    return { writtenBeforeSwitching: true, readerReloaded: true, foldedToOriginal: true };
+    return { writtenBeforeSwitching: true, readerReloaded: true, foldedToOriginal: true, cleanAgain: true };
+  });
+
+  await check('undoing-every-change-in-editar-leaves-nothing-to-save', async () => {
+    const fresh = await PDFDocument.create();
+    fresh
+      .addPage([595, 842])
+      .drawText('Documento limpio', { x: 60, y: 760, size: 16, font: await fresh.embedFont(StandardFonts.Helvetica) });
+    const bytes = Buffer.from(await fresh.save()),
+      id = crypto.createHash('sha256').update(bytes).digest('hex');
+    const stored = () =>
+      page.evaluate(
+        id =>
+          new Promise((resolve, reject) => {
+            const request = indexedDB.open('folio-library');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const get = request.result.transaction('drafts', 'readonly').objectStore('drafts').get(id);
+              get.onsuccess = () => resolve(!!get.result);
+              get.onerror = () => reject(get.error);
+            };
+          }),
+        id,
+      );
+    await page
+      .locator('input[type=file][accept="application/pdf,.pdf"]')
+      .first()
+      .setInputFiles({ name: 'limpio.pdf', mimeType: 'application/pdf', buffer: bytes });
+    await page.waitForFunction(
+      () => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'limpio.pdf',
+    );
+    await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    await pick(1, 100, 765);
+    await page.locator('.edit-selection.kind-text').waitFor();
+    await page.keyboard.press('Shift+ArrowRight');
+    await settle();
+    // Written after a pause: a draft and the unsaved mark.
+    for (let i = 0; i < 50 && !(await stored()); i++) await page.waitForTimeout(100);
+    assert(await stored(), 'The change was written as a draft');
+    await page.locator('.download-button.pending').waitFor();
+    // One undo returns to the file: no draft, nothing to save, and leaving Editar has nothing to reopen.
+    await page.keyboard.press('Control+z');
+    await settle();
+    await page.waitForFunction(() => !document.querySelector('.download-button.pending'));
+    for (let i = 0; i < 50 && (await stored()); i++) await page.waitForTimeout(100);
+    assert(!(await stored()), 'The draft is discarded');
+    let busy = false;
+    await page.exposeFunction('sawBusy', () => {
+      busy = true;
+    });
+    await page.evaluate(() =>
+      new MutationObserver(() => {
+        if (document.querySelector('[aria-label="Modo lectura"]:disabled, .loading-overlay')) window.sawBusy();
+      }).observe(document.body, { subtree: true, childList: true, attributes: true }),
+    );
+    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
+    await page.waitForTimeout(1500);
+    assert(!busy, 'Leaving Editar reopens nothing');
+    assert.equal(await page.locator('.download-button.pending').count(), 0, 'Still nothing to save');
+    return { draftDiscarded: true, nothingToSave: true, noReopen: true };
+  });
+
+  await check('clicking-again-picks-what-lies-beneath-in-turn', async () => {
+    // Text over a small box over a large box the PDF draws: three items under one point.
+    const stacked = await PDFDocument.create(),
+      sheet = stacked.addPage([595, 842]);
+    sheet.drawRectangle({ x: 100, y: 500, width: 300, height: 200, color: rgb(0.85, 0.9, 0.95) });
+    sheet.drawRectangle({ x: 150, y: 560, width: 200, height: 80, color: rgb(0.7, 0.8, 0.9) });
+    sheet.drawText('Encima de todo', {
+      x: 180,
+      y: 596,
+      size: 14,
+      font: await stacked.embedFont(StandardFonts.Helvetica),
+    });
+    await page
+      .locator('input[type=file][accept="application/pdf,.pdf"]')
+      .first()
+      .setInputFiles({ name: 'apilados.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await stacked.save()) });
+    await page.waitForFunction(
+      () => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'apilados.pdf',
+    );
+    await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    const kinds = [],
+      rects = [];
+    await pick(1, 200, 600);
+    for (let i = 0; i < 4; i++) {
+      if (i) {
+        // Apart enough not to be a double click, which starts typing.
+        await page.waitForTimeout(700);
+        const at = await toScreen(1, 200, 600);
+        await page.mouse.click(at.x, at.y);
+      }
+      await page.waitForFunction(() => document.querySelector('.edit-selection'));
+      kinds.push(await page.locator('.edit-selection').evaluate(node => /kind-(\w+)/.exec(node.className)?.[1]));
+      rects.push(JSON.stringify(await page.locator('.edit-selection').boundingBox()));
+    }
+    assert.deepEqual(kinds, ['text', 'graphic', 'graphic', 'text'], `Each click one deeper: ${kinds}`);
+    assert.notEqual(rects[1], rects[2], 'The small box, then the large one');
+    assert.equal(await page.getByRole('textbox', { name: 'Texto del párrafo' }).count(), 0, 'No typing started');
+    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
+    return { order: kinds };
+  });
+
+  await check('moving-lines-up-with-other-items-and-alt-moves-freely', async () => {
+    const aligned = await PDFDocument.create(),
+      font = await aligned.embedFont(StandardFonts.Helvetica),
+      sheet = aligned.addPage([595, 842]);
+    sheet.drawText('Alfa', { x: 60, y: 700, size: 14, font });
+    sheet.drawText('Beta', { x: 200, y: 600, size: 14, font });
+    const bytes = Buffer.from(await aligned.save()),
+      id = crypto.createHash('sha256').update(bytes).digest('hex');
+    const draftX = async previous => {
+      for (let i = 0; i < 60; i++) {
+        const value = await page.evaluate(
+          id =>
+            new Promise((resolve, reject) => {
+              const request = indexedDB.open('folio-library');
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const get = request.result.transaction('drafts', 'readonly').objectStore('drafts').get(id);
+                get.onsuccess = () =>
+                  resolve(
+                    get.result
+                      ? btoa(Array.from(new Uint8Array(get.result), c => String.fromCharCode(c)).join(''))
+                      : '',
+                  );
+                get.onerror = () => reject(get.error);
+              };
+            }),
+          id,
+        );
+        if (value && value !== previous)
+          return { value, x: textAt(new Uint8Array(Buffer.from(value, 'base64')), 'Beta').rect[0] };
+        await page.waitForTimeout(100);
+      }
+      throw new Error('The move was not written');
+    };
+    await page
+      .locator('input[type=file][accept="application/pdf,.pdf"]')
+      .first()
+      .setInputFiles({ name: 'guias.pdf', mimeType: 'application/pdf', buffer: bytes });
+    await page.waitForFunction(
+      () => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'guias.pdf',
+    );
+    await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    // Beta's left edge dragged 3 pt short of Alfa's: it lines up, and a guide shows where.
+    const drag = async (from, to, alt) => {
+      // The layer reads the page once the pointer is over it; the hover follows the next move.
+      let start = await toScreen(1, from, 604);
+      await page.mouse.move(start.x - 2, start.y);
+      await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      start = await toScreen(1, from, 604);
+      await page.mouse.move(start.x, start.y);
+      // A selected item shows its selection instead of the hover.
+      await page.locator('.edit-hover, .edit-selection.kind-text').first().waitFor();
+      await page.mouse.down();
+      if (alt) await page.keyboard.down('Alt');
+      const end = await toScreen(1, to, 604);
+      await page.mouse.move((start.x + end.x) / 2, end.y, { steps: 4 });
+      await page.mouse.move(end.x, end.y, { steps: 4 });
+      const guide = await page.locator('.edit-guide.vertical').count();
+      await page.mouse.up();
+      if (alt) await page.keyboard.up('Alt');
+      await settle();
+      return guide;
+    };
+    const guided = await drag(205, 205 - 137, false),
+      snapped = await draftX('');
+    assert.equal(guided, 1, 'A guide shows while it lines up');
+    assert(Math.abs(snapped.x - 60) < 0.5, `Lined up with Alfa: ${snapped.x}`);
+    // Held Alt: the same kind of drag lands where it is dropped.
+    const free = await drag(snapped.x + 5, snapped.x + 5 + 140, true),
+      dropped = await draftX(snapped.value);
+    const back = await drag(dropped.x + 5, dropped.x + 5 - 137, true),
+      loose = await draftX(dropped.value);
+    assert.equal(free + back, 0, 'No guides with Alt held');
+    assert(Math.abs(loose.x - 63) < 1, `Not lined up: ${loose.x}`);
+    await page.getByRole('button', { name: 'Listo' }).click();
+    // The reader opens the written PDF before anything else opens.
+    await page.waitForFunction(
+      () =>
+        !document.querySelector('.edit-toolbar') &&
+        !document.querySelector('canvas[data-live]') &&
+        !document.querySelector('[aria-label="Modo lectura"]:disabled'),
+    );
+    await settle();
+    return { snappedTo: Math.round(snapped.x), freeTo: Math.round(loose.x) };
+  });
+
+  await check('the-opacity-slider-shows-the-image-faded-while-sliding', async () => {
+    const faded = await PDFDocument.create(),
+      sheet = faded.addPage([595, 842]);
+    sheet.drawImage(await faded.embedPng(swatch.asPNG()), { x: 100, y: 500, width: 200, height: 150 });
+    const bytes = Buffer.from(await faded.save()),
+      id = crypto.createHash('sha256').update(bytes).digest('hex');
+    await page
+      .locator('input[type=file][accept="application/pdf,.pdf"]')
+      .first()
+      .setInputFiles({ name: 'opacidad.pdf', mimeType: 'application/pdf', buffer: bytes });
+    await page.waitForFunction(
+      () => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'opacidad.pdf',
+    );
+    await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    await pick(1, 200, 575);
+    await page.locator('.edit-selection.kind-image').waitFor();
+    // Held on the slider at about 40 %: the image shows faded before anything is written.
+    const slider = page.getByRole('slider', { name: 'Opacidad de la imagen' }),
+      track = await slider.boundingBox();
+    await page.mouse.move(track.x + track.width - 2, track.y + track.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(track.x + track.width * 0.4, track.y + track.height / 2, { steps: 6 });
+    const value = Number(await slider.inputValue()) / 100;
+    await page.waitForFunction(
+      value => {
+        const sprite = document.querySelector('.edit-sprite');
+        return sprite && Math.abs(Number(sprite.style.opacity) - value) < 0.01;
+      },
+      value,
+      { timeout: 10000 },
+    );
+    const live = await page.locator('.edit-sprite').evaluate(node => Number(node.style.opacity));
+    await page.mouse.up();
+    await settle();
+    // Letting go writes it into the PDF.
+    let opacity;
+    for (let i = 0; i < 60 && opacity === undefined; i++) {
+      const stored = await page.evaluate(
+        id =>
+          new Promise((resolve, reject) => {
+            const request = indexedDB.open('folio-library');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const get = request.result.transaction('drafts', 'readonly').objectStore('drafts').get(id);
+              get.onsuccess = () =>
+                resolve(
+                  get.result ? btoa(Array.from(new Uint8Array(get.result), c => String.fromCharCode(c)).join('')) : '',
+                );
+              get.onerror = () => reject(get.error);
+            };
+          }),
+        id,
+      );
+      if (stored)
+        opacity = items(new Uint8Array(Buffer.from(stored, 'base64'))).find(item => item.kind === 'image')?.opacity;
+      else await page.waitForTimeout(100);
+    }
+    assert(value > 0.3 && value < 0.5, `Slid to about 40 %: ${value}`);
+    assert(Math.abs(opacity - value) < 0.02, `Written: ${opacity}`);
+    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
+    return { shownWhileSliding: live, written: opacity };
   });
 } finally {
   for (const result of results) console.log(JSON.stringify(result));
@@ -732,4 +999,4 @@ try {
   await browser.close();
   server.kill();
 }
-process.exitCode = results.length === 15 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 19 && results.every(result => result.status === 'passed') ? 0 : 1;

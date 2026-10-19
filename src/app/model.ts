@@ -65,6 +65,8 @@ export type OpenContext = {
   id?: string;
   password?: string;
   modified?: boolean;
+  /** The bytes' revision, when it is already known (Editar computed it while writing them). */
+  revision?: string;
   useSession?: boolean;
   preserveHistory?: boolean;
   page?: number;
@@ -77,6 +79,9 @@ export type History = {
   annotations: Annotation[];
   bytes?: Uint8Array;
   password?: string;
+  /** Whether `bytes` differ from the document's file, and their revision. */
+  modified?: boolean;
+  revision?: string;
   page?: number;
   bookmarks?: BookmarkNode[];
   session?: true;

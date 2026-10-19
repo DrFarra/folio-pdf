@@ -1,6 +1,6 @@
 import { driveStage, driveStageNative } from '../drive';
 import { isNativePdfDocument } from '../nativePdf';
-import { rememberDocument, saveSession, storeDraft } from '../storage';
+import { discardDraft, rememberDocument, saveSession, storeDraft } from '../storage';
 import type { Annotation, LoadedDocument } from '../types';
 import { annotationFingerprint, here, type DocumentTab } from './model';
 
@@ -38,6 +38,13 @@ export class Persistence {
   /** `doc`'s bytes already are its stored draft (one recovered on opening): writing them back is skipped. */
   stored(doc: LoadedDocument) {
     this.draftWrites.set(doc, Promise.resolve());
+  }
+
+  /** Discards `id`'s draft once the drafts queued before it are written: the document is its file again. */
+  discard(id: string): Promise<void> {
+    const operation = this.drafts.catch(() => {}).then(() => discardDraft(id));
+    this.drafts = operation;
+    return operation;
   }
 
   /** Stores a modified document's PDF as its draft, once per revision. */

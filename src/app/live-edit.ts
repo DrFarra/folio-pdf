@@ -44,6 +44,8 @@ export class LiveEdit {
   private doc: LoadedDocument | null = null;
   private base: History | null = null;
   private depth = 0;
+  // The document as its file holds it, when Editar opened on it unchanged: undoing every change returns to it.
+  private origin: LoadedDocument | null = null;
   // How long the last write took (ms), whether a change waits to be written, and the writes.
   private writeMs = 0;
   private pending = false;
@@ -53,6 +55,8 @@ export class LiveEdit {
   private parking: Promise<void> | null = null;
   // The reader is reopening the parked document's PDF.
   private rebinding = false;
+  /** The document a save gave a new id (its file's): still the same document, so Editar is not started afresh. */
+  renamed: LoadedDocument | null = null;
 
   /** Parking or closing is under way: history steps wait for it. */
   get settling() {
@@ -90,6 +94,7 @@ export class LiveEdit {
     }
     const session = store.open(current);
     this.start = this.doc = current;
+    this.origin = current.modified ? null : current;
     this.depth = 0;
     this.pending = false;
     // Until a write is timed, about a millisecond per MB (a 238 MB book: ~250 ms here, longer on a laptop).
@@ -133,6 +138,19 @@ export class LiveEdit {
     const write = this.writing
       .catch(() => {})
       .then(async () => {
+        // Every change undone: the document is its file again, with nothing to write or save.
+        const origin = this.depth === 0 ? this.origin : null;
+        if (origin && this.doc) {
+          const previous = this.doc,
+            next =
+              this.start === origin
+                ? origin
+                : { ...previous, bytes: origin.bytes, revision: origin.revision, size: origin.size, modified: false };
+          if (next === previous) return;
+          this.doc = next;
+          this.host.written(previous, next);
+          return;
+        }
         const started = performance.now(),
           { bytes, revision } = await session.save();
         this.writeMs = performance.now() - started;
@@ -148,6 +166,19 @@ export class LiveEdit {
       this.host.notify(errorMessage(error, 'No se pudieron guardar los cambios de Editar.'), 'error');
     });
     return write;
+  }
+
+  /** `next` (a save of `previous`'s bytes) is now the document's file: undoing every later change returns to it. */
+  saved(previous: LoadedDocument, next: LoadedDocument) {
+    this.renamed = next;
+    if (this.start === previous) this.start = next;
+    if (this.doc !== previous) return;
+    this.doc = next;
+    if (this.base?.bytes) this.base.modified = this.base.revision !== next.revision;
+    if (!this.pending) {
+      this.origin = next;
+      this.depth = 0;
+    }
   }
 
   /** Undoes or redoes one change in the live document. */
@@ -259,6 +290,7 @@ export function useLiveEditing(
   notify: Notify,
 ) {
   useEffect(() => {
+    if (doc && live.renamed === doc) return;
     store.reset();
   }, [doc?.id, store]);
   useEffect(() => {

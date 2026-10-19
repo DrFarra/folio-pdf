@@ -24,6 +24,7 @@ export type SessionRequest =
       scale: number;
       fill?: string;
       stroke?: string;
+      opaque?: boolean;
     }
   | { type: 'edit'; operation: Operation | Operation[] }
   | { type: 'render'; page: number; scale: number; rotation: number }

@@ -34,8 +34,14 @@ export function useAutosave(
 ) {
   const live = useLatest(options);
   const saved = useRef<{ doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[] } | null>(null);
+  const previous = useRef<LoadedDocument | null>(null);
   useEffect(() => {
     const { persistence, shown, forgotten, draftStored, notify } = live.current;
+    const before = previous.current;
+    previous.current = doc;
+    // Every change undone: its draft would bring them back when the file is opened again.
+    if (doc && !doc.modified && !doc.draftSource && before?.id === doc.id && before.modified)
+      void persistence.discard(doc.id).catch(() => {});
     if (!doc?.modified || isNativePdfDocument(doc.pdf) || forgotten(doc.id)) return;
     void persistence
       .draft(doc)

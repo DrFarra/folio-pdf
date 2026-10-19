@@ -7,6 +7,8 @@ import { useLatest } from './latest';
 
 type ScrollTo = { key: string; top: number; left: number };
 type ReturnLocation = { key: string; page: number; top: number; left: number };
+/** How long «Volver a p. N» stays after a jump. */
+const RETURN_SHOWN_MS = 15000;
 
 type Position = {
   viewer: RefObject<HTMLDivElement | null>;
@@ -135,6 +137,12 @@ export function useReaderPosition(options: Position) {
     setReturnLocation(current => (current?.page === page ? null : current));
   }, [page]);
   useEffect(() => setReturnLocation(null), [doc?.pdf]);
+  // It is a moment's way back: it leaves on its own a while after the jump.
+  useEffect(() => {
+    if (!returnLocation) return;
+    const timer = setTimeout(() => setReturnLocation(null), RETURN_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [returnLocation]);
   /** Remembers where the reader is before a jump, for «Volver a p. N». */
   const rememberLocation = useCallback(() => {
     const key = live.current.activeKey();

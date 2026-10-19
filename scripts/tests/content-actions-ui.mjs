@@ -203,6 +203,13 @@ async function nativeBridge(context) {
       // Android sends PDFs as base64 (src/binary.ts).
       const payload = args =>
         args?.base64 ? [...atob(args.base64)].map(char => char.charCodeAt(0)) : [...new Uint8Array(args)];
+      // Folio identifies a PDF it wrote by the SHA-256 of its bytes, as the native side does.
+      const written = async data => {
+        const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(data)))]
+          .map(n => n.toString(16).padStart(2, '0'))
+          .join('');
+        return { id: digest, revision: digest };
+      };
       window.__TAURI_INTERNALS__ = {
         metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
         transformCallback: callback => {
@@ -245,12 +252,17 @@ async function nativeBridge(context) {
           if (command === 'write_pdf_copy') {
             const data = payload(args);
             state.writes.push({ bytes: data, headers: options?.headers });
-            return { token: 'output-copy-token', name: 'content-actions-source — copia.pdf', size: data.length };
+            return {
+              token: 'output-copy-token',
+              name: 'content-actions-source — copia.pdf',
+              size: data.length,
+              ...(await written(data)),
+            };
           }
           if (command === 'write_pdf_original') {
             const data = payload(args);
             state.originals.push({ bytes: data, headers: options?.headers });
-            return { token: 'saved-token', name, size: data.length };
+            return { token: 'saved-token', name, size: data.length, ...(await written(data)) };
           }
           if (command === 'remember_document') state.remembered.push(args);
           if (command === 'store_session') state.sessions.push(args);
@@ -461,6 +473,8 @@ try {
       await page.getByRole('textbox', { name: 'Texto', exact: true }).fill('NATIVE 2');
       await commit(page, 'edit', 2);
       // Guardar replaces the opened file through the provider; Guardar una copia asks where to write.
+      // The written file holds the bytes already open: the document is not read again, so its page stays.
+      const openPage = await page.locator('.pdf-content-picker[data-page="2"]').elementHandle();
       await page.keyboard.press(saveShortcut);
       await page.waitForFunction(() => globalThis.__contentActionsNative.originals.length === 1);
       await savedIdle(page, 2);
@@ -479,6 +493,7 @@ try {
       preserved(replaced);
       assert((await documentHeader(page).innerText()).includes('content-actions-source.pdf'));
       assert.equal(await documentHeader(page).locator('small').count(), 0);
+      assert(await openPage.evaluate(node => node.isConnected), 'Saving did not reopen the document');
       await page.keyboard.press(saveCopyShortcut);
       await savedIdle(page, 2);
       assert.equal(

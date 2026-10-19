@@ -43,6 +43,10 @@ export type OutputHost = {
     token: string | undefined,
     context: OpenContext,
   ) => Promise<boolean | undefined>;
+  /** The saved file holds `next`'s bytes, already open: it replaces `previous` wherever it is held, without reopening it. */
+  adopt: (previous: LoadedDocument, next: LoadedDocument) => void;
+  /** The document's file now has `revision`: undo steps holding other bytes read as unsaved. */
+  savedAs: (revision: string) => void;
   /** Drafts queued so far are written: a saved document's draft can be discarded. */
   draftsWritten: () => Promise<void>;
   /** Removes a library entry the saved document replaces. */
@@ -73,7 +77,10 @@ export class DocumentOutput {
     const doc = this.host.current();
     if (!doc) throw new Error('No hay documento abierto.');
     if (isNativePdfDocument(doc.pdf)) throw new Error('Usa Guardar una copia para guardar este PDF.');
-    return this.annotated(doc, this.host.annotations(), !!doc.drive);
+    const annotations = this.host.annotations();
+    // The bytes already hold these annotations: writing them again would rewrite the whole PDF for nothing.
+    if (annotationFingerprint(annotations) === doc.bytesAnnotations) return doc.bytes;
+    return this.annotated(doc, annotations, !!doc.drive);
   }
 
   /** The annotations PDFKit's file-backed document had removed, all its pages read first when an older session left them unknown. */
@@ -212,9 +219,29 @@ export class DocumentOutput {
       if (saved) {
         await host.draftsWritten().catch(() => {});
         const name = typeof saved === 'object' ? saved.name : doc.name;
+        // The file holds the very bytes open here (no annotations had to be written in): it becomes the
+        // document's file as it is. Reading a book back (PDF.js, the engine) took most of saving it.
+        const file = typeof saved === 'object' && saved.id && bytes === doc.bytes ? saved : null;
+        if (file)
+          host.adopt(doc, {
+            ...doc,
+            id: file.id!,
+            revision: file.revision || file.id!,
+            name,
+            nativeSource: file.token,
+            size: bytes.length,
+            modified: false,
+            draftSource: false,
+            sample: false,
+            outdated: undefined,
+            savedAnnotations: annotationFingerprint(host.annotations()),
+          });
         if (
-          await this.reopenSaved(bytes, name, typeof saved === 'object' ? saved.token : undefined, doc, keepEditing)
+          file ||
+          (await this.reopenSaved(bytes, name, typeof saved === 'object' ? saved.token : undefined, doc, keepEditing))
         ) {
+          const current = host.current();
+          if (current) host.savedAs(current.revision);
           await discardDraft(doc.id);
           // The saved PDF replaces the previous library entry; after a copy the original stays listed.
           if (!copy && host.current()?.id !== doc.id) await host.retire(doc.id);

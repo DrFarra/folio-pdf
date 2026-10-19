@@ -151,7 +151,9 @@ export default function EditToolbar({
   useEffect(() => {
     setOpacity(null);
     setPicked({});
-  }, [selection]);
+    // An opacity shown but never written goes with the selection it was shown for.
+    if (store.state.ghost && !store.state.committing) store.set({ ghost: null });
+  }, [selection, store]);
 
   const chooseTool = (next: EditTool) => {
     if (next === 'image') {
@@ -397,7 +399,21 @@ export default function EditToolbar({
               min={0}
               max={100}
               value={Math.round((opacity ?? selection.item.opacity ?? 1) * 100)}
-              onChange={event => setOpacity(Number(event.target.value) / 100)}
+              onChange={event => {
+                const value = Number(event.target.value) / 100;
+                setOpacity(value);
+                // The image shows the opacity while it is being chosen; letting go writes it.
+                if (!store.state.committing)
+                  store.set({
+                    ghost: {
+                      page: selection.page,
+                      kind: 'image',
+                      item: selection.item,
+                      rect: selection.item.rect,
+                      opacity: value,
+                    },
+                  });
+              }}
               onPointerUp={() => {
                 if (opacity !== null) fadeSelection(store, opacity);
               }}
@@ -518,7 +534,7 @@ export default function EditToolbar({
                   : selection?.kind === 'image'
                     ? 'Arrastra para moverla · las esquinas cambian el tamaño (Mayús: libre)'
                     : selection?.kind === 'graphic'
-                      ? 'Arrastra para moverlo · Alt+clic elige lo que está debajo · Supr lo elimina'
+                      ? 'Arrastra para moverlo (con Alt, sin guías) · Otro clic elige lo que está debajo · Supr lo elimina'
                       : selection?.kind === 'shape'
                         ? 'Arrastra para moverla · los tiradores cambian el tamaño'
                         : HINTS[tool])

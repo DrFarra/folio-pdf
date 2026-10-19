@@ -22,7 +22,7 @@ export type ReadRequest = {
   nativeSource?: string;
   drive?: DriveBinding;
   /** Present when Folio reopens a document it already has (an edit, a save, a Drive copy). */
-  context?: { id?: string; modified?: boolean; password?: string };
+  context?: { id?: string; modified?: boolean; password?: string; revision?: string };
   signal: AbortSignal;
   /** False once a newer open has started: this one stops and releases what it holds. */
   current: () => boolean;
@@ -150,7 +150,10 @@ export async function readDocument(request: ReadRequest): Promise<ReadDocument |
         request.onRecovered();
       }
     }
-    revision = (bytes === originalBytes && (nativeInput?.id || contentId)) || draftId || (await digest(bytes));
+    revision =
+      (bytes === originalBytes && (context?.revision || nativeInput?.id || contentId)) ||
+      draftId ||
+      (await digest(bytes));
     size = bytes.length;
     const task = getDocument({ data: new Uint8Array(bytes), password, ...pdfAssetSettings() });
     request.onTask(task);

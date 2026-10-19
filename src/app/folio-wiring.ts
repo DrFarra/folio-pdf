@@ -4,7 +4,7 @@ import { uid } from './model';
 import type { Area } from '../engine/operations.ts';
 import type { AnnotationDraft } from '../text-selection';
 import { useEdgeSwipeBack } from '../edge-swipe';
-import { touchDocument } from '../storage';
+import { rememberDocument, touchDocument } from '../storage';
 import type { Annotation, PDFNavigationTarget } from '../types';
 import type { useFolioState } from './folio-state';
 import type { useFolioReader } from './folio-reader';
@@ -278,6 +278,31 @@ export function useFolioWiring(f: Layer5) {
     reopen: (source, name, token, context) => openDocument(source, name, false, token, context),
     draftsWritten: () => persistence.draftsWritten,
     retire: retireLibraryEntry,
+    adopt: (previous, next) => {
+      tabStore.list = tabStore.list.map(tab => (tab.doc === previous ? { ...tab, doc: next } : tab));
+      if (docRef.current === previous) {
+        docRef.current = next;
+        setDoc(next);
+      }
+      liveEdit.saved(previous, next);
+      tabStore.publish();
+      if (preferencesRef.current.rememberRecent && !libraryStore.forgotten.has(next.id))
+        libraryStore.enqueue(
+          () =>
+            rememberDocument({
+              id: next.id,
+              name: next.name,
+              size: next.size,
+              pages: next.pdf.numPages,
+              openedAt: Date.now(),
+              nativeSource: next.nativeSource,
+            }),
+          () => notify('No se pudo guardar este PDF en la biblioteca.', 'error'),
+        );
+    },
+    savedAs: revision => {
+      for (const step of [...history.undo, ...history.redo]) if (step.bytes) step.modified = step.revision !== revision;
+    },
     downloaded: current => {
       downloadedDrafts.current.add(current);
       tabStore.publish();

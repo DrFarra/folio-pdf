@@ -105,6 +105,23 @@
 .edit-ghost > .edit-handle {
   pointer-events: none;
 }
+/* A line a moved item's edge or centre lines up on, across the page. */
+.edit-guide {
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+  background: #e5397f;
+}
+.edit-guide.vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.edit-guide.horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
 .edit-marquee {
   position: absolute;
   pointer-events: none;

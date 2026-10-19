@@ -201,11 +201,11 @@ export class EditStore {
     );
   }
   /** The item alone, to move on screen; only the live document draws it. */
-  sprite(doc: LoadedDocument, page: number, item: PageContentItem, scale: number, colors?: Colors) {
+  sprite(doc: LoadedDocument, page: number, item: PageContentItem, scale: number, colors?: Colors, opaque = false) {
     const session = this.live(doc) && this.session;
-    return this.picture(doc, page, `sprite:${item.id}:${scale}:${colors?.fill}:${colors?.stroke}`, () =>
+    return this.picture(doc, page, `sprite:${item.id}:${scale}:${colors?.fill}:${colors?.stroke}:${opaque}`, () =>
       session
-        ? session.sprite(page, { id: item.id, kind: item.kind, rect: item.rect }, scale, colors)
+        ? session.sprite(page, { id: item.id, kind: item.kind, rect: item.rect }, scale, colors, opaque)
         : Promise.resolve(null),
     );
   }

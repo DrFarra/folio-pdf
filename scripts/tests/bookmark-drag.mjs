@@ -236,10 +236,11 @@ try {
   await page.waitForFunction(
     () => !document.querySelector('.loading-overlay') && !document.querySelector('.download-button')?.disabled,
   );
-  assert.notEqual(
+  // Folio's bookmarks live in its session, not in the PDF: with nothing else changed, the download is the file itself.
+  assert.equal(
     createHash('sha256').update(fs.readFileSync(saved)).digest('hex'),
     hash,
-    'The download carries the edited outline.',
+    'The download is the unchanged PDF.',
   );
   // A web download is an export: the document keeps its session, so reopening it restores the branch.
   await waitParent('mother', null);

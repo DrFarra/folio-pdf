@@ -14,7 +14,7 @@ const out = await mkdtemp(path.join(root, 'test-results', 'app-logic-'));
 const entry = path.join(out, 'logic.mjs');
 await build({
   stdin: {
-    contents: `export * from './src/app/shortcuts.ts'; export * from './src/app/document-status.ts'; export { toggledBookmark, withNote, commentFor } from './src/app/marks.ts'; export { centeredArea } from './src/app/tool-sections.ts';`,
+    contents: `export * from './src/app/shortcuts.ts'; export * from './src/app/document-status.ts'; export { toggledBookmark, withNote, commentFor } from './src/app/marks.ts'; export { centeredArea } from './src/app/tool-sections.ts'; export { snapBox } from './src/edit/snap.ts';`,
     resolveDir: root,
     loader: 'ts',
   },
@@ -181,5 +181,21 @@ assert.equal(
   false,
   'A downloaded web PDF no longer reads as unsaved.',
 );
+
+// Editar's guides: an edge or centre within reach lines up, each axis on its own, the nearest line first.
+const page = { width: 600, height: 800 },
+  other = { x: 100, y: 100, w: 200, h: 50 };
+assert.deepEqual(logic.snapBox({ x: 104, y: 300, w: 50, h: 20 }, [other], page, 6), {
+  box: { x: 100, y: 300, w: 50, h: 20 },
+  x: 100,
+  y: undefined,
+});
+assert.deepEqual(
+  logic.snapBox({ x: 400, y: 389, w: 40, h: 20 }, [], page, 6).box,
+  { x: 400, y: 390, w: 40, h: 20 },
+  'The page centre',
+);
+assert.equal(logic.snapBox({ x: 120, y: 300, w: 50, h: 20 }, [other], page, 6).x, undefined, 'Out of reach');
+assert.equal(logic.snapBox({ x: 294, y: 300, w: 10, h: 10 }, [other], page, 6).box.x, 295, 'Right edges line up');
 
 console.log(JSON.stringify({ id: 'app-logic', status: 'passed' }));

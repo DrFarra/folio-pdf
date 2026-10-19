@@ -10,6 +10,7 @@ import {
   type EditStore,
   type Picture,
   type Rect,
+  type Selection as EditSelection,
   type ShapeKind,
   type TextDraft,
 } from './store';
@@ -25,9 +26,12 @@ import {
 } from './actions';
 import { parseFontName } from './fonts';
 import { ShapeSvg } from './ShapeLayer';
+import { snapBox } from './snap';
 import './edit.css';
 
 type Point = { x: number; y: number };
+/** How near (px) an edge or centre must come to another's to line up with it. */
+const SNAP_REACH = 6;
 type Box = { x: number; y: number; w: number; h: number };
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end';
 type Target = { kind: ContentKind; item: PageContentItem } | { kind: 'shape'; shape: Annotation };
@@ -40,6 +44,8 @@ type Gesture =
       moved: boolean;
       wasSelected: boolean;
       group?: PageContentItem[];
+      /** Alt held: the item moves freely, without lining up with the others. */
+      free?: boolean;
     }
   | { mode: 'marquee'; start: Point; now: Point; add: boolean }
   | { mode: 'resize'; target: Target; handle: Handle; start: Point; now: Point; free: boolean }
@@ -197,11 +203,13 @@ function Sprite({
   colors?: Colors;
   fallback: React.ReactNode;
 }) {
-  const want = `${item.id}:${item.rect}:${scale}:${colors?.fill}:${colors?.stroke}`;
+  // An image fading to another opacity is drawn opaque and faded here, so the opacity shows as it is chosen.
+  const opaque = item.kind === 'image' && opacity !== undefined;
+  const want = `${item.id}:${item.rect}:${scale}:${colors?.fill}:${colors?.stroke}:${opaque}`;
   const [sprite, setSprite] = useState<(Picture & { for: string }) | null>(null);
   useEffect(() => {
     let alive = true;
-    void store.sprite(doc, number, item, scale, colors).then(found => {
+    void store.sprite(doc, number, item, scale, colors, opaque).then(found => {
       if (alive) setSprite(found && { ...found, for: want });
     });
     return () => {
@@ -515,6 +523,10 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     return hits;
   }
   const hitTest = (p: Point): Target | null => hitAll(p)[0] ?? null;
+  const selectionOf = (target: Target): EditSelection =>
+    target.kind === 'shape'
+      ? { kind: 'shape', page: number, id: target.shape.id }
+      : { kind: target.kind, page: number, item: target.item };
   const same = (a: Target | null, b: Target | null) =>
     !!a &&
     !!b &&
@@ -532,8 +544,22 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
   const others = selection?.kind !== 'shape' ? (selection?.others ?? []) : [];
   const targetBox = (target: Target) => (target.kind === 'shape' ? toBox(target.shape.rect) : toBox(target.item.rect));
 
-  /** The box (or line ends) a gesture is showing. */
-  function preview(current: Gesture): { box: Box; line?: [Point, Point] } {
+  /** What a moved item lines up with: the page's other items and Folio's shapes. */
+  function alignable(current: Gesture & { mode: 'move' }): Box[] {
+    const moving = current.group ? current.group.map(item => item.id) : [];
+    const own = (id: string) =>
+      moving.includes(id) ||
+      (current.target.kind === 'shape' ? current.target.shape.id === id : current.target.item.id === id);
+    return [
+      ...(items || [])
+        .filter(item => (item.kind !== 'text' || item.level === 'paragraph') && !own(item.id))
+        .map(item => toBox(item.rect)),
+      ...shapes.filter(shape => !own(shape.id)).map(shape => toBox(shape.rect)),
+    ];
+  }
+
+  /** The box (or line ends) a gesture is showing, and the guides a move lines up on. */
+  function preview(current: Gesture): { box: Box; line?: [Point, Point]; guides?: { x?: number; y?: number } } {
     const dx = current.now.x - current.start.x,
       dy = current.now.y - current.start.y;
     if (current.mode === 'create' || current.mode === 'marquee') {
@@ -579,7 +605,15 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
             Math.min(0, bound.y),
             Math.min(bound.y + dy, Math.max(viewport.height, bound.y + bound.h) - bound.h),
           ) - bound.y;
-      const box = { ...base, x: base.x + sx, y: base.y + sy };
+      let box = { ...base, x: base.x + sx, y: base.y + sy },
+        guides: { x?: number; y?: number } | undefined;
+      // Edges and centres line up with the other items within a few pixels, unless Alt is held.
+      if (!current.free) {
+        const moved = { ...bound, x: bound.x + sx, y: bound.y + sy },
+          snapped = snapBox(moved, alignable(current), viewport, SNAP_REACH);
+        box = { ...box, x: box.x + snapped.box.x - moved.x, y: box.y + snapped.box.y - moved.y };
+        if (snapped.x !== undefined || snapped.y !== undefined) guides = { x: snapped.x, y: snapped.y };
+      }
       if (target.kind === 'shape' && target.shape.line) {
         const a = toPoint(target.shape.line[0], target.shape.line[1]),
           b = toPoint(target.shape.line[2], target.shape.line[3]),
@@ -591,9 +625,10 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
             { x: a.x + mx, y: a.y + my },
             { x: b.x + mx, y: b.y + my },
           ],
+          guides,
         };
       }
-      return { box };
+      return { box, guides };
     }
     if (target.kind === 'shape' && target.shape.line) {
       const a = toPoint(target.shape.line[0], target.shape.line[1]),
@@ -732,10 +767,18 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     }
     const target = current.target;
     if (current.mode === 'move' && !current.moved) {
-      // A click on one item of a group selects it alone; a second click on selected text starts typing in it.
+      // A click on one item of a group selects it alone. Another click on the selection picks what lies
+      // under it, each click one deeper and back to the top; selected text with nothing under it starts typing.
       if (current.group && target.kind !== 'shape') store.set({ selection: selectItems(number, [target.item]) });
-      else if (current.wasSelected && target.kind === 'text' && target.item.editable && items)
-        editText(store, number, target.item, items);
+      else if (current.wasSelected) {
+        const stack = hitAll(current.start).filter(hit => hit.kind === 'shape' || hit.item.editable);
+        if (stack.length > 1)
+          store.set({
+            notice: '',
+            selection: selectionOf(stack[(stack.findIndex(hit => same(hit, target)) + 1) % stack.length]),
+          });
+        else if (target.kind === 'text' && target.item.editable && items) editText(store, number, target.item, items);
+      }
       return;
     }
     if (current.mode === 'move' && current.group && target.kind !== 'shape') {
@@ -787,11 +830,16 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       update({ mode: 'resize', target: selected, handle, start: p, now: p, free: event.shiftKey });
       return;
     }
-    // Alt+click reaches what lies under the selection.
+    // The selection under the pointer stays the target, even beneath something else, so it can be
+    // dragged and another click goes one deeper (finish); Alt+click goes one deeper at once.
     const hits = hitAll(p),
       below = hits.findIndex(hit => same(hit, selected));
     const target =
-      (event.altKey && hits.length > 1 ? hits[below < 0 ? 1 : (below + 1) % hits.length] : hits[0]) ?? null;
+      (event.altKey && hits.length > 1
+        ? hits[below < 0 ? 1 : (below + 1) % hits.length]
+        : below >= 0
+          ? hits[below]
+          : hits[0]) ?? null;
     if (tool !== 'select' && !(tool === 'text' && target?.kind === 'text')) {
       if (tool === 'image' && !pendingImage) return;
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -825,14 +873,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
     }
     const wasSelected = same(target, selected),
       inGroup = target.kind !== 'shape' && group.length > 1 && group.some(item => item.id === target.item.id);
-    if (!inGroup)
-      store.set({
-        notice: '',
-        selection:
-          target.kind === 'shape'
-            ? { kind: 'shape', page: number, id: target.shape.id }
-            : { kind: target.kind, page: number, item: target.item },
-      });
+    if (!inGroup) store.set({ notice: '', selection: selectionOf(target) });
     event.currentTarget.setPointerCapture(event.pointerId);
     update({ mode: 'move', target, start: p, now: p, moved: false, wasSelected, ...(inGroup ? { group } : {}) });
   }
@@ -847,8 +888,7 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
       update({
         ...current,
         now: p,
-        ...(current.mode === 'move' ? { moved } : {}),
-        ...(current.mode !== 'move' ? { free: event.shiftKey } : {}),
+        ...(current.mode === 'move' ? { moved, free: event.altKey } : { free: event.shiftKey }),
       } as Gesture);
       return;
     }
@@ -1091,6 +1131,12 @@ export default function EditLayer({ store, doc, number, viewport, page, canvas, 
           className="edit-selection dragging"
           style={{ left: live.box.x, top: live.box.y, width: live.box.w, height: live.box.h }}
         />
+      )}
+      {live?.guides?.x !== undefined && (
+        <div className="edit-guide vertical" style={{ left: live.guides.x }} aria-hidden="true" />
+      )}
+      {live?.guides?.y !== undefined && (
+        <div className="edit-guide horizontal" style={{ top: live.guides.y }} aria-hidden="true" />
       )}
       {live && gesture?.mode === 'marquee' && (
         <div

@@ -4741,6 +4741,8 @@ export function itemSprite(
     scale: number;
     fill?: string;
     stroke?: string;
+    /** An image drawn fully opaque, for the reader to fade it to an opacity being chosen. */
+    opaque?: boolean;
   },
 ): PagePlate {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
@@ -4809,7 +4811,14 @@ export function itemSprite(
       }
     } else {
       const selection = pageContent(doc, page, undefined, { id: options.id, kind: options.kind, rect: area });
-      const drawn = movedDrawing(page, selection, options.kind === 'text', sourceBox, sourceBox, {});
+      const drawn = movedDrawing(
+        page,
+        selection,
+        options.kind === 'text',
+        sourceBox,
+        sourceBox,
+        options.opaque && options.kind === 'image' ? { opacity: 1 } : {},
+      );
       release = drawn.release;
       drawn.draw(device, true);
     }

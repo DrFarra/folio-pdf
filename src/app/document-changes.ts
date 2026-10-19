@@ -49,7 +49,15 @@ export class DocumentChanges {
     const { host } = this,
       doc = host.current()!,
       { page, bookmarks } = host.reading();
-    return { bytes: doc.bytes, password: doc.password, annotations: host.annotations(), page, bookmarks };
+    return {
+      bytes: doc.bytes,
+      password: doc.password,
+      modified: doc.modified,
+      revision: doc.revision,
+      annotations: host.annotations(),
+      page,
+      bookmarks,
+    };
   }
 
   /** Reopens `doc` with new bytes in place of its copy. */
@@ -76,6 +84,9 @@ export class DocumentChanges {
       if (
         !(await this.reopen(doc, step.bytes, {
           password: step.password,
+          // Back to the PDF before every change: the document is its file again.
+          modified: step.modified ?? true,
+          revision: step.revision,
           page: quiet ? host.reading().page : step.page,
           bookmarks: step.bookmarks,
           quiet,
@@ -101,7 +112,16 @@ export class DocumentChanges {
       { page, bookmarks } = host.reading();
     host.setBusy(true);
     try {
-      if (await this.reopen(doc, doc.bytes, { password: doc.password, page, bookmarks, quiet: true }))
+      if (
+        await this.reopen(doc, doc.bytes, {
+          password: doc.password,
+          modified: doc.modified,
+          revision: doc.revision,
+          page,
+          bookmarks,
+          quiet: true,
+        })
+      )
         host.setAnnotations(annotations);
     } finally {
       host.setBusy(false);

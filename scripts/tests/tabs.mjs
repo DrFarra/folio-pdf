@@ -852,6 +852,18 @@ try {
     await page.waitForFunction(() => document.querySelector('[aria-label="Número de página"]')?.value === '1');
     return { returnShownAfterSmoothJump: true, returnRestoresPage: true };
   });
+
+  await check('return-location-leaves-on-its-own', async page => {
+    await page.getByRole('button', { name: 'Páginas', exact: true }).click();
+    await page.getByRole('button', { name: 'Ir a página 3', exact: true }).click();
+    const back = page.getByRole('button', { name: 'Volver a p. 1', exact: true });
+    await back.waitFor();
+    // Still there a while after the jump, gone once its moment has passed.
+    await page.waitForTimeout(10000);
+    assert.equal(await back.count(), 1, '«Volver a p. N» stays for a while');
+    await back.waitFor({ state: 'detached', timeout: 8000 });
+    return { leavesOnItsOwn: true };
+  });
 } finally {
   await browser?.close();
   preview.kill();
