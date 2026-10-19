@@ -10,11 +10,12 @@ import type { useFolioState } from './folio-state';
 import type { useFolioReader } from './folio-reader';
 import type { useFolioDocuments } from './folio-documents';
 import type { useFolioCommands } from './folio-commands';
+import type { useFolioInput } from './folio-input';
 
-type Layer4 = ReturnType<typeof useFolioState> & ReturnType<typeof useFolioReader> & ReturnType<typeof useFolioDocuments> & ReturnType<typeof useFolioCommands>;
+type Layer5 = ReturnType<typeof useFolioState> & ReturnType<typeof useFolioReader> & ReturnType<typeof useFolioDocuments> & ReturnType<typeof useFolioCommands> & ReturnType<typeof useFolioInput>;
 
 /** Connects the controllers to the app (their hosts), Editar's actions and the pages' event handlers. */
-export function useFolioWiring(f: Layer4) {
+export function useFolioWiring(f: Layer5) {
   const { activateTab, activeView, annotatedBytes, annotationRef, applyOperation, bookmarkRef, busyRef, cancelScrollRestore, captureTab, changes, closeTab, closeWorkbench,
     commentHighlight, commitAnnotations, discardOpenTabs, dismissToast, doc, docRef, downloadedDrafts, driveAvailable, driveLibrary, editNote, editStore, editingRef,
     editorDraftRef, goToPage, history, inlineEditing, library, libraryStore, liveEdit, loadingRef, mobileAnnotating, mobilePage, navigatePDF, notify, onAnnotate, onArea,

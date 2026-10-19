@@ -4,9 +4,8 @@ import { readImage } from '../edit/EditToolbar';
 import { errorMessage } from '../errors';
 import { isAndroid, isDesktop, isMac, isMobile, isNative, setKeepAwake, setReaderChrome, startupDocuments, type NativeDocument } from '../platform';
 import type { Notify } from './notices';
+import { useLatest } from './latest';
 
-/** The latest value, so listeners registered once still see the current render's handlers. */
-function useLatest<T>(value: T) { const ref = useRef(value); ref.current = value; return ref; }
 
 type SystemOpens = {
   open: (file: NativeDocument) => Promise<unknown>;

@@ -3,6 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { openExternalUrl } from '../platform';
 import type { LoadedDocument, PDFNavigationTarget } from '../types';
 import type { Notify } from './notices';
+import { useLatest } from './latest';
 
 type ScrollTo = { key: string; top: number; left: number };
 type ReturnLocation = { key: string; page: number; top: number; left: number };
@@ -26,7 +27,7 @@ type Position = {
  * document reopens at, «Volver a p. N» after a jump, and the PDF's own links. */
 export function useReaderPosition(options: Position) {
   const { viewer, doc, page, setPage, readingMode, rotation } = options;
-  const live = useRef(options); live.current = options;
+  const live = useLatest(options);
   const [pageInput, setPageInput] = useState('1');
   // The field holds what is typed until it is committed.
   const pageInputDirty = useRef(false);

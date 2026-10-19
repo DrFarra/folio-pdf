@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useExit } from '../motion';
 import { rememberSearch } from '../search-snippet';
 import type { SideTab, Tool } from '../types';
 import { searchTerm } from './model';
 import type { useDocumentSearch } from './search';
+import { useLatest } from './latest';
 
 /** The explorer's tabs on touch layouts: three in the side drawer, annotations in their own. */
 export const explorerIds = ['pages', 'outline', 'bookmarks', 'annotations'] as const;
@@ -30,7 +32,7 @@ type Panels = {
  * touch layouts the drawers' keyboard focus. */
 export function usePanels(options: Panels) {
   const { touch, phone, sidebar, setSidebar, sideTab, setSideTab, notesOpen, setNotesOpen, searchOpen, setSearchOpen, search, input, setTool, setAnnotating, showChrome } = options;
-  const live = useRef(options); live.current = options;
+  const live = useLatest(options);
   // The search a result was last visited for (Enter goes to the next one only then), and Enter
   // pressed before the typing pause; the panel open before searching, to restore.
   const visited = useRef<string | null>(null), submitPending = useRef(false), panelBeforeSearch = useRef(false);
@@ -70,7 +72,7 @@ export function usePanels(options: Panels) {
     requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('folio:reveal-search-result', { detail: { page: results[next].page, offset: results[next].offset } })));
     if (touch) { input.current?.blur(); setSidebar(false); setNotesOpen(false); showChrome(); }
   };
-  const goToResultRef = useRef(goToResult); goToResultRef.current = goToResult;
+  const goToResultRef = useLatest(goToResult);
   useEffect(() => { if (submitPending.current) { submitPending.current = false; goToResultRef.current(0); } }, [search.results]);
   /** Enter (`step` 1, or 0 to show the current result) and Shift+Enter (-1). */
   const submitSearch = (step: number) => {
@@ -116,4 +118,17 @@ export function usePanels(options: Panels) {
   /** A page chosen in a panel: remembered for «Volver», and on touch the drawer closes. */
   const showPage = (number: number) => { live.current.rememberLocation(); live.current.goToPage(number); if (touch) closeMobilePanel(); };
   return { goToResult, submitSearch, stepResult, typeQuery, openSearch, closeSearch, closeMobilePanel, openExplorer, toggleSidePanel, showExplorerTab, showPage, focusRail };
+}
+
+/** The touch drawers (explorer, annotations) stay mounted while they slide away. Only the one
+ * open last slides away; one replaced by a tab switch is already gone. `drawerSwap` marks a
+ * switch between them, which swaps their content instead of closing and reopening. */
+export function useDrawerExit(touch: boolean, sidebar: boolean, notesOpen: boolean) {
+  const sidebarLeaving = useExit(touch && sidebar), notesLeaving = useExit(touch && notesOpen);
+  const [drawerSwap, setDrawerSwap] = useState(false);
+  const last = useRef<'sidebar' | 'notes'>('sidebar');
+  if (sidebar) last.current = 'sidebar'; else if (notesOpen) last.current = 'notes';
+  useEffect(() => { if (!sidebar && !notesOpen) setDrawerSwap(false); }, [sidebar, notesOpen]);
+  return { sidebarLeaving, notesLeaving, drawerSwap, setDrawerSwap,
+    sidebarShown: sidebar || sidebarLeaving && last.current === 'sidebar', notesShown: notesOpen || notesLeaving && last.current === 'notes' };
 }

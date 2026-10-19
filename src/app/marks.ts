@@ -4,6 +4,7 @@ import { addPageBookmark, deleteBookmark, hasBookmarkPage } from '../bookmarks';
 import { addHighlights } from '../highlight-merge';
 import type { AnnotationDraft } from '../text-selection';
 import { uid, type History, type NoteDraft } from './model';
+import { useLatest } from './latest';
 
 /** The document's annotations and bookmarks: what is shown, and the latest value (refs) for
  * code that runs between renders. `commit…` changes them as a user's edit, with an undo step
@@ -12,7 +13,7 @@ export function useMarks(record: (step: History, gesture?: string) => void, edit
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [bookmarks, setBookmarks] = useState<BookmarkNode[]>([]);
   const annotationRef = useRef<Annotation[]>([]), bookmarkRef = useRef<BookmarkNode[]>([]);
-  const live = useRef({ record, edited }); live.current = { record, edited };
+  const live = useLatest({ record, edited });
   const showAnnotations = useCallback((next: Annotation[]) => { annotationRef.current = next; setAnnotations(next); }, []);
   const showBookmarks = useCallback((next: BookmarkNode[]) => { bookmarkRef.current = next; setBookmarks(next); }, []);
   const commitAnnotations = useCallback((next: Annotation[], gesture?: string) => {

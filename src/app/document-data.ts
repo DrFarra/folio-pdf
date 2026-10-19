@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { errorMessage } from '../errors';
 import { markDrive, readCover, renderCover, saveCover } from '../library-meta';
@@ -8,6 +8,7 @@ import { readOutline, readPageLabel, readPageLabels } from '../pdf';
 import type { Annotation, LoadedDocument, OutlineEntry } from '../types';
 import { annotationFingerprint } from './model';
 import type { Notify } from './notices';
+import { useLatest } from './latest';
 
 /** Reads the document's outline when it opens (empty when it has none or it cannot be read). */
 export function useOutlineLoader(doc: LoadedDocument | null, setOutline: (outline: OutlineEntry[]) => void) {
@@ -47,7 +48,7 @@ export function usePageLabels(pdf: PDFDocumentProxy | undefined, page: number) {
 
 /** The library shows page one as each document's cover; it is rendered once, when idle. */
 export function useLibraryCover(doc: LoadedDocument | null) {
-  const latest = useRef(doc); latest.current = doc;
+  const latest = useLatest(doc);
   const id = doc?.id;
   useEffect(() => {
     const current = latest.current;
@@ -63,7 +64,7 @@ export function useLibraryCover(doc: LoadedDocument | null) {
 /** iOS reads a file-backed PDF's own annotations page by page as PDFKit shows them: each
  * page's are added to Folio's (an older session's are matched up first) once. */
 export function useNativeAnnotations(doc: LoadedDocument | null, annotations: { current: () => Annotation[]; set: (next: Annotation[]) => void; shown: (doc: LoadedDocument) => boolean; notify: Notify }) {
-  const live = useRef(annotations); live.current = annotations;
+  const live = useLatest(annotations);
   useEffect(() => {
     if (!doc || !isNativePdfDocument(doc.pdf)) return;
     return subscribeNativePdfAnnotations(doc.pdf, (number, originals) => {

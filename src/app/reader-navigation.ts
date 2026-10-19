@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import type { LoadedDocument } from '../types';
 import { inView } from '../components/PDFPage';
+import { useLatest } from './latest';
 
 type Viewer = RefObject<HTMLDivElement | null>;
 // Menus and sheets over the reader keep their taps to themselves.
@@ -10,7 +11,7 @@ const overlays = 'dialog[open],.document-switcher,.highlight-annotation-menu,.hi
  * `idle` is false while a tool, panel or task takes the taps. Any reader interaction
  * (`folio:reader-interaction`) shows the controls again. */
 export function useReaderTaps(viewer: Viewer, active: boolean, idle: boolean, handlers: { doubleTap: (event: PointerEvent) => void; toggleChrome: () => void; showChrome: () => void }) {
-  const live = useRef(handlers); live.current = handlers;
+  const live = useLatest(handlers);
   useEffect(() => {
     const root = viewer.current;
     if (!active || !root) return;
@@ -48,7 +49,7 @@ export function useReaderTaps(viewer: Viewer, active: boolean, idle: boolean, ha
 
 /** Single-page reading on touch: a horizontal swipe turns the page (`turn(1)` forward). */
 export function useSwipePages(viewer: Viewer, enabled: boolean, turn: (step: 1 | -1) => void) {
-  const live = useRef(turn); live.current = turn;
+  const live = useLatest(turn);
   useEffect(() => {
     const root = viewer.current;
     if (!enabled || !root) return;
@@ -86,7 +87,7 @@ type Tracking = {
  * scrolls the reader by `distance` (`scrollBy`; null only stops a jump), smoothly if asked: while that animation passes other
  * pages the current page stays the target, and tracking resumes when it ends or the user scrolls. */
 export function usePageTracking({ viewer, doc, readingMode, page, enabled, ...callbacks }: Tracking) {
-  const live = useRef(callbacks); live.current = callbacks;
+  const live = useLatest(callbacks);
   const smoothJump = useRef(0), smoothJumps = useRef(0), track = useRef(() => {});
   useEffect(() => {
     const root = viewer.current;

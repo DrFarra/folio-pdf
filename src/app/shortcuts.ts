@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { isMac, isNative } from '../platform';
+import { useLatest } from './latest';
 
 /** What a key press asks for. `undefined` leaves it to the page. */
 export type Shortcut =
@@ -108,7 +109,7 @@ export function menuShortcut(id: string, context: { modal: boolean; editor: bool
 
 /** Calls `handle` for each key press the page has not handled yet. */
 export function useKeyboard(handle: (event: KeyboardEvent) => void) {
-  const live = useRef(handle); live.current = handle;
+  const live = useLatest(handle);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => { if (!event.defaultPrevented) live.current(event); };
     window.addEventListener('keydown', listener);

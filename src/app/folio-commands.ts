@@ -3,17 +3,12 @@ import { errorMessage } from '../errors';
 import { isNativePdfDocument } from '../nativePdf';
 import { type History } from './model';
 import type { Area, Operation, PageEntry } from '../engine/operations.ts';
-import { paletteCommands } from './palette-commands';
 import { commentFor, patched, toggledBookmark, withAdded, withNote, without } from './marks';
-import { menuShortcut, readShortcut, useKeyboard, type Shortcut } from './shortcuts';
-import { useAndroidBack, useMacMenu } from './native-events';
-import { hasBookmarkPage } from '../bookmarks';
 import { highlightSelection } from '../text-selection';
 import type { AnnotationDraft } from '../text-selection';
-import { editKey } from '../edit/keys';
 import { isNative, pickNativeDocuments, haptic, type Anchor } from '../platform';
 import type { Annotation, LoadedDocument, RecentDocument, Tool } from '../types';
-import { documentStatus, isUnsaved, pageCounter as pageCounterOf, pageName as pageNameOf, turnedPage } from './document-status';
+import { documentStatus, isUnsaved, pageCounter as pageCounterOf, pageName as pageNameOf } from './document-status';
 import { centeredArea } from './tool-sections';
 import type { useFolioState } from './folio-state';
 import type { useFolioReader } from './folio-reader';
@@ -21,33 +16,15 @@ import type { useFolioDocuments } from './folio-documents';
 
 type Layer3 = ReturnType<typeof useFolioState> & ReturnType<typeof useFolioReader> & ReturnType<typeof useFolioDocuments>;
 
-/** What the user does: the commands of the keyboard, the palette and the menus, and the actions on annotations, tools, files and the library. */
+/** What the user can do: the actions on annotations and bookmarks, files and tools, the library
+ * and the document's output, and what the interface says about the document. */
 export function useFolioCommands(f: Layer3) {
-  const { activeTabKey, annotationRef, annotations, bookmarkRef, bookmarks, busy, busyRef, captureTab, changeZoom, changes, chooseTheme, closeMobilePanel, closeSearch, closeTab,
-    commitAnnotations, commitBookmarks, confirmClear, currentPageLabel, doc, docRef, downloadedDrafts, driveAvailable, driveLibrary, driveMessage, editStore, editingRef,
-    editorDraftRef, fileInput, goToPage, history, library, libraryStore, loading, loadingRef, mobileAnnotating, mobileTabs, navigate, noteDraft, noteOrigin, noteText,
-    notesOpen, notify, openDocument, openExplorer, openNote, openSearch, outline, output, page, pageLabels, phone, phoneRef, picking, readerChromeHidden,
-    readingPreferences, recents, rememberLocation, resultIndex, resultLimit, results, returnLocation, returnPage, returnToPlace, searchInput, searchOpen, setActiveNote,
-    setBookmarkEditingId, setCapabilityNotice, setConfirmClear, setCreating, setCustomScale, setDeleteTarget, setDriveLibrary, setEditArea, setEditing, setHelp, setInfo,
-    setLibrary, setMobileAnnotating, setMobileTabs, setNoteDraft, setNotesOpen, setPageInput, setPageJump, setPalette, setReaderChromeHidden, setReadingPreferences,
-    setRedactions, setSearchOpen, setSettings, setShortcutsOpen, setSideTab, setSidebar, setTool, setViewSettings, setWorkbench, setZoomMode, showExplorerTab, showPage,
-    sideTab, sidebar, spread, stepResult, storageFailed, switchTab, tabStore, tabs, tool, toolSections, touchLayout, touchRef, viewer, workbench, workbenchRef } = f;
-  // The palette's commands, built when it opens.
-  const commands = () => paletteCommands({ doc, idle: !busy && !loading, pageName, saveLabel, bookmarked: hasBookmarkPage(bookmarks, page),
-    canUndo: history.undo.length > 0, canRedo: history.redo.length > 0, returnPage,
-    pageTone: readingPreferences.pageTone, outline, driveAvailable,
-    tabs: tabs.filter(tab => tab.key !== activeTabKey).map(tab => ({ key: tab.key, name: tab.doc.name })),
-    recents: recents.filter(item => !tabs.some(tab => tab.doc.id === item.id)),
-    run: { save: () => void download(), print: () => void printDocument(), share: () => void shareDocument(), edit: openEditor, tools: openTools,
-      split: () => { openTools(); setWorkbench('split'); }, info: () => setInfo(true), close: closeActiveTab,
-      jump: () => { setPageInput(String(page)); setPageJump(true); }, goTo: number => goToPage(number), back: returnToLocation, bookmark: toggleBookmark,
-      chapter: number => { if (!returnLocation) rememberLocation(); goToPage(number, false); },
-      search: openSearch, explorer: openExplorer, annotations: () => { if (touchLayout) showExplorerTab('annotations'); else setNotesOpen(true); },
-      highlight: () => { setMobileAnnotating(true); activateHighlight(); }, tool: next => { if (next !== 'select') setMobileAnnotating(true); setTool(next); }, undo, redo,
-      zoom: changeZoom, fit: setZoomMode, actualSize: () => { setCustomScale(1); setZoomMode('custom'); }, tone: pageTone => setReadingPreferences(current => ({ ...current, pageTone })),
-      view: () => setViewSettings(true), switchTab: key => void switchTab(key), reopen: recent => void reopenRecent(recent),
-      open: () => void chooseFile(), create: () => setCreating(true), drive: () => { setLibrary(true); setDriveLibrary(true); }, library: () => void returnToLibrary(),
-      theme: chooseTheme, settings: () => setSettings(true), shortcuts: () => setShortcutsOpen(true), help: () => setHelp(true) } });
+  const { annotationRef, annotations, bookmarkRef, bookmarks, busy, busyRef, captureTab, changes, closeMobilePanel, closeSearch, closeTab, commitAnnotations, commitBookmarks,
+    confirmClear, currentPageLabel, doc, docRef, downloadedDrafts, driveMessage, editorDraftRef, fileInput, history, libraryStore, loadingRef, mobileAnnotating, navigate,
+    noteDraft, noteOrigin, noteText, notify, openDocument, openNote, output, page, pageLabels, phone, phoneRef, picking, resultIndex, resultLimit, returnToPlace,
+    searchOpen, setActiveNote, setBookmarkEditingId, setCapabilityNotice, setConfirmClear, setDeleteTarget, setDriveLibrary, setEditArea, setEditing, setLibrary,
+    setMobileAnnotating, setNoteDraft, setNotesOpen, setReaderChromeHidden, setRedactions, setSearchOpen, setSideTab, setSidebar, setTool, setWorkbench, showPage,
+    sideTab, storageFailed, tabStore, tool, toolSections, touchLayout, touchRef, viewer, workbench } = f;
   const recordStep = (step: History, gesture?: string) => history.record(step, gesture);
   const trimHistory = (stack: History[]) => history.trim(stack);
   const undo = useCallback(() => history.step('undo'), [history]);
@@ -67,46 +44,6 @@ export function useFolioCommands(f: Layer3) {
     if (highlightSelection()) setTool('select');
     else setTool(previous => previous === 'highlight' ? 'select' : 'highlight');
   }
-  // Finds in the library, or in the document.
-  function find() { if (library) document.querySelector<HTMLInputElement>('.document-library-search input')?.focus(); else if (docRef.current) openSearch(); }
-  function runShortcut(shortcut: Shortcut, modal: Element | undefined) {
-    switch (shortcut.run) {
-      case 'close-dialog': modal?.dispatchEvent(new Event('cancel', { cancelable: true })); break;
-      case 'undo': undo(); break;
-      case 'redo': redo(); break;
-      case 'switch-tab': void switchTab(tabStore.neighbour(shortcut.step).key); break;
-      case 'close-tab': if (tabStore.activeKey) void closeTab(tabStore.activeKey); break;
-      case 'settings': setConfirmClear(false); setSettings(true); break;
-      case 'help': setHelp(true); break;
-      case 'save': void download({ keepEditing: shortcut.keepEditing, copy: shortcut.copy }); break;
-      case 'palette': setPalette(value => !value); break;
-      case 'open': void chooseFile(); break;
-      case 'find': find(); break;
-      case 'print': void printDocument(); break;
-      case 'search-step': stepResult(shortcut.step); break;
-      case 'shortcuts': setShortcutsOpen(true); break;
-      case 'zoom': changeZoom(shortcut.delta); break;
-      case 'actual-size': setCustomScale(1); setZoomMode('custom'); break;
-      case 'scroll': viewer.current?.scrollBy({ left: shortcut.left }); break;
-      case 'turn': goToPage(turnedPage(page, shortcut.forward, spread)); break;
-      case 'tool':
-        if (shortcut.tool === 'highlight') activateHighlight();
-        else { if (shortcut.tool === 'draw') setMobileAnnotating(true); setTool(shortcut.tool); }
-        break;
-      case 'escape': setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); if (searchOpen) closeSearch(); break;
-    }
-  }
-  useKeyboard(e => {
-    const target = e.target as HTMLElement, field = !!target.closest('input,textarea,select,[contenteditable]');
-    const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
-    const { prevent, shortcut } = readShortcut(e, { field, searchField: target === searchInput.current, modal: !!modal,
-      editor: workbenchRef.current === 'edit-pdf' && !phoneRef.current, draft: editorDraftRef.current, busy: !!busyRef.current, loading: loadingRef.current,
-      library, tabs: tabStore.list.length, tab: !!tabStore.activeKey, searchResults: searchOpen && results.length > 0, canAnnotate: !!docRef.current?.canAnnotate,
-      overflows: () => !!viewer.current && viewer.current.scrollWidth > viewer.current.clientWidth + 4,
-      editKeys: () => editingRef.current && !field && !modal && editKey(editStore, e, () => setEditing(false)) });
-    if (prevent) e.preventDefault();
-    if (shortcut) runShortcut(shortcut, modal);
-  });
   async function openFiles(files: File[]) {
     if (editorDraftRef.current) { notify('Aplica o descarta la edición antes de abrir otro documento.'); return; }
     if (busyRef.current) return;
@@ -211,16 +148,6 @@ export function useFolioCommands(f: Layer3) {
     tabStore.retain(); tabStore.publish(); closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); setLibrary(true);
     if (current) tabStore.storeInBackground(current);
   }
-  // Back steps out of panels, tool sections, annotation mode and hidden controls, and only then the document.
-  useAndroidBack({ root: () => library && !driveLibrary, back: toolsBack => {
-    if (mobileTabs) setMobileTabs(false);
-    else if (sidebar || notesOpen || searchOpen) closeMobilePanel();
-    else if (library) setDriveLibrary(false);
-    else if (workbench) { if (toolsBack) toolsBack.click(); else if (editorDraftRef.current) notify('Aplica o descarta la edición antes de salir del editor.'); else void closeWorkbench(); }
-    else if (mobileAnnotating || tool !== 'select') { setMobileAnnotating(false); setTool('select'); setRedactions([]); }
-    else if (readerChromeHidden) setReaderChromeHidden(false);
-    else void returnToLibrary();
-  } });
   async function fullscreen() {
     try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
     catch { notify('No se pudo activar la pantalla completa.', 'error'); }
@@ -240,14 +167,9 @@ export function useFolioCommands(f: Layer3) {
   const pageCounter = doc ? pageCounterOf(page, doc.pdf.numPages, currentPageLabel) : undefined;
   const listedResults = Math.max(resultLimit, resultIndex + 1);
   const sideCount = sideTab === 'pages' ? doc?.pdf.numPages : sideTab === 'bookmarks' ? bookmarks.filter(node => node.page !== null).length : 0;
-  useMacMenu(id => {
-    const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
-    const shortcut = menuShortcut(id, { modal: !!modal, editor: workbenchRef.current === 'edit-pdf', document: !!docRef.current });
-    if (shortcut) runShortcut(shortcut, modal);
-  });
-  return { activateHighlight, anchorOf, annotatedBytes, applyOperation, capabilitySummary, centerArea, chooseFile, clearLibrary, closeActiveTab, closeWorkbench, commands,
-    commentHighlight, discardOpenTabs, docDirty, download, driveDirty, driveStatus, editNote, find, forgetRecent, fullscreen, inlineEditing, listedResults, mobilePage,
-    navigatePDF, onAnnotate, onArea, openEditor, openFiles, openTools, openWorkbenchSection, pageCounter, pageName, printDocument, recordStep, redo, removeAnnotation,
-    reopenRecent, replaceDocument, retireLibraryEntry, returnToLibrary, returnToLocation, runShortcut, saveLabel, saveNote, savesOriginal, selectWorkbenchTool,
-    sessionStatus, shareDocument, showDrive, sideCount, snapshot, startAnnotating, toggleBookmark, trimHistory, undo, unsaved, updateAnnotation };
+  return { activateHighlight, anchorOf, annotatedBytes, applyOperation, capabilitySummary, centerArea, chooseFile, clearLibrary, closeActiveTab, closeWorkbench, commentHighlight,
+    discardOpenTabs, docDirty, download, driveDirty, driveStatus, editNote, forgetRecent, fullscreen, inlineEditing, listedResults, mobilePage, navigatePDF, onAnnotate,
+    onArea, openEditor, openFiles, openTools, openWorkbenchSection, pageCounter, pageName, printDocument, recordStep, redo, removeAnnotation, reopenRecent,
+    replaceDocument, retireLibraryEntry, returnToLibrary, returnToLocation, saveLabel, saveNote, savesOriginal, selectWorkbenchTool, sessionStatus, shareDocument,
+    showDrive, sideCount, snapshot, startAnnotating, toggleBookmark, trimHistory, undo, unsaved, updateAnnotation };
 }

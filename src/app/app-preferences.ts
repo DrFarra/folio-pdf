@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { preference } from '../preferences';
 import { readReadingPreferences } from '../reading-preferences';
+import { useLatest } from './latest';
 
 /** The settings people choose in Ajustes, kept across sessions: whether opened PDFs stay in
  * the library, the default zoom, and the reading preferences. The refs hold the latest
@@ -9,7 +10,7 @@ export function useAppPreferences() {
   const [rememberRecent, setRememberRecent] = useState(() => preference('folio.remember', 'true') !== 'false');
   const [defaultZoom, setDefaultZoom] = useState(() => preference('folio.defaultZoom', 'page'));
   const [readingPreferences, setReadingPreferences] = useState(readReadingPreferences);
-  const readingPreferencesRef = useRef(readingPreferences); readingPreferencesRef.current = readingPreferences;
+  const readingPreferencesRef = useLatest(readingPreferences);
   const preferencesRef = useRef({ rememberRecent, defaultZoom });
   useEffect(() => {
     preferencesRef.current = { rememberRecent, defaultZoom };

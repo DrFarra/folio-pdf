@@ -1,3 +1,4 @@
+import { isNative } from '../platform';
 import type { Annotation, LoadedDocument } from '../types';
 import { annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace } from './model';
 
@@ -41,3 +42,8 @@ export const pageCounter = (page: number, pages: number, label: string) => `${pa
 /** The page ← and → turn to; two pages side by side (`spread`, 1–2, 3–4…) turn as a pair. */
 export const turnedPage = (page: number, forward: boolean, spread: boolean) =>
   forward ? page + (spread ? 2 - (page + 1) % 2 : 1) : Math.max(1, page - (spread ? (page % 2 ? 2 : 3) : 1));
+
+/** What the activity capsule says while a task runs: saving (where), printing or applying edits. */
+export const activityLabel = (busy: string | null, drive: boolean, driveMessage: string) =>
+  busy === 'download' ? drive ? driveMessage || 'Guardando en Google Drive…' : savesInPlace ? 'Guardando el PDF…' : isNative ? 'Guardando una copia…' : 'Preparando el PDF…'
+    : busy === 'print' ? 'Preparando la impresión…' : busy === 'edit' ? 'Aplicando los cambios…' : '';

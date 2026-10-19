@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '../errors';
 import { isNativePdfDocument } from '../nativePdf';
 import { pageText, searchText } from '../pdf';
@@ -6,6 +6,7 @@ import { recentSearches } from '../search-snippet';
 import type { LoadedDocument } from '../types';
 import { searchTerm } from './model';
 import type { Notify } from './notices';
+import { useLatest } from './latest';
 
 /** Searching the open document: the typed `query`, the term searched (`searchQuery`,
  * which follows typing after a pause and needs two characters), its results over the
@@ -20,7 +21,7 @@ export function useDocumentSearch(doc: LoadedDocument | null, open: boolean, not
   // Results are listed 200 at a time.
   const [resultLimit, setResultLimit] = useState(200);
   const [history, setHistory] = useState(recentSearches);
-  const indexed = useRef(textIndex); indexed.current = textIndex;
+  const indexed = useLatest(textIndex);
   // PDFKit text crosses IPC, so a native document waits for a query.
   const requested = open && (!!searchQuery || !(doc && isNativePdfDocument(doc.pdf)));
   useEffect(() => {

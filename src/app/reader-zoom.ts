@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { isMac } from '../platform';
 import { MAX_ZOOM } from './model';
+import { useLatest } from './latest';
 
 type Size = { width: number; height: number };
 /** A page point (x, y as fractions of the page) and where on the reader it should stay. */
@@ -31,10 +32,10 @@ type ZoomOptions = {
  * gives, and the wheel, trackpad and pinch gestures that change it keeping a point in place. */
 export function useReaderZoom(options: ZoomOptions) {
   const { viewer, documentId, dimensions, rotation, viewportSize, phone, touchLayout, spread, pageGap } = options;
-  const live = useRef(options); live.current = options;
+  const live = useLatest(options);
   const [zoomMode, setZoomMode] = useState('page');
   const [customScale, setCustomScale] = useState(1);
-  const zoomModeRef = useRef(zoomMode); zoomModeRef.current = zoomMode;
+  const zoomModeRef = useLatest(zoomMode);
   const { scale, fitScale } = useMemo(() => {
     const rotated = rotation % 180 !== 0;
     const w = (rotated ? dimensions.height : dimensions.width) * (spread ? 2 : 1) + (spread ? pageGap : 0);
@@ -44,9 +45,9 @@ export function useReaderZoom(options: ZoomOptions) {
     if (zoomMode === 'width' || zoomMode === 'page' && phone && viewportSize.width > viewportSize.height) return { scale: Math.max(.25, Math.min(3, (viewportSize.width - (phone ? 16 : viewportSize.width < 600 ? 30 : 100)) / w)), fitScale: fit };
     return { scale: zoomMode === 'page' ? fit : customScale, fitScale: fit };
   }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone, spread, pageGap]);
-  const currentScale = useRef(scale); currentScale.current = scale;
+  const currentScale = useLatest(scale);
   // The fitted-page scale a double tap zooms from and returns to.
-  const fitScaleRef = useRef(fitScale); fitScaleRef.current = fitScale;
+  const fitScaleRef = useLatest(fitScale);
   const pointerAnchor = useRef<ZoomAnchor | null>(null);
   const readingAnchor = useRef<ReadingAnchor | null>(null);
 
@@ -189,7 +190,7 @@ export function useReaderZoom(options: ZoomOptions) {
  * Android's system bars are hidden, and the height they free does not refit the page. */
 export function useViewportSize(viewer: RefObject<HTMLDivElement | null>, layoutKey: unknown, keepWidth: () => boolean) {
   const [size, setSize] = useState({ width: 1000, height: 700 });
-  const keep = useRef(keepWidth); keep.current = keepWidth;
+  const keep = useLatest(keepWidth);
   useEffect(() => {
     const root = viewer.current;
     if (!root) return;

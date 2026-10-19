@@ -6,6 +6,7 @@ import type { Annotation, BookmarkNode, LoadedDocument } from '../types';
 import { here, saveAdvice } from './model';
 import type { Notify } from './notices';
 import type { Persistence } from './persistence';
+import { useLatest } from './latest';
 
 type Autosave = {
   persistence: Persistence;
@@ -24,7 +25,7 @@ type Autosave = {
  * as a draft, and the session (annotations, bookmarks, page) shortly after it changes; while
  * scrolling only the page changes, so that waits for reading to settle. */
 export function useAutosave(doc: LoadedDocument | null, annotations: Annotation[], bookmarks: BookmarkNode[], page: number, options: Autosave) {
-  const live = useRef(options); live.current = options;
+  const live = useLatest(options);
   const saved = useRef<{ doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[] } | null>(null);
   useEffect(() => {
     const { persistence, shown, forgotten, draftStored, notify } = live.current;
