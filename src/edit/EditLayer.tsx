@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PageViewport, PDFPageProxy } from 'pdfjs-dist';
-import type { PageContentItem } from '../engine/operations.mjs';
+import type { PageContentItem } from '../engine/operations.ts';
 import type { Annotation, LoadedDocument } from '../types';
 import { errorMessage } from '../errors';
 import { useEdit, type Colors, type ContentKind, type EditStore, type Picture, type Rect, type ShapeKind, type TextDraft } from './store';

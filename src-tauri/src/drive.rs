@@ -472,7 +472,7 @@ mod tests {
         let base=bound(&d,pdf(&d,"files","base"));let edit=stage(&d,base.id.clone(),pdf(&d,"edits","edit")).unwrap();
         let offline=bound(&d,pdf(&d,"files","offline"));json_write(&cache_path(&d,&offline.account,"offline"),&offline).unwrap();
         let library=bound(&d,pdf(&d,"files","library"));let duplicate=Binding{id:uuid::Uuid::new_v4().to_string(),..library.clone()};json_write(&binding_path(&d,&duplicate.id).unwrap(),&duplicate).unwrap();
-        crate::save_recents(&d,&[crate::Recent{id:"a".repeat(64),name:"library.pdf".into(),size:1,pages:1,opened_at:1,path:library.path.clone(),draft:false,hidden:false}]).unwrap();
+        crate::save_recents(&d,&[crate::Recent{id:"a".repeat(64),name:"library.pdf".into(),size:1,pages:1,opened_at:1,path:library.path.clone(),draft:false,hidden:false,known:None}]).unwrap();
         let old=bound(&d,pdf(&d,"files","superseded"));let orphan=pdf(&d,"edits","orphan");
         prune(&d,true);
         for path in [&base.path,&edit.path,&offline.path,&library.path] {assert!(path.exists());}

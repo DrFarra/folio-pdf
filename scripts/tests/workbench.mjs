@@ -7,7 +7,7 @@ import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 import { verifySignatures } from '../../src/engine/signatures.mjs';
 import { unzipSync, strFromU8 } from 'fflate';

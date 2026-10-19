@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import ts from 'typescript';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const output = path.resolve('test-results'); fs.mkdirSync(output, { recursive: true });

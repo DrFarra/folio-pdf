@@ -1,0 +1,63 @@
+import type { ReactNode } from 'react';
+import { ArrowDownToLine, BookOpen, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Eraser, FileText, Highlighter, Minus, MoreHorizontal, MousePointer2, PenLine, Plus, Redo2, StickyNote, Undo2, Wrench } from 'lucide-react';
+import IconButton from './IconButton';
+import { MAX_ZOOM, redoShortcut } from '../app/model';
+import { isNativePdfDocument } from '../nativePdf';
+import { shortcutLabel } from '../platform';
+import type { LoadedDocument, Tool } from '../types';
+
+const zoomSteps = [50, 75, 100, 125, 150, 200, 300, 400, 600, 800];
+
+type Props = {
+  doc: LoadedDocument | null; busy: boolean; loading: boolean;
+  mode: 'read' | 'annotate' | 'edit';
+  onRead: () => void; onAnnotate: () => void; onEdit: () => void; onTools: () => void;
+  canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void;
+  /** The page number field holds what is typed until it is committed (Enter or leaving it). */
+  page: number; pageInput: string; onPageInput: (value: string) => void; onPageCommit: () => void; onPageBlur: () => void; onPage: (page: number) => void;
+  zoomMode: string; scale: number; onZoom: (delta: number) => void;
+  /** 'page', 'width' or a percentage. */
+  onZoomChoice: (value: string) => void;
+  bookmarked: boolean; onBookmark: () => void;
+  saveLabel: string; unsaved: boolean; onSave: () => void; onMore: () => void;
+};
+
+/** The desktop reader's toolbar: mode, tools and history; page; zoom, bookmark, save and more. */
+export function ReaderToolbar({ doc, busy, loading, mode, page, scale, zoomMode, bookmarked, saveLabel, ...on }: Props) {
+  const idle = !!doc && !busy && !loading, percent = Math.round(scale * 100);
+  return <div className="reader-toolbar">
+    <div className="toolbar-left">
+      <div className="desktop-mode-switch" role="group" aria-label="Modo del documento">
+        <button aria-label="Modo lectura" aria-pressed={mode === 'read'} disabled={!idle} onClick={on.onRead}><BookOpen size={17} /><span>Lectura</span></button>
+        <button aria-label="Anotar documento" aria-pressed={mode === 'annotate'} disabled={!idle} onClick={on.onAnnotate}><Highlighter size={17} /><span>Anotar</span></button>
+        <button aria-label="Editar contenido del PDF" aria-pressed={mode === 'edit'} disabled={!idle || !doc.canEdit || !doc.canCopy || isNativePdfDocument(doc.pdf)} onClick={on.onEdit}><FileText size={17} /><span>Editar</span></button>
+      </div>
+      <button className="tools-button" aria-label="Herramientas" disabled={!idle} onClick={on.onTools}><Wrench size={17} /><span>Herramientas</span></button>
+      <div className="undo-group"><span className="toolbar-divider" /><IconButton label={`Deshacer (${shortcutLabel('Z')})`} onClick={on.onUndo} disabled={busy || !on.canUndo}><Undo2 size={17} /></IconButton><IconButton label={`Rehacer (${redoShortcut})`} onClick={on.onRedo} disabled={busy || !on.canRedo}><Redo2 size={17} /></IconButton></div>
+    </div>
+    <div className="page-controls"><IconButton label="Página anterior" onClick={() => on.onPage(page - 1)} disabled={!doc || page <= 1}><ChevronLeft size={17} /></IconButton><form onSubmit={e => { e.preventDefault(); on.onPageCommit(); }}><input aria-label="Número de página" type="text" inputMode="numeric" value={on.pageInput} onChange={e => on.onPageInput(e.target.value.replace(/\D/g, ''))} onBlur={on.onPageBlur} /><span>/ {doc?.pdf.numPages || '—'}</span></form><IconButton label="Página siguiente" onClick={() => on.onPage(page + 1)} disabled={!doc || page >= doc.pdf.numPages}><ChevronRight size={17} /></IconButton></div>
+    <div className="toolbar-right">
+      <div className="zoom-controls"><IconButton label="Reducir zoom" onClick={() => on.onZoom(-.1)} disabled={!doc || scale <= .25}><Minus size={16} /></IconButton><div className="zoom-select"><select aria-label="Nivel de zoom" value={zoomMode === 'custom' ? String(percent) : zoomMode} onChange={e => on.onZoomChoice(e.target.value)} disabled={!doc}><option value="page">Ajustar página</option><option value="width">Ajustar ancho</option>{!zoomSteps.includes(percent) && zoomMode === 'custom' && <option value={String(percent)}>{percent} %</option>}{zoomSteps.map(n => <option key={n} value={n}>{n} %</option>)}</select><ChevronDown size={12} /></div><IconButton label="Ampliar zoom" onClick={() => on.onZoom(.1)} disabled={!doc || scale >= MAX_ZOOM}><Plus size={16} /></IconButton></div>
+      <span className="toolbar-divider" /><IconButton label={bookmarked ? 'Editar marcador de esta página' : 'Guardar marcador de esta página'} disabled={!idle} onClick={on.onBookmark} active={bookmarked}><Bookmark size={17} fill={bookmarked ? 'currentColor' : 'none'} /></IconButton>
+      <button className={`download-button${on.unsaved ? ' pending' : ''}`} aria-label={saveLabel} title={`${saveLabel} (${shortcutLabel('S')})`} onClick={on.onSave} disabled={!idle}><ArrowDownToLine size={16} /><span>{doc?.drive ? 'Guardar' : saveLabel}</span></button>
+      <IconButton label="Más acciones del documento" disabled={!idle} onClick={on.onMore}><MoreHorizontal size={20} /></IconButton>
+    </div>
+  </div>;
+}
+
+type AnnotationProps = {
+  doc: LoadedDocument; disabled: boolean; tool: Tool; onTool: (tool: Tool) => void;
+  onHighlight: () => void; onDone: () => void;
+  /** The active tool's options (colour, width). */
+  settings: ReactNode;
+};
+
+/** Anotar's toolbar on desktop: its tools, what the active one does, and Listo. */
+export function AnnotationToolbar({ doc, disabled, tool, onTool, onHighlight, onDone, settings }: AnnotationProps) {
+  const locked = !doc.canAnnotate || disabled;
+  return <div className="desktop-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
+    <div className="tool-group"><IconButton label="Seleccionar texto (V)" toggle active={tool === 'select'} onClick={() => onTool('select')}><MousePointer2 size={18} /></IconButton><IconButton label="Resaltador (H)" toggle active={tool === 'highlight'} disabled={locked || !doc.canCopy} onMouseDown={e => e.preventDefault()} onClick={onHighlight}><Highlighter size={19} /></IconButton><IconButton label="Nota (N)" toggle active={tool === 'note'} disabled={locked} onClick={() => onTool(tool === 'note' ? 'select' : 'note')}><StickyNote size={18} /></IconButton><IconButton label="Lápiz (D)" toggle active={tool === 'draw'} disabled={locked} onClick={() => onTool('draw')}><PenLine size={21} /></IconButton><IconButton label="Goma" toggle active={tool === 'eraser'} disabled={locked} onClick={() => onTool('eraser')}><Eraser size={21} /></IconButton>{settings}</div>
+    <span className="desktop-tool-description">{tool === 'draw' ? 'Dibuja sobre la página' : tool === 'eraser' ? 'Pasa la goma sobre un trazo para borrarlo' : tool === 'highlight' ? 'Selecciona el texto para resaltarlo' : tool === 'note' ? 'Haz clic en la página para añadir una nota' : 'Selecciona texto para copiar, resaltar o comentar'}</span>
+    <button className="text-button" onClick={onDone}><Check size={16} />Listo</button>
+  </div>;
+}

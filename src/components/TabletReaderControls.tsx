@@ -1,4 +1,5 @@
-import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2 } from 'lucide-react';
+import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, Layers, Search, Highlighter, MoreHorizontal, Undo2, Redo2, PenLine, Eraser, StickyNote, MousePointer2, X } from 'lucide-react';
+import IconButton from './IconButton';
 import type { MouseEventHandler, ReactNode } from 'react';
 import type { Tool } from '../types';
 
@@ -43,4 +44,9 @@ export function TabletAnnotationDock({ tool, setTool, disabled, canCopy, setting
     <Button label="Goma" active={tool === 'eraser'} disabled={disabled} onClick={() => setTool('eraser')}><Eraser size={22} /></Button>
     <span className="tablet-dock-divider" style={hasSettings ? undefined : { visibility: 'hidden' }} />{settings}
   </div>;
+}
+
+/** Search results on a tablet with the results panel closed: the count and steps through them. */
+export function TabletSearchBar({ results, result, onResult, onResults, onClose }: { results: number; result: number; onResult: (index: number) => void; onResults: () => void; onClose: () => void }) {
+  return <div className="tablet-search-controls" role="toolbar" aria-label="Resultados de búsqueda"><IconButton label="Ver resultados" onClick={onResults}><Search size={20} /></IconButton><span>{results ? `${result + 1} / ${results}` : 'Sin resultados'}</span><IconButton label="Resultado anterior" disabled={!results} onClick={() => onResult(result - 1)}><ChevronLeft size={21} /></IconButton><IconButton label="Resultado siguiente" disabled={!results} onClick={() => onResult(result + 1)}><ChevronRight size={21} /></IconButton><IconButton label="Cerrar búsqueda" onClick={onClose}><X size={21} /></IconButton></div>;
 }

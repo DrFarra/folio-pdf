@@ -1,4 +1,4 @@
-import { invokeBinary } from './binary';
+import { invokeBinary, readShared } from './binary';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { downloadBytes } from './pdf';
 import type { Annotation } from './types';
@@ -63,13 +63,21 @@ export async function readNativeDocument(document: NativeDocument): Promise<Uint
   // buffered again by the webview, and on Windows it stops the page (238 MB: 5.7 s
   // without a frame); bounded reads keep it to the one copy filled here.
   if (isAndroid || document.size > 4 * 1024 * 1024) {
-    const bytes = new Uint8Array(document.size);
-    for (let offset = 0; offset < bytes.length;) {
-      const length = Math.min(isAndroid ? 256 * 1024 : 4 * 1024 * 1024, bytes.length - offset);
-      const chunk = new Uint8Array(await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }));
-      if (chunk.length !== length) throw new Error('El PDF cambió durante la lectura. Vuelve a abrirlo.');
-      bytes.set(chunk, offset); offset += length;
-    }
+    const shared = isAndroid ? null : await readShared(document.token, document.size);
+    if (shared) return shared;
+    const bytes = new Uint8Array(document.size), step = isAndroid ? 256 * 1024 : 4 * 1024 * 1024;
+    // On desktop several slices are in flight, so Folio reads the next ones from disk while
+    // the WebView hands over this one; one at a time, a 396 MB book took 9 s from Google Drive.
+    let next = 0;
+    const reader = async () => {
+      while (next < bytes.length) {
+        const offset = next, length = Math.min(step, bytes.length - offset); next += length;
+        const chunk = new Uint8Array(await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }));
+        if (chunk.length !== length) throw new Error('El PDF cambió durante la lectura. Vuelve a abrirlo.');
+        bytes.set(chunk, offset);
+      }
+    };
+    await Promise.all(Array.from({ length: isAndroid ? 1 : 4 }, reader));
     return bytes;
   }
   return new Uint8Array(await invoke<ArrayBuffer>('read_document', { token: document.token }));

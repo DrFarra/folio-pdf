@@ -7,7 +7,7 @@ import { findChrome } from './browser.mjs';
 import { androidTablet, openTabletEditor, tabletDownload } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { writeAnnotations, inspectDocument } from '../../src/engine/mupdf-engine.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results'); fs.mkdirSync(output, { recursive: true });

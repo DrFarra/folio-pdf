@@ -7,7 +7,7 @@ import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
 import { storedSession, waitForSession } from './session-helpers.mjs';
 

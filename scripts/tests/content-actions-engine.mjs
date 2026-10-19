@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import ts from 'typescript';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument, open, save, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const results = [], hash = bytes => createHash('sha256').update(bytes).digest('hex');

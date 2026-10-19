@@ -7,7 +7,7 @@ import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 const root = process.cwd(), output = path.join(root, 'test-results'); fs.mkdirSync(output, { recursive: true });
 const source = path.join(output, 'selection-menu-source.pdf');

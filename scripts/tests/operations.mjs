@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 fs.mkdirSync('test-results', { recursive: true });

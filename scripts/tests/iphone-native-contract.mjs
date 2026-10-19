@@ -6,7 +6,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { PDFDocument } from 'pdf-lib';
 import { webkit } from 'playwright-core';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 // Explicit IPC contract test, deliberately separate from native simulator smoke
 // and the browser UI suite. UIKit dialogs are NOT exercised by this mock bridge.

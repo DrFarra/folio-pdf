@@ -17,7 +17,7 @@ import { shrink, inkMask, skewAngle, flattenField, marginTilt, flatTilt, flatten
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(path.join(root, 'package.json'));
 const mupdf = await import(pathToFileURL(require.resolve('mupdf')).href);
-const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engine/operations.mjs')).href);
+const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engine/operations.ts')).href);
 const out = path.join(root, 'test-results/real'); fs.mkdirSync(out, { recursive: true });
 const faces = JSON.parse(fs.readFileSync(path.join(root, 'public/fonts/ocr/faces.json'), 'utf8')).faces.map(({ file, ...face }) => ({ ...face, file: new Uint8Array(fs.readFileSync(path.join(root, 'public/fonts/ocr', file))) }));
 ort.env.wasm.numThreads = 4;

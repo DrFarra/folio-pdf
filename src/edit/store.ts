@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getPageContent, readPagePlate } from '../engine/client';
 import { EditSession } from '../engine/session';
-import type { Area, Operation, PageContentInfo, PageContentItem } from '../engine/operations.mjs';
+import type { Area, Operation, PageContentInfo, PageContentItem } from '../engine/operations.ts';
 import type { Annotation, LoadedDocument } from '../types';
 
 // State of Editar inside the reader, shared by every page's EditLayer and the
@@ -77,7 +77,7 @@ export class EditStore {
     this.state = { ...this.state, ...(typeof patch === 'function' ? patch(this.state) : patch) };
     for (const listener of [...this.listeners]) listener();
   }
-  // The live document is not closed here: the app writes it out first (closeEditSession).
+  // The live document is not closed here: the app writes it out first (LiveEdit.close).
   reset() { this.dropPictures(); this.cache.clear(); this.state = { ...initial, shapeStyle: this.state.shapeStyle }; for (const listener of [...this.listeners]) listener(); }
 
   /** Opens the live document for `doc`, unless it is open for it already. */

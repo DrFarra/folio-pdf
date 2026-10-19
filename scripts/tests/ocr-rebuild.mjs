@@ -14,7 +14,7 @@ import zlib from 'node:zlib';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(path.join(root, 'package.json'));
 const mupdf = await import(pathToFileURL(require.resolve('mupdf')).href);
-const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engine/operations.mjs')).href);
+const { operateDocument } = await import(pathToFileURL(path.join(root, 'src/engine/operations.ts')).href);
 ort.env.wasm.numThreads = 1;
 const results = [];
 const check = async (id, run) => { results.push({ id, ...(await run()) }); };

@@ -48,6 +48,14 @@ pub fn upload_shared_end(id: String, webview: tauri::Webview) -> Result<(), Stri
     Ok(())
 }
 
+/// The page has copied a PDF Folio shared with it (`read_document_shared`).
+#[cfg(windows)]
+#[tauri::command(async)]
+pub fn release_shared(id: String, webview: tauri::Webview) { shared::release(&webview, &id) }
+
+#[cfg(windows)]
+pub use shared::deliver;
+
 #[cfg(windows)]
 mod shared {
     use super::*;
@@ -56,7 +64,7 @@ mod shared {
 
     // The buffer's object belongs to the window's thread; its memory, mapped until
     // the buffer is closed, is read from any thread.
-    struct Shared { buffer: ICoreWebView2SharedBuffer, data: *const u8, size: usize, posted: Instant }
+    struct Shared { buffer: ICoreWebView2SharedBuffer, data: *mut u8, size: usize, posted: Instant, download: bool }
     unsafe impl Send for Shared {}
     static SHARED: LazyLock<Mutex<HashMap<String, Shared>>> = LazyLock::new(Default::default);
 
@@ -66,27 +74,64 @@ mod shared {
         receiver.recv().map_err(|_| INTERRUPTED)?
     }
 
+    /// `size` bytes of shared memory, not yet known to the page or to `SHARED`.
+    fn create(platform: &tauri::webview::PlatformWebview, size: u64, download: bool) -> Result<Shared, String> {
+        let created = (|| -> windows_core::Result<(ICoreWebView2SharedBuffer, *mut u8)> { unsafe {
+            let buffer = platform.environment().cast::<ICoreWebView2Environment12>()?.CreateSharedBuffer(size)?;
+            let mut data = std::ptr::null_mut(); buffer.Buffer(&mut data)?;
+            Ok((buffer, data))
+        } })();
+        let (buffer, data) = created.map_err(|_| "No se pudo preparar el archivo. Actualiza Microsoft Edge WebView2.")?;
+        Ok(Shared { buffer, data, size: size as usize, posted: Instant::now(), download })
+    }
+    /// Keeps `shared` under `id` and hands it to the page as `sharedbufferreceived` with `message`.
+    /// An id in use is refused: the page names the buffers, and must not replace one Folio holds.
+    fn send(platform: &tauri::webview::PlatformWebview, id: String, shared: Shared, access: COREWEBVIEW2_SHARED_BUFFER_ACCESS, message: String) -> Result<(), String> {
+        let close = |shared: Shared| { let _ = unsafe { shared.buffer.Close() }; };
+        let Ok(mut map) = SHARED.lock() else { close(shared); return Err("No se pudo preparar el archivo.".into()); };
+        // Memory a page never handed back is released after a minute.
+        map.retain(|_, old| old.posted.elapsed().as_secs() < 60 || { let _ = unsafe { old.buffer.Close() }; false });
+        if map.contains_key(&id) { close(shared); return Err(INTERRUPTED.into()); }
+        let buffer = shared.buffer.clone();
+        map.insert(id.clone(), shared);
+        unsafe { platform.controller().CoreWebView2().and_then(|core| core.cast::<ICoreWebView2_17>()).and_then(|core| core.PostSharedBufferToScript(&buffer, access, &HSTRING::from(message))) }
+            .map_err(|_| { if let Some(failed) = map.remove(&id) { close(failed); } "No se pudo preparar el archivo.".to_string() })
+    }
+
     /// Shares `size` bytes with the page, which receives them as `sharedbufferreceived` with `{folioUpload: id}`.
     pub fn post(webview: &tauri::Webview, id: String, size: u64) -> Result<(), String> {
-        on_window_thread(webview, move |platform| unsafe {
-            let mut shared = SHARED.lock().map_err(|_| "No se pudo preparar el archivo.")?;
-            // Memory a page never handed back is released after a minute.
-            shared.retain(|_, old| old.posted.elapsed().as_secs() < 60 || { let _ = old.buffer.Close(); false });
-            let created = (|| -> windows_core::Result<(ICoreWebView2SharedBuffer, ICoreWebView2_17, *mut u8)> {
-                let buffer = platform.environment().cast::<ICoreWebView2Environment12>()?.CreateSharedBuffer(size)?;
-                let mut data = std::ptr::null_mut(); buffer.Buffer(&mut data)?;
-                Ok((buffer, platform.controller().CoreWebView2()?.cast::<ICoreWebView2_17>()?, data))
-            })();
-            let (buffer, core, data) = created.map_err(|_| "No se pudo preparar el archivo. Actualiza Microsoft Edge WebView2.")?;
-            shared.insert(id.clone(), Shared { buffer: buffer.clone(), data, size: size as usize, posted: Instant::now() });
-            core.PostSharedBufferToScript(&buffer, COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_WRITE, &HSTRING::from(format!(r#"{{"folioUpload":"{id}"}}"#)))
-                .map_err(|_| { if let Some(failed) = shared.remove(&id) { let _ = failed.buffer.Close(); } "No se pudo preparar el archivo.".to_string() })
+        on_window_thread(webview, move |platform| {
+            let shared = create(&platform, size, false)?;
+            let message = format!(r#"{{"folioUpload":"{id}"}}"#);
+            send(&platform, id, shared, COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_WRITE, message)
         })
+    }
+
+    /// The reverse: `fill` writes `size` bytes off the window's thread, then the page receives them
+    /// read-only as `sharedbufferreceived` with `{folioDownload: id}` and gives them back (`release`).
+    /// The buffer is only listed once filled, so nothing the page asks for can close it meanwhile.
+    pub fn deliver(webview: &tauri::Webview, id: String, size: u64, fill: impl FnOnce(&mut [u8]) -> Result<(), String>) -> Result<(), String> {
+        let shared = on_window_thread(webview, move |platform| create(&platform, size, true))?;
+        if let Err(error) = fill(unsafe { std::slice::from_raw_parts_mut(shared.data, shared.size) }) {
+            let _ = webview.with_webview(move |_| { let shared = shared; unsafe { let _ = shared.buffer.Close(); } });
+            return Err(error);
+        }
+        on_window_thread(webview, move |platform| {
+            let message = format!(r#"{{"folioDownload":"{id}"}}"#);
+            send(&platform, id, shared, COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, message)
+        })
+    }
+
+    pub fn release(webview: &tauri::Webview, id: &str) {
+        let Some(shared) = SHARED.lock().ok().and_then(|mut shared| shared.remove(id)) else { return; };
+        let _ = webview.with_webview(move |_| { let shared = shared; unsafe { let _ = shared.buffer.Close(); } });
     }
 
     /// Copies what the page wrote and closes the buffer.
     pub fn take(webview: &tauri::Webview, id: &str) -> Result<Vec<u8>, String> {
-        let shared = SHARED.lock().map_err(|_| "No se pudo preparar el archivo.")?.remove(id).ok_or(INTERRUPTED)?;
+        let shared = { let mut map = SHARED.lock().map_err(|_| "No se pudo preparar el archivo.")?;
+            if map.get(id).is_none_or(|shared| shared.download) { return Err(INTERRUPTED.into()); }
+            map.remove(id).ok_or(INTERRUPTED)? };
         let bytes = unsafe { std::slice::from_raw_parts(shared.data, shared.size) }.to_vec();
         let _ = webview.with_webview(move |_| { let shared = shared; unsafe { let _ = shared.buffer.Close(); } });
         Ok(bytes)

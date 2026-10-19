@@ -9,7 +9,7 @@ import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { storedSession } from './session-helpers.mjs';
 
 // WebKit's mobile browser context provides genuine DOM text selection, PDF.js

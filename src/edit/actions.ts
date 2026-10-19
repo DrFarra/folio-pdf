@@ -1,4 +1,4 @@
-import type { Operation, PageContentItem } from '../engine/operations.mjs';
+import type { Operation, PageContentItem } from '../engine/operations.ts';
 import type { Annotation } from '../types';
 import type { Colors, ContentKind, EditStore, Rect, Selection, TextDraft, TextStyle } from './store';
 import { fontFields, originalCovers, parseFontName } from './fonts';

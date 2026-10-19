@@ -8,7 +8,7 @@ import { findChrome } from './browser.mjs';
 import { androidTablet, desktopDocumentAction, openTabletEditor, tabletDownload } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 const root = process.cwd(), output = path.join(root, 'test-results');

@@ -11,7 +11,7 @@ import { chromium, webkit } from 'playwright-core';
 import * as mupdf from 'mupdf';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { findChrome } from './browser.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 const output = path.join(process.cwd(), 'test-results'); fs.mkdirSync(output, { recursive: true });
 const port = process.env.FOLIO_EDIT_PORT || '4251', origin = `http://127.0.0.1:${port}`;
