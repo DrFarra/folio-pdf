@@ -12,12 +12,12 @@ import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentTabStrip from './components/DocumentTabStrip';
 import DocumentOutline from './components/DocumentOutline';
 import ViewSettings from './components/ViewSettings';
-import { formatSize, plural, readOutline, readPageLabels, readPageLabel } from './pdf';
+import { plural, readOutline, readPageLabels, readPageLabel } from './pdf';
 import { errorMessage } from './errors';
 import { isNativePdfDocument, subscribeNativePdfAnnotations } from './nativePdf';
 import { migrateLegacyNativePage } from './native-session';
-import { processPdf } from './engine/client';
-import { DEFAULT_HIGHLIGHT_COLOR, annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, trimHistory as trimSteps, uid, type DocumentTab, type History, type NoteDraft, type TabView } from './app/model';
+
+import { annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, uid, type DocumentTab, type History, type NoteDraft, type TabView } from './app/model';
 import type { Area, Operation, PageEntry } from './engine/operations.ts';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
@@ -48,10 +48,13 @@ import { DocumentOutput } from './app/document-output';
 import { Library } from './app/library';
 import { Tabs } from './app/tabs';
 import { DocumentOpener } from './app/opener';
+import { UndoHistory } from './app/history';
+import { useTabView } from './app/tab-view';
+import { DocumentChanges } from './app/document-changes';
 import { useDocumentSearch } from './app/search';
 import { readShortcut, useKeyboard, type Shortcut } from './app/shortcuts';
 import { useAndroidBack, useDesktopDrops, useMacMenu, usePreserveOnLeave, useSystemOpens, useWindowCloseGuard } from './app/native-events';
-import { addPageBookmark, deleteBookmark, hasBookmarkPage, remapBookmarks } from './bookmarks';
+import { addPageBookmark, deleteBookmark, hasBookmarkPage } from './bookmarks';
 import { commentSelection, highlightSelection } from './text-selection';
 import type { AnnotationDraft } from './text-selection';
 import { EditStore } from './edit/store';
@@ -80,7 +83,7 @@ import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
 import { isDesktop, isNative, isIOS, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
 import { clearSavedState, forgetDocument, listLibrary, touchDocument, saveSession } from './storage';
-import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigationTarget, RecentDocument, SideTab, Tool } from './types';
+import type { Annotation, BookmarkNode, LoadedDocument, PDFNavigationTarget, RecentDocument, SideTab, Tool } from './types';
 
 const NO_ANNOTATIONS: Annotation[] = [];
 
@@ -88,13 +91,14 @@ export default function App() {
   const layout = useDeviceLayout(), phone = layout === 'phone', tablet = layout === 'tablet', touchLayout = phone || tablet;
   const [mobileActions, setMobileActions] = useState(false);
   const [mobileTabs, setMobileTabs] = useState(false);
-  const [mobileAnnotating, setMobileAnnotating] = useState(false);
   // Editar inside the reader (desktop): the pages stay, with an edit layer and toolbar.
   const [editing, setEditing] = useState(false);
   const editingRef = useRef(editing); editingRef.current = editing;
   const editStore = useMemo(() => new EditStore(), []);
   const tabStore = useMemo(() => new Tabs(), []);
   const opener = useMemo(() => new DocumentOpener(), []);
+  const history = useMemo(() => new UndoHistory(), []);
+  const changes = useMemo(() => new DocumentChanges(), []);
   const liveEdit = useMemo(() => new LiveEdit(), []);
   const persistence = useMemo(() => new Persistence(), []);
   const output = useMemo(() => new DocumentOutput(), []);
@@ -111,26 +115,17 @@ export default function App() {
   const editorRestorePending = useRef(false);
   const editorRestoreRequest = useRef(0);
   const [creating, setCreating] = useState(false);
-  const [editArea, setEditArea] = useState<Area | null>(null);
-  const [redactions, setRedactions] = useState<Area[]>([]);
-  const [page, setPage] = useState(1);
+  const { page, setPage, dimensions, rotation, setRotation, readingMode, setReadingMode, annotating: mobileAnnotating, setAnnotating: setMobileAnnotating,
+    tool, setTool, color, setColor, sidebar, setSidebar, sideTab, setSideTab, notesOpen, setNotesOpen, outline, setOutline, activeNote, setActiveNote,
+    redactions, setRedactions, editArea, setEditArea, sessionFailed, setSessionFailed, draftFailed, setDraftFailed, apply: applyTabView } = useTabView();
   const [pageInput, setPageInput] = useState('1');
-  const [dimensions, setDimensions] = useState({ width: 595, height: 842, rotation: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 1000, height: 700 });
-  const [rotation, setRotation] = useState(0);
-  const [readingMode, setReadingMode] = useState<'continuous' | 'single' | 'spread'>(() => readReadingPreferences().mode);
-  const [tool, setTool] = useState<Tool>('select');
   const { inkKind, setInkKind, setInkStyles, inkStyle, inkRecentColors, setInkRecentColors, eraserSize, setEraserSize, penOnly, choosePenOnly, penDetected } = useInkPreferences();
-  const [color, setColor] = useState(() => { const saved = preference('folio.highlightColor', DEFAULT_HIGHLIGHT_COLOR); return /^#[0-9a-f]{6}$/i.test(saved) ? saved : DEFAULT_HIGHLIGHT_COLOR; });
-  const [sidebar, setSidebar] = useState(false);
-  const [sideTab, setSideTab] = useState<SideTab>('pages');
-  const [notesOpen, setNotesOpen] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [bookmarks, setBookmarks] = useState<BookmarkNode[]>([]);
   const [bookmarkEditingId, setBookmarkEditingId] = useState<string | null>(null);
   const [tabs, setTabs] = useState<DocumentTab[]>([]);
   const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
-  const [outline, setOutline] = useState<OutlineEntry[] | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const visitedSearch = useRef<string | null>(null);
   const submitPending = useRef(false);
@@ -179,7 +174,6 @@ export default function App() {
     const { x, y } = lastPointer.current;
     setNoteAnchor(marker ? (marker.bottom > 0 && marker.top < innerHeight ? marker : null) : x || y ? { left: x, top: y, right: x + 26, bottom: y + 27 } : null);
   }, [noteKey]);
-  const [activeNote, setActiveNote] = useState<string | null>(null);
   const [password, setPassword] = useState<PasswordRequest | null>(null);
   const passwordRef = useRef(password); passwordRef.current = password;
   const [dragOver, setDragOver] = useState(false);
@@ -193,10 +187,7 @@ export default function App() {
   useEffect(() => { if (!sidebar && !notesOpen) setDrawerSwap(false); }, [sidebar, notesOpen]);
   const [driveAvailable, setDriveAvailable] = useState(isNative);
   const [driveRefresh, setDriveRefresh] = useState<Transfer | null>(null);
-  const [sessionFailed, setSessionFailed] = useState(false);
-  const [draftFailed, setDraftFailed] = useState(false);
   const storageFailed = sessionFailed || draftFailed;
-  useEffect(() => { if (tool === 'highlight' || tool === 'note') setMobileAnnotating(true); }, [tool]);
   // The tab key, or 'window', whose closing waits because its session could not be saved.
   const [closeBlocked, setCloseBlocked] = useState<string | null>(null);
   const [, setHistoryTick] = useState(0);
@@ -212,8 +203,6 @@ export default function App() {
   const annotationRef = useRef<Annotation[]>([]);
   const readingState = useRef({ page, bookmarks });
   readingState.current = { page, bookmarks };
-  const undoStack = useRef<History[]>([]);
-  const redoStack = useRef<History[]>([]);
   const sessionSaved = useRef<{ doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[] } | null>(null);
   const librarySave = useRef<Promise<void>>(Promise.resolve());
   const busyRef = useRef(busy);
@@ -250,14 +239,14 @@ export default function App() {
     const current = docRef.current, key = tabStore.activeKey;
     if (!current || !key) return null;
     return { ...activeView.current, key, doc: current, annotations: annotationRef.current, bookmarks: readingState.current.bookmarks,
-      undo: undoStack.current, redo: redoStack.current, scrollTop: viewer.current?.scrollTop || 0, scrollLeft: viewer.current?.scrollLeft || 0 };
+      undo: history.undo, redo: history.redo, scrollTop: viewer.current?.scrollTop || 0, scrollLeft: viewer.current?.scrollLeft || 0 };
   }
   function activateTab(tab: DocumentTab, focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab') {
     pageInputDirty.current = false;
     if (tab.key !== tabStore.activeKey) setEditing(false);
     tabStore.activeKey = tab.key; setActiveTabKey(tab.key);
     docRef.current = tab.doc; annotationRef.current = tab.annotations; readingState.current = { page: tab.page, bookmarks: tab.bookmarks };
-    undoStack.current = tab.undo; redoStack.current = tab.redo;
+    history.undo = tab.undo; history.redo = tab.redo;
     restoreScroll.current = { key: tab.key, top: tab.scrollTop, left: tab.scrollLeft };
     setReaderChromeHidden(false); setDoc(tab.doc); setAnnotations(tab.annotations); setBookmarks(tab.bookmarks); setReturnLocation(null);
     applyView(tab, touchRef.current);
@@ -268,17 +257,14 @@ export default function App() {
   /** Shows a tab's view of its document: page, zoom, mode, tool, panels and search. On touch
    * layouts (`closeDrawers`) the drawers start closed, whatever the tab had open. */
   function applyView(view: TabView, closeDrawers: boolean) {
-    setPage(view.page); setPageInput(String(view.page)); setDimensions(view.dimensions);
-    setZoomMode(view.zoomMode); setCustomScale(view.customScale); setRotation(view.rotation); setReadingMode(view.readingMode);
-    setTool(view.tool); setColor(view.color); setMobileAnnotating(view.annotating || view.tool === 'highlight' || view.tool === 'note');
-    setSidebar(closeDrawers ? false : view.sidebar); setSideTab(view.sideTab); setNotesOpen(closeDrawers ? false : view.notesOpen); setOutline(view.outline);
+    applyTabView(view, closeDrawers); setPageInput(String(view.page)); setZoomMode(view.zoomMode); setCustomScale(view.customScale);
     setTextIndex(view.textIndex); setIndexing(view.indexing); setSearchOpen(view.searchOpen); setQuery(view.query); setSearchQuery(searchTerm(view.query)); setResultIndex(view.resultIndex);
-    setActiveNote(view.activeNote); setRedactions(view.redactions); setEditArea(view.editArea); setSessionFailed(view.sessionFailed); setDraftFailed(view.draftFailed); setBookmarkEditingId(null);
+    setBookmarkEditingId(null);
   }
   /** The last document closed: the reader empties and the library shows. */
   function showNoDocument() {
     pageInputDirty.current = false; setPageInput('1'); setPage(1);
-    tabStore.activeKey = null; setActiveTabKey(null); docRef.current = null; annotationRef.current = []; undoStack.current = []; redoStack.current = [];
+    tabStore.activeKey = null; setActiveTabKey(null); docRef.current = null; annotationRef.current = []; history.undo = []; history.redo = [];
     setReaderChromeHidden(false); setDoc(null); setAnnotations([]); setBookmarks([]); setOutline(null); setTextIndex([]); setQuery(''); setSearchOpen(false); setNotesOpen(false); setSidebar(false);
     setTool('select'); setRedactions([]); setEditArea(null); setMobileAnnotating(false); setReturnLocation(null); setWorkBenchClosed(); setLibrary(true);
   }
@@ -295,7 +281,7 @@ export default function App() {
     if (quiet && viewer.current) restoreScroll.current = { key: tab.key, top: viewer.current.scrollTop, left: viewer.current.scrollLeft };
     if (!replacing) setEditing(false);
     docRef.current = tab.doc; annotationRef.current = tab.annotations; readingState.current = { page: tab.page, bookmarks: tab.bookmarks };
-    undoStack.current = tab.undo; redoStack.current = tab.redo;
+    history.undo = tab.undo; history.redo = tab.redo;
     setDoc(tab.doc); setReaderChromeHidden(false); setAnnotations(tab.annotations); setBookmarks(tab.bookmarks);
     applyView(tab, touchRef.current && !replacing); setHistoryTick(v => v + 1);
     const editor = resumeEditing && !phoneRef.current;
@@ -352,7 +338,6 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('folio.readingPreferences', JSON.stringify(readingPreferences)); } catch { /* Preferences remain active for this session. */ }
   }, [readingPreferences]);
-  useEffect(() => { try { localStorage.setItem('folio.highlightColor', color); } catch { /* The selected color still works for this session. */ } }, [color]);
   useEffect(() => { if (!pageInputDirty.current) setPageInput(String(page)); }, [page]);
   // Reaching the remembered page again, by any means, retires «Volver a p. N».
   useEffect(() => { setReturnLocation(current => current?.page === page ? null : current); }, [page]);
@@ -463,15 +448,13 @@ export default function App() {
     return () => observer.disconnect();
   }, [doc]);
   const chromeUpdate = useRef(Promise.resolve());
-  // The selection previewing a highlight takes the chosen colour.
-  useEffect(() => { document.documentElement.style.setProperty('--highlight-preview', color); }, [color]);
   // The screen stays on while a document is being read, never in the library.
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useEffect(() => { void setKeepAwake(reading); }, [reading]);
   useEffect(() => () => { void setKeepAwake(false); }, []);
   // The palette's commands, built when it opens.
   const commands = () => paletteCommands({ doc, idle: !busy && !loading, pageName, saveLabel, bookmarked: hasBookmarkPage(bookmarks, page),
-    canUndo: undoStack.current.length > 0, canRedo: redoStack.current.length > 0, returnPage: returnLocation?.key === activeTabKey && returnLocation.page !== page ? returnLocation.page : null,
+    canUndo: history.undo.length > 0, canRedo: history.redo.length > 0, returnPage: returnLocation?.key === activeTabKey && returnLocation.page !== page ? returnLocation.page : null,
     pageTone: readingPreferences.pageTone, outline, driveAvailable,
     tabs: tabs.filter(tab => tab.key !== activeTabKey).map(tab => ({ key: tab.key, name: tab.doc.name })),
     recents: recents.filter(item => !tabs.some(tab => tab.doc.id === item.id)),
@@ -590,18 +573,8 @@ export default function App() {
     return () => { cancelAnimationFrame(frame); if (scrollRestoreFrame.current === frame) scrollRestoreFrame.current = null; };
   }, [doc, goToPage]);
 
-  // Undo keeps less on a phone (see trimHistory).
-  const historyBudget = () => (phoneRef.current ? 40 : 200) * 1024 * 1024;
-  const trimHistory = (stack: History[]) => trimSteps(stack, historyBudget());
-  const annotationGesture = useRef<string | undefined>(undefined);
-  /** Records an undo step (one per gesture: a drag records once) and forgets what was undone.
-   * False when the step is too large to keep. */
-  function recordStep(step: History, gesture?: string) {
-    if (!gesture || annotationGesture.current !== gesture) undoStack.current.push(step);
-    annotationGesture.current = gesture;
-    trimHistory(undoStack.current); redoStack.current = []; setHistoryTick(v => v + 1);
-    return !!gesture || undoStack.current.at(-1) === step;
-  }
+  const recordStep = (step: History, gesture?: string) => history.record(step, gesture);
+  const trimHistory = (stack: History[]) => history.trim(stack);
   const commitAnnotations = useCallback((next: Annotation[], gesture?: string) => {
     recordStep({ annotations: annotationRef.current }, gesture);
     if (docRef.current) unreadSessions.current.delete(docRef.current.id);
@@ -613,26 +586,8 @@ export default function App() {
     if (docRef.current) unreadSessions.current.delete(docRef.current.id);
     readingState.current.bookmarks = next; setBookmarks(next);
   }, []);
-  /** Undoes or redoes one step: of Editar's live document, a change of the PDF (reopened from its
-   * snapshot), or of annotations and bookmarks. The step it replaces goes to the other stack. */
-  function stepHistory(direction: 'undo' | 'redo') {
-    if (editorDraftRef.current || busyRef.current || loadingRef.current || editStore.state.committing || liveEdit.settling) return;
-    const [from, to] = direction === 'undo' ? [undoStack.current, redoStack.current] : [redoStack.current, undoStack.current];
-    const step = from.pop();
-    if (!step) return;
-    annotationGesture.current = undefined;
-    if (step.session) { to.push(step); liveEdit.step(direction); return; }
-    // The PDF before Editar replaces the live document's: what it holds now is written first, to redo.
-    if (direction === 'undo' && step.bytes && editStore.session) { void liveEdit.write().catch(() => {}).then(() => { to.push(snapshot()); trimHistory(to); return restoreHistory(step, from, to); }); return; }
-    to.push(step.bytes ? snapshot() : { annotations: annotationRef.current, bookmarks: readingState.current.bookmarks });
-    trimHistory(to);
-    if (step.bytes) { void restoreHistory(step, from, to); return; }
-    annotationRef.current = step.annotations;
-    if (step.bookmarks) { readingState.current.bookmarks = step.bookmarks; setBookmarks(step.bookmarks); }
-    setAnnotations(step.annotations); setHistoryTick(v => v + 1);
-  }
-  const undo = useCallback(() => stepHistory('undo'), [openDocument]);
-  const redo = useCallback(() => stepHistory('redo'), [openDocument]);
+  const undo = useCallback(() => history.step('undo'), [history]);
+  const redo = useCallback(() => history.step('redo'), [history]);
   const toggleBookmark = useCallback(() => {
     if (!docRef.current || busyRef.current || loadingRef.current) return;
     haptic('light');
@@ -728,82 +683,14 @@ export default function App() {
     commitAnnotations(annotationRef.current.filter(annotation => annotation.id !== id), gesture);
     setActiveNote(current => current === id ? null : current);
   }, [commitAnnotations]);
-  function snapshot(): History {
-    const current = docRef.current!;
-    return { bytes: current.bytes, password: current.password, annotations: annotationRef.current,
-      page: readingState.current.page, bookmarks: readingState.current.bookmarks };
-  }
-  async function restoreHistory(value: History, from: History[], to: History[]) {
-    const current = docRef.current; if (!current || !value.bytes) return;
-    const keepEditing = workbenchRef.current === 'edit-pdf', quiet = editingRef.current;
-    setBusy('edit');
-    try {
-      if (!await openDocument(value.bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password: value.password,
-        modified: true, useSession: false, preserveHistory: true, page: quiet ? readingState.current.page : value.page, bookmarks: value.bookmarks, quiet })) {
-        // The current revision stays open, so the step remains available.
-        to.pop(); from.push(value); notify(from === redoStack.current ? 'No se pudo rehacer el cambio.' : 'No se pudo deshacer el cambio.', 'error'); return;
-      }
-      annotationRef.current = value.annotations; setAnnotations(value.annotations);
-      if (keepEditing) setWorkbench('edit-pdf');
-    } finally { setBusy(null); setHistoryTick(v => v + 1); }
-  }
-  /** The reader opens the PDF Editar wrote, keeping the annotations and the view. */
-  async function reopenWritten(current: LoadedDocument) {
-    const annotations = annotationRef.current; setBusy('edit');
-    try {
-      if (await openDocument(current.bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password: current.password, modified: true,
-        useSession: false, preserveHistory: true, page: readingState.current.page, bookmarks: readingState.current.bookmarks, quiet: true })) { annotationRef.current = annotations; setAnnotations(annotations); }
-    } finally { setBusy(null); }
-  }
-  async function applyOperation(operation: Operation, signal?: AbortSignal, context?: { keepEditing?: boolean; page?: number; quiet?: boolean }) {
-    const current = docRef.current; if (!current) return;
-    if (isNativePdfDocument(current.pdf)) throw new Error('Esta herramienta no está disponible para PDF tan grandes.');
-    const before = snapshot(); setBusy('edit');
-    try {
-      // The bytes already hold the annotations they were opened with; only changes need writing.
-      const unchanged = annotationFingerprint(annotationRef.current) === current.bytesAnnotations;
-      const source = unchanged ? current.bytes : await annotatedBytes(current);
-      signal?.throwIfAborted();
-      const output = await processPdf(source, operation, current.password, signal);
-      signal?.throwIfAborted();
-      // An optimized PDF is left as it is: no reload, no undo step.
-      if (operation.operation === 'compress' && output.length >= source.length) { notify('El PDF ya está optimizado; no se redujo su tamaño.'); setWorkbench(null); return; }
-      const bookmarkPages = operation.operation === 'pages' ? remapBookmarks(before.bookmarks || [], operation.plan) : before.bookmarks;
-      const password = operation.operation === 'protect' ? operation.ownerPassword : operation.operation === 'unprotect' ? '' : current.password;
-      const opened = await openDocument(output, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, password, modified: true,
-        useSession: false, preserveHistory: true, page: context?.quiet ? readingState.current.page : context?.keepEditing ? context.page : before.page, bookmarks: bookmarkPages, quiet: context?.quiet });
-      if (!opened) throw new Error('No se pudo cargar el resultado de la operación.');
-      if (!recordStep(before)) notify('Este cambio no se podrá deshacer porque el documento es demasiado grande.');
-      if (!context?.quiet) { setWorkbench(context?.keepEditing ? 'edit-pdf' : null); setTool('select'); }
-      if (operation.operation === 'compress') notify(`PDF reducido de ${formatSize(source.length)} a ${formatSize(output.length)}.`, 'success');
-    } finally { setBusy(null); }
-  }
+  const snapshot = () => changes.snapshot();
+  const reopenWritten = (current: LoadedDocument) => changes.reopenWritten(current);
+  const applyOperation = (operation: Operation, signal?: AbortSignal, context?: { keepEditing?: boolean; page?: number; quiet?: boolean }) => changes.apply(operation, signal, context);
   const annotatedBytes = (current: LoadedDocument, items?: Annotation[], incremental?: boolean) => output.annotated(current, items, incremental);
   const download = (options?: { keepEditing?: boolean; copy?: boolean }) => output.save(options);
   const printDocument = (anchor?: Anchor) => output.print(anchor);
   const shareDocument = (anchor?: Anchor) => output.share(anchor);
-  async function replaceDocument(bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) {
-    const current = docRef.current; if (!current) return;
-    setBusy('edit');
-    try {
-      const before = snapshot();
-      if (context?.extraction) {
-        const { name, plan } = context.extraction;
-        // A derived PDF owns its session and draft. Loading it retains the source
-        // tab, including its annotation history, bookmarks and reading view.
-        const opened = await openDocument(bytes, name, false, undefined, { id: uid(), modified: true, draftSource: true,
-          useSession: false, page: 1, bookmarks: remapBookmarks(before.bookmarks || [], plan) });
-        if (!opened) throw new Error('No se pudo abrir el PDF con las páginas extraídas.');
-        setWorkbench(null); notify('Páginas extraídas en una pestaña nueva.', 'success');
-        return;
-      }
-      const opened = await openDocument(bytes, current.name, current.sample, current.nativeSource, { id: current.id, draftSource: current.draftSource, modified: true,
-        useSession: false, preserveHistory: true, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
-      if (!opened) throw new Error('No se pudo abrir el resultado.');
-      setWorkbench(null);
-      if (!recordStep(before)) notify('Este cambio no se podrá deshacer porque el documento es demasiado grande.');
-    } finally { setBusy(null); }
-  }
+  const replaceDocument = (bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) => changes.replace(bytes, context);
   function onArea(area: Area) {
     if (!doc?.canEdit || busy) return;
     if (tool === 'redact') { setRedactions(previous => [...previous, area]); return; }
@@ -1015,7 +902,7 @@ export default function App() {
   const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc && !doc.sample ? { id: doc.id, name: doc.name, page, pages: doc.pdf.numPages } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
-  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={() => output.currentBytes()} onNotify={message => notify(message, 'success')} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
+  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={() => output.currentBytes()} onNotify={message => notify(message, 'success')} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!history.undo.length} canRedo={!!history.redo.length} onReplace={replaceDocument} /> : null;
 
   const saveLabel = doc?.drive ? 'Guardar en Drive' : fileSaveLabel;
   // Only an opened file can be updated; otherwise Guardar already asks where to save.
@@ -1055,10 +942,20 @@ export default function App() {
   const pageEvents = useRef({ onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: (_id: string) => {} });
   // Editar writes content edits to the PDF in place and keeps shapes as Folio annotations.
   editStore.doc = doc;
+  // Undo keeps less on a phone.
+  history.host = { budget: () => (phoneRef.current ? 40 : 200) * 1024 * 1024, changed: () => setHistoryTick(v => v + 1),
+    blocked: () => editorDraftRef.current || !!busyRef.current || loadingRef.current || editStore.state.committing || liveEdit.settling,
+    liveOpen: () => !!editStore.session, stepLive: direction => liveEdit.step(direction), writeLive: () => liveEdit.write(), snapshot,
+    restore: (step, from, to) => changes.restore(step, from, to), current: () => ({ annotations: annotationRef.current, bookmarks: readingState.current.bookmarks }),
+    apply: (annotations, bookmarks) => { annotationRef.current = annotations; if (bookmarks) { readingState.current.bookmarks = bookmarks; setBookmarks(bookmarks); } setAnnotations(annotations); } };
+  changes.host = { current: () => docRef.current, annotations: () => annotationRef.current, setAnnotations: annotations => { annotationRef.current = annotations; setAnnotations(annotations); },
+    reading: () => readingState.current, annotated: current => annotatedBytes(current), open: openDocument, setBusy: busy => setBusy(busy ? 'edit' : null),
+    workbench: () => workbenchRef.current === 'edit-pdf', editing: () => editingRef.current, setWorkbench, resetTool: () => setTool('select'),
+    record: step => recordStep(step), isRedo: stack => stack === history.redo, changed: () => setHistoryTick(v => v + 1), notify };
   opener.host = { tabs: tabStore, persistence, draft: () => editorDraftRef.current, notify, askPassword: setPassword, current: () => docRef.current,
     leaveEditor: async () => { if (workbenchRef.current === 'edit-pdf' && !phoneRef.current) await closeWorkbench(); },
     setLoading: (loading, cover) => { loadingRef.current = loading; if (cover || !loading) setLoading(loading); },
-    view: () => activeView.current, history: () => ({ undo: undoStack.current, redo: redoStack.current }), capture: captureTab, show: activateTab, present: presentTab,
+    view: () => activeView.current, history: () => ({ undo: history.undo, redo: history.redo }), capture: captureTab, show: activateTab, present: presentTab,
     preferences: () => ({ restorePage: readingPreferencesRef.current.restorePage, mode: readingPreferencesRef.current.mode, defaultZoom: preferencesRef.current.defaultZoom,
       panel: readingPreferencesRef.current.initialPanel, rememberRecent: preferencesRef.current.rememberRecent }),
     forgotten: forgottenIds.current, unread: unreadSessions.current,
@@ -1086,8 +983,8 @@ export default function App() {
   persistence.host = { forgotten: id => forgottenIds.current.has(id), unread: id => unreadSessions.current.has(id),
     held: document => docRef.current === document || tabStore.list.some(tab => tab.doc === document), annotated: (document, items) => annotatedBytes(document, items, true) };
   liveEdit.host = { store: editStore, current: () => docRef.current, editing: () => editingRef.current, touch: () => touchRef.current, notify,
-    snapshot, historyBudget, trim: trimHistory, historyChanged: () => setHistoryTick(v => v + 1), reopen: reopenWritten,
-    stacks: current => { const owner = tabStore.list.find(tab => tab.doc === current); return !owner || owner.key === tabStore.activeKey ? [undoStack.current, redoStack.current] : [owner.undo, owner.redo]; },
+    snapshot, historyBudget: () => history.host.budget(), trim: trimHistory, historyChanged: () => setHistoryTick(v => v + 1), reopen: reopenWritten,
+    stacks: current => { const owner = tabStore.list.find(tab => tab.doc === current); return !owner || owner.key === tabStore.activeKey ? [history.undo, history.redo] : [owner.undo, owner.redo]; },
     written: (previous, next) => {
       tabStore.list = tabStore.list.map(tab => tab.doc === previous ? { ...tab, doc: next } : tab);
       if (docRef.current === previous) { docRef.current = next; setDoc(next); }
@@ -1151,10 +1048,10 @@ export default function App() {
     <header className="app-header" data-tauri-drag-region inert={touchLayout && (library || sidebar || notesOpen)}>
       {!touchLayout && <div className="brand"><img src="/folio.svg" alt="Folio" /></div>}
       <h1 className="sr-only">{doc?.name || 'Folio'}</h1>
-      {tablet ? <TabletReaderHeader nameAdornment={driveIndicator} documentsOpen={mobileTabs} name={doc?.name || 'Folio'} count={tabs.length} page={pageCounter} pageStep={readingMode === 'single' && doc ? { previous: page > 1 ? () => goToPage(page - 1, false) : undefined, next: page < doc.pdf.numPages ? () => goToPage(page + 1, false) : undefined } : undefined} annotating={mobileAnnotating} disabled={!!busy || loading} draft={editorDraft || inlineEditing} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} bookmarked={!!doc && hasBookmarkPage(bookmarks, page)} onBookmark={toggleBookmark} onLibrary={() => void returnToLibrary()} onDocuments={() => setMobileTabs(value => !value)} onPage={() => { setPageInput(String(page)); setPageJump(true); }} onPages={() => openExplorer()} onSearch={openSearch} onAnnotate={startAnnotating} onDone={() => { setMobileAnnotating(false); setTool('select'); }} onUndo={undo} onRedo={redo} onMore={() => setMobileActions(true)} /> : phone ? <>
+      {tablet ? <TabletReaderHeader nameAdornment={driveIndicator} documentsOpen={mobileTabs} name={doc?.name || 'Folio'} count={tabs.length} page={pageCounter} pageStep={readingMode === 'single' && doc ? { previous: page > 1 ? () => goToPage(page - 1, false) : undefined, next: page < doc.pdf.numPages ? () => goToPage(page + 1, false) : undefined } : undefined} annotating={mobileAnnotating} disabled={!!busy || loading} draft={editorDraft || inlineEditing} canUndo={!!history.undo.length} canRedo={!!history.redo.length} bookmarked={!!doc && hasBookmarkPage(bookmarks, page)} onBookmark={toggleBookmark} onLibrary={() => void returnToLibrary()} onDocuments={() => setMobileTabs(value => !value)} onPage={() => { setPageInput(String(page)); setPageJump(true); }} onPages={() => openExplorer()} onSearch={openSearch} onAnnotate={startAnnotating} onDone={() => { setMobileAnnotating(false); setTool('select'); }} onUndo={undo} onRedo={redo} onMore={() => setMobileActions(true)} /> : phone ? <>
         <IconButton label="Volver a la biblioteca" disabled={!!busy || loading} onClick={() => void returnToLibrary()}><ChevronLeft size={24} /></IconButton>
         <button id="document-switcher-trigger" className="mobile-document-selector" aria-label="Documentos abiertos y recientes" aria-haspopup="dialog" aria-expanded={mobileTabs} aria-controls="document-switcher" disabled={!!busy || loading || !tabs.length} onClick={() => setMobileTabs(value => !value)}><span>{doc?.name || 'Folio'}</span>{driveIndicator}{tabs.length > 1 && <span className="mobile-tab-count">{tabs.length}</span>}<ChevronDown size={16} /></button>
-        {mobileAnnotating ? <><IconButton label="Deshacer" disabled={!!busy || !undoStack.current.length} onClick={undo}><Undo2 size={21} /></IconButton><IconButton label="Rehacer" disabled={!!busy || !redoStack.current.length} onClick={redo}><Redo2 size={21} /></IconButton><button className="mobile-done" onClick={() => { setMobileAnnotating(false); setTool('select'); }}>Listo</button></> : <IconButton label="Más acciones" onClick={() => setMobileActions(true)}><MoreHorizontal size={23} /></IconButton>}
+        {mobileAnnotating ? <><IconButton label="Deshacer" disabled={!!busy || !history.undo.length} onClick={undo}><Undo2 size={21} /></IconButton><IconButton label="Rehacer" disabled={!!busy || !history.redo.length} onClick={redo}><Redo2 size={21} /></IconButton><button className="mobile-done" onClick={() => { setMobileAnnotating(false); setTool('select'); }}>Listo</button></> : <IconButton label="Más acciones" onClick={() => setMobileActions(true)}><MoreHorizontal size={23} /></IconButton>}
       </> : <>
       <DocumentTabStrip tabs={tabs} activeKey={activeTabKey} disabled={!!busy || loading || editorDraft} driveIndicator={driveIndicator} drag={tabDrag}
         modified={tab => unsaved(tab.doc, tab.key === activeTabKey ? annotations : tab.annotations)}
@@ -1203,7 +1100,7 @@ export default function App() {
       <main className={`reader${phone && mobileAnnotating ? ' mobile-annotating' : ''}`} id="document-reader" inert={library || touchLayout && (sidebar || notesOpen)}>
         {!touchLayout && !inlineEditing && <ReaderToolbar doc={doc} busy={!!busy} loading={loading} mode={editing ? 'edit' : mobileAnnotating ? 'annotate' : 'read'}
           onRead={() => { setEditing(false); setMobileAnnotating(false); setTool('select'); }} onAnnotate={startAnnotating} onEdit={openEditor} onTools={openTools}
-          canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onUndo={undo} onRedo={redo}
+          canUndo={!!history.undo.length} canRedo={!!history.redo.length} onUndo={undo} onRedo={redo}
           page={page} pageInput={pageInput} onPageInput={value => { pageInputDirty.current = true; setPageInput(value); }} onPageCommit={commitPageInput} onPageBlur={() => { if (pageInputDirty.current) commitPageInput(); }} onPage={goToPage}
           zoomMode={zoomMode} scale={scale} onZoom={changeZoom} onZoomChoice={value => { if (['page', 'width'].includes(value)) setZoomMode(value); else { setCustomScale(Number(value) / 100); setZoomMode('custom'); } }}
           bookmarked={hasBookmarkPage(bookmarks, page)} onBookmark={toggleBookmark} saveLabel={saveLabel} unsaved={docDirty} onSave={() => void download()} onMore={() => setMobileActions(true)} />}
@@ -1246,7 +1143,7 @@ export default function App() {
 
     {touchLayout && <DocumentSwitcher open={mobileTabs && !library} documents={tabs.map(tab => ({ key: tab.key, id: tab.doc.id, name: tab.doc.name, page: tab.key === activeTabKey ? page : tab.page, pages: tab.doc.pdf.numPages }))} recents={recents} activeKey={activeTabKey} disabled={!!busy || loading || editorDraft} onDismiss={() => setMobileTabs(false)} onSelect={key => { setMobileTabs(false); requestAnimationFrame(() => { closeMobilePanel(); if (key === activeTabKey) setLibrary(false); else void switchTab(key); }); }} onRecent={recent => { setMobileTabs(false); requestAnimationFrame(() => { closeMobilePanel(); void reopenRecent(recent); }); }} onCloseDocument={key => { setMobileTabs(false); requestAnimationFrame(() => void closeTab(key)); }} onImport={() => { setMobileTabs(false); requestAnimationFrame(() => void chooseFile()); }} onLibrary={() => { setMobileTabs(false); void returnToLibrary(); }} />}
     {touchLayout && mobileActions && <TouchDocumentActions doc={doc} busy={!!busy} loading={loading} status={sessionStatus} storageFailed={storageFailed} onClose={() => setMobileActions(false)}
-      tablet={tablet} saveLabel={saveLabel} savesOriginal={savesOriginal} capabilitySummary={capabilitySummary} canUndo={undoStack.current.length > 0} canRedo={redoStack.current.length > 0}
+      tablet={tablet} saveLabel={saveLabel} savesOriginal={savesOriginal} capabilitySummary={capabilitySummary} canUndo={history.undo.length > 0} canRedo={history.redo.length > 0}
       on={{ save: () => void download(), saveCopy: () => void download({ copy: true }), undo, redo, drive: showDrive, share: anchor => void shareDocument(anchor), edit: openEditor,
         view: () => setViewSettings(true), tools: openTools, print: anchor => void printDocument(anchor), info: () => setInfo(true), close: closeActiveTab }} />}
     {!touchLayout && mobileActions && <DesktopDocumentActions doc={doc} busy={!!busy} loading={loading} status={sessionStatus} storageFailed={storageFailed} onClose={() => setMobileActions(false)}
@@ -1262,7 +1159,7 @@ export default function App() {
     {dragOver && <div className="drop-overlay"><div><Upload size={38} /><h2>Suelta para abrir</h2><p>Archivos PDF</p></div></div>}
     {creating && <CreatePDF onClose={() => setCreating(false)} onCreate={async (bytes, name) => { await openDocument(bytes, name, false, undefined, { modified: true, useSession: false }); setCreating(false); }} />}
     <ActivityPill working={activity} done={activityDone} />
-    <PencilPalette enabled={!!doc?.canAnnotate && !library && !busy && !loading && !workbench} inkColor={inkStyle.color} canUndo={undoStack.current.length > 0}
+    <PencilPalette enabled={!!doc?.canAnnotate && !library && !busy && !loading && !workbench} inkColor={inkStyle.color} canUndo={history.undo.length > 0}
       active={tool === 'draw' ? inkKind : tool === 'eraser' || tool === 'highlight' || tool === 'note' ? tool as PencilAction : undefined}
       onAction={action => {
         if (action === 'undo') { undo(); return; }
