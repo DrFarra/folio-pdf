@@ -19,12 +19,13 @@ rules that break things when ignored. Read the files named before changing them.
 
 ## App's parts
 
-`App()` holds the open documents' state (tabs, each tab's view, undo, open and save) and wires the rest. Each concern it delegates is self-contained:
+`App()` holds the open documents' state and wires the rest. A tab's view (page, zoom, mode, tool, panels, search) is shown by one function, `applyView`, whether a tab is switched to or a document opens; `showNoDocument` empties the reader. Undo steps are recorded by `recordStep` and stepped by `stepHistory`. Each concern it delegates is self-contained:
 
 | Module (`src/app/`) | What it owns |
 |---|---|
 | `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
-| `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection) and the document its session restores. |
+| `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection), the session it opens with, the document that session restores and the tab it opens in. |
+| `library.ts` | Opening from the library and Google Drive, checking Drive for a newer revision first; reopening the tabs a phone had open. |
 | `live-edit.ts` | Editar's live document: open, write after a pause, step, park, close. |
 | `persistence.ts` | Storing a tab: session, draft, pending Drive edit; shared and queued writes. |
 | `document-output.ts` | Saving (over the file, a copy, Drive, a download), sharing and printing, with the annotations written in. |
@@ -36,7 +37,7 @@ rules that break things when ignored. Read the files named before changing them.
 | `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave. |
 | `notices.tsx`, `theme.ts`, `print.ts`, `ink-preferences.ts`, `desktop-window.ts` | Toasts and the activity capsule, the theme, desktop printing, drawing preferences, the window's controls. |
 
-`LiveEdit`, `Persistence` and `DocumentOutput` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
+`LiveEdit`, `Persistence`, `DocumentOutput` and `Library` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
 
 ## A document's life
 
