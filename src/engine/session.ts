@@ -1,4 +1,4 @@
-import type { Operation, PageContentInfo, PagePlate } from './operations.mjs';
+import type { Operation, PageContentInfo, PagePlate } from './operations.ts';
 import type { SessionRequest } from './session.worker';
 
 /** Editar's document, open in its own worker for as long as Editar is: a change

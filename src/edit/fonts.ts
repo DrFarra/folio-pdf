@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isDesktop } from '../platform';
 import { assetUrl } from '../assets';
-import type { TextOptions } from '../engine/operations.mjs';
+import type { TextOptions } from '../engine/operations.ts';
 
 // Text written in Editar uses, in order: the PDF's own font when it has every
 // character; the same family installed on the computer; then the closest of

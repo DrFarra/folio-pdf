@@ -10,7 +10,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { findChrome } from './browser.mjs';
 import { chapterParts, defaultNames, equalParts, everyParts, fileNames, rangeParts } from '../../src/split.ts';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 const pages = parts => parts.map(part => [part.first, part.last]);
 

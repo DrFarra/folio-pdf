@@ -1,5 +1,5 @@
 import type { Annotation } from '../types';
-import type { Operation } from './operations.mjs';
+import type { Operation } from './operations.ts';
 
 const engine = import('./mupdf-engine.mjs');
 self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' | 'operate'; bytes: Uint8Array; password?: string; annotations?: Annotation[]; options?: Operation; incremental?: boolean; lend?: boolean }>) => {
@@ -7,7 +7,7 @@ self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' 
     const { inspectDocument, writeAnnotations } = await engine;
     const request = event.data;
     const result = request.operation === 'operate'
-      ? (await import('./operations.mjs')).operateDocument(request.bytes, request.options!, request.password, (part, output) => self.postMessage({ part, output }, { transfer: [output.buffer] }))
+      ? (await import('./operations.ts')).operateDocument(request.bytes, request.options!, request.password, (part, output) => self.postMessage({ part, output }, { transfer: [output.buffer] }))
       : request.operation === 'inspect'
       ? inspectDocument(request.bytes, request.password)
       : writeAnnotations(request.bytes, request.annotations || [], request.password, request.incremental);

@@ -7,7 +7,7 @@ import { assetUrl, pdfAssetSettings } from '../assets';
 import { getDocument } from '../pdf';
 import { errorMessage } from '../errors';
 import { processPdf, readAreaContent, readPageImage } from '../engine/client';
-import type { Area, AreaContentInfo, Operation, PageContentItem } from '../engine/operations.mjs';
+import type { Area, AreaContentInfo, Operation, PageContentItem } from '../engine/operations.ts';
 import type { LoadedDocument } from '../types';
 import './ContentEditor.css';
 

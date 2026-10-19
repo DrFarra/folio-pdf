@@ -8,7 +8,7 @@ import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { enterAnnotationMode, desktopDocumentAction } from './ui-helpers.mjs';
 
 // These tests use actual mouse drags through the PDF.js text layer. They do not

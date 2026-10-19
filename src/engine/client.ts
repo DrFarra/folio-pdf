@@ -1,6 +1,6 @@
 import type { Annotation } from '../types';
 import type { Inspection } from './mupdf-engine.mjs';
-import type { Operation, PageEntry, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo, PagePlate, TextLayers } from './operations.mjs';
+import type { Operation, PageEntry, Field, Area, AreaContentInfo, PageContentInfo, PageImageInfo, PagePlate, TextLayers } from './operations.ts';
 
 // Starting a worker loads ~10 MB of WASM, so idle workers are reused. A worker
 // runs one request at a time and is reused only after a successful result: an

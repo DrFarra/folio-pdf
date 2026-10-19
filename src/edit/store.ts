@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getPageContent, readPagePlate } from '../engine/client';
 import { EditSession } from '../engine/session';
-import type { Area, Operation, PageContentInfo, PageContentItem } from '../engine/operations.mjs';
+import type { Area, Operation, PageContentInfo, PageContentItem } from '../engine/operations.ts';
 import type { Annotation, LoadedDocument } from '../types';
 
 // State of Editar inside the reader, shared by every page's EditLayer and the

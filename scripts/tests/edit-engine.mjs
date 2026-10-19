@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as mupdf from 'mupdf';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { operateDocument, editDocument, editDocumentAll, pagePlate, itemSprite, readPage } from '../../src/engine/operations.mjs';
+import { operateDocument, editDocument, editDocumentAll, pagePlate, itemSprite, readPage } from '../../src/engine/operations.ts';
 import { writeAnnotations, inspectDocument, open } from '../../src/engine/mupdf-engine.mjs';
 
 const results = [];

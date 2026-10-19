@@ -7,7 +7,7 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { LoaderCircle, MessageSquare } from 'lucide-react';
 import type { Annotation, Tool, SearchResult, PDFNavigationTarget } from '../types';
 import { TextLayer, pageTextModel, findTextMatches, resolvePDFDestination, safePDFLink } from '../pdf';
-import type { Area } from '../engine/operations.mjs';
+import type { Area } from '../engine/operations.ts';
 import { DEFAULT_HIGHLIGHT_OPACITY } from '../engine/highlight-style.mjs';
 import { highlightSelection, selectedTextRects, textCaretAtPoint } from '../text-selection';
 import type { AnnotationDraft, HighlightSelectionRequest, TextSelectionRequest } from '../text-selection';

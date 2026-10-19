@@ -5,7 +5,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { verifySignatures } from '../../src/engine/signatures.mjs';
 
 // Use a separate QA identifier/data directory, never the user's live Folio session.

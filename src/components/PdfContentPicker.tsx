@@ -4,7 +4,7 @@ import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'p
 import { AlertCircle, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Minus, MousePointer2, Plus, Type } from 'lucide-react';
 import { pdfAssetSettings } from '../assets';
 import { getPageContent } from '../engine/client';
-import type { Area, PageContentInfo, PageContentItem } from '../engine/operations.mjs';
+import type { Area, PageContentInfo, PageContentItem } from '../engine/operations.ts';
 import type { ContentEditorKind } from './ContentEditor';
 import { getDocument, plural } from '../pdf';
 import { errorMessage } from '../errors';

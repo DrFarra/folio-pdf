@@ -7,7 +7,7 @@ import { findChrome } from './browser.mjs';
 import { androidTablet, openTabletEditor, settled } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 const root = process.cwd(), output = path.join(root, 'test-results'); fs.mkdirSync(output, { recursive: true });
 const fixture = await PDFDocument.create(), font = await fixture.embedFont(StandardFonts.Helvetica);

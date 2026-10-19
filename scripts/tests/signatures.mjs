@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import forge from 'node-forge';
 import { signDocument, verifySignatures } from '../../src/engine/signatures.mjs';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 fs.mkdirSync('test-results', { recursive: true });
 const keys = forge.pki.rsa.generateKeyPair({ bits: 2048 });

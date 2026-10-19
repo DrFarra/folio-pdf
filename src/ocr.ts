@@ -1,6 +1,6 @@
 import { assetUrl } from './assets';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { Operation } from './engine/operations.mjs';
+import type { Operation } from './engine/operations.ts';
 import { OcrEngine } from './ppocr-client';
 import { cleanPaper, rebuildLines, wordChecker } from './rebuild';
 import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';

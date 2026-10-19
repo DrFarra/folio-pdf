@@ -2,33 +2,82 @@ import * as mupdf from 'mupdf';
 import { open, hasSignature, save, folioAnnotation } from './mupdf-engine.mjs';
 import { jpegOrientation, orientationMatrix } from './jpeg-orientation.mjs';
 
-const fail = message => { throw new Error(message); };
-const finite = values => Array.isArray(values) && values.every(Number.isFinite);
-const rect = value => {
+export type Area = { page: number; rect: [number, number, number, number] };
+export type AreaContentInfo = { text: string; size: number; color: string; fontName: string; mixedStyle: boolean; rotated: boolean };
+export type PageContentItem = { id: string; kind: 'text' | 'image' | 'graphic'; level?: 'line' | 'paragraph'; rect: Area['rect']; text?: string; size?: number; color?: string; fontName?: string; mixedStyle?: boolean; rotated?: boolean; editable: boolean; reason?: string; areaReplaceable?: boolean; baselineOffset?: number; lineHeight?: number;
+  /** Text: the characters the item's subset font painted on this page, or '*' for a complete font. Image: its opacity, quarter turn and transparency. */
+  fontGlyphs?: string; opacity?: number; rotation?: 0 | 90 | 180 | 270; transparent?: boolean;
+  /** Graphic: the colours it paints with (null for a pattern), and whether its path also clips. */
+  fill?: string | null; stroke?: string | null; clip?: boolean };
+export type PageContentInfo = { items: PageContentItem[]; warnings: string[] };
+/** A PNG of the page around an item, drawn without it, and the PDF area it covers. */
+export type PagePlate = { png: Uint8Array; rect: Area['rect'] };
+/** A line of a rebuilt scan, written as real text: its ink box in page points (y down), and its ink and background colours (0–1). */
+export type RebuiltLine = { text: string; box: [number, number, number, number]; color: [number, number, number]; ink?: [number, number, number]; background?: [number, number, number]; band?: boolean; words?: { text: string; box: [number, number, number, number]; color?: [number, number, number]; letters?: [number, number][] }[] };
+/** An open font a rebuilt line can be written in: its family, PostScript-like name, style and file. */
+export type RebuildFace = { family: string; name: string; bold: boolean; italic: boolean; file: Uint8Array };
+/** How many text runs a page paints and how many it keeps invisible (an OCR layer), and whether it is a scan (an image over nearly all of it, little text on top). */
+export type TextLayers = { page: number; visible: number; hidden: number; scan: boolean };
+/** Intrinsic pixels and the quarter turn used to display one safe image instance. JPEG data stays compressed. */
+export type PageImageInfo = { bytes: Uint8Array; type: 'image/png' | 'image/jpeg'; width: number; height: number; opacity: number; rotation: 0 | 90 | 180 | 270 };
+export type TextOptions = { text: string; size: number; color: string; font?: Uint8Array; fontName?: string; fontFamily?: string; fontIndex?: number; originalFont?: boolean; align?: 'left' | 'center' | 'right'; lineHeight?: number; wrap?: boolean; sourceRect?: Area['rect']; sourceId?: string; baselineOffset?: number };
+export type ImageOptions = { image: Uint8Array; fit?: 'contain' | 'cover' | 'stretch'; opacity?: number; rotation?: 0 | 90 | 180 | 270; sourceRect?: Area['rect'] };
+export type Field = Area & { id: string; pages: number[]; name: string; label: string; type: string; value: string; readOnly: boolean; multiline: boolean; maxLength: number; options: string[]; exportOptions: string[]; checked: boolean; buttonValue: string };
+export type PageEntry = { page?: number; source?: number; blank?: [number, number]; rotation?: number };
+export type Operation =
+  | { operation: 'fields' | 'text' | 'compress' | 'sanitize' | 'unprotect' }
+  | ({ operation: 'area-info' } & Area)
+  | { operation: 'page-content'; page: number; graphics?: boolean }
+  | { operation: 'page-image'; page: number; id: string }
+  | ({ operation: 'page-plate'; id: string; kind: 'text' | 'image' | 'graphic'; scale: number } & Area)
+  | { operation: 'pages'; plan: PageEntry[]; sources?: { bytes: Uint8Array; password?: string }[] }
+  | { operation: 'split'; parts: PageEntry[][] }
+  | { operation: 'fill'; values: Record<string, string | boolean>; flatten?: boolean }
+  /** angle turns the page clockwise first (degrees); image replaces it with a flattened scan of size [width, height] points. */
+  | { operation: 'ocr'; pages: { page: number; words: { text: string; rect: [number, number, number, number] }[]; angle?: number; image?: Uint8Array; size?: [number, number]; lines?: RebuiltLine[]; original?: Uint8Array }[]; font?: Uint8Array; faces?: RebuildFace[] }
+  | { operation: 'text-layers'; pages: number[] }
+  | ({ operation: 'create-field'; name: string; fieldType: 'text' | 'checkbox' | 'combobox'; options?: string[]; multiline?: boolean } & Area)
+  | ({ operation: 'add-text' | 'replace-text' } & TextOptions & Area)
+  | ({ operation: 'add-image' | 'replace-image' } & ImageOptions & Area)
+  | ({ operation: 'remove-content'; id: string; kind: 'text' | 'image' } & Area)
+  | ({ operation: 'move-text'; sourceId: string; sourceRect: Area['rect']; copy?: boolean } & Area)
+  | ({ operation: 'move-image'; sourceId: string; sourceRect: Area['rect']; copy?: boolean; rotation?: 0 | 90 | 180 | 270; opacity?: number } & Area)
+  | ({ operation: 'remove-image' | 'crop' } & Area)
+  | ({ operation: 'move-graphic'; sourceId: string; sourceRect: Area['rect']; copy?: boolean } & Area)
+  | ({ operation: 'remove-graphic'; sourceId: string; sourceRect: Area['rect'] } & Area)
+  | ({ operation: 'recolor-graphic'; sourceId: string; sourceRect: Area['rect']; fill?: string; stroke?: string } & Area)
+  | { operation: 'redact'; areas: Area[]; sanitize?: boolean }
+  | { operation: 'protect'; userPassword: string; ownerPassword: string; permissions?: number };
+
+function fail(message: string): never { throw new Error(message); }
+// MuPDF.js takes null for "no stroke" (getBounds checks for it); its types ask for a StrokeState.
+const NO_STROKE = null as unknown as mupdf.StrokeState;
+const finite = (values: unknown): values is number[] => Array.isArray(values) && values.every(Number.isFinite);
+const rect = (value: unknown): mupdf.Rect => {
   if (!finite(value) || value.length !== 4) fail('Área inválida.');
-  const box = [Math.min(value[0], value[2]), Math.min(value[1], value[3]), Math.max(value[0], value[2]), Math.max(value[1], value[3])];
+  const box: mupdf.Rect = [Math.min(value[0], value[2]), Math.min(value[1], value[3]), Math.max(value[0], value[2]), Math.max(value[1], value[3])];
   if (box[2] - box[0] < .1 || box[3] - box[1] < .1) fail('El área seleccionada es demasiado pequeña.');
   return box;
 };
-const pageIndex = (doc, number) => {
+const pageIndex = (doc: mupdf.PDFDocument, number: number) => {
   if (!Number.isInteger(number) || number < 1 || number > doc.countPages()) fail('Número de página inválido.');
   return number - 1;
 };
-const allowed = (doc, permission) => {
+const allowed = (doc: mupdf.PDFDocument, permission: mupdf.DocumentPermission) => {
   if (hasSignature(doc)) fail('El documento firmado está en modo lectura.');
   if (!doc.hasPermission(permission)) fail('Los permisos del PDF no permiten esta operación.');
 };
-const rgb = color => {
+const rgb = (color: string): [number, number, number] => {
   if (!/^#[\da-f]{6}$/i.test(color)) fail('Color inválido.');
-  return [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16) / 255);
+  return [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16) / 255) as [number, number, number];
 };
-const intersects = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
-const quadBounds = q => [Math.min(q[0], q[2], q[4], q[6]), Math.min(q[1], q[3], q[5], q[7]), Math.max(q[0], q[2], q[4], q[6]), Math.max(q[1], q[3], q[5], q[7])];
+const intersects = (a: mupdf.Rect, b: mupdf.Rect) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+const quadBounds = (q: mupdf.Quad): mupdf.Rect => [Math.min(q[0], q[2], q[4], q[6]), Math.min(q[1], q[3], q[5], q[7]), Math.max(q[0], q[2], q[4], q[6]), Math.max(q[1], q[3], q[5], q[7])];
 
 // Scripts, launched files, submissions and media actions; links and in-document
 // navigation remain. Chained actions are dropped from the actions that remain.
 const unsafeActions = new Set(['JavaScript', 'Launch', 'SubmitForm', 'ImportData', 'Rendition', 'Sound', 'Movie', 'RichMediaExecute', 'GoToE']);
-function stripActions(object) {
+function stripActions(object: mupdf.PDFObject) {
   if (!object.isDictionary()) return;
   object.delete('AA');
   const action = object.get('A');
@@ -36,7 +85,7 @@ function stripActions(object) {
   if (unsafeActions.has(action.get('S').asName())) object.delete('A'); else action.delete('Next');
 }
 
-function clearPrivateData(doc, removeOutlines = false) {
+function clearPrivateData(doc: mupdf.PDFDocument, removeOutlines = false) {
   const trailer = doc.getTrailer(), root = trailer.get('Root');
   trailer.delete('Info'); root.delete('Metadata'); root.delete('OpenAction'); root.delete('AA');
   const names = root.get('Names');
@@ -44,14 +93,14 @@ function clearPrivateData(doc, removeOutlines = false) {
   root.delete('AF'); root.delete('Collection');
   if (removeOutlines) { root.delete('Outlines'); root.delete('Dests'); if (!names.isNull()) names.delete('Dests'); }
   // Outline items and form fields carry actions too; XFA forms carry scripts.
-  const seen = new Set();
-  function outline(item, depth = 0) {
+  const seen = new Set<number>();
+  function outline(item: mupdf.PDFObject, depth = 0) {
     for (let count = 0; item.isDictionary() && count < 100000; item = item.get('Next'), count++) {
       const ref = item.asIndirect(); if (ref && seen.has(ref)) return; if (ref) seen.add(ref);
       stripActions(item); if (depth < 32) outline(item.get('First'), depth + 1);
     }
   }
-  function formFields(array, depth = 0) {
+  function formFields(array: mupdf.PDFObject, depth = 0) {
     for (let i = 0; i < array.length && depth < 32; i++) {
       const field = array.get(i), ref = field.asIndirect(); if (!field.isDictionary() || ref && seen.has(ref)) continue; if (ref) seen.add(ref);
       stripActions(field); formFields(field.get('Kids'), depth + 1);
@@ -74,15 +123,15 @@ function clearPrivateData(doc, removeOutlines = false) {
 // Widgets of one field share its value: list it once, at its first widget.
 // Radio buttons stay separate because each widget is one of the choices, and
 // fields without a name because an empty name does not identify a field.
-function fieldKey(widget, id) {
+function fieldKey(widget: mupdf.PDFWidget, id: string) {
   if (widget.isRadioButton() || !widget.getName()) return id;
   let state = '';
-  if (widget.isCheckbox()) widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') state = key; });
+  if (widget.isCheckbox()) widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') state = String(key); });
   return widget.getName() + '\n' + state;
 }
 
-function fields(doc) {
-  const result = [], groups = new Map();
+function fields(doc: mupdf.PDFDocument): Field[] {
+  const result: Field[] = [], groups = new Map<string, Field>();
   for (let i = 0; i < doc.countPages(); i++) {
     const page = doc.loadPage(i);
     try {
@@ -91,7 +140,7 @@ function fields(doc) {
         if (group) { if (!group.pages.includes(i + 1)) group.pages.push(i + 1); continue; }
         let buttonValue = '';
         if (widget.isRadioButton()) {
-          widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') buttonValue = key; });
+          widget.getObject().get('AP', 'N').forEach((_, key) => { if (key !== 'Off') buttonValue = String(key); });
           // Groups with /Opt name their states 0, 1…; the option is the text people read.
           const options = widget.getObject().getInheritable('Opt');
           if (options.isArray() && /^\d+$/.test(buttonValue) && Number(buttonValue) < options.length) buttonValue = options.get(Number(buttonValue)).asString() || buttonValue;
@@ -113,32 +162,35 @@ function fields(doc) {
   return result;
 }
 
-function sourceDestination(source, value) {
+function sourceDestination(source: mupdf.PDFDocument, value: mupdf.PDFObject): mupdf.PDFObject | null {
   if (value.isName() || value.isString()) {
     const name = value.isName() ? value.asName() : value.asString(), root = source.getTrailer().get('Root');
     const legacy = root.get('Dests', name);
-    function find(node, depth = 0) {
+    function find(node: mupdf.PDFObject, depth = 0): mupdf.PDFObject | undefined {
       if (depth > 32) fail('El árbol de destinos es demasiado profundo.');
       const names = node.get('Names');
       for (let i = 0; i + 1 < names.length; i += 2) if (names.get(i).asString() === name) return names.get(i + 1);
       const kids = node.get('Kids');
       for (let i = 0; i < kids.length; i++) { const found = find(kids.get(i), depth + 1); if (found) return found; }
     }
-    value = legacy.isNull() ? find(root.get('Names', 'Dests')) : legacy;
-    if (!value) return null;
+    const named = legacy.isNull() ? find(root.get('Names', 'Dests')) : legacy;
+    if (!named) return null;
+    value = named;
   }
   if (value.isDictionary()) value = value.get('D');
   return value.isArray() ? value : null;
 }
 
-function importAnnotations(doc, source, sourceIndex, targetIndex, map, pendingLinks, sourceNumber) {
+/** A link copied with an imported page, pointed at its destination once every page is in place. */
+type PendingLink = { ref: mupdf.PDFObject; page: mupdf.PDFObject; sourceNumber: number; source: mupdf.PDFDocument; dest: mupdf.PDFObject };
+function importAnnotations(doc: mupdf.PDFDocument, source: mupdf.PDFDocument, sourceIndex: number, targetIndex: number, map: mupdf.PDFGraftMap, pendingLinks: PendingLink[], sourceNumber: number) {
   const from = source.findPage(sourceIndex), to = doc.findPage(targetIndex), originals = from.get('Annots'), copied = doc.newArray();
   for (let i = 0; i < originals.length; i++) {
     const original = originals.get(i), subtype = original.get('Subtype').asName();
     if (subtype === 'Popup') continue;
     const internalLink = subtype === 'Link' && (!original.get('Dest').isNull() || original.get('A', 'S').asName() === 'GoTo');
     const copy = doc.newDictionary();
-    original.forEach((value, key) => { if (!['P', 'Parent', 'Popup', 'IRT', ...(internalLink ? ['Dest', 'A'] : [])].includes(key)) copy.put(key, map.graftObject(value)); });
+    original.forEach((value, key) => { if (!['P', 'Parent', 'Popup', 'IRT', ...(internalLink ? ['Dest', 'A'] : [])].includes(String(key))) copy.put(key, map.graftObject(value)); });
     copy.put('P', to);
     const name = original.get('NM').asString(); if (name) copy.put('NM', doc.newString(`${name}-import-${to.asIndirect()}-${i}`));
     if (subtype === 'Widget') {
@@ -171,8 +223,8 @@ function importAnnotations(doc, source, sourceIndex, targetIndex, map, pendingLi
   if (copied.length) to.put('Annots', copied);
 }
 
-function pruneFields(doc) {
-  const active = new Set();
+function pruneFields(doc: mupdf.PDFDocument) {
+  const active = new Set<number>();
   for (let i = 0; i < doc.countPages(); i++) {
     const annotations = doc.findPage(i).get('Annots');
     for (let n = 0; n < annotations.length; n++) if (annotations.get(n).get('Subtype').asName() === 'Widget') {
@@ -180,7 +232,7 @@ function pruneFields(doc) {
       while (!field.isNull() && depth++ < 32) { active.add(field.asIndirect()); field = field.get('Parent'); }
     }
   }
-  function filter(array, depth = 0) {
+  function filter(array: mupdf.PDFObject, depth = 0): mupdf.PDFObject {
     if (depth > 32) fail('La estructura de campos es demasiado profunda.');
     const kept = doc.newArray();
     for (let i = 0; i < array.length; i++) {
@@ -194,7 +246,7 @@ function pruneFields(doc) {
 
 // The PostScript name (name table ID 6) of a TrueType/OpenType font or of the
 // first face of a collection: embedded fonts keep their real name.
-function postScriptName(bytes, index = 0) {
+function postScriptName(bytes: Uint8Array, index = 0) {
   try {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let start = 0;
@@ -217,19 +269,19 @@ function postScriptName(bytes, index = 0) {
   return undefined;
 }
 
-const folioDrawing = object => {
-  let buffer;
+const folioDrawing = (object: mupdf.PDFObject) => {
+  let buffer: mupdf.Buffer | undefined;
   try { buffer = object.readStream(); return /^q [-\d.e ]+ cm \/Folio\d+ Do Q\n$/.test(buffer.asString()); }
   catch { return false; } finally { buffer?.destroy(); }
 };
 
 // Turns a page's content about the centre of its visible area, clockwise as seen by
 // `degrees`: the original drawing is kept, only its placement changes.
-function turnContent(doc, page, degrees) {
+function turnContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, degrees: number) {
   if (!Number.isFinite(degrees) || Math.abs(degrees) > 20) fail('Ángulo inválido.');
   const t = degrees * Math.PI / 180, cos = Math.cos(t), sin = Math.sin(t);
   const area = mupdf.Rect.transform(page.getBounds(), mupdf.Matrix.invert(page.getTransform())), cx = (area[0] + area[2]) / 2, cy = (area[1] + area[3]) / 2;
-  const matrix = [cos, -sin, sin, cos, cx - cos * cx - sin * cy, cy + sin * cx - cos * cy];
+  const matrix: mupdf.Matrix = [cos, -sin, sin, cos, cx - cos * cx - sin * cy, cy + sin * cx - cos * cy];
   const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
   list.push(doc.addStream(`q ${matrix.map(v => +v.toFixed(6)).join(' ')} cm\n`, {}));
   if (contents.isArray()) for (let i = 0; i < contents.length; i++) list.push(contents.get(i));
@@ -239,7 +291,7 @@ function turnContent(doc, page, degrees) {
 }
 // A scan flattened by Folio takes the page's place: the image shows the page as it
 // was seen, so the page becomes upright and exactly that size.
-function replaceWithImage(doc, index, bytes, size) {
+function replaceWithImage(doc: mupdf.PDFDocument, index: number, bytes: unknown, size: unknown) {
   if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
   const [width, height] = Array.isArray(size) ? size.map(Number) : [];
   if (!(width > 0 && height > 0 && width <= 14400 && height <= 14400)) fail('Tamaño de página inválido.');
@@ -260,20 +312,20 @@ function replaceWithImage(doc, index, bytes, size) {
 const SERIF = new Set(['Times', 'Caladea', 'Pagella', 'Schola', 'Bonum', 'EBGaramond', 'Arvo', 'Crimson', 'Rokkitt']);
 // Slab serifs draw their strokes as evenly as a sans: stroke contrast cannot set them apart from one.
 const SLAB = new Set(['Arvo', 'Rokkitt']);
-const STANDARD_FACES = [
+const STANDARD_FACES: [family: string, name: string, bold: boolean, italic: boolean][] = [
   ['Helvetica', 'Helvetica', false, false], ['Helvetica', 'Helvetica-Bold', true, false], ['Helvetica', 'Helvetica-Oblique', false, true],
   ['Times', 'Times-Roman', false, false], ['Times', 'Times-Bold', true, false], ['Times', 'Times-Italic', false, true],
 ];
-function measured(font) {
+function measured(font: mupdf.Font) {
   // Drawn at 100 px with the baseline at row 150, where its ink starts and ends (a font's
   // own bounds are its whole box, not the letter's).
-  const reach = (c, top) => {
+  const reach = (c: string, top: boolean) => {
     const gid = font.encodeCharacter(c); if (!gid) return 0;
     const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, [0, 0, 200, 200], false), device = new mupdf.DrawDevice(mupdf.Matrix.identity, pix), text = new mupdf.Text();
     try {
-      pix.clear(255); text.showGlyph(font, [100, 0, 0, -100, 40, 150], gid, c.codePointAt(0));
+      pix.clear(255); text.showGlyph(font, [100, 0, 0, -100, 40, 150], gid, c.codePointAt(0)!);
       device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1); device.close();
-      const data = pix.getPixels(), rows = [];
+      const data = pix.getPixels(), rows: number[] = [];
       for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) if (data[y * 200 + x] < 128) { rows.push(y); break; }
       if (!rows.length) return 0;
       return top ? (150 - rows[0]) / 100 : (rows[rows.length - 1] + 1 - 150) / 100;
@@ -281,21 +333,26 @@ function measured(font) {
   };
   return { cap: reach('H', true) || .7, xheight: reach('x', true) || .5, descender: reach('p', false) || .2 };
 }
-function loadFaces(extra = []) {
+/** A face a rebuilt line can be written in, with its measures in ems. */
+type Face = { family: string; name: string; bold: boolean; italic: boolean; font: mupdf.Font; cap: number; xheight: number; descender: number };
+function loadFaces(extra: RebuildFace[] = []): Face[] {
   if (!Array.isArray(extra) || extra.length > 64) fail('Fuentes inválidas.');
-  const faces = STANDARD_FACES.map(([family, name, bold, italic]) => ({ family, name, bold, italic, font: new mupdf.Font(name) }));
+  const faces: Omit<Face, keyof ReturnType<typeof measured>>[] = STANDARD_FACES.map(([family, name, bold, italic]) => ({ family, name, bold, italic, font: new mupdf.Font(name) }));
   try {
     for (const face of extra) {
       if (typeof face?.family !== 'string' || typeof face.name !== 'string' || face.name.length > 100 || !(face.file instanceof Uint8Array) || face.file.length > 4 * 1024 * 1024) fail('Fuente inválida.');
       faces.push({ family: face.family, name: face.name, bold: !!face.bold, italic: !!face.italic, font: new mupdf.Font(face.name, face.file) });
     }
-    for (const face of faces) Object.assign(face, measured(face.font));
-    return faces;
+    // Measured in place: the same objects, now with their measures.
+    return faces.map(face => Object.assign(face, measured(face.font)));
   } catch (error) { for (const face of faces) face.font.destroy(); throw error; }
 }
 
 /** The scan of a rebuilt page, in grey, and its pixels per point. */
-function scanOf(bytes, width) {
+/** A rebuilt page's scan in grey, `k` pixels per point. */
+type Scan = { gray: Uint8Array; w: number; h: number; k: number; native?: number };
+type Word = NonNullable<RebuiltLine['words']>[number];
+function scanOf(bytes: unknown, width: number): Scan {
   if (!(bytes instanceof Uint8Array) || bytes.length > 64 * 1024 * 1024) fail('Imagen de página inválida.');
   const image = new mupdf.Image(bytes), pix = image.toPixmap();
   try {
@@ -312,7 +369,7 @@ function scanOf(bytes, width) {
  */
 // The letters' size from the words' widths in a font: steadier than the ink's height, which takes
 // in a neighbour's accents and stray marks (0 without words to measure).
-function widthSize(font, line) {
+function widthSize(font: mupdf.Font, line: RebuiltLine) {
   // Words of small letters when the line has them: a word in capitals may be letter-spaced («C A P Í T U L O»).
   const long = (line.words ?? []).filter(word => [...word.text].length >= 3), small = long.filter(word => /\p{Ll}/u.test(word.text));
   const widths = (small.length ? small : long).map(word => {
@@ -321,7 +378,8 @@ function widthSize(font, line) {
   }).filter(Boolean).sort((p, q) => p - q);
   return widths.length ? widths[widths.length >> 1] : 0;
 }
-function placeIn(face, line, { size: fixed = 0, baseline = 0 } = {}) {
+type Placement = { glyphs: { c: string; gid: number }[]; size: number; baseline: number; x: number };
+function placeIn(face: Face, line: RebuiltLine, { size: fixed = 0, baseline = 0 } = {}): Placement {
   const { font, cap, descender } = face, [x0, top, x1, bottom] = line.box;
   const glyphs = [...line.text].map(c => ({ c, gid: font.encodeCharacter(c) }));
   const units = glyphs.reduce((n, { c, gid }) => n + (gid ? font.advanceGlyph(gid) : /\s/.test(c) ? .25 : 0), 0);
@@ -339,7 +397,9 @@ function placeIn(face, line, { size: fixed = 0, baseline = 0 } = {}) {
  * follows each word, so copied and searched text keeps its spaces.
  */
 // A character the face lacks (a Greek letter, a symbol) comes from the fallback face of its kind.
-const glyphsOf = (chars, font, fallback) => [...chars].map(c => {
+type Glyph = { c: string; gid: number; font: mupdf.Font };
+type Fallback = mupdf.Font | mupdf.Font[] | null;
+const glyphsOf = (chars: string, font: mupdf.Font, fallback: Fallback): Glyph[] => [...chars].map(c => {
   const gid = font.encodeCharacter(c);
   if (gid || !fallback) return { c, gid, font };
   // A list of fallbacks is tried in turn (a made face lends from the face it stands for, then Times).
@@ -348,7 +408,7 @@ const glyphsOf = (chars, font, fallback) => [...chars].map(c => {
 });
 // `width`: how much wider the scan's letters run than the face's, across the page; each word
 // then keeps within 5% of it (a word's box is a pixel or two off, its letters are not).
-function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fallback = null, width = 0) {
+function wordsText(font: mupdf.Font, { size, baseline }: { size: number; baseline: number }, words: Word[], limit = .4, fonts: (mupdf.Font | undefined)[] = [], fallback: Fallback = null, width = 0) {
   const text = new mupdf.Text();
   for (const [n, word] of words.entries()) {
     font = fonts[n] ?? font;
@@ -372,18 +432,18 @@ function wordsText(font, { size, baseline }, words, limit = .4, fonts = [], fall
     const tracking = spaced ? Math.min(size * .06, Math.max(0, ((b - a) - units * size * (width || 1)) / (shown.length - 1))) : 0;
     const stretch = spaced ? Math.min(1 + reach, Math.max(width || 1, ((b - a) - tracking * (shown.length - 1)) / (units * size))) : Math.min(1 + reach, Math.max(Math.min(1 - reach, room), Math.min(room, held)));
     let x = a;
-    for (const { c, gid, font } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += font.advanceGlyph(gid) * size * stretch + tracking; } }
+    for (const { c, gid, font } of glyphs) { if (gid) { text.showGlyph(font, [size * stretch, 0, 0, -size, x, baseline], gid, c.codePointAt(0)!); x += font.advanceGlyph(gid) * size * stretch + tracking; } }
     x -= tracking;
     if (space) text.showGlyph(font, [size, 0, 0, -size, x, baseline], space, 32);
   }
   return text;
 }
-function textOf(font, { glyphs, size, baseline, x }, fallback = null) {
+function textOf(font: mupdf.Font, { glyphs, size, baseline, x }: Placement, fallback: Fallback = null) {
   const text = new mupdf.Text();
-  for (const { c } of glyphs) { const [{ gid, font: from }] = glyphsOf(c, font, fallback); if (gid) text.showGlyph(from, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)); x += (gid ? from.advanceGlyph(gid) : .25) * size; }
+  for (const { c } of glyphs) { const [{ gid, font: from }] = glyphsOf(c, font, fallback); if (gid) text.showGlyph(from, [size, 0, 0, -size, x, baseline], gid, c.codePointAt(0)!); x += (gid ? from.advanceGlyph(gid) : .25) * size; }
   return text;
 }
-const grey = rgb => rgb.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255;
+const grey = (rgb: number[]) => rgb.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 255;
 
 /**
  * How thick a line's strokes are, in ems: the typical width of the ink crossed
@@ -392,7 +452,7 @@ const grey = rgb => rgb.reduce((t, v, i) => t + v * [.299, .587, .114][i], 0) * 
  */
 // How strongly a line's ink stands off its background: nearly its darkest (a thin stroke
 // never reaches the ink's full colour, so the line's colour is not it).
-function contrastOf(scan, line) {
+function contrastOf(scan: Scan, line: RebuiltLine) {
   const [x0, top, x1, bottom] = line.box, k = scan.k, ground = grey(line.background ?? [1, 1, 1]), counts = new Uint32Array(256);
   let total = 0;
   for (let y = Math.max(0, Math.floor(top * k)); y < Math.min(scan.h, Math.ceil(bottom * k)); y++) for (let x = Math.max(0, Math.floor(x0 * k)); x < Math.min(scan.w, Math.ceil(x1 * k)); x++) { counts[Math.min(255, Math.round(Math.abs(scan.gray[y * scan.w + x] - ground)))]++; total++; }
@@ -403,8 +463,8 @@ function contrastOf(scan, line) {
 // line's full contrast counting as one pixel (a pale or coloured line's strokes are no thinner). A blur spreads a stroke without changing its sum, so a thin
 // stroke stays thinner than a bold one however soft the scan (counting dark pixels does not:
 // at 3 pixels per point a stroke is 2 or 3 of them).
-function strokes(scan, a, b, y0, y1, ground, contrast) {
-  const runs = [];
+function strokes(scan: Scan, a: number, b: number, y0: number, y1: number, ground: number, contrast: number) {
+  const runs: number[] = [];
   for (let y = y0; y < y1; y++) {
     let sum = 0, peak = 0, previous = 0;
     for (let x = a; x <= b; x++) {
@@ -417,7 +477,7 @@ function strokes(scan, a, b, y0, y1, ground, contrast) {
   }
   return runs;
 }
-function strokeWidth(scan, line, size, contrast) {
+function strokeWidth(scan: Scan, line: RebuiltLine, size: number, contrast: number) {
   const [x0, top, x1, bottom] = line.box, k = scan.k, ground = grey(line.background ?? [1, 1, 1]);
   const runs = strokes(scan, Math.max(0, Math.floor(x0 * k)), Math.min(scan.w, Math.ceil(x1 * k)), Math.max(0, Math.floor(top * k)), Math.min(scan.h, Math.ceil(bottom * k)), ground, contrast);
   if (runs.length < 20) return 0;
@@ -431,13 +491,13 @@ function strokeWidth(scan, line, size, contrast) {
  * reach into the next line: of the bands of ink in it, the line's own is the one as tall as
  * small letters of its size (`size`, from the words' widths) and the fullest of those.
  */
-function inkBand(scan, line, size) {
+function inkBand(scan: Scan, line: RebuiltLine, size: number) {
   const k = scan.k, [x0f, top, x1f, bottom] = line.box, text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]);
   const x0 = Math.max(0, Math.floor(x0f * k)), x1 = Math.min(scan.w, Math.ceil(x1f * k)), y0 = Math.max(0, Math.floor(top * k)), y1 = Math.min(scan.h, Math.ceil(bottom * k));
   if (x1 - x0 < 10 || y1 - y0 < 6 || !size) return null;
   const counts = Array.from({ length: y1 - y0 }, (_, y) => { let n = 0; for (let x = x0; x < x1; x++) if (Math.abs(scan.gray[(y0 + y) * scan.w + x] - ground) > Math.abs(text - ground) / 2) n++; return n; });
   const peak = Math.max(...counts), expect = size * .48 * k, capitals = !/[a-zà-ÿ]/.test(line.text);
-  const bands = [];
+  const bands: { a: number; b: number; sum: number; height: number; capitals?: boolean }[] = [];
   for (let a = 0; a < counts.length; a++) {
     if (counts[a] < peak * .45) continue;
     let b = a, sum = 0; while (b < counts.length && counts[b] >= peak * .45) sum += counts[b++];
@@ -471,20 +531,21 @@ function inkBand(scan, line, size) {
  * curves (short runs down its columns). Serif faces are drawn with a broad pen, about twice as
  * thick upright as across; sans faces, Gill and Helvetica alike, are nearly even (under 1.5).
  */
-function strokeContrast(scan, line, baseline, size, contrast) {
+function strokeContrast(scan: Scan, line: RebuiltLine, baseline: number, size: number, contrast: number) {
   const k = scan.k, ground = grey(line.background ?? [1, 1, 1]), base = baseline || line.box[3];
   const x0 = Math.max(0, Math.floor(line.box[0] * k)), x1 = Math.min(scan.w, Math.ceil(line.box[2] * k)), top = Math.max(1, Math.round((base - size * .45) * k)), bottom = Math.min(scan.h - 2, Math.round(base * k));
   if (bottom - top < 4 || x1 - x0 < 10) return 0;
-  const ink = (x, y) => Math.min(1, Math.abs(scan.gray[y * scan.w + x] - ground) / contrast), across = [], down = [];
+  const ink = (x: number, y: number) => Math.min(1, Math.abs(scan.gray[y * scan.w + x] - ground) / contrast), across: number[] = [], down: number[] = [];
   for (let y = top + 1; y < bottom - 1; y++) for (let x = x0, sum = 0; x <= x1; x++) { const v = x < x1 ? ink(x, y) : 0; if (v > .25) sum += v; else if (sum) { across.push(sum); sum = 0; } }
   for (let x = x0; x < x1; x++) for (let y = top - 2, sum = 0, length = 0; y <= bottom + 2; y++) { const v = y < bottom + 2 ? ink(x, y) : 0; if (v > .25) { sum += v; length++; } else if (sum) { if (length < (bottom - top) * .4) down.push(sum); sum = length = 0; } }
   if (across.length < 20 || down.length < 20) return 0;
-  const middle = values => values.sort((p, q) => p - q)[values.length >> 1];
+  const middle = (values: number[]) => values.sort((p, q) => p - q)[values.length >> 1];
   return middle(across) / middle(down);
 }
 
 /** The scan's ink around a line, in shades, at up to 4 pixels per point and 40 across its height (a title's shapes show at less). */
-function inkAround(scan, line) {
+type Around = { k: number; box: mupdf.Rect; cw: number; ch: number; tone: Float32Array };
+function inkAround(scan: Scan, line: RebuiltLine): Around | null {
   const [x0, top, x1, bottom] = line.box, k = Math.min(scan.k, 4, 40 / Math.max(1, bottom - top)), step = scan.k / k, margin = (bottom - top) * .4;
   const bx0 = Math.max(0, Math.floor((x0 - margin) * k)), by0 = Math.max(0, Math.floor((top - margin) * k));
   const bx1 = Math.min(Math.floor(scan.w / step), Math.ceil((x1 + margin) * k)), by1 = Math.min(Math.floor(scan.h / step), Math.ceil((bottom + margin) * k));
@@ -493,7 +554,7 @@ function inkAround(scan, line) {
   // How much ink each pixel holds: 0 on the background, 1 at the letters' own colour.
   const text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]), tone = new Float32Array(cw * ch), span = text - ground || 1;
   // On a band of its own (a table's dark row), above and below it is another colour, not ink.
-  const inBand = y => !line.band || ((by0 + y) / k >= top && (by0 + y) / k < bottom);
+  const inBand = (y: number) => !line.band || ((by0 + y) / k >= top && (by0 + y) / k < bottom);
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) tone[y * cw + x] = !inBand(y) ? 0 : (scan.gray[Math.min(scan.h - 1, Math.round((by0 + y) * step)) * scan.w + Math.min(scan.w - 1, Math.round((bx0 + x) * step))] - ground) / span;
   return { k, box: [bx0, by0, bx1, by1], cw, ch, tone };
 }
@@ -504,7 +565,7 @@ function inkAround(scan, line) {
  * stacks its ink into the sharpest columns: upright letters' stems stand at 0°, italics
  * lean 9–20°.
  */
-function wordStyle(scan, line, word, contrast) {
+function wordStyle(scan: Scan, line: RebuiltLine, word: Word, contrast: number) {
   const k = scan.k, [, top, , bottom] = line.box, [a, , b] = word.box, text = grey(line.color), ground = grey(line.background ?? [1, 1, 1]);
   const x0 = Math.max(0, Math.floor(a * k) - 2), x1 = Math.min(scan.w, Math.ceil(b * k) + 2), y0 = Math.max(0, Math.floor(top * k)), y1 = Math.min(scan.h, Math.ceil(bottom * k));
   const w = x1 - x0, h = y1 - y0;
@@ -514,7 +575,7 @@ function wordStyle(scan, line, word, contrast) {
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) ink[y * w + x] = Math.max(0, Math.min(1, (scan.gray[(y0 + y) * scan.w + x0 + x] - ground) / ((text - ground) || 1)));
   if (runs.length < 8) return null;
   runs.sort((p, q) => p - q);
-  const sharpness = degrees => {
+  const sharpness = (degrees: number) => {
     const t = Math.tan(degrees * Math.PI / 180), columns = new Float64Array(w + h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) columns[Math.round(x + (y - h) * t + h)] += ink[y * w + x];
     let sum = 0; for (const c of columns) sum += c * c; return sum;
@@ -531,10 +592,13 @@ function wordStyle(scan, line, word, contrast) {
  * word by word, softened like the scan and compared shade for shade (a correlation, -1 to 1),
  * nudged a few pixels each way; the best match, its nudge and the softening that fit.
  */
-function faceScore(around, line, face, fixed = {}) {
+/** A face's fit to a line: the correlation, the baseline's nudge, the softening and the ink's weight against the scan's. */
+type Score = { dy: number; score: number; blur?: number; weight?: number };
+type ScoreOptions = { baseline?: number; size?: number; blur?: number; fallback?: Fallback; thicken?: number };
+function faceScore(around: Around | null, line: RebuiltLine, face: Face, fixed: ScoreOptions = {}): Score {
   if (!around) return { dy: 0, score: 0 };
   const { k, box, cw, ch, tone } = around, pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray, box, false), device = new mupdf.DrawDevice(mupdf.Matrix.scale(k, k), pix);
-  let text, best = { dy: 0, score: -1 };
+  let text: mupdf.Text | undefined, best: Score = { dy: 0, score: -1 };
   try {
     pix.clear(255); const placed = placeIn(face, line, fixed); text = line.words?.length ? wordsText(face.font, placed, line.words, .35, [], fixed.fallback) : textOf(face.font, placed, fixed.fallback);
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceGray, [0], 1);
@@ -545,9 +609,9 @@ function faceScore(around, line, face, fixed = {}) {
     for (let i = 0; i < drawn.length; i++) mark[i] = 1 - drawn[i] / 255;
     // Only the rows of this line's own letters, from the top of its tallest to the bottom of its
     // deepest and a little more: close lines' boxes overlap, and their letters are not this face's.
-    const rows = []; for (let y = 0; y < ch; y++) { for (let x = 0; x < cw; x++) if (mark[y * cw + x] > .3) { rows.push(y); break; } }
+    const rows: number[] = []; for (let y = 0; y < ch; y++) { for (let x = 0; x < cw; x++) if (mark[y * cw + x] > .3) { rows.push(y); break; } }
     const spare = Math.max(2, Math.round(placed.size * k * .12)), from = rows.length ? Math.max(0, rows[0] - spare) : 0, to = rows.length ? Math.min(ch, rows[rows.length - 1] + 1 + spare) : ch;
-    const match = (soft, dy, dx) => {
+    const match = (soft: Float32Array, dy: number, dx: number) => {
       let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
       for (let y = Math.max(from, -dy); y < Math.min(to, ch - dy); y++) for (let x = Math.max(0, -dx); x < Math.min(cw, cw - dx); x++) {
         const a = soft[y * cw + x], b = tone[(y + dy) * cw + x + dx];
@@ -557,20 +621,20 @@ function faceScore(around, line, face, fixed = {}) {
     };
     // The face's letters softened as the scan softened its own (the blur is not known: the
     // closer of two, unless given), then matched shade for shade, nudged a pixel or two each way.
-    const softened = r => blur(blur(mark, cw, ch, r), cw, ch, r);
-    let r = fixed.blur, soft = r && softened(r);
+    const softened = (r: number) => blur(blur(mark, cw, ch, r), cw, ch, r);
+    let r = fixed.blur, soft = r ? softened(r) : new Float32Array(0);
     if (!r) {
       const options = [Math.max(1, Math.round(k / 4)), Math.max(2, Math.round(k / 2))].map(r => ({ r, soft: softened(r) })).map(option => ({ ...option, score: match(option.soft, 0, 0) }));
       ({ r, soft } = options[0].score >= options[1].score ? options[0] : options[1]);
     }
     // The best nudge, climbed to from no nudge (the match rises smoothly toward it): a pixel at a
     // time while a neighbour matches better.
-    const tried = new Map(), at = (dy, dx) => { const key = dy * 8 + dx; if (!tried.has(key)) tried.set(key, match(soft, dy, dx)); return tried.get(key); };
+    const tried = new Map<number, number>(), at = (dy: number, dx: number) => { const key = dy * 8 + dx; if (!tried.has(key)) tried.set(key, match(soft, dy, dx)); return tried.get(key)!; };
     // Up and down by up to a tenth of the line's height (a baseline read off by a few pixels in big text).
     const reachY = Math.max(3, Math.round(ch * .1));
     let y = 0, x = 0;
     for (;;) {
-      let next = null;
+      let next: [number, number] | null = null;
       for (const [sy, sx] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { const ny = y + sy, nx = x + sx; if (Math.abs(ny) <= reachY && Math.abs(nx) <= 3 && at(ny, nx) > (next ? at(...next) : at(y, x))) next = [ny, nx]; }
       if (!next) break;
       [y, x] = next;
@@ -584,7 +648,7 @@ function faceScore(around, line, face, fixed = {}) {
   } finally { text?.destroy(); device.destroy(); pix.destroy(); }
 }
 // A box blur of radius r, across then down.
-function blur(values, w, h, r) {
+function blur(values: Float32Array, w: number, h: number, r: number) {
   const across = new Float32Array(values.length), out = new Float32Array(values.length);
   for (let y = 0; y < h; y++) { let sum = 0; for (let x = -r; x < w + r; x++) { if (x + r < w && x + r >= 0) sum += values[y * w + x + r]; if (x - r - 1 >= 0 && x - r - 1 < w) sum -= values[y * w + x - r - 1]; if (x >= 0 && x < w) across[y * w + x] = sum / (2 * r + 1); } }
   for (let x = 0; x < w; x++) { let sum = 0; for (let y = -r; y < h + r; y++) { if (y + r < h && y + r >= 0) sum += across[(y + r) * w + x]; if (y - r - 1 >= 0 && y - r - 1 < h) sum -= across[(y - r - 1) * w + x]; if (y >= 0 && y < h) out[y * w + x] = sum / (2 * r + 1); } }
@@ -597,17 +661,22 @@ function blur(values, w, h, r) {
  * lines in every family's regular face; then the two closest families' regular, bold and
  * italic faces are tried on all of the style's lines.
  */
-function pageFaces(scan, lines, faces) {
+/** The face a rebuilt line is written in: the nudge of its baseline, its size and baseline when
+ * fixed for the page, each word's own face, the faces lending missing characters, the page's
+ * measure of its letters' width, and an outline that brings its ink up to the scan's. */
+type PageFace = { face: Face; dy: number; size?: number; baseline?: number; words?: Face[]; fallback?: Fallback; width?: number; thicken?: number };
+type Chosen = PageFace & { size: number; baseline: number; words: Face[]; fallback: mupdf.Font };
+function pageFaces(scan: Scan | null, lines: RebuiltLine[], faces: Face[]): PageFace[] {
   if (!scan) return lines.map(() => ({ face: faces[0], dy: 0 }));
-  const named = name => faces.find(face => face.name === name);
+  const named = (name: string) => faces.find(face => face.name === name)!;
   // Each word's box drawn in to its own ink, left and right (the recogniser's boxes run into the
   // spaces): read across the middle of the line, clear of the lines above and below. Two words the
   // recogniser ran together («26Tumores», «laLTA») are parted at the space between them.
   for (const line of lines) {
     const k = scan.k, [, top, , bottom] = line.box, ground = grey(line.background ?? [1, 1, 1]), half = Math.abs(grey(line.color) - ground) / 2;
     const y0 = Math.max(0, Math.round((top + (bottom - top) * .25) * k)), y1 = Math.min(scan.h, Math.round((bottom - (bottom - top) * .2) * k));
-    const inked = x => { for (let y = y0; y < y1; y++) if (Math.abs(scan.gray[y * scan.w + x] - ground) > half) return true; return false; };
-    const tighten = ([a, t, b, u]) => {
+    const inked = (x: number) => { for (let y = y0; y < y1; y++) if (Math.abs(scan.gray[y * scan.w + x] - ground) > half) return true; return false; };
+    const tighten = ([a, t, b, u]: mupdf.Rect): mupdf.Rect => {
       const x0 = Math.max(0, Math.floor(a * k)), x1 = Math.min(scan.w, Math.ceil(b * k));
       let first = x0, last = x1 - 1;
       while (first < last && !inked(first)) first++;
@@ -620,22 +689,23 @@ function pageFaces(scan, lines, faces) {
     };
     // A word set letter-spaced in capitals («C A P Í T U L O») is read as several: three or more
     // runs of one to three capitals in a row, as far apart as their letters, are one word.
-    const merged = [];
+    const merged: Word[] = [];
     for (let n = 0; n < (line.words ?? []).length;) {
-      const caps = word => /^[\p{Lu}]{1,3}$/u.test(word.text);
-      let end = n; while (end < line.words.length && caps(line.words[end]) && (end === n || line.words[end].box[0] - line.words[end - 1].box[2] < (bottom - top) * .8)) end++;
+      const words = line.words!;
+      const caps = (word: Word) => /^[\p{Lu}]{1,3}$/u.test(word.text);
+      let end = n; while (end < words.length && caps(words[end]) && (end === n || words[end].box[0] - words[end - 1].box[2] < (bottom - top) * .8)) end++;
       if (end - n >= 3) {
-        const run = line.words.slice(n, end);
-        merged.push({ ...run[0], text: run.map(word => word.text).join(''), box: [run[0].box[0], run[0].box[1], run[run.length - 1].box[2], run[0].box[3]], letters: run.every(word => word.letters) ? run.flatMap(word => word.letters) : undefined });
+        const run = words.slice(n, end);
+        merged.push({ ...run[0], text: run.map(word => word.text).join(''), box: [run[0].box[0], run[0].box[1], run[run.length - 1].box[2], run[0].box[3]], letters: run.every(word => word.letters) ? run.flatMap(word => word.letters!) : undefined });
         n = end;
-      } else merged.push(line.words[n++]);
+      } else merged.push(words[n++]);
     }
     line.words = merged;
-    line.words = (line.words ?? []).flatMap(word => {
+    const words: Word[] = (line.words ?? []).flatMap(word => {
       const box = tighten(word.box), joined = /^(\d+|\p{Ll}+)(\p{Lu}.*)$/u.exec(word.text);
       if (!joined) return [{ ...word, box }];
       // The widest blank run of columns inside the word, a space's width at least.
-      let best = null;
+      let best: { run: number; at: number } | null = null;
       for (let x = Math.ceil(box[0] * k), run = 0; x <= Math.floor(box[2] * k); x++) {
         if (x < Math.floor(box[2] * k) && !inked(x)) { run++; continue; }
         if (run && (!best || run > best.run)) best = { run, at: x - run };
@@ -647,14 +717,15 @@ function pageFaces(scan, lines, faces) {
     });
     // The words' places from the ink itself when it parts plainly into as many runs as there are
     // words (gaps a space wide): the recogniser's boxes can sit a few pixels off and narrow.
-    if (line.words.length >= 2) {
-      const from = Math.max(0, Math.floor((line.words[0].box[0] - 1) * k)), to = Math.min(scan.w, Math.ceil((line.words[line.words.length - 1].box[2] + 1) * k)), space = (bottom - top) * .18 * k;
-      const runs = []; let start = -1, blank = 0;
+    line.words = words;
+    if (words.length >= 2) {
+      const from = Math.max(0, Math.floor((words[0].box[0] - 1) * k)), to = Math.min(scan.w, Math.ceil((words[words.length - 1].box[2] + 1) * k)), space = (bottom - top) * .18 * k;
+      const runs: [number, number][] = []; let start = -1, blank = 0;
       for (let x = from; x <= to; x++) {
         if (x < to && inked(x)) { if (start < 0 || blank >= space) { if (start >= 0) runs[runs.length - 1][1] = x - blank; runs.push([x, x + 1]); start = x; } blank = 0; runs[runs.length - 1][1] = x + 1; }
         else if (start >= 0) blank++;
       }
-      if (runs.length === line.words.length && runs.every(([a, b], n) => Math.abs((a + b) / 2 / k - (line.words[n].box[0] + line.words[n].box[2]) / 2) < (bottom - top))) line.words = line.words.map((word, n) => ({ ...word, box: [runs[n][0] / k, word.box[1], runs[n][1] / k, word.box[3]] }));
+      if (runs.length === words.length && runs.every(([a, b], n) => Math.abs((a + b) / 2 / k - (words[n].box[0] + words[n].box[2]) / 2) < (bottom - top))) line.words = words.map((word, n) => ({ ...word, box: [runs[n][0] / k, word.box[1], runs[n][1] / k, word.box[3]] }));
     }
     if (line.words.length) line.text = line.words.map(word => word.text).join(' ');
   }
@@ -665,7 +736,7 @@ function pageFaces(scan, lines, faces) {
     return widthSize(named('Times-Roman').font, line) || (line.box[3] - line.box[1]) / ((tall ? .7 : .5) + (deep ? .21 : 0));
   });
   const arounds = lines.map(line => inkAround(scan, line)), strips = lines.map((line, i) => inkBand(scan, line, sizes[i])), baselines = strips.map(strip => strip?.baseline ?? 0), contrasts = lines.map(line => contrastOf(scan, line)), strokes = lines.map((line, i) => strokeWidth(scan, line, sizes[i], contrasts[i]));
-  const scored = lines.map(() => new Map());
+  const scored = lines.map(() => new Map<string, Score>());
   // How much the scan softened its letters, once for the page, from a few of its longest lines in
   // Times: every face is then weighed at that blur (a thin face blurred more would pass for bold).
   const blurs = [...lines.keys()].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 8).map(i => faceScore(arounds[i], lines[i], named('Times-Roman'), { baseline: baselines[i] }).blur ?? 0).sort((p, q) => p - q);
@@ -676,7 +747,7 @@ function pageFaces(scan, lines, faces) {
   // (Only where small letters are some seven pixels tall in the scan itself: below, the blur evens out every stroke and
   // a serif reads as a sans; the shapes say it then.)
   const detail = Math.min(scan.k, scan.native || scan.k), penned = lines.map((line, i) => sizes[i] * .48 * detail >= 7 ? strokeContrast(scan, line, baselines[i], sizes[i], contrasts[i]) : 0);
-  const kindOf = (value, sure) => !value ? null : value > (sure ? 2 : 1.75) ? 'serif' : value < (sure ? 1.45 : 1.55) ? 'sans' : null;
+  const kindOf = (value: number, sure: boolean) => !value ? null : value > (sure ? 2 : 1.75) ? 'serif' : value < (sure ? 1.45 : 1.55) ? 'sans' : null;
   // A line of capitals is drawn as tall as its capitals for the comparison (its widths tell its
   // size badly when its face is condensed or wide).
   // A line's size in a face: its letters as tall as the scan's, from the words' widths (unbounded by
@@ -685,16 +756,16 @@ function pageFaces(scan, lines, faces) {
   // The ink's height is read to a pixel (a sixth of a small letter here), the widths over a whole
   // line far closer: so a face's size is its widths' measure times one ratio for the page, how much
   // taller (or shorter) the scan's small letters are than the face's at that width.
-  const ratios = new Map(), ratioOf = face => {
+  const ratios = new Map<Face, number>(), ratioOf = (face: Face): number => {
     if (!ratios.has(face)) {
       const found = lines.flatMap((line, i) => { const strip = strips[i], wide = (line.words?.length ?? 0) >= 4 && widthSize(face.font, line); return strip && !strip.capitals && wide ? [strip.height / face.xheight / wide] : []; }).sort((p, q) => p - q);
       // Too few lines in a bold or italic face (an italic's slanted rows read its height badly): its family's regular's.
       const regular = faces.find(other => other.family === face.family && !other.bold && !other.italic);
       ratios.set(face, found.length >= 3 && !face.italic ? Math.min(1.35, Math.max(.75, found[found.length >> 1])) : regular && regular !== face ? ratioOf(regular) : 1);
     }
-    return ratios.get(face);
+    return ratios.get(face)!;
   };
-  const measure = (i, face) => {
+  const measure = (i: number, face: Face) => {
     const wide = widthSize(face.font, lines[i]), strip = strips[i];
     if (strip?.capitals) return strip.height / face.cap;
     // An italic by its height: italics differ in width far more than romans (ours run wider than Palatino's).
@@ -702,8 +773,9 @@ function pageFaces(scan, lines, faces) {
     if (wide) return wide * ratioOf(face);
     return strip ? strip.height / face.xheight : placeIn(face, lines[i]).size;
   };
-  const score = (i, face) => { if (!scored[i].has(face.name)) scored[i].set(face.name, faceScore(arounds[i], lines[i], face, { baseline: baselines[i], blur, size: measure(i, face) })); return scored[i].get(face.name); };
-  const groups = [];
+  const score = (i: number, face: Face) => { if (!scored[i].has(face.name)) scored[i].set(face.name, faceScore(arounds[i], lines[i], face, { baseline: baselines[i], blur, size: measure(i, face) })); return scored[i].get(face.name)!; };
+  type StyleGroup = { height: number; color: number[]; stroke: number; members: number[] };
+  const groups: StyleGroup[] = [];
   lines.forEach((line, i) => {
     const height = sizes[i], stroke = strokes[i];
     const group = groups.find(g => Math.abs(g.height - height) <= g.height * .15 && Math.hypot(...g.color.map((v, c) => v - line.color[c])) < .15 && Math.abs(g.stroke - stroke) <= g.stroke * .18);
@@ -713,7 +785,7 @@ function pageFaces(scan, lines, faces) {
   // sans note of one size), or when a line of it plainly is the other kind (one family's lines
   // differ by a few hundredths, two families' by a tenth); a line with no clear preference
   // follows the group's majority.
-  const leaning = i => score(i, named('Times-Roman')).score - score(i, named('Helvetica')).score;
+  const leaning = (i: number) => score(i, named('Times-Roman')).score - score(i, named('Helvetica')).score;
   for (const group of [...groups]) {
     const serif = group.members.filter(i => leaning(i) > .03), sans = group.members.filter(i => leaning(i) < -.03), toSerif = serif.length >= sans.length;
     const moved = serif.length >= 2 && sans.length >= 2 ? group.members.filter(i => toSerif ? leaning(i) < -.03 : leaning(i) > .03) : group.members.filter(i => toSerif ? leaning(i) < -.1 : leaning(i) > .1);
@@ -723,9 +795,9 @@ function pageFaces(scan, lines, faces) {
   }
   // Weight by stroke thickness, against the page's own text: how thick a regular stroke
   // looks depends on the scan's blur, so bold is a style clearly heavier than most of the page.
-  const median = values => { const sorted = values.filter(v => v > 0).sort((p, q) => p - q); return sorted.length ? sorted[sorted.length >> 1] : 0; };
+  const median = (values: number[]) => { const sorted = values.filter(v => v > 0).sort((p, q) => p - q); return sorted.length ? sorted[sorted.length >> 1] : 0; };
   const usual = median(lines.flatMap((line, i) => Array(line.text.length).fill(strokes[i])));
-  const regulars = faces.filter(face => !face.bold && !face.italic), chosen = [];
+  const regulars = faces.filter(face => !face.bold && !face.italic), chosen: Chosen[] = [];
   // Ink varies across a scan (a darker band, a lighter corner): weight is judged against the
   // lines around a line, in its own column, not against the whole page.
   const near = lines.map((line, i) => lines.flatMap((other, j) => {
@@ -737,13 +809,13 @@ function pageFaces(scan, lines, faces) {
   // a line of capitals, with fewer upright stems, sharpens less as it is sheared upright; a line of
   // small letters with a few italic words in it leans a little too).
   const tilted = lines.map((line, i) => { const style = wordStyle(scan, line, { text: line.text, box: line.box }, contrasts[i]); return !!style && ((style.lean >= 6 && style.gain >= 1.05) || (!!strips[i]?.capitals && style.lean >= 9 && style.gain >= 1.03)); });
-  const mean = (face, among) => among.reduce((t, i) => t + score(i, face).score, 0) / among.length;
+  const mean = (face: Face, among: number[]) => among.reduce((t, i) => t + score(i, face).score, 0) / among.length;
   // How evenly a face's widths match a set of lines' words: each word's width in the scan over its
   // width in the face is one size; in the face the text was set in, every word gives about the same
   // one, in another face they scatter (its letters are each wider or narrower in their own way).
   // Positions, not shapes: it holds where letters are a dozen pixels tall. The middle deviation,
   // with how many words gave it (null under 8: too few to tell).
-  const scatter = (face, among) => {
+  const scatter = (face: Face, among: number[]) => {
     const ratios = among.flatMap(i => (lines[i].words ?? []).filter(word => /^[\p{L}]{4,}[.,;:]?$/u.test(word.text)).map(word => {
       const units = [...word.text].reduce((t, c) => { const gid = face.font.encodeCharacter(c); return t + (gid ? face.font.advanceGlyph(gid) : 0); }, 0);
       return units ? (word.box[2] - word.box[0]) / units : 0;
@@ -754,42 +826,43 @@ function pageFaces(scan, lines, faces) {
   };
   // The family whose widths fit a set of lines clearly best (a quarter less scattered than the
   // next), among `families`; null when none stands out or there are too few words.
-  const widest = (among, families) => {
-    const ranked = families.map(family => [family, scatter(regulars.find(face => face.family === family), among)]).filter(([, v]) => v !== null).sort((p, q) => p[1] - q[1]);
+  const widest = (among: number[], families: string[]) => {
+    const ranked = families.map(family => [family, scatter(regulars.find(face => face.family === family)!, among)] as const).filter((entry): entry is readonly [string, number] => entry[1] !== null).sort((p, q) => p[1] - q[1]);
     return ranked.length >= 2 && ranked[0][1] < ranked[1][1] * .8 ? ranked[0][0] : null;
   };
   // Each style's families, ranked on a few of its longest lines in each family's regular or bold
   // face (a bold heading's family shows in its bold); the page's family is the one that fits its
   // text best overall (weighted by lines), so close faces do not alternate.
   const ranked = groups.map(({ members }) => {
-    const sample = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 4), fits = new Map();
+    const sample = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 4), fits = new Map<string, number>();
     for (const face of faces) if (!face.italic) fits.set(face.family, Math.max(fits.get(face.family) ?? -1, mean(face, sample)));
     return fits;
   });
-  const overall = new Map(regulars.map(face => [face.family, groups.reduce((t, g, k) => t + ranked[k].get(face.family) * g.members.length, 0) / lines.length]));
+  const overall = new Map(regulars.map(face => [face.family, groups.reduce((t, g, k) => t + ranked[k].get(face.family)! * g.members.length, 0) / lines.length]));
   // Serif or sans is the surer call (Times against Helvetica); a closer family of that kind
   // (Garamond, Palatino, Calibri, a slab...) only when it fits clearly better than the plain one.
-  const pick = (scores, kind) => {
+  const pick = (scores: Map<string, number>, kind: 'serif' | 'sans') => {
     const plain = kind === 'serif' ? 'Times' : 'Helvetica', [family, value] = [...scores].filter(([family]) => SERIF.has(family) === (kind === 'serif')).sort((a, b) => b[1] - a[1])[0];
-    return value - scores.get(plain) > .015 ? family : plain;
+    return value - scores.get(plain)! > .015 ? family : plain;
   };
-  const main = pick(overall, overall.get('Times') > overall.get('Helvetica') ? 'serif' : 'sans');
+  const main = pick(overall, overall.get('Times')! > overall.get('Helvetica')! ? 'serif' : 'sans');
   // The body text: the style with the most letters.
-  const body = groups.reduce((best, g) => { const letters = g.members.reduce((t, i) => t + lines[i].text.length, 0); return letters > best.letters ? { ...g, letters } : best; }, { letters: -1 });
+  // (`lines` is never empty, so neither is `groups`: the seed is always replaced.)
+  const body = groups.reduce<StyleGroup & { letters: number }>((best, g) => { const letters = g.members.reduce((t, i) => t + lines[i].text.length, 0); return letters > best.letters ? { ...g, letters } : best; }, { letters: -1 } as StyleGroup & { letters: number });
   const bodySize = median(body.members.map(i => sizes[i]));
   for (const [k, { members, color }] of groups.entries()) {
     const height = median(members.map(i => sizes[i]));
     // A style keeps the page's family unless it is clearly of the other kind (a sans heading on a
     // serif page): Helvetica fits it clearly better than Times, or the best sans family fits it
     // better than any serif one (a humanist sans such as Gill or Myriad is far from Helvetica).
-    const lean = ranked[k].get('Times') - ranked[k].get('Helvetica'), kind = SERIF.has(main) ? 'serif' : 'sans';
-    const best = serif => Math.max(...[...ranked[k]].filter(([family]) => SERIF.has(family) === serif).map(([, v]) => v));
+    const lean = ranked[k].get('Times')! - ranked[k].get('Helvetica')!, kind = SERIF.has(main) ? 'serif' : 'sans';
+    const best = (serif: boolean) => Math.max(...[...ranked[k]].filter(([family]) => SERIF.has(family) === serif).map(([, v]) => v));
     const other = kind === 'serif' ? lean < -.04 || best(false) - best(true) > .012 : lean > .04 || best(true) - best(false) > .012;
     // The words' widths, where there are enough of them, name the family outright.
     const families = [widest(members, [...new Set(regulars.map(face => face.family))]) ?? (other ? pick(ranked[k], kind === 'serif' ? 'sans' : 'serif') : main)];
     const candidates = faces.filter(face => families.includes(face.family)), total = new Map(candidates.map(face => [face, mean(face, members)]));
-    const sum = filter => [...total].filter(([face]) => filter(face)).reduce((t, [, v]) => t + v, 0);
-    const around = i => median(near[i].filter(j => !members.includes(j)).map(j => strokes[j])) || usual;
+    const sum = (filter: (face: Face) => boolean) => [...total].filter(([face]) => filter(face)).reduce((t, [, v]) => t + v, 0);
+    const around = (i: number) => median(near[i].filter(j => !members.includes(j)).map(j => strokes[j])) || usual;
     // A whole style in bold is a heading or a label: it also differs from the body text in size
     // or colour (a body line printed a little darker is not bold), or it is a line or two,
     // clearly heavier, set apart from the body (a run-in heading).
@@ -806,8 +879,8 @@ function pageFaces(scan, lines, faces) {
     // and slant when its letters plainly say so (a sans table row among serif text of one size, a
     // bold paragraph, a heading set in italic).
     const home = families[0], away = pick(overall, SERIF.has(home) ? 'sans' : 'serif'), kinds = [...new Set(regulars.map(face => face.family))];
-    const set = family => { const of = (bold, italic) => faces.find(face => face.family === family && face.bold === bold && face.italic === italic); return { regular: of(false, false) ?? faces[0], heavy: of(true, false), slant: of(false, true) }; };
-    const fit = (i, family) => { const { regular, heavy } = set(family); return Math.max(score(i, regular).score, heavy ? score(i, heavy).score : -2); };
+    const set = (family: string) => { const of = (bold: boolean, italic: boolean) => faces.find(face => face.family === family && face.bold === bold && face.italic === italic); return { regular: of(false, false) ?? faces[0], heavy: of(true, false), slant: of(false, true) }; };
+    const fit = (i: number, family: string) => { const { regular, heavy } = set(family); return Math.max(score(i, regular).score, heavy ? score(i, heavy).score : -2); };
     members.forEach(i => {
       // The closest family of the other kind for this line (a humanist sans box on a serif page is
       // far from Helvetica). A heading or a label of a few words has little to tell its family by;
@@ -817,7 +890,7 @@ function pageFaces(scan, lines, faces) {
       // Uneven strokes say serif in a short line too when it is no heavier than the text around
       // (a bold heading's stems are thick for its bars too; an italic running head's are not). When
       // the strokes agree with the style's family, the line keeps it.
-      const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home) && (!SLAB.has(f) || SLAB.has(main))).reduce((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
+      const rival = kinds.filter(f => SERIF.has(f) !== SERIF.has(home) && (!SLAB.has(f) || SLAB.has(main))).reduce<string | null>((best, f) => !best || score(i, set(f).regular).score > score(i, set(best).regular).score ? f : best, null) ?? away;
       const sure = kindOf(penned[i], true), level = strokes[i] / (median(near[i].map(j => strokes[j])) || usual || 1), plainly = sure === 'sans' || (lines[i].words?.length ?? 0) > 6 || level < 1.1 ? sure : null, against = plainly && (plainly === 'serif') !== SERIF.has(home) && !(plainly === 'sans' && SLAB.has(home));
       const family = against || (!plainly && fit(i, rival) - fit(i, home) > ((lines[i].words?.length ?? 0) <= 4 ? .015 : .03)) ? rival : home, { regular, heavy, slant } = set(family);
       const plain = score(i, regular).score, thick = heavy ? score(i, heavy).score : -2, leaning = slant ? score(i, slant).score : -2;
@@ -845,10 +918,10 @@ function pageFaces(scan, lines, faces) {
       const face = slanting ? slant : lineBold ? heavy : regular;
       // Within the line, each word keeps its own weight and slant (a bold «Fig. 4-9.», an
       // italic name).
-      const sibling = (bold, italic) => faces.find(other => other.family === face.family && other.bold === bold && other.italic === italic && !(bold && italic)) ?? face;
+      const sibling = (bold: boolean, italic: boolean) => faces.find(other => other.family === face.family && other.bold === bold && other.italic === italic && !(bold && italic)) ?? face;
       // How much better one face draws a word than another, on the word's own ink.
-      const fits = (n, one, other) => {
-        const word = lines[i].words[n], line = { ...lines[i], text: word.text, words: [word], box: [word.box[0], lines[i].box[1], word.box[2], lines[i].box[3]] }, around = inkAround(scan, line);
+      const fits = (n: number, one: Face, other: Face) => {
+        const word = lines[i].words![n], line: RebuiltLine = { ...lines[i], text: word.text, words: [word], box: [word.box[0], lines[i].box[1], word.box[2], lines[i].box[3]] }, around = inkAround(scan, line);
         const fixed = { baseline: baselines[i], size: measure(i, face), blur };
         return faceScore(around, line, one, fixed).score - faceScore(around, line, other, fixed).score;
       };
@@ -859,30 +932,30 @@ function pageFaces(scan, lines, faces) {
       // the bold face draws better than the regular one taken together (one word's shape alone
       // says little in a soft scan, and a lone heavy word is the scan's ink).
       // Words in their own colour (a blue link) are weighed apart: their strokes read thinner against the line's ink.
-      const plainWord = n => !lines[i].words?.[n]?.color;
-      const own = wordStyles[i].filter((style, n) => style && plainWord(n)), common = own.length >= 3 ? median(own.map(style => style.stroke)) : 0;
+      const plainWord = (n: number) => !lines[i].words?.[n]?.color;
+      const own = wordStyles[i].filter((style, n): style is NonNullable<typeof style> => !!style && plainWord(n)), common = own.length >= 3 ? median(own.map(style => style.stroke)) : 0;
       // Heavier: past the line's usual stroke by a good margin, or, in a line plainly of two weights
       // (half bold, half not), on the heavy side of the split that parts them most.
-      const sorted = own.map(style => style.stroke).sort((p, q) => p - q), average = list => list.reduce((t, v) => t + v, 0) / list.length;
+      const sorted = own.map(style => style.stroke).sort((p, q) => p - q), average = (list: number[]) => list.reduce((t, v) => t + v, 0) / list.length;
       let cut = common * 1.22, widest = 1.25;
       for (let k = 2; k <= sorted.length - 2; k++) { const low = average(sorted.slice(0, k)), high = average(sorted.slice(k)); if (high / low > widest) { widest = high / low; cut = Math.sqrt(low * high); } }
-      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds = [], slants = [];
+      const measured = wordStyles[i].flatMap((style, n) => style && plainWord(n) ? [n] : []), bolds: boolean[] = [], slants: boolean[] = [];
       for (let m = 0; m < measured.length;) {
-        let end = m; while (end < measured.length && !face.bold && common > 0 && wordStyles[i][measured[end]].stroke > cut) end++;
+        let end = m; while (end < measured.length && !face.bold && common > 0 && wordStyles[i][measured[end]]!.stroke > cut) end++;
         const run = measured.slice(m, end);
         // (One of them plainly leaning: a run-in heading in italic, whose strokes read heavy too.)
-        if (run.length >= 2 && run.some(n => wordStyles[i][n].italic)) run.forEach(n => slants[n] = true);
+        if (run.length >= 2 && run.some(n => wordStyles[i][n]!.italic)) run.forEach(n => slants[n] = true);
         else if (run.length >= 2 && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > 0) run.forEach(n => bolds[n] = true);
         m = Math.max(end, m + 1);
       }
       // Words in their own colour are weighed as a run against the rest of the line: far heavier
       // (past what another ink alone makes: a black «Tabla 35-5» before a teal title) and drawn
       // about as well by the bold, they are bold.
-      const words_ = lines[i].words ?? [], tinted = n => words_[n]?.color, alike = (p, q) => !!p === !!q && (!p || p.every((v, c) => Math.abs(v - q[c]) < .08));
+      const words_ = lines[i].words ?? [], tinted = (n: number) => words_[n]?.color, alike = (p: number[] | undefined, q: number[] | undefined) => !!p === !!q && (!p || p.every((v, c) => Math.abs(v - q![c]) < .08));
       if (!face.bold) for (let m = 0; m < words_.length;) {
         let end = m + 1; while (end < words_.length && alike(tinted(end), tinted(m))) end++;
         const run = Array.from({ length: end - m }, (_, k) => m + k).filter(n => wordStyles[i][n]), rest = wordStyles[i].flatMap((style, n) => style && (n < m || n >= end) ? [style.stroke] : []);
-        if (tinted(m) && run.length >= 2 && rest.length >= 2 && run.every(n => wordStyles[i][n].stroke > median(rest) * 1.5) && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > -.03 * run.length) run.forEach(n => bolds[n] = true);
+        if (tinted(m) && run.length >= 2 && rest.length >= 2 && run.every(n => wordStyles[i][n]!.stroke > median(rest) * 1.5) && run.reduce((t, n) => t + fits(n, sibling(true, false), sibling(false, false)), 0) > -.03 * run.length) run.forEach(n => bolds[n] = true);
         m = end;
       }
       // Italic: a word that leans, or one in a line set in italic, or one of small letters whose
@@ -914,7 +987,7 @@ function pageFaces(scan, lines, faces) {
         const taken = before ? (!after || after === before ? before : after) : after ?? face;
         // (Not an italic one: a sentence's capitalised «La» before an italic term is roman, where a
         // bold run-in heading takes its article along.)
-        return taken !== before && taken.italic && !taken.bold && !face.italic && /^\p{Lu}/u.test(lines[i].words[n].text) ? before ?? face : taken;
+        return taken !== before && taken.italic && !taken.bold && !face.italic && /^\p{Lu}/u.test(lines[i].words![n].text) ? before ?? face : taken;
       });
       // A line most of whose words are italic is an italic line (sized and placed in the italic).
       const italicWords = words.filter(other => other.italic).length;
@@ -925,21 +998,21 @@ function pageFaces(scan, lines, faces) {
   }
   // A paragraph is set in one family: its lines (each joined to the next below it in its column,
   // of its size) take the family most of them have, keeping their own weight and slant.
-  const swapTo = (i, family) => {
-    const swap = face => faces.find(other => other.family === family && other.bold === face.bold && other.italic === face.italic) ?? face;
+  const swapTo = (i: number, family: string) => {
+    const swap = (face: Face) => faces.find(other => other.family === family && other.bold === face.bold && other.italic === face.italic) ?? face;
     chosen[i] = { ...chosen[i], face: swap(chosen[i].face), words: chosen[i].words.map(swap), fallback: named(SERIF.has(family) ? 'Times-Roman' : 'Helvetica').font };
   };
-  const neighbour = (i, below) => {
+  const neighbour = (i: number, below: boolean) => {
     const [x0, top, x1, bottom] = lines[i].box, h = bottom - top;
     return lines.map((line, j) => ({ line, j })).filter(({ line, j }) => j !== i && chosen[j] && Math.min(line.box[2], x1) > Math.max(line.box[0], x0) && Math.abs(sizes[j] - sizes[i]) < sizes[i] * .15
       && (below ? line.box[1] >= top + h * .5 && line.box[1] - bottom < h : line.box[3] <= bottom - h * .5 && top - line.box[3] < h))
       .sort((p, q) => below ? p.line.box[1] - q.line.box[1] : q.line.box[3] - p.line.box[3])[0]?.j;
   };
   // Running text only: a heading, a label or a band's few words keep the family they showed.
-  const running = i => !lines[i].band && (lines[i].words?.length ?? 0) > 6;
-  const paragraph = lines.map((_, i) => i), root = i => paragraph[i] === i ? i : (paragraph[i] = root(paragraph[i]));
+  const running = (i: number) => !lines[i].band && (lines[i].words?.length ?? 0) > 6;
+  const paragraph = lines.map((_, i) => i), root = (i: number): number => paragraph[i] === i ? i : (paragraph[i] = root(paragraph[i]));
   lines.forEach((_, i) => { const under = neighbour(i, true); if (under !== undefined && running(i) && running(under)) paragraph[root(under)] = root(i); });
-  const members = new Map();
+  const members = new Map<number, number[]>();
   lines.forEach((_, i) => members.set(root(i), [...(members.get(root(i)) ?? []), i]));
   // A paragraph of three lines or more holds far more letters than a line: its family is the one
   // that fits all of them best, which a line alone tells only faintly (at 15 pixels a humanist sans
@@ -947,9 +1020,9 @@ function pageFaces(scan, lines, faces) {
   const kinds = [...new Set(regulars.map(face => face.family))];
   for (const group of members.values()) {
     if (group.length < 3) continue;
-    const count = family => group.filter(i => chosen[i].face.family === family).length;
+    const count = (family: string) => group.filter(i => chosen[i].face.family === family).length;
     const usual = group.map(i => chosen[i].face.family).sort((a, b) => count(b) - count(a))[0];
-    const together = family => { const face = regulars.find(other => other.family === family); return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
+    const together = (family: string) => { const face = regulars.find(other => other.family === family)!; return group.reduce((t, i) => t + score(i, face).score, 0) / group.length; };
     // Of the kind the paragraph's strokes show, when they show it plainly.
     // (Strokes too few pixels to read: the kind most of its lines already took, by their shapes.)
     const kind = kindOf(median(group.map(i => penned[i])), false) ?? (group.filter(i => SERIF.has(chosen[i].face.family)).length * 2 > group.length ? 'serif' : 'sans'), allowed = kinds.filter(family => (!SLAB.has(family) || SLAB.has(main)) && (!kind || SERIF.has(family) === (kind === 'serif') || (kind === 'sans' && SLAB.has(family))));
@@ -962,7 +1035,7 @@ function pageFaces(scan, lines, faces) {
   // A book sets its text in one serif family and one sans (a slide in one typeface): the page's
   // lines of each kind take the family that fits all of them best together, keeping their own
   // weight and slant (a line alone tells close families apart only faintly).
-  const plainKinds = new Set(lines.flatMap((line, i) => strips[i]?.capitals ? [] : [kindOf(penned[i], true)]).filter(Boolean));
+  const plainKinds = new Set(lines.flatMap((_line, i) => strips[i]?.capitals ? [] : [kindOf(penned[i], true)]).filter(Boolean));
   const page = lines.reduce((t, line) => t + line.text.length, 0) < 1200 && plainKinds.size < 2 ? [null] : [true, false];
   for (const kind of page) {
     const members = lines.flatMap((_, i) => chosen[i] && !lines[i].band && (kind === null || SERIF.has(chosen[i].face.family) === kind) ? [i] : []);
@@ -973,8 +1046,8 @@ function pageFaces(scan, lines, faces) {
     const longest = [...members].sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 10);
     // Each line at the softening that suits it best (the page's one softening, fixed to weigh bold
     // fairly, blunts the shapes that tell close families apart).
-    const together = family => { const regular = regulars.find(face => face.family === family); return longest.reduce((t, i) => t + faceScore(arounds[i], lines[i], regular, { baseline: baselines[i], size: measure(i, regular) }).score, 0); };
-    const best = candidates.reduce((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
+    const together = (family: string) => { const regular = regulars.find(face => face.family === family)!; return longest.reduce((t, i) => t + faceScore(arounds[i], lines[i], regular, { baseline: baselines[i], size: measure(i, regular) }).score, 0); };
+    const best = candidates.reduce<{ family: string | null; value: number }>((best, family) => { const value = together(family); return value > best.value ? { family, value } : best; }, { family: null, value: -Infinity }).family;
     if (best) for (const i of members) if (chosen[i].face.family !== best) swapTo(i, best);
   }
   // On a slide (few letters) a list's items share one weight and one size: each line takes those
@@ -986,7 +1059,7 @@ function pageFaces(scan, lines, faces) {
     const peers = lines.flatMap((other, j) => chosen[j] && !other.band && !strips[j]?.capitals && chosen[j].face.family === family && Math.abs((chosen[j].size || measure(j, chosen[j].face)) - size) <= size * .2 ? [j] : []);
     if (peers.length < 3) return;
     // Not a line plainly heavier or lighter than the rest (a bold heading among its items).
-    const stroke = j => strokes[j] / (median(near[j].map(n => strokes[n])) || usual || 1);
+    const stroke = (j: number) => strokes[j] / (median(near[j].map(n => strokes[n])) || usual || 1);
     if (stroke(i) > 1.28 || stroke(i) < .75) return;
     const heavy = peers.filter(j => chosen[j].face.bold).length * 2 > peers.length, italic = chosen[i].face.italic;
     const face = faces.find(other => other.family === family && other.bold === heavy && other.italic === italic && !(heavy && italic)) ?? chosen[i].face;
@@ -1026,7 +1099,7 @@ function pageFaces(scan, lines, faces) {
   const inked = lines.flatMap((line, i) => chosen[i] && line.ink ? [i] : []);
   for (const i of inked) {
     const close = inked.filter(j => chosen[j].face === chosen[i].face && Math.hypot(...lines[j].color.map((v, c) => v - lines[i].color[c])) < .12);
-    if (close.length >= 3) lines[i].ink = [0, 1, 2].map(c => close.map(j => lines[j].ink[c]).sort((p, q) => p - q)[close.length >> 1]);
+    if (close.length >= 3) lines[i].ink = [0, 1, 2].map(c => close.map(j => lines[j].ink![c]).sort((p, q) => p - q)[close.length >> 1]) as [number, number, number];
   }
   // An italic line set among roman lines of its family takes their size (italics are measured on
   // fewer, slanted letters): the roman line just above or below, when within a sixth of it.
@@ -1046,12 +1119,12 @@ function pageFaces(scan, lines, faces) {
     const members = chosen.flatMap((choice, i) => choice?.face === face && !lines[i].band ? [i] : []);
     const longest = members.sort((a, b) => lines[b].text.length - lines[a].text.length).slice(0, 6);
     if (longest.length < 2) continue;
-    const off = thicken => median(longest.map(i => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) + 1e-9 : 0; }));
+    const off = (thicken: number) => median(longest.map(i => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) + 1e-9 : 0; }));
     let best = 0, least = off(0);
     for (const thicken of [.01, .02, .03, .04, .05]) { const value = off(thicken); if (value < least - .01) { least = value; best = thicken; } }
     // Each line still keeps whichever lays down ink nearer its own (a running head in a light
     // weight, letter-spaced, is already as dark as the scan without it).
-    const near = (i, thicken) => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) : Infinity; };
+    const near = (i: number, thicken: number) => { const weight = faceScore(arounds[i], lines[i], face, { baseline: baselines[i], size: chosen[i].size || measure(i, face), blur, thicken }).weight; return weight ? Math.abs(Math.log(weight)) : Infinity; };
     if (best) members.forEach(i => { if (near(i, best) <= near(i, 0)) chosen[i].thicken = best; });
   }
   return chosen;
@@ -1059,7 +1132,7 @@ function pageFaces(scan, lines, faces) {
 
 // A line of OCR text written as real text where the scan showed it, in `face`, its
 // baseline nudged by `dy`. `box` is the ink of the line in page points (y down).
-function checkLine(line) {
+function checkLine(line: RebuiltLine): RebuiltLine {
   if (typeof line?.text !== 'string' || !line.text.trim() || line.text.length > 2000) fail('Línea OCR inválida.');
   const color = line.color;
   if (!Array.isArray(color) || color.length !== 3 || !color.every(v => v >= 0 && v <= 1)) fail('Color de línea inválido.');
@@ -1067,12 +1140,12 @@ function checkLine(line) {
   if (line.band !== undefined && typeof line.band !== 'boolean') fail('Línea OCR inválida.');
   if (line.ink !== undefined && !(Array.isArray(line.ink) && line.ink.length === 3 && line.ink.every(v => v >= 0 && v <= 1))) fail('Color de línea inválido.');
   if (line.words !== undefined && !(Array.isArray(line.words) && line.words.length <= 500 && line.words.every(word => typeof word?.text === 'string' && word.text.length <= 500))) fail('Palabras OCR inválidas.');
-  const colour = value => Array.isArray(value) && value.length === 3 && value.every(v => v >= 0 && v <= 1) ? value : undefined;
+  const colour = (value: unknown) => (Array.isArray(value) && value.length === 3 && value.every(v => v >= 0 && v <= 1) ? value : undefined) as [number, number, number] | undefined;
   // Each letter's span across the page (x from, x to), when the recogniser gives them: one per character.
-  const spans = (letters, text) => Array.isArray(letters) && letters.length === [...text].length && letters.every(span => Array.isArray(span) && span.length === 2 && span.every(Number.isFinite)) ? letters : undefined;
+  const spans = (letters: unknown, text: string) => (Array.isArray(letters) && letters.length === [...text].length && letters.every(span => Array.isArray(span) && span.length === 2 && span.every(Number.isFinite)) ? letters : undefined) as [number, number][] | undefined;
   return { ...line, box: rect(line.box), words: line.words?.map(word => ({ text: word.text, box: rect(word.box), color: colour(word.color), letters: spans(word.letters, word.text) })) };
 }
-function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 0, words: wordFaces = [], fallback = null, thicken = 0 }) {
+function writeLine(doc: mupdf.PDFDocument, page: mupdf.PDFPage, line: RebuiltLine, { face, dy, size = 0, baseline = 0, width = 0, words: wordFaces = [], fallback = null, thicken = 0 }: PageFace) {
   const placed = placeIn(face, line, { size, baseline });
   if (!(placed.size >= 2 && placed.size <= 400)) return;
   placed.baseline += dy;
@@ -1081,11 +1154,11 @@ function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 
     // than the face's own (a condensed title; across a page, the face's own measure holds them).
     // A run of words in their own colour (a link, a term in red) is drawn in it, runs in reading order.
     if (!line.words?.length) { const text = textOf(face.font, placed, fallback); try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, line.ink ?? line.color, 1); } finally { text.destroy(); } return; }
-    const colourOf = word => word.color ?? line.ink ?? line.color, same = (p, q) => p.every((v, c) => v === q[c]);
-    for (let start = 0; start < line.words.length;) {
-      let end = start + 1; while (end < line.words.length && same(colourOf(line.words[end]), colourOf(line.words[start]))) end++;
-      const text = wordsText(face.font, placed, line.words.slice(start, end), .35, wordFaces.slice(start, end).map(other => other.font), fallback, width);
-      try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, colourOf(line.words[start]), 1); } finally { text.destroy(); }
+    const words = line.words, colourOf = (word: Word) => word.color ?? line.ink ?? line.color, same = (p: number[], q: number[]) => p.every((v, c) => v === q[c]);
+    for (let start = 0; start < words.length;) {
+      let end = start + 1; while (end < words.length && same(colourOf(words[end]), colourOf(words[start]))) end++;
+      const text = wordsText(face.font, placed, words.slice(start, end), .35, wordFaces.slice(start, end).map(other => other.font), fallback, width);
+      try { device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, colourOf(words[start]), 1); } finally { text.destroy(); }
       start = end;
     }
   }, line.text, thicken * placed.size);
@@ -1094,10 +1167,10 @@ function writeLine(doc, page, line, { face, dy, size = 0, baseline = 0, width = 
 // Write a drawing as a Form XObject, keeping the rest of the page streams intact.
 // `own` marks text Folio writes: true, or the text it stands for.
 // `outline`: a width (pt) its text is also stroked at, in its own colour (fill then stroke, one text).
-function appendDrawing(doc, page, draw, own = false, outline = 0) {
+function appendDrawing(doc: mupdf.PDFDocument, page: mupdf.PDFPage, draw: (device: mupdf.Device) => void, own: boolean | string = false, outline = 0) {
   const bounds = page.getBounds();
   const buffer = new mupdf.Buffer(), writer = new mupdf.DocumentWriter(buffer, 'pdf', 'compress=yes');
-  let generated, closed = false;
+  let generated: mupdf.PDFDocument | undefined, closed = false;
   try {
     const device = writer.beginPage(bounds);
     try { draw(device); } finally { try { writer.endPage(); } finally { device.destroy(); } }
@@ -1105,9 +1178,9 @@ function appendDrawing(doc, page, draw, own = false, outline = 0) {
     // A system or CJK font would otherwise be embedded whole on every edit.
     generated.subsetFonts();
     const object = generated.findPage(0);
-    let content = object.get('Contents').readStream();
+    let content: mupdf.Buffer | string = object.get('Contents').readStream();
     if (outline) { const thick = content.asString().replace(/\bBT\b/g, `BT 2 Tr ${outline.toFixed(3)} w 1 j`).replace(/([-\d.]+) ([-\d.]+) ([-\d.]+) rg/g, '$& $1 $2 $3 RG'); content.destroy(); content = thick; }
-    let form;
+    let form: mupdf.PDFObject;
     try { form = doc.addStream(content, { Type: 'XObject', Subtype: 'Form', BBox: object.get('MediaBox').asJS(), Resources: doc.graftObject(object.get('Resources')) }); }
     finally { if (typeof content !== 'string') content.destroy(); }
     const target = page.getObject(), inherited = target.getInheritable('Resources');
@@ -1122,8 +1195,8 @@ function appendDrawing(doc, page, draw, own = false, outline = 0) {
     // Text Folio writes keeps the box it covers, in its own space: wherever its
     // wrapper later puts it, it is found and moved as a whole (folioTexts).
     if (own) {
-      let structured, box = null, text = '';
-      try { structured = generatedPage.toStructuredText(); text = structured.asText(); structured.walk({ beginTextBlock: bounds => { box = box ? [Math.min(box[0], bounds[0]), Math.min(box[1], bounds[1]), Math.max(box[2], bounds[2]), Math.max(box[3], bounds[3])] : [...bounds]; } }); }
+      let structured: mupdf.StructuredText | undefined, box: mupdf.Rect | null = null, text = '';
+      try { structured = generatedPage.toStructuredText(undefined); text = structured.asText(); structured.walk({ beginTextBlock: (bounds: mupdf.Rect) => { box = box ? [Math.min(box[0], bounds[0]), Math.min(box[1], bounds[1]), Math.max(box[2], bounds[2]), Math.max(box[3], bounds[3])] : [...bounds]; } }); }
       finally { structured?.destroy(); }
       // Its text too (as the caller drew it: the writer's own map can misname letters), since a neighbour's text overlapping it can share its box.
       if (box) { form.put('FolioBox', mupdf.Rect.transform(box, mupdf.Matrix.invert(generatedPage.getTransform()))); form.put('FolioText', doc.newString(typeof own === 'string' ? own : text)); }
@@ -1157,13 +1230,15 @@ function appendDrawing(doc, page, draw, own = false, outline = 0) {
  * an ornate parenthesis): copying and searching the moved text would read it
  * wrong. The moved glyphs carry the characters they stood for; those replace
  * the writer's entries. Only fonts addressed by glyph id (Identity-H) are mapped. */
-function mapCharacters(doc, form, glyphs) {
-  const hex = n => n.toString(16).padStart(4, '0');
-  const utf16 = code => [...String.fromCodePoint(code)].flatMap(c => [...c].map(unit => unit.charCodeAt(0))).map(hex).join('');
+/** A glyph Folio wrote, with the character it stands for, in the font it was written in. */
+type MovedGlyph = { fontName: string; gid: number; unicode: number };
+function mapCharacters(doc: mupdf.PDFDocument, form: mupdf.PDFObject, glyphs: MovedGlyph[]) {
+  const hex = (n: number) => n.toString(16).padStart(4, '0');
+  const utf16 = (code: number) => [...String.fromCodePoint(code)].flatMap(c => [...c].map(unit => unit.charCodeAt(0))).map(hex).join('');
   form.get('Resources', 'Font').forEach(font => {
     const descendant = font.get('DescendantFonts').get(0), map = descendant.get('CIDToGIDMap');
     if (font.get('Subtype').asName() !== 'Type0' || font.get('Encoding').asName() !== 'Identity-H' || !(map.isNull() || map.asName() === 'Identity')) return;
-    const name = font.get('BaseFont').asName(), chars = new Map();
+    const name = font.get('BaseFont').asName(), chars = new Map<number, string>();
     // What the writer already maps, then the moved glyphs' own characters over it.
     const old = font.get('ToUnicode'); let text = '';
     if (old.isStream()) { const buffer = old.readStream(); try { text = buffer.asString(); } finally { buffer.destroy(); } }
@@ -1174,7 +1249,7 @@ function mapCharacters(doc, form, glyphs) {
     // Subsetting may prefix the name of a font that had no prefix (Helvetica → ABCDEF+Helvetica).
     for (const glyph of glyphs) if ((glyph.fontName === name || glyph.fontName === name.replace(/^[A-Z]{6}\+/, '')) && glyph.unicode > 0) chars.set(glyph.gid, utf16(glyph.unicode));
     if (!chars.size) return;
-    const entries = [...chars].sort((a, b) => a[0] - b[0]), blocks = [];
+    const entries = [...chars].sort((a, b) => a[0] - b[0]), blocks: string[] = [];
     for (let i = 0; i < entries.length; i += 100) blocks.push(`${entries.slice(i, i + 100).length} beginbfchar\n${entries.slice(i, i + 100).map(([code, value]) => `<${hex(code)}> <${value}>`).join('\n')}\nendbfchar`);
     font.put('ToUnicode', doc.addStream(`/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <ffff>\nendcodespacerange\n${blocks.join('\n')}\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n`, {}));
   });
@@ -1184,7 +1259,7 @@ function mapCharacters(doc, form, glyphs) {
 // seconds on a PDF with thousands of objects; each edit adds only its own subset font.
 const QUICK = 'garbage=2,compress=yes,encrypt=keep';
 
-function saveDrawnDocument(doc, password) {
+function saveDrawnDocument(doc: mupdf.PDFDocument, password?: string) {
   // MuPDF 1.28.1 can lose a newly grafted Form's stream when deduplicating
   // an embedded font already present in the document. Persist the new streams
   // before the deduplication pass; reopening preserves their data when renumbered.
@@ -1194,7 +1269,10 @@ function saveDrawnDocument(doc, password) {
   finally { normalized.destroy(); }
 }
 
-function textDrawing(device, box, options) {
+/** A document's own font, with the glyphs it painted (a subset's cmap cannot be trusted for the rest). */
+type GlyphFont = { font: mupdf.Font; glyphs: Map<number, number>; complete?: boolean };
+type TextDrawing = Partial<TextOptions> & { text: string; glyphFont?: GlyphFont };
+function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing) {
   if (typeof options.text !== 'string' || options.text.length > 50000) fail('Texto inválido o demasiado largo.');
   const size = Number(options.size ?? 12);
   if (!Number.isFinite(size) || size < 4 || size > 200) fail('Tamaño de letra inválido.');
@@ -1212,15 +1290,15 @@ function textDrawing(device, box, options) {
   const glyphFont = options.glyphFont;
   if (glyphFont && !(glyphFont.font instanceof mupdf.Font && glyphFont.glyphs instanceof Map)) fail('Fuente de texto no disponible.');
   const font = glyphFont ? glyphFont.font : options.font ? new mupdf.Font(options.fontFamily || postScriptName(options.font, options.fontIndex) || 'Folio Sans', options.font, options.fontIndex ?? 0) : new mupdf.Font(options.fontName ?? 'Helvetica');
-  const encode = glyphFont ? c => glyphFont.glyphs.get(c.codePointAt(0)) || (glyphFont.complete ? font.encodeCharacter(c) : 0) : c => font.encodeCharacter(c);
+  const encode = glyphFont ? (c: string) => glyphFont.glyphs.get(c.codePointAt(0)!) || (glyphFont.complete ? font.encodeCharacter(c) : 0) : (c: string) => font.encodeCharacter(c);
   // Subset fonts often have no space glyph: their gaps advance like a space.
   const spaceGlyph = encode(' '), space = spaceGlyph ? font.advanceGlyph(spaceGlyph) : .25;
-  const advance = c => { const gid = encode(c); return gid ? font.advanceGlyph(gid) : /\s/.test(c) ? space : 0; };
+  const advance = (c: string) => { const gid = encode(c); return gid ? font.advanceGlyph(gid) : /\s/.test(c) ? space : 0; };
   const text = new mupdf.Text();
   try {
     for (const c of options.text) if (!/\s/.test(c) && !encode(c)) fail(glyphFont ? `La fuente original no incluye «${c}».` : `La fuente elegida no incluye el carácter «${c}».`);
-    const limit = box[2] - box[0], measure = line => [...line].reduce((n, c) => n + advance(c) * size, 0);
-    const lines = [];
+    const limit = box[2] - box[0], measure = (line: string) => [...line].reduce((n, c) => n + advance(c) * size, 0);
+    const lines: string[] = [];
     for (const paragraph of options.text.replace(/\r/g, '').split('\n')) {
       if (!wrap || measure(paragraph) <= limit + .5) { lines.push(paragraph); continue; }
       let line = '';
@@ -1244,7 +1322,7 @@ function textDrawing(device, box, options) {
       const width = measure(line);
       if (width > limit + .5 || y > box[3] + .5) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
       let x = box[0] + (align === 'center' ? (limit - width) / 2 : align === 'right' ? limit - width : 0);
-      for (const c of line) { const gid = encode(c); if (gid) text.showGlyph(font, [size, 0, 0, -size, x, y], gid, c.codePointAt(0)); x += advance(c) * size; }
+      for (const c of line) { const gid = encode(c); if (gid) text.showGlyph(font, [size, 0, 0, -size, x, y], gid, c.codePointAt(0)!); x += advance(c) * size; }
       y += size * lineHeight;
     }
     // Wrapped text must fit its actual glyph ink, including descenders below the baseline.
@@ -1252,14 +1330,15 @@ function textDrawing(device, box, options) {
     // A document's own font may report its whole font box for every glyph, so
     // its text keeps the baseline fitting the original lines had.
     if (wrap && options.text.trim() && !glyphFont) {
-      const ink = text.getBounds(null, mupdf.Matrix.identity);
+      const ink = text.getBounds(NO_STROKE, mupdf.Matrix.identity);
       if (ink[3] > box[3] + .5 || (options.baselineOffset !== undefined && ink[1] < box[1] - .5)) fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
     }
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, rgb(options.color || '#202020'), 1);
   } finally { text.destroy(); if (!glyphFont) font.destroy(); }
 }
 
-function imagePlacement(image, box, options, orientation = 1) {
+type Placed = { matrix: mupdf.Matrix; alpha: number; clip: boolean };
+function imagePlacement(image: mupdf.Image, box: mupdf.Rect, options: Pick<ImageOptions, 'fit' | 'opacity' | 'rotation'>, orientation = 1): Placed {
   const fit = options.fit ?? 'stretch', alpha = options.opacity ?? 1, rotation = options.rotation ?? 0;
   if (!['contain', 'cover', 'stretch'].includes(fit)) fail('Ajuste de imagen inválido.');
   if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) fail('Opacidad de imagen inválida.');
@@ -1272,7 +1351,7 @@ function imagePlacement(image, box, options, orientation = 1) {
     w = iw * scale; h = ih * scale;
   }
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
-  const matrix = rotation === 90 ? [0, w, -h, 0, cx + h / 2, cy - w / 2]
+  const matrix: mupdf.Matrix = rotation === 90 ? [0, w, -h, 0, cx + h / 2, cy - w / 2]
     : rotation === 180 ? [-w, 0, 0, -h, cx + w / 2, cy + h / 2]
     : rotation === 270 ? [0, -w, h, 0, cx - h / 2, cy + w / 2]
     : [w, 0, 0, h, cx - w / 2, cy - h / 2];
@@ -1280,8 +1359,8 @@ function imagePlacement(image, box, options, orientation = 1) {
   return { matrix: mupdf.Matrix.concat(orientationMatrix(orientation), matrix), alpha, clip: fit === 'cover' };
 }
 
-function imageDrawing(device, box, image, placement) {
-  let path;
+function imageDrawing(device: mupdf.Device, box: mupdf.Rect, image: mupdf.Image, placement: Placed) {
+  let path: mupdf.Path;
   if (placement.clip) {
     path = new mupdf.Path(); path.rect(...box);
     try { device.clipPath(path, false, mupdf.Matrix.identity); } finally { path.destroy(); }
@@ -1290,15 +1369,15 @@ function imageDrawing(device, box, image, placement) {
   finally { if (placement.clip) device.popClip(); }
 }
 
-function areaContent(page, box) {
-  const result = { text: '', size: 12, color: '#202020', fontName: 'Helvetica', mixedStyle: false, rotated: false };
-  const styles = new Map(), lines = [];
-  let selected = '', direction, structured;
+function areaContent(page: mupdf.PDFPage, box: mupdf.Rect): AreaContentInfo {
+  const result: AreaContentInfo = { text: '', size: 12, color: '#202020', fontName: 'Helvetica', mixedStyle: false, rotated: false };
+  const styles = new Map<string, { size: number; color: string; fontName: string; count: number }>(), lines: string[] = [];
+  let selected = '', direction = false, structured: mupdf.StructuredText | undefined;
   try {
     structured = page.toStructuredText('preserve-whitespace');
     structured.walk({
-      beginLine: (_bounds, mode, vector) => { selected = ''; direction = mode !== 0 || Math.abs(vector[1]) > .01 || vector[0] < .99; },
-      onChar: (character, _origin, font, size, quad, color) => {
+      beginLine: (_bounds: mupdf.Rect, mode: number, vector: mupdf.Point) => { selected = ''; direction = mode !== 0 || Math.abs(vector[1]) > .01 || vector[0] < .99; },
+      onChar: (character: string, _origin: mupdf.Point, font: mupdf.Font, size: number, quad: mupdf.Quad, color: number[]) => {
         try {
           // Same rule as areaRemoval: a glyph belongs to the area by its centre.
           const glyph = quadBounds(quad), x = (glyph[0] + glyph[2]) / 2, y = (glyph[1] + glyph[3]) / 2;
@@ -1322,46 +1401,61 @@ function areaContent(page, box) {
 
 // Describe selectable regions, rather than pretending a PDF always has isolated
 // editable objects. The device pass also sees faint images and invisible OCR.
-function pageContent(doc, page, requestedImage, selectedContent, withDrawings = false) {
+/** An item of a page as Editar selected it, to be found again before it is changed. */
+type SelectedContent = { id: string; kind: 'text' | 'image' | 'graphic'; rect: mupdf.Rect };
+/** What the device saw painted: text, images, drawings, in page space and painting order. */
+type TextPaint = { box: mupdf.Rect; hidden: boolean; complex: boolean; clip: mupdf.Rect; order: number };
+type ImagePaint = { box: mupdf.Rect; fullBox: mupdf.Rect; alpha: number; complex: boolean; masked: boolean; transparent: boolean; clipped: boolean; matrix: mupdf.Matrix; order: number; width: number; height: number };
+type Clip = { box: mupdf.Rect; complex: boolean; maskMatrix?: mupdf.Matrix };
+/** A character of the page's text, where and how it is painted. */
+type ContentGlyph = { c: string; origin: mupdf.Point; quad: mupdf.Quad; fontName: string; size: number; color: number[] };
+type TextStyle = { size: number; color: string; fontName: string; count: number };
+type Row = { box: mupdf.Rect; mode: number; direction: mupdf.Point; text: string; styles: Map<string, TextStyle>; glyphs: ContentGlyph[]; origin?: mupdf.Point };
+type Candidate = { item: PageContentItem; box: mupdf.Rect; block: number; rows: Row[] };
+// The page's items; or one of its images' pixels; or what removing a selected item takes.
+function pageContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, requestedImage?: undefined, selectedContent?: undefined, withDrawings?: boolean): PageContentInfo;
+function pageContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, requestedImage: string): PageImageInfo;
+function pageContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, requestedImage: undefined, selectedContent: SelectedContent): Removal;
+function pageContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, requestedImage?: string, selectedContent?: SelectedContent, withDrawings = false): PageContentInfo | PageImageInfo | Removal {
   if (requestedImage !== undefined && (typeof requestedImage !== 'string' || !/^image-\d{1,5}$/.test(requestedImage))) fail('La imagen seleccionada ya no es válida.');
   const bounds = page.getBounds(), inverse = mupdf.Matrix.invert(page.getTransform());
-  const overlap = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > .5 && Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > .5;
-  const intersection = (a, b) => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
-  const usable = b => finite(b) && b.length === 4 && b[2] - b[0] > .1 && b[3] - b[1] > .1;
-  const equalBox = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < .5);
-  const point = (x, y, m) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
-  const warnings = new Set(), textPaint = [], images = [], imagePaint = [], glyphs = [], graphics = [], groups = [];
-  const clips = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, overflow = false, deviceError, display, structured, device, selectedImage;
+  const overlap = (a: mupdf.Rect, b: mupdf.Rect) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > .5 && Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > .5;
+  const intersection = (a: mupdf.Rect, b: mupdf.Rect): mupdf.Rect => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  const usable = (b: unknown): b is mupdf.Rect => finite(b) && b.length === 4 && b[2] - b[0] > .1 && b[3] - b[1] > .1;
+  const equalBox = (a: mupdf.Rect, b: mupdf.Rect) => a.every((v, i) => Math.abs(v - b[i]) < .5);
+  const point = (x: number, y: number, m: mupdf.Matrix): mupdf.Point => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
+  const warnings = new Set<string>(), textPaint: TextPaint[] = [], images: ImagePaint[] = [], imagePaint: ImagePaint[] = [], glyphs: ContentGlyph[] = [], graphics: { box: mupdf.Rect; order: number }[] = [], groups: boolean[] = [];
+  const clips: Clip[] = [{ box: bounds, complex: false }]; let events = 0, characters = 0, order = 0, overflow = false, deviceError: unknown, display: mupdf.DisplayList | undefined, structured: mupdf.StructuredText | undefined, device: mupdf.Device | undefined, selectedImage: mupdf.Image | undefined;
   // Device callbacks run inside MuPDF: an exception unwinding through them skips
   // its cleanup and corrupts the WASM heap. They record the failure and stop
   // collecting; it is raised once runPageContents has returned.
   const reserve = () => { if (++events > 20000) overflow = true; return !overflow && !deviceError; };
-  const guard = callback => (...args) => { try { callback(...args); } catch (error) { deviceError ??= error; } };
-  const currentClip = () => clips.at(-1);
+  const guard = <A extends unknown[]>(callback: (...args: A) => void) => (...args: A) => { try { callback(...args); } catch (error) { deviceError ??= error; } };
+  const currentClip = () => clips.at(-1)!;
   const complexGroup = () => groups.some(Boolean);
-  const pushClip = (box, complex, maskMatrix) => { if (reserve()) clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex, maskMatrix }); };
-  const isRectangle = (path, matrix) => {
-    let count = 0, curve = false, closed = false; const points = [];
-    path.walk({ moveTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, lineTo: (x, y) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, curveTo: () => { curve = true; }, closePath: () => { closed = true; } });
+  const pushClip = (box: mupdf.Rect, complex: boolean, maskMatrix?: mupdf.Matrix) => { if (reserve()) clips.push({ box: intersection(box, currentClip().box), complex: complex || currentClip().complex, maskMatrix }); };
+  const isRectangle = (path: mupdf.Path, matrix: mupdf.Matrix) => {
+    let count = 0, curve = false, closed = false; const points: mupdf.Point[] = [];
+    path.walk({ moveTo: (x: number, y: number) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, lineTo: (x: number, y: number) => { count++; if (count <= 5) points.push(point(x, y, matrix)); }, curveTo: () => { curve = true; }, closePath: () => { closed = true; } });
     if (curve || !closed || count < 4 || count > 5) return false;
-    const box = path.getBounds(null, matrix);
+    const box = path.getBounds(NO_STROKE, matrix);
     return points.every(([x, y]) => (Math.abs(x - box[0]) < .1 || Math.abs(x - box[2]) < .1) && (Math.abs(y - box[1]) < .1 || Math.abs(y - box[3]) < .1));
   };
-  const paintText = (text, matrix, alpha, hidden, stroke = null) => {
+  const paintText = (text: mupdf.Text, matrix: mupdf.Matrix, alpha: number, hidden: boolean, stroke = NO_STROKE) => {
     if (!reserve()) return; const box = text.getBounds(stroke, matrix);
     textPaint.push({ box, hidden: hidden || alpha <= 0, complex: complexGroup() || currentClip().complex || alpha < .999, clip: currentClip().box, order: order++ });
   };
-  const paintImage = (image, matrix, alpha, mask = false) => {
+  const paintImage = (image: mupdf.Image, matrix: mupdf.Matrix, alpha: number, mask = false) => {
     if (!reserve()) return; const box = mupdf.Rect.transform([0, 0, 1, 1], matrix);
-    let softMask;
+    let softMask: mupdf.Image | null | undefined;
     try {
       softMask = image.getMask();
       // An image's own soft mask (a PNG's alpha) is painted as a mask clip with the
       // image's matrix just before it: that is transparency, not an effect.
       const own = softMask && clips.length > 1 && currentClip().maskMatrix?.every((v, i) => Math.abs(v - matrix[i]) < .01);
-      const clip = own ? clips.at(-2) : currentClip(), visible = intersection(box, clip.box);
+      const clip = own ? clips.at(-2)! : currentClip(), visible = intersection(box, clip.box);
       // A soft mask is ordinary transparency (a PNG's alpha); stencil masks are effects.
-      const info = { box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask(), transparent: !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() };
+      const info: ImagePaint = { box: visible, fullBox: box, alpha, complex: complexGroup() || clip.complex, masked: mask || image.getImageMask(), transparent: !!softMask, clipped: !equalBox(visible, box), matrix, order: order++, width: image.getWidth(), height: image.getHeight() };
       if (selectedContent) imagePaint.push(info);
       if (usable(visible)) {
         if (`image-${images.length}` === (requestedImage ?? (selectedContent?.kind === 'image' ? selectedContent.id : undefined))) selectedImage = new mupdf.Image(image.pointer);
@@ -1369,46 +1463,46 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
       }
     } finally { softMask?.destroy(); }
   };
-  const paintPath = (path, matrix, alpha, stroke = null) => { if (reserve() && alpha > 0) graphics.push({ box: path.getBounds(stroke, matrix), order: order++ }); };
+  const paintPath = (path: mupdf.Path, matrix: mupdf.Matrix, alpha: number, stroke = NO_STROKE) => { if (reserve() && alpha > 0) graphics.push({ box: path.getBounds(stroke, matrix), order: order++ }); };
   try {
     device = new mupdf.Device(Object.fromEntries(Object.entries({
-      fillText: (text, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false); } finally { text.destroy(); cs.destroy(); } },
-      strokeText: (text, stroke, matrix, cs, _color, alpha) => { try { paintText(text, matrix, alpha, false, stroke); } finally { text.destroy(); stroke.destroy(); cs.destroy(); } },
-      ignoreText: (text, matrix) => { try { paintText(text, matrix, 0, true); } finally { text.destroy(); } },
-      fillImage: (image, matrix, alpha) => { try { paintImage(image, matrix, alpha); } finally { image.destroy(); } },
-      fillImageMask: (image, matrix, cs, _color, alpha) => { try { paintImage(image, matrix, alpha, true); } finally { image.destroy(); cs.destroy(); } },
-      fillPath: (path, _evenOdd, matrix, cs, _color, alpha) => { try { paintPath(path, matrix, alpha); } finally { path.destroy(); cs.destroy(); } },
-      strokePath: (path, stroke, matrix, cs, _color, alpha) => { try { paintPath(path, matrix, alpha, stroke); } finally { path.destroy(); stroke.destroy(); cs.destroy(); } },
-      clipPath: (path, _evenOdd, matrix) => { try { pushClip(path.getBounds(null, matrix), !isRectangle(path, matrix)); } finally { path.destroy(); } },
-      clipStrokePath: (path, stroke, matrix) => { try { pushClip(path.getBounds(stroke, matrix), true); } finally { path.destroy(); stroke.destroy(); } },
-      clipText: (text, matrix) => { try { pushClip(text.getBounds(null, matrix), true); } finally { text.destroy(); } },
-      clipStrokeText: (text, stroke, matrix) => { try { pushClip(text.getBounds(stroke, matrix), true); } finally { text.destroy(); stroke.destroy(); } },
-      clipImageMask: (image, matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true, [...matrix]); } finally { image.destroy(); } },
+      fillText: (text: mupdf.Text, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, _color: number[], alpha: number) => { try { paintText(text, matrix, alpha, false); } finally { text.destroy(); cs.destroy(); } },
+      strokeText: (text: mupdf.Text, stroke: mupdf.StrokeState, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, _color: number[], alpha: number) => { try { paintText(text, matrix, alpha, false, stroke); } finally { text.destroy(); stroke.destroy(); cs.destroy(); } },
+      ignoreText: (text: mupdf.Text, matrix: mupdf.Matrix) => { try { paintText(text, matrix, 0, true); } finally { text.destroy(); } },
+      fillImage: (image: mupdf.Image, matrix: mupdf.Matrix, alpha: number) => { try { paintImage(image, matrix, alpha); } finally { image.destroy(); } },
+      fillImageMask: (image: mupdf.Image, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, _color: number[], alpha: number) => { try { paintImage(image, matrix, alpha, true); } finally { image.destroy(); cs.destroy(); } },
+      fillPath: (path: mupdf.Path, _evenOdd: boolean, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, _color: number[], alpha: number) => { try { paintPath(path, matrix, alpha); } finally { path.destroy(); cs.destroy(); } },
+      strokePath: (path: mupdf.Path, stroke: mupdf.StrokeState, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, _color: number[], alpha: number) => { try { paintPath(path, matrix, alpha, stroke); } finally { path.destroy(); stroke.destroy(); cs.destroy(); } },
+      clipPath: (path: mupdf.Path, _evenOdd: boolean, matrix: mupdf.Matrix) => { try { pushClip(path.getBounds(NO_STROKE, matrix), !isRectangle(path, matrix)); } finally { path.destroy(); } },
+      clipStrokePath: (path: mupdf.Path, stroke: mupdf.StrokeState, matrix: mupdf.Matrix) => { try { pushClip(path.getBounds(stroke, matrix), true); } finally { path.destroy(); stroke.destroy(); } },
+      clipText: (text: mupdf.Text, matrix: mupdf.Matrix) => { try { pushClip(text.getBounds(NO_STROKE, matrix), true); } finally { text.destroy(); } },
+      clipStrokeText: (text: mupdf.Text, stroke: mupdf.StrokeState, matrix: mupdf.Matrix) => { try { pushClip(text.getBounds(stroke, matrix), true); } finally { text.destroy(); stroke.destroy(); } },
+      clipImageMask: (image: mupdf.Image, matrix: mupdf.Matrix) => { try { pushClip(mupdf.Rect.transform([0, 0, 1, 1], matrix), true, [...matrix] as mupdf.Matrix); } finally { image.destroy(); } },
       popClip: () => { if (clips.length > 1) clips.pop(); },
-      beginGroup: (_box, cs, _isolated, knockout, blend, alpha) => { try { if (reserve()) groups.push(knockout || blend !== 'Normal' || alpha < .999); } finally { cs.destroy(); } },
+      beginGroup: (_box: mupdf.Rect, cs: mupdf.ColorSpace, _isolated: boolean, knockout: boolean, blend: mupdf.BlendMode, alpha: number) => { try { if (reserve()) groups.push(knockout || blend !== 'Normal' || alpha < .999); } finally { cs.destroy(); } },
       endGroup: () => { groups.pop(); },
-      beginMask: (box, _luminosity, cs) => { try { pushClip(box, true); } finally { cs.destroy(); } },
+      beginMask: (box: mupdf.Rect, _luminosity: boolean, cs: mupdf.ColorSpace) => { try { pushClip(box, true); } finally { cs.destroy(); } },
       endMask: () => {},
-    }).map(([name, callback]) => [name, guard(callback)])));
+    }).map(([name, callback]) => [name, guard(callback as (...args: unknown[]) => void)])));
     page.runPageContents(device, mupdf.Matrix.identity); device.close(); device.destroy(); device = undefined;
     if (deviceError) throw deviceError;
     if (overflow) fail('La página contiene demasiados elementos para detectarlos automáticamente.');
     display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
     // The installed walker truncates non-BMP runes with fromCharCode. JSON's
     // Unicode strings preserve them; only strings are used, not its rounded boxes.
-    const jsonLines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
+    const jsonLines: string[] = JSON.parse(structured.asJSON()).blocks.filter((block: { type: string }) => block.type === 'text').flatMap((block: { lines: { text: string }[] }) => block.lines.map(line => line.text));
     if (jsonLines.reduce((n, line) => n + line.length, 0) > 200000) fail('La página tiene demasiado texto para detectarlo automáticamente.');
-    const blocks = [], fontChars = new Map(); let block, line, index = 0, rune = 0, jsonRunes;
+    const blocks: { box: mupdf.Rect; lines: Row[] }[] = [], fontChars = new Map<string, Set<string>>(); let block: { box: mupdf.Rect; lines: Row[] }, line: Row, index = 0, rune = 0, jsonRunes: string[] = [];
     structured.walk({
-      beginTextBlock: box => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
-      beginLine: (box, mode, direction) => { line = { box, mode, direction, text: '', styles: new Map(), glyphs: [] }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
-      onChar: (character, origin, font, size, _quad, color) => {
+      beginTextBlock: (box: mupdf.Rect) => { block = { box, lines: [] }; blocks.push(block); if (blocks.length > 5000) fail('Hay demasiados bloques para la selección automática.'); },
+      beginLine: (box: mupdf.Rect, mode: number, direction: mupdf.Point) => { line = { box, mode, direction, text: '', styles: new Map(), glyphs: [] }; block.lines.push(line); jsonRunes = [...(jsonLines[index++] || '')]; rune = 0; },
+      onChar: (character: string, origin: mupdf.Point, font: mupdf.Font, size: number, _quad: mupdf.Quad, color: number[]) => {
         try {
           if (++characters > 100000) fail('Hay demasiado texto para la selección automática.');
           const c = jsonRunes[rune++] ?? character; line.text += c; line.origin ??= origin;
           const fontName = font.getName();
           if (c.trim()) { const chars = fontChars.get(fontName) || new Set(); if (chars.size < 4000) chars.add(c); fontChars.set(fontName, chars); }
-          if (selectedContent) { const glyph = { c, origin: [...origin], quad: [..._quad], fontName, size, color: [...color] }; line.glyphs.push(glyph); glyphs.push(glyph); }
+          if (selectedContent) { const glyph: ContentGlyph = { c, origin: [...origin], quad: [..._quad], fontName, size, color: [...color] }; line.glyphs.push(glyph); glyphs.push(glyph); }
           if (!c.trim()) return;
           const hex = '#' + color.map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0')).join('');
           const key = `${fontName}:${Math.round(size * 100)}:${hex}`, style = line.styles.get(key) || { size, color: hex, fontName, count: 0 };
@@ -1416,23 +1510,23 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         } finally { font.destroy(); }
       },
     });
-    const candidates = [];
-    const addText = (id, level, box, rows, bi) => {
-        const styles = new Map(); rows.forEach(row => row.styles.forEach((style, key) => { const entry = styles.get(key) || { ...style, count: 0 }; entry.count += style.count; styles.set(key, entry); }));
+    const candidates: Candidate[] = [];
+    const addText = (id: string, level: 'line' | 'paragraph', box: mupdf.Rect, rows: Row[], bi: number) => {
+        const styles = new Map<string, TextStyle>(); rows.forEach(row => row.styles.forEach((style, key) => { const entry = styles.get(key) || { ...style, count: 0 }; entry.count += style.count; styles.set(key, entry); }));
         const style = [...styles.values()].sort((a, b) => b.count - a.count)[0] || { size: 12, color: '#202020', fontName: 'Helvetica' };
         const related = textPaint.filter(event => overlap(event.box, box)), hidden = related.some(event => event.hidden), visible = related.some(event => !event.hidden);
         const rotated = rows.some(row => row.mode !== 0 || Math.abs(row.direction[1]) > .01 || row.direction[0] < .99);
         const clipped = !equalBox(intersection(box, bounds), box) || related.some(event => !equalBox(intersection(box, event.clip), box));
         const complex = related.some(event => event.complex && !event.hidden);
         let reason = !visible ? 'Texto OCR invisible: no representa letras visibles que puedan reemplazarse.' : hidden ? 'Hay capas de texto visibles e invisibles superpuestas.' : rotated ? 'Texto girado o vertical.' : clipped || complex ? 'Texto recortado o con efectos.' : undefined;
-        const baselineOffset = rows[0].origin?.[1] - box[1];
-        const advances = !rotated ? rows.slice(1).map((row, i) => (row.origin?.[1] - rows[i].origin?.[1]) / style.size).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b) : [];
+        const baselineOffset = rows[0].origin?.[1]! - box[1];
+        const advances = !rotated ? rows.slice(1).map((row, i) => (row.origin?.[1]! - rows[i].origin?.[1]!) / style.size).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b) : [];
         const lineHeight = advances.length ? advances[Math.floor(advances.length / 2)] : undefined;
         if (lineHeight !== undefined && (lineHeight < .8 || lineHeight > 3)) reason ??= 'Interlineado fuera del rango del editor.';
-        const item = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}), fontGlyphs: /^[A-Z]{6}\+/.test(style.fontName) ? [...(fontChars.get(style.fontName) || [])].join('') : '*' };
+        const item: PageContentItem = { id, kind: 'text', level, rect: mupdf.Rect.transform(intersection(box, bounds), inverse), text: rows.map(row => row.text).join('\n'), size: style.size, color: style.color, fontName: style.fontName, mixedStyle: styles.size > 1, rotated, editable: !reason, ...(reason ? { reason } : {}), ...(reason && visible && !hidden ? { areaReplaceable: true } : {}), ...(Number.isFinite(baselineOffset) && baselineOffset >= 0 ? { baselineOffset } : {}), ...(lineHeight !== undefined && lineHeight >= .8 && lineHeight <= 3 ? { lineHeight } : {}), fontGlyphs: /^[A-Z]{6}\+/.test(style.fontName) ? [...(fontChars.get(style.fontName) || [])].join('') : '*' };
         candidates.push({ item, box, block: bi, rows });
     };
-    const around = rows => rows.reduce((box, row) => [Math.min(box[0], row.box[0]), Math.min(box[1], row.box[1]), Math.max(box[2], row.box[2]), Math.max(box[3], row.box[3])], [...rows[0].box]);
+    const around = (rows: Row[]) => rows.reduce<mupdf.Rect>((box, row) => [Math.min(box[0], row.box[0]), Math.min(box[1], row.box[1]), Math.max(box[2], row.box[2]), Math.max(box[3], row.box[3])], [...rows[0].box]);
     for (const [bi, block] of blocks.entries()) {
       const rows = block.lines.filter(row => row.text.trim() && usable(intersection(row.box, bounds)));
       if (!rows.length) continue;
@@ -1449,7 +1543,7 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         .filter(row => { const x = (row.box[0] + row.box[2]) / 2, y = (row.box[1] + row.box[3]) / 2; return x >= x0 && x <= x1 && y >= y0 && y <= y1; });
       if (!rows.length) return;
       addText(`text-folio-${n}`, 'paragraph', mupdf.Rect.transform(own.box, page.getTransform()), rows, -1 - n);
-      candidates.at(-1).item.text = own.text.trim();
+      candidates.at(-1)!.item.text = own.text.trim();
     });
     for (const candidate of candidates) {
       if (candidate.item.editable && candidates.some(other => other.block !== candidate.block && other.item.level === 'line' && overlap(candidate.box, other.box))) {
@@ -1464,7 +1558,7 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
       candidate.item.editable = true; delete candidate.item.reason; delete candidate.item.areaReplaceable;
     }
     const placed = folioImages(page);
-    const imageItems = images.map((image, i) => {
+    const imageItems = images.map((image, i): PageContentItem => {
       const [a, b, c, d] = image.matrix, orthogonal = (Math.abs(b) < .01 && Math.abs(c) < .01) || (Math.abs(a) < .01 && Math.abs(d) < .01);
       // Moving an image draws it again on top: anything above it would end up below.
       // What lies below is kept. An image Folio placed is edited where it is.
@@ -1472,7 +1566,7 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
       const overlaps = !own && (images.some(other => other.order > image.order && other.alpha > 0 && overlap(image.box, other.box)) || candidates.some(candidate => candidate.item.level === 'line' && overlap(image.box, candidate.box) && textPaint.some(event => !event.hidden && event.order > image.order && overlap(event.box, candidate.box))) || graphics.some(graphic => graphic.order > image.order && overlap(graphic.box, image.box)));
       const reason = image.alpha <= 0 ? 'Imagen invisible.' : image.clipped || image.complex || image.masked ? 'Imagen recortada, con máscara o efectos.' : a * d - b * c <= 0 ? 'Imagen reflejada.' : !orthogonal ? 'Imagen inclinada.' : overlaps ? 'Imagen con contenido superpuesto.' : image.width * image.height > 16000000 ? 'La imagen supera el límite de 16 megapíxeles para editarla automáticamente.' : undefined;
       if (reason) warnings.add(reason);
-      const rotation = ((Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
+      const rotation = ((Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90) % 360 + 360) % 360 as 0 | 90 | 180 | 270;
       return { id: `image-${i}`, kind: 'image', rect: mupdf.Rect.transform(image.box, inverse), editable: !reason, opacity: image.alpha, rotation, ...(image.transparent ? { transparent: true } : {}), ...(reason ? { reason } : {}), ...(reason && image.alpha > 0 ? { areaReplaceable: true } : {}) };
     });
     const items = [...candidates.map(candidate => candidate.item), ...imageItems];
@@ -1496,13 +1590,13 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
         // by alpha or clipping. The picker deliberately tolerates tiny overlaps;
         // deletion must not use that tolerance or remove a second instance.
         // Removal takes every image the mark touches: mark a spot of this one that no other image covers.
-        const [x0, y0, x1, y1] = image.fullBox, spots = [];
+        const [x0, y0, x1, y1] = image.fullBox, spots: mupdf.Point[] = [];
         for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) spots.push([x0 + (x1 - x0) * i / 8, y0 + (y1 - y0) * j / 8]);
-        const spot = spots.map(([x, y]) => [x - .2, y - .2, x + .2, y + .2]).find(box => !imagePaint.some(other => other !== image && intersects(box, other.fullBox)));
+        const spot = spots.map(([x, y]): mupdf.Rect => [x - .2, y - .2, x + .2, y + .2]).find(box => !imagePaint.some(other => other !== image && intersects(box, other.fullBox)));
         if (!spot) fail('Otra imagen cubre por completo esta; no se puede eliminar solo esta instancia con seguridad.');
         return { boxes: [spot], retainedGlyphs: glyphs.filter(glyph => glyph.c.trim()), info: image, image: selectedImage && new mupdf.Image(selectedImage.pointer) };
       }
-      const candidate = candidates.find(candidate => candidate.item === item), selected = new Set(candidate.rows.flatMap(row => row.glyphs));
+      const candidate = candidates.find(candidate => candidate.item === item)!, selected = new Set(candidate.rows.flatMap(row => row.glyphs));
       if (selected.size > 5000) fail('Hay demasiados caracteres para modificar esta selección automáticamente. Selecciona menos líneas.');
       return textRemoval([...selected], glyphs.filter(glyph => !selected.has(glyph) && glyph.c.trim()), item.level === 'line'
         ? 'Esta línea está demasiado cerca de otro texto para modificarla sola. Selecciona el párrafo completo.' : 'Este párrafo está demasiado cerca de otro texto para modificarlo solo.');
@@ -1510,7 +1604,7 @@ function pageContent(doc, page, requestedImage, selectedContent, withDrawings = 
     if (requestedImage !== undefined) {
       const item = imageItems.find(item => item.id === requestedImage);
       if (!item || !selectedImage) fail('La imagen seleccionada ya no existe en esta página.');
-      if (!item.editable) fail(item.reason);
+      if (!item.editable) fail(item.reason!);
       if (images[Number(requestedImage.slice(6))].transparent) fail('Esta imagen tiene transparencia: muévela o sustitúyela desde el editor de escritorio.');
       return pageImagePixels(selectedImage, images[Number(requestedImage.slice(6))], jpegSource(doc, page, selectedImage));
     }
@@ -1527,12 +1621,13 @@ const PAINT = new Set(['S', 's', 'f', 'F', 'f*', 'B', 'B*', 'b', 'b*']);
 const FILL_COLOR = new Set(['rg', 'g', 'k', 'sc', 'scn', 'cs']), STROKE_COLOR = new Set(['RG', 'G', 'K', 'SC', 'SCN', 'CS']);
 // What may stand between the parts of one drawing: state changes, none of them painting.
 const BETWEEN = new Set(['gs', 'w', 'J', 'j', 'M', 'd', 'ri', 'i', 'cm', 'BDC', 'BMC', 'EMC', 'MP', 'DP', ...FILL_COLOR, ...STROKE_COLOR]);
-const latin1 = bytes => { let text = ''; for (let i = 0; i < bytes.length; i += 32768) text += String.fromCharCode(...bytes.subarray(i, i + 32768)); return text; };
-const number = value => String(Math.round(value * 10000) / 10000);
+const latin1 = (bytes: Uint8Array) => { let text = ''; for (let i = 0; i < bytes.length; i += 32768) text += String.fromCharCode(...bytes.subarray(i, i + 32768)); return text; };
+const number = (value: number) => String(Math.round(value * 10000) / 10000);
 
 /** A content stream's operators, each with its operands and the offsets they span. */
-function contentOperators(text) {
-  const ops = [], args = [], n = text.length, white = c => c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === '\f' || c === '\0';
+type Operator = { op: string; start: number; end: number; args: string[] };
+function contentOperators(text: string): Operator[] {
+  const ops: Operator[] = [], args: string[] = [], n = text.length, white = (c: string) => c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === '\f' || c === '\0';
   let i = 0, start = -1, depth = 0;
   while (i < n) {
     const c = text[i];
@@ -1554,35 +1649,43 @@ function contentOperators(text) {
     }
     ops.push({ op: token, start, end: i, args: args.splice(0) }); start = -1;
     // Inline image data runs, unparsed, to EI.
-    if (token === 'ID') { const end = /\sEI(?=\s|$)/g; end.lastIndex = i + 1; const found = end.exec(text); i = ops.at(-1).end = found ? found.index + 3 : n; }
+    if (token === 'ID') { const end = /\sEI(?=\s|$)/g; end.lastIndex = i + 1; const found = end.exec(text); i = ops.at(-1)!.end = found ? found.index + 3 : n; }
   }
   return ops;
 }
 
 // Gray, RGB or CMYK operands as #rrggbb; a pattern or other space gives null.
-function colorHex(args) {
+function colorHex(args: string[]) {
   if (!args.length || args.some(arg => arg.startsWith('/'))) return null;
-  const v = args.map(Number), hex = values => '#' + values.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join('');
+  const v = args.map(Number), hex = (values: number[]) => '#' + values.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join('');
   return v.length === 4 ? hex(v.slice(0, 3).map(x => (1 - x) * (1 - v[3]))) : v.length === 3 ? hex(v) : v.length === 1 ? hex([v[0], v[0], v[0]]) : null;
 }
 
 /** The page's drawings in PDF coordinates, with where each sits in its content stream. */
-function pageDrawings(page) {
+/** Where a drawing's operators are in its stream: a part keeps the transform it is drawn with. */
+type Span = { start: number; end: number };
+type Part = Span & { ctm: mupdf.Matrix; lone?: boolean };
+/** One drawing of a page: its stream, place, parts, painting and colour operators, and its colours (null: a pattern). */
+type Drawing = { si: number; start: number; box: mupdf.Rect; parts: Part[]; paints: Span[]; fills: Span[]; strokes: Span[]; clip?: boolean; fill?: string | null; stroke?: string | null };
+type DrawingGroup = Omit<Drawing, 'box' | 'parts'> & { ctm: mupdf.Matrix; pure: boolean; children: Drawing[]; loose: Drawing[]; box?: mupdf.Rect; parts?: Part[] };
+function pageDrawings(page: mupdf.PDFPage) {
   const contents = page.getObject().get('Contents');
   const streams = contents.isArray() ? Array.from({ length: contents.length }, (_, i) => contents.get(i)) : contents.isStream() ? [contents] : [];
   const pageBox = mupdf.Rect.transform(page.getBounds(), mupdf.Matrix.invert(page.getTransform()));
-  const union = (a, b) => a ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : b;
-  const meet = (a, b) => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
-  const texts = [], drawings = [], saved = [];
-  let state = { ctm: [1, 0, 0, 1, 0, 0], width: 1, clip: pageBox, fill: '#000000', stroke: '#000000' }, path = null;
-  const point = (x, y) => { const [a, b, c, d, e, f] = state.ctm, px = x * a + y * c + e, py = x * b + y * d + f; path.box = union(path.box, [px, py, px, py]); };
+  const union = (a: mupdf.Rect | null | undefined, b: mupdf.Rect): mupdf.Rect => a ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : b;
+  const meet = (a: mupdf.Rect, b: mupdf.Rect): mupdf.Rect => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  type State = { ctm: mupdf.Matrix; width: number; clip: mupdf.Rect; fill: string | null; stroke: string | null };
+  const texts: string[] = [], drawings: Drawing[] = [], saved: State[] = [];
+  let state: State = { ctm: [1, 0, 0, 1, 0, 0], width: 1, clip: pageBox, fill: '#000000', stroke: '#000000' }, path: { si: number; start: number; box: mupdf.Rect | null; clip: boolean } | null = null;
+  const point = (x: number, y: number) => { const [a, b, c, d, e, f] = state.ctm, px = x * a + y * c + e, py = x * b + y * d + f; path!.box = union(path!.box, [px, py, px, py]); };
   // Open q…Q groups; the first stands for the page itself.
-  const fresh = (si, start) => ({ si, start, ctm: state.ctm, pure: true, children: [], loose: [], paints: [], fills: [], strokes: [] });
-  const groups = [{ ...fresh(-1, 0), pure: false }];
+  const fresh = (si: number, start: number): DrawingGroup => ({ si, start, ctm: state.ctm, pure: true, children: [], loose: [], paints: [], fills: [], strokes: [] });
+  const groups: DrawingGroup[] = [{ ...fresh(-1, 0), pure: false }];
   // A group that only drew paths waits inside its parent, which may take it in;
   // a group with anything else gives its own drawings and lone paths.
-  const close = (group, si, end) => {
-    if (group.pure && group.si === si && group.box) { group.parts = [{ start: group.start, end, ctm: group.ctm }]; groups.at(-1).children.push(group); return; }
+  const close = (group: DrawingGroup, si: number, end: number) => {
+    // (Taken in, the group is a drawing: it has its box, and now its one part.)
+    if (group.pure && group.si === si && group.box) { group.parts = [{ start: group.start, end, ctm: group.ctm }]; groups.at(-1)!.children.push(group as Drawing); return; }
     drawings.push(...group.children, ...group.loose);
   };
   for (const [si, stream] of streams.entries()) {
@@ -1591,8 +1694,8 @@ function pageDrawings(page) {
     for (const { op, start, end, args } of contentOperators(texts[si])) {
       const v = args.map(Number);
       if (op === 'q') { saved.push(state); state = { ...state }; groups.push(fresh(si, start)); }
-      else if (op === 'Q') { if (saved.length) state = saved.pop(); if (groups.length > 1) close(groups.pop(), si, end); }
-      else if (op === 'cm' && v.length === 6 && v.every(Number.isFinite)) state.ctm = mupdf.Matrix.concat(v, state.ctm);
+      else if (op === 'Q') { if (saved.length) state = saved.pop()!; if (groups.length > 1) close(groups.pop()!, si, end); }
+      else if (op === 'cm' && v.length === 6 && v.every(Number.isFinite)) state.ctm = mupdf.Matrix.concat(v as mupdf.Matrix, state.ctm);
       else if (op === 'w' && Number.isFinite(v[0])) state.width = v[0];
       else if (['m', 'l', 'c', 'v', 'y', 're', 'h'].includes(op)) {
         path ??= { si, start, box: null, clip: false };
@@ -1614,7 +1717,7 @@ function pageDrawings(page) {
           if (filled && group.fill === undefined) group.fill = state.fill;
           if (stroked && group.stroke === undefined) group.stroke = state.stroke;
         }
-        if (visible && path.si === si) groups.at(-1).loose.push({ si, start: path.start, parts: [{ start: path.start, end, ctm: state.ctm, lone: true }], box, paints: [paint], fills: [], strokes: [], clip: path.clip, ...(filled ? { fill: state.fill } : {}), ...(stroked ? { stroke: state.stroke } : {}) });
+        if (visible && path.si === si) groups.at(-1)!.loose.push({ si, start: path.start, parts: [{ start: path.start, end, ctm: state.ctm, lone: true }], box, paints: [paint], fills: [], strokes: [], clip: path.clip, ...(filled ? { fill: state.fill } : {}), ...(stroked ? { stroke: state.stroke } : {}) });
         path = null;
       }
       else if (FILL_COLOR.has(op) || STROKE_COLOR.has(op)) {
@@ -1627,46 +1730,49 @@ function pageDrawings(page) {
       else if (op === 'BT' || op === 'Do' || op === 'BI' || op === 'sh') for (const group of groups) group.pure = false;
     }
   }
-  while (groups.length > 1) close(groups.pop(), -1, 0);
+  while (groups.length > 1) close(groups.pop()!, -1, 0);
   close(groups[0], -1, 0);
   // A shape's fill and its border are often painted one after the other, with at
   // most a change of state between them: they make one drawing, in parts.
-  const same = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 && w * h > .8 * Math.max((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])); };
-  const merged = [];
+  const same = (a: mupdf.Rect, b: mupdf.Rect) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 && w * h > .8 * Math.max((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])); };
+  const merged: Drawing[] = [];
   for (const drawing of drawings.sort((a, b) => a.si - b.si || a.start - b.start)) {
     const last = merged.at(-1);
     if (last && last.si === drawing.si && !last.clip && !drawing.clip && same(last.box, drawing.box)
-      && contentOperators(texts[drawing.si].slice(last.parts.at(-1).end, drawing.start)).every(({ op }) => BETWEEN.has(op))) {
+      && contentOperators(texts[drawing.si].slice(last.parts.at(-1)!.end, drawing.start)).every(({ op }) => BETWEEN.has(op))) {
       Object.assign(last, { box: union(last.box, drawing.box), parts: [...last.parts, ...drawing.parts], paints: [...last.paints, ...drawing.paints], fills: [...last.fills, ...drawing.fills], strokes: [...last.strokes, ...drawing.strokes] });
       if (last.fill === undefined && drawing.fill !== undefined) last.fill = drawing.fill;
       if (last.stroke === undefined && drawing.stroke !== undefined) last.stroke = drawing.stroke;
     } else merged.push(drawing);
   }
   // The page's own background is not something to pick.
-  const area = box => (box[2] - box[0]) * (box[3] - box[1]), pageArea = area(pageBox);
+  const area = (box: mupdf.Rect) => (box[2] - box[0]) * (box[3] - box[1]), pageArea = area(pageBox);
   const listed = merged.filter(drawing => area(drawing.box) < pageArea * .85);
   return { streams, texts, drawings: listed.length > 3000 ? [] : listed, tooMany: listed.length > 3000 };
 }
 
-function drawingItems(page) {
+function drawingItems(page: mupdf.PDFPage) {
   const { drawings, tooMany } = pageDrawings(page);
-  return { tooMany, items: drawings.map((drawing, i) => ({ id: `graphic-${i}`, kind: 'graphic', rect: drawing.box, editable: true, ...(drawing.fill !== undefined ? { fill: drawing.fill } : {}), ...(drawing.stroke !== undefined ? { stroke: drawing.stroke } : {}), ...(drawing.clip ? { clip: true } : {}) })) };
+  return { tooMany, items: drawings.map((drawing, i): PageContentItem => ({ id: `graphic-${i}`, kind: 'graphic', rect: drawing.box, editable: true, ...(drawing.fill !== undefined ? { fill: drawing.fill } : {}), ...(drawing.stroke !== undefined ? { stroke: drawing.stroke } : {}), ...(drawing.clip ? { clip: true } : {}) })) };
 }
 
 /** The drawing `sourceId` names, checked against where it was selected. */
-function drawingAt(page, options) {
+type DrawingSource = { sourceId: string; sourceRect: mupdf.Rect };
+function drawingAt(page: mupdf.PDFPage, options: DrawingSource) {
   if (typeof options.sourceId !== 'string' || !/^graphic-\d{1,5}$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
   const found = pageDrawings(page), drawing = found.drawings[Number(options.sourceId.slice(8))], source = rect(options.sourceRect);
   if (!drawing || !drawing.box.every((value, i) => Math.abs(value - source[i]) <= .02)) fail('La selección cambió o ya no existe. Selecciona de nuevo el contenido.');
   return { found, drawing, source };
 }
 
-const pdfColor = hex => rgb(hex).map(number).join(' ');
+const pdfColor = (hex: string) => rgb(hex).map(number).join(' ');
 /** Edits to a drawing's own stream that paint it in new colours. */
-function recolorEdits(drawing, { fill, stroke }) {
+/** A rewrite of a stream: the text from `from` to `to` becomes `value`. */
+type Edit = [from: number, to: number, value: string];
+function recolorEdits(drawing: Drawing, { fill, stroke }: { fill?: string; stroke?: string }) {
   if (!fill && !stroke) fail('Elige un color.');
   if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede cambiar su color.');
-  const set = `${fill ? `${pdfColor(fill)} rg ` : ''}${stroke ? `${pdfColor(stroke)} RG ` : ''}`, edits = [];
+  const set = `${fill ? `${pdfColor(fill)} rg ` : ''}${stroke ? `${pdfColor(stroke)} RG ` : ''}`, edits: Edit[] = [];
   // A lone path is wrapped with its new colours; a group gets them after its
   // own q, and each colour it sets is replaced.
   for (const part of drawing.parts) {
@@ -1677,23 +1783,24 @@ function recolorEdits(drawing, { fill, stroke }) {
   if (stroke) for (const op of drawing.strokes) edits.push([op.start, op.end, `${pdfColor(stroke)} RG`]);
   return edits;
 }
-const applyEdits = (text, edits) => { let next = text; for (const [from, to, value] of [...edits].sort((a, b) => b[0] - a[0])) next = next.slice(0, from) + value + next.slice(to); return next; };
+const applyEdits = (text: string, edits: Edit[]) => { let next = text; for (const [from, to, value] of [...edits].sort((a, b) => b[0] - a[0])) next = next.slice(0, from) + value + next.slice(to); return next; };
 
 /** Move, duplicate, recolour or remove one drawing by rewriting its operators. */
-function editDrawing(doc, page, index, options) {
+type DrawingEdit = Extract<Operation, { operation: 'move-graphic' | 'remove-graphic' | 'recolor-graphic' }>;
+function editDrawing(doc: mupdf.PDFDocument, page: mupdf.PDFPage, index: number, options: DrawingEdit) {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
   const { found, drawing, source } = drawingAt(page, options);
-  const text = found.texts[drawing.si], edits = [], operation = options.operation;
-  let expected;
+  const text = found.texts[drawing.si], edits: Edit[] = [], operation = options.operation;
+  let expected: mupdf.Rect | undefined;
   if (operation === 'move-graphic') {
     if (drawing.clip) fail('Este trazo también recorta otros elementos: no se puede mover.');
     if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
     const target = rect(options.rect), dx = target[0] - source[0], dy = target[1] - source[1];
     // The shift in a part's own coordinates that moves it by (dx, dy) on the page.
-    const shift = ([a, b, c, d]) => { const det = a * d - b * c; if (!(Math.abs(det) > 1e-9)) fail('Este dibujo no se puede mover.'); return `q 1 0 0 1 ${number((d * dx - c * dy) / det)} ${number((a * dy - b * dx) / det)} cm\n`; };
+    const shift = ([a, b, c, d]: mupdf.Matrix) => { const det = a * d - b * c; if (!(Math.abs(det) > 1e-9)) fail('Este dibujo no se puede mover.'); return `q 1 0 0 1 ${number((d * dx - c * dy) / det)} ${number((a * dy - b * dx) / det)} cm\n`; };
     // A copy goes whole just before the drawing, where the state is the drawing's
     // own; a move shifts each part where it is, leaving the state between them as it was.
-    if (options.copy) edits.push([drawing.parts[0].start, drawing.parts[0].start, `${shift(drawing.parts[0].ctm)}${text.slice(drawing.parts[0].start, drawing.parts.at(-1).end)}\nQ\n`]);
+    if (options.copy) edits.push([drawing.parts[0].start, drawing.parts[0].start, `${shift(drawing.parts[0].ctm)}${text.slice(drawing.parts[0].start, drawing.parts.at(-1)!.end)}\nQ\n`]);
     else for (const part of drawing.parts) edits.push([part.start, part.end, `${shift(part.ctm)}${text.slice(part.start, part.end)}\nQ`]);
     expected = [source[0] + dx, source[1] + dy, source[2] + dx, source[3] + dy];
   } else if (operation === 'remove-graphic') {
@@ -1706,21 +1813,21 @@ function editDrawing(doc, page, index, options) {
   else { const list = doc.newArray(); found.streams.forEach((value, i) => list.push(i === drawing.si ? stream : value)); object.put('Contents', list); }
   verifyRetainedGlyphs(doc, index, glyphs, 'No se pudo cambiar este dibujo sin afectar al texto. El original permanece intacto.');
   if (expected) {
-    const moved = doc.loadPage(index); let after;
+    const moved = doc.loadPage(index); let after: Drawing[];
     try { after = pageDrawings(moved).drawings; } finally { moved.destroy(); }
-    if (!after.some(other => other.box.every((value, i) => Math.abs(value - expected[i]) < .5))) fail('El dibujo quedaría recortado en esa posición. El original permanece intacto.');
+    if (!after.some(other => other.box.every((value, i) => Math.abs(value - expected![i]) < .5))) fail('El dibujo quedaría recortado en esa posición. El original permanece intacto.');
   }
 }
 
-function contentGlyphs(page, whitespace = false) {
-  let display, structured, rune = 0, line = 0, chars; const result = [];
+function contentGlyphs(page: mupdf.PDFPage, whitespace = false) {
+  let display: mupdf.DisplayList | undefined, structured: mupdf.StructuredText | undefined, rune = 0, line = 0, chars: string[] = []; const result: ContentGlyph[] = [];
   try {
     display = page.toDisplayList(false); structured = display.toStructuredText('preserve-whitespace');
-    const lines = JSON.parse(structured.asJSON()).blocks.filter(block => block.type === 'text').flatMap(block => block.lines.map(line => line.text));
+    const lines: string[] = JSON.parse(structured.asJSON()).blocks.filter((block: { type: string }) => block.type === 'text').flatMap((block: { lines: { text: string }[] }) => block.lines.map(line => line.text));
     if (lines.reduce((n, text) => n + text.length, 0) > 200000) fail('No se pudo verificar la eliminación sin afectar texto vecino.');
     structured.walk({
       beginLine: () => { chars = [...(lines[line++] || '')]; rune = 0; },
-      onChar: (c, origin, font, size, quad, color) => {
+      onChar: (c: string, origin: mupdf.Point, font: mupdf.Font, size: number, quad: mupdf.Quad, color: number[]) => {
         try { const value = chars[rune++] ?? c; if (whitespace || value.trim()) result.push({ c: value, origin: [...origin], quad: [...quad], fontName: font.getName(), size, color: [...color] }); }
         finally { font.destroy(); }
       },
@@ -1731,21 +1838,23 @@ function contentGlyphs(page, whitespace = false) {
 
 // Every filled glyph on the page in device space, with the font that painted it
 // kept alive, so text can be drawn again with its own fonts and colours.
-function captureGlyphs(page) {
-  const glyphs = [], fonts = new Map(); let device, failure;
+/** A glyph as painted, in device space, with the font that painted it kept alive. `rgb` is its colour where its own space is not drawn again. */
+type CapturedGlyph = { font: mupdf.Font; fontName: string; matrix: mupdf.Matrix; origin: mupdf.Point; gid: number; unicode: number; wmode: number; space: 'gray' | 'rgb' | 'cmyk' | null; color: number[]; alpha: number; rgb?: number[] };
+function captureGlyphs(page: mupdf.PDFPage) {
+  const glyphs: CapturedGlyph[] = [], fonts = new Map<number, mupdf.Font>(); let device: mupdf.Device | undefined, failure: unknown;
   const release = () => { for (const font of fonts.values()) font.destroy(); fonts.clear(); };
   try {
     device = new mupdf.Device({
-      fillText: (text, matrix, cs, color, alpha) => {
+      fillText: (text: mupdf.Text, matrix: mupdf.Matrix, cs: mupdf.ColorSpace, color: number[], alpha: number) => {
         try {
           if (failure) return;
           const space = cs.isGray() ? 'gray' : cs.isRGB() ? 'rgb' : cs.isCMYK() ? 'cmyk' : null;
-          text.walk({ showGlyph: (font, trm, gid, unicode, wmode) => {
+          text.walk({ showGlyph: (font: mupdf.Font, trm: mupdf.Matrix, gid: number, unicode: number, wmode: number) => {
             if (failure) return;
             if (glyphs.length >= 100000) { failure = new Error('Hay demasiado texto en la página para moverlo automáticamente.'); return; }
             if (!fonts.has(font.pointer)) fonts.set(font.pointer, new mupdf.Font(font.pointer));
             const m = mupdf.Matrix.concat(trm, matrix);
-            glyphs.push({ font: fonts.get(font.pointer), fontName: font.getName(), matrix: m, origin: [m[4], m[5]], gid, unicode, wmode, space, color: [...color], alpha });
+            glyphs.push({ font: fonts.get(font.pointer)!, fontName: font.getName(), matrix: m, origin: [m[4], m[5]], gid, unicode, wmode, space, color: [...color], alpha });
           } });
         } catch (error) { failure ??= error; } finally { text.destroy(); cs.destroy(); }
       },
@@ -1757,8 +1866,8 @@ function captureGlyphs(page) {
 }
 
 // The characters a font has actually painted on this page and their glyphs.
-function fontCensus(glyphs, fontName) {
-  const map = new Map();
+function fontCensus(glyphs: CapturedGlyph[], fontName: string) {
+  const map = new Map<number, number>();
   for (const glyph of glyphs) if (glyph.fontName === fontName && glyph.gid && glyph.unicode > 0 && !map.has(glyph.unicode)) map.set(glyph.unicode, glyph.gid);
   return map;
 }
@@ -1768,8 +1877,8 @@ function fontCensus(glyphs, fontName) {
 // Each glyph is its own text: written as one run, the PDF writer turns their
 // places into whole thousandths of an em between glyphs, and along a long line
 // that rounding drifts the letters by a third of a point.
-function glyphDrawing(device, glyphs, dx, dy) {
-  const paint = glyph => glyph.space ? [glyph.space, ...glyph.color, glyph.alpha] : ['rgb', ...glyph.rgb, glyph.alpha];
+function glyphDrawing(device: mupdf.Device, glyphs: CapturedGlyph[], dx: number, dy: number) {
+  const paint = (glyph: CapturedGlyph): [string, ...number[]] => glyph.space ? [glyph.space, ...glyph.color, glyph.alpha] : ['rgb', ...glyph.rgb!, glyph.alpha];
   for (let start = 0; start < glyphs.length;) {
     let end = start;
     const text = new mupdf.Text();
@@ -1780,7 +1889,7 @@ function glyphDrawing(device, glyphs, dx, dy) {
       }
       const [space, ...rest] = paint(glyphs[start]), alpha = rest.pop();
       const cs = space === 'gray' ? mupdf.ColorSpace.DeviceGray : space === 'cmyk' ? mupdf.ColorSpace.DeviceCMYK : mupdf.ColorSpace.DeviceRGB;
-      device.fillText(text, mupdf.Matrix.identity, cs, rest, alpha);
+      device.fillText(text, mupdf.Matrix.identity, cs, rest as mupdf.Color, alpha!);
     } finally { text.destroy(); }
     start = end;
   }
@@ -1789,11 +1898,13 @@ function glyphDrawing(device, glyphs, dx, dy) {
 // Redaction removes every glyph whose font box touches a mark, and with ordinary
 // leading those boxes overlap the adjacent lines. Mark only the middle band of
 // each selected glyph; verifyRetainedGlyphs then checks the edited page.
-function textRemoval(selected, retainedGlyphs, conflict) {
-  const marks = selected.map(({ quad, origin }) => {
+/** What a removal marks (`boxes`), the text it must leave as it was, and the text it takes. */
+type Removal = { boxes: mupdf.Rect[]; retainedGlyphs: ContentGlyph[]; selected?: ContentGlyph[]; info?: ImagePaint; image?: mupdf.Image };
+function textRemoval(selected: ContentGlyph[], retainedGlyphs: ContentGlyph[], conflict: string): Removal {
+  const marks = selected.map(({ quad, origin }): mupdf.Rect => {
     if (!finite(quad) || !finite(origin)) fail('Los límites del texto no permiten una eliminación segura.');
-    const at = (t, i) => quad[i] + t * (quad[i + 4] - quad[i]);
-    const box = quadBounds([.4, .6].flatMap(t => [at(t, 0), at(t, 1), at(t, 2), at(t, 3)]));
+    const at = (t: number, i: number) => quad[i] + t * (quad[i + 4] - quad[i]);
+    const box = quadBounds([.4, .6].flatMap(t => [at(t, 0), at(t, 1), at(t, 2), at(t, 3)]) as mupdf.Quad);
     // Inset normal boxes to avoid deleting a neighbouring glyph that only
     // shares an edge. Zero-width accents still need a small removal area.
     const insetX = Math.min(.02, (box[2] - box[0]) / 10), insetY = Math.min(.02, (box[3] - box[1]) / 10);
@@ -1802,7 +1913,7 @@ function textRemoval(selected, retainedGlyphs, conflict) {
   // Merge touching marks with the same vertical extent, but never bridge
   // lines or differently sized spans. This avoids thousands of annotations
   // for an ordinary paragraph while retaining its actual glyph geometry.
-  const boxes = [];
+  const boxes: mupdf.Rect[] = [];
   marks.sort((a, b) => a[1] - b[1] || a[3] - b[3] || a[0] - b[0]);
   for (const box of marks) {
     const last = boxes.at(-1);
@@ -1816,8 +1927,8 @@ function textRemoval(selected, retainedGlyphs, conflict) {
 
 // A drawn area takes the glyphs whose centre lies inside it, so a generous
 // rectangle never clips letters of neighbouring words or lines.
-function areaRemoval(page, box) {
-  const glyphs = contentGlyphs(page, true), inside = ({ quad }) => {
+function areaRemoval(page: mupdf.PDFPage, box: mupdf.Rect) {
+  const glyphs = contentGlyphs(page, true), inside = ({ quad }: ContentGlyph) => {
     const b = quadBounds(quad), x = (b[0] + b[2]) / 2, y = (b[1] + b[3]) / 2;
     return x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
   };
@@ -1825,11 +1936,11 @@ function areaRemoval(page, box) {
 }
 
 // Checks the edited document itself: a failed check is undone by the caller, never written.
-function verifyRetainedGlyphs(doc, index, expected, message = 'La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.') {
-  const page = doc.loadPage(index); let actual;
+function verifyRetainedGlyphs(doc: mupdf.PDFDocument, index: number, expected: ContentGlyph[], message = 'La eliminación afectaría otros caracteres o no quitaría toda la selección. El original permanece intacto.') {
+  const page = doc.loadPage(index); let actual: ContentGlyph[];
   try { actual = contentGlyphs(page); } finally { page.destroy(); }
-  const key = glyph => JSON.stringify([glyph.c, glyph.fontName, glyph.color.map(n => Math.round(n * 255))]);
-  const sort = (a, b) => key(a).localeCompare(key(b)) || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0] || a.size - b.size;
+  const key = (glyph: ContentGlyph) => JSON.stringify([glyph.c, glyph.fontName, glyph.color.map(n => Math.round(n * 255))]);
+  const sort = (a: ContentGlyph, b: ContentGlyph) => key(a).localeCompare(key(b)) || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0] || a.size - b.size;
   expected.sort(sort); actual.sort(sort);
   if (expected.length !== actual.length || expected.some((glyph, i) => {
     const next = actual[i];
@@ -1841,9 +1952,9 @@ function verifyRetainedGlyphs(doc, index, expected, message = 'La eliminación a
 // DCT XObject with this size and plain RGB or gray samples qualifies, and only
 // when it is the painted image itself, not an inline image of the same size;
 // every other image is decoded to PNG.
-function jpegSource(doc, page, image) {
-  const found = new Map(), visited = new Set();
-  (function walk(resources, depth) {
+function jpegSource(doc: mupdf.PDFDocument, page: mupdf.PDFPage, image: mupdf.Image) {
+  const found = new Map<number, mupdf.PDFObject>(), visited = new Set<number>();
+  (function walk(resources: mupdf.PDFObject, depth: number) {
     if (depth > 8 || !resources.isDictionary()) return;
     const xobjects = resources.get('XObject'); if (!xobjects.isDictionary()) return;
     xobjects.forEach(value => {
@@ -1859,19 +1970,19 @@ function jpegSource(doc, page, image) {
     || ['Decode', 'SMask', 'Mask', 'DecodeParms'].some(key => !object.get(key).isNull()) || object.get('ImageMask').asBoolean()) return null;
   // MuPDF's store hands out the image it already loaded for this XObject, so a
   // different pointer means another image was painted, e.g. an inline one.
-  let loaded;
+  let loaded: mupdf.Image | undefined;
   try { loaded = doc.loadImage(object); if (loaded.pointer !== image.pointer) return null; } catch { return null; } finally { loaded?.destroy(); }
   const buffer = object.readRawStream();
   try { const bytes = new Uint8Array(buffer.asUint8Array()); return jpegOrientation(bytes) === 1 ? bytes : null; }
   finally { buffer.destroy(); }
 }
 
-function pageImagePixels(image, info, jpeg) {
+function pageImagePixels(image: mupdf.Image, info: ImagePaint, jpeg: Uint8Array | null): PageImageInfo {
   const width = image.getWidth(), height = image.getHeight();
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height > 16000000) fail('La imagen supera el límite de 16 megapíxeles para editarla automáticamente.');
-  const rotation = ((Math.round(Math.atan2(info.matrix[1], info.matrix[0]) / (Math.PI / 2)) * 90) % 360 + 360) % 360;
+  const rotation = ((Math.round(Math.atan2(info.matrix[1], info.matrix[0]) / (Math.PI / 2)) * 90) % 360 + 360) % 360 as 0 | 90 | 180 | 270;
   if (jpeg) return { bytes: jpeg, type: 'image/jpeg', width, height, opacity: info.alpha, rotation };
-  let decoded, rgb;
+  let decoded: mupdf.Pixmap | undefined, rgb: mupdf.Pixmap | undefined;
   try {
     decoded = image.toPixmap(); rgb = decoded.convertToColorSpace(mupdf.ColorSpace.DeviceRGB, true);
     return { bytes: new Uint8Array(rgb.asPNG()), type: 'image/png', width, height, opacity: info.alpha, rotation };
@@ -1880,11 +1991,11 @@ function pageImagePixels(image, info, jpeg) {
 
 // The invisible text on a page (an OCR layer, 3 Tr) removed where it lies, word by word: the
 // image, drawings and any text that is painted (a watermark over a scan) stay.
-function removeHiddenText(doc, page) {
-  const boxes = [];
-  const device = new mupdf.Device({ ignoreText: (text, ctm) => {
-    let run = null;
-    text.walk({ showGlyph: (font, trm) => {
+function removeHiddenText(doc: mupdf.PDFDocument, page: mupdf.PDFPage) {
+  const boxes: mupdf.Rect[] = [];
+  const device = new mupdf.Device({ ignoreText: (text: mupdf.Text, ctm: mupdf.Matrix) => {
+    let run: mupdf.Rect | null = null;
+    text.walk({ showGlyph: (_font: mupdf.Font, trm: mupdf.Matrix) => {
       const box = mupdf.Rect.transform([0, -.25, .6, 1], mupdf.Matrix.concat(trm, ctm)), size = box[3] - box[1];
       // Glyphs of one word or line, side by side on one baseline, make one box.
       if (run && Math.abs(box[3] - run[3]) < size * .3 && box[0] - run[2] < size * 1.5 && box[2] > run[0]) { run[0] = Math.min(run[0], box[0]); run[1] = Math.min(run[1], box[1]); run[2] = Math.max(run[2], box[2]); run[3] = Math.max(run[3], box[3]); }
@@ -1895,10 +2006,11 @@ function removeHiddenText(doc, page) {
   try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); }
   if (boxes.length) redactPage(doc, page, boxes, { black: false, images: false, graphics: false, text: true, preserveAnnotations: true });
 }
-function redactPage(doc, page, boxes, { black = true, images = true, imageMethod = mupdf.PDFPage.REDACT_IMAGE_PIXELS, graphics = true, text = true, preserveAnnotations = false } = {}) {
+type RedactOptions = { black?: boolean; images?: boolean; imageMethod?: number; graphics?: boolean; text?: boolean; preserveAnnotations?: boolean };
+function redactPage(doc: mupdf.PDFDocument, page: mupdf.PDFPage, boxes: mupdf.Rect[], { black = true, images = true, imageMethod = mupdf.PDFPage.REDACT_IMAGE_PIXELS, graphics = true, text = true, preserveAnnotations = false }: RedactOptions = {}) {
   // Editing content must retain comments, links, widgets and pending redaction marks.
   const object = page.getObject(), originals = preserveAnnotations ? object.get('Annots') : null;
-  let restored;
+  let restored: mupdf.PDFObject | undefined;
   if (originals && !originals.isNull()) {
     restored = doc.newArray();
     for (let i = 0; i < originals.length; i++) restored.push(originals.get(i));
@@ -1919,18 +2031,20 @@ function redactPage(doc, page, boxes, { black = true, images = true, imageMethod
 // An image Folio placed is a Form holding only that image, drawn by its own
 // `q <matrix> cm /FolioN Do Q` stream. Moving, resizing, turning, copying or
 // removing it rewrites that one stream: nothing is redacted and stacking stays.
-function folioImages(page) {
-  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found = [];
+/** A Form Folio placed: which stream draws it, its name, the matrix that stream applies and the area it covers. */
+type Wrapped = { index: number; name: string; wrapper: mupdf.Matrix; box: mupdf.Rect };
+function folioImages(page: mupdf.PDFPage) {
+  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found: Wrapped[] = [];
   if (!contents.isArray() || !xobjects.isDictionary()) return found;
-  const read = stream => { const buffer = stream.readStream(); try { return buffer.asString(); } finally { buffer.destroy(); } };
+  const read = (stream: mupdf.PDFObject) => { const buffer = stream.readStream(); try { return buffer.asString(); } finally { buffer.destroy(); } };
   for (let index = 0; index < contents.length; index++) {
     const match = /^q ((?:[-\d.e]+ ){6})cm \/(Folio\d+) Do Q\n$/.exec(read(contents.get(index)));
     const form = match && xobjects.get(match[2]);
-    if (!form?.isStream() || form.get('Subtype').asName() !== 'Form' || !form.get('Matrix').isNull()) continue;
-    const wrapper = match[1].trim().split(' ').map(Number);
+    if (!match || !form?.isStream() || form.get('Subtype').asName() !== 'Form' || !form.get('Matrix').isNull()) continue;
+    const wrapper = match[1].trim().split(' ').map(Number) as mupdf.Matrix;
     let matrix = wrapper, images = 0, plain = true;
     for (const { op, args } of contentOperators(read(form))) {
-      if (op === 'cm' && args.length === 6) matrix = mupdf.Matrix.concat(args.map(Number), matrix);
+      if (op === 'cm' && args.length === 6) matrix = mupdf.Matrix.concat(args.map(Number) as mupdf.Matrix, matrix);
       else if (op === 'Do' && form.get('Resources').get('XObject').get(args[0]?.slice(1) ?? '').get('Subtype').asName() === 'Image') images++;
       else plain = false;
     }
@@ -1939,10 +2053,10 @@ function folioImages(page) {
   return found;
 }
 // Only an unambiguous match: two placed images on exactly the same spot take the general path.
-const folioImage = (placed, box) => { const matches = placed.filter(image => image.box.every((value, i) => Math.abs(value - box[i]) < .05)); return matches.length === 1 ? matches[0] : null; };
+const folioImage = (placed: Wrapped[], box: mupdf.Rect) => { const matches = placed.filter(image => image.box.every((value, i) => Math.abs(value - box[i]) < .05)); return matches.length === 1 ? matches[0] : null; };
 
 /** Draws a placed Form with another matrix (null removes it); a copy keeps the original. */
-function rewrap(doc, page, placed, matrix, copy = false) {
+function rewrap(doc: mupdf.PDFDocument, page: mupdf.PDFPage, placed: Wrapped, matrix: mupdf.Matrix | null, copy = false) {
   const object = page.getObject(), contents = object.get('Contents'), list = doc.newArray();
   const replacement = matrix && doc.addStream(`q ${matrix.map(number).join(' ')} cm /${placed.name} Do Q\n`, {});
   for (let i = 0; i < contents.length; i++) {
@@ -1956,30 +2070,32 @@ function rewrap(doc, page, placed, matrix, copy = false) {
 // like a placed image, and carries the box it covers (FolioBox). Moving, copying,
 // removing or retyping it rewrites that wrapper, so text overlapping it does not
 // matter: nothing is redacted.
-function folioTexts(page) {
-  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found = [];
+type WrittenText = Wrapped & { text: string };
+function folioTexts(page: mupdf.PDFPage) {
+  const object = page.getObject(), contents = object.get('Contents'), xobjects = object.getInheritable('Resources').get('XObject'), found: WrittenText[] = [];
   if (!contents.isArray() || !xobjects.isDictionary()) return found;
   for (let index = 0; index < contents.length; index++) {
-    let buffer, text = '';
+    let buffer: mupdf.Buffer | undefined, text = '';
     try { buffer = contents.get(index).readStream(); text = buffer.asString(); } catch { continue; } finally { buffer?.destroy(); }
     const match = /^q ((?:[-\d.e]+ ){6})cm \/(Folio\d+) Do Q\n$/.exec(text), form = match && xobjects.get(match[2]), box = form?.get('FolioBox');
-    if (!box?.isArray() || box.length !== 4) continue;
-    const wrapper = match[1].trim().split(' ').map(Number);
-    found.push({ index, name: match[2], wrapper, box: mupdf.Rect.transform(box.asJS(), wrapper), text: form.get('FolioText').asString() });
+    if (!match || !form || !box?.isArray() || box.length !== 4) continue;
+    const wrapper = match[1].trim().split(' ').map(Number) as mupdf.Matrix;
+    found.push({ index, name: match[2], wrapper, box: mupdf.Rect.transform(box.asJS() as mupdf.Rect, wrapper), text: form.get('FolioText').asString() });
   }
   return found;
 }
 // Compared without spaces or line breaks: lines wrap and join differently.
-const letters = text => text.replace(/\s+/g, '');
+const letters = (text: string) => text.replace(/\s+/g, '');
 // The paragraph that is one of them: mostly the same box (and, given, the same text), and only one such.
-const folioText = (placed, box, text) => {
-  const iou = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 ? w * h / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - w * h) : 0; };
+const folioText = (placed: WrittenText[], box: mupdf.Rect, text?: string) => {
+  const iou = (a: mupdf.Rect, b: mupdf.Rect) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); return w > 0 && h > 0 ? w * h / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - w * h) : 0; };
   const matches = placed.filter(own => iou(own.box, box) > .75 && (text === undefined || letters(own.text) === letters(text)));
   return matches.length === 1 ? matches[0] : null;
 };
 
-function editFolioImage(doc, page, image, options) {
-  let replacement = null;
+type MoveOptions = Extract<Operation, { operation: 'move-text' | 'move-image' }>;
+function editFolioImage(doc: mupdf.PDFDocument, page: mupdf.PDFPage, image: Wrapped, options: { operation: string; rect: mupdf.Rect; rotation?: number; copy?: boolean }) {
+  let replacement: mupdf.Matrix | null = null;
   if (options.operation === 'move-image') {
     const turn = options.rotation ?? 0;
     if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
@@ -1987,7 +2103,7 @@ function editFolioImage(doc, page, image, options) {
     const from = image.box, target = rect(options.rect), turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
     const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
     const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
-    const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
+    const fit: mupdf.Matrix = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
     const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(-turn)), mupdf.Matrix.translate(cx, cy));
     replacement = mupdf.Matrix.concat(mupdf.Matrix.concat(image.wrapper, fit), spin);
   }
@@ -1997,7 +2113,7 @@ function editFolioImage(doc, page, image, options) {
 // Move, resize, turn or duplicate a text block or an image without rewriting it:
 // text keeps its own glyphs, fonts and mixed styles, and an image keeps its
 // compressed data and transparency. The original is removed like remove-content.
-function moveContent(doc, page, index, target, options) {
+function moveContent(doc: mupdf.PDFDocument, page: mupdf.PDFPage, index: number, target: mupdf.Rect, options: MoveOptions) {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
   if (options.copy !== undefined && typeof options.copy !== 'boolean') fail('Opción de copia inválida.');
   const source = rect(options.sourceRect), sourceBox = mupdf.Rect.transform(source, page.getTransform());
@@ -2018,19 +2134,19 @@ function moveContent(doc, page, index, target, options) {
       redactPage(doc, page, selection.boxes, { black: false, images: !text, imageMethod: mupdf.PDFPage.REDACT_IMAGE_REMOVE, graphics: false, text, preserveAnnotations: true });
       verifyRetainedGlyphs(doc, index, selection.retainedGlyphs, text ? 'No se pudo mover el texto sin afectar al texto cercano. El original permanece intacto.' : undefined);
     }
-    let form;
+    let form: mupdf.PDFObject;
     // The moved text as it reads, a line break wherever the baseline changes.
-    const reading = text && selection.selected.map((glyph, i, all) => (i && Math.abs(glyph.origin[1] - all[i - 1].origin[1]) > glyph.size / 2 ? '\n' : '') + glyph.c).join('');
+    const reading = text && selection.selected!.map((glyph, i, all) => (i && Math.abs(glyph.origin[1] - all[i - 1].origin[1]) > glyph.size / 2 ? '\n' : '') + glyph.c).join('');
     try { form = appendDrawing(doc, page, draw, reading); }
-    catch (error) { throw /type 3/i.test(error?.message) ? new Error('Este texto usa una fuente dibujada (Type 3) que no se puede volver a escribir. Edítalo para reescribirlo.') : error; }
+    catch (error) { throw /type 3/i.test((error as Error)?.message) ? new Error('Este texto usa una fuente dibujada (Type 3) que no se puede volver a escribir. Edítalo para reescribirlo.') : error; }
     if (glyphs) mapCharacters(doc, form, glyphs);
     if (expected.length) {
       // Every glyph must appear where it was moved. A rewritten font may name an
       // odd glyph differently (a bullet as a middle dot, a TeX brace as a letter), so almost all must read the same.
-      const moved = doc.loadPage(index); let found;
+      const moved = doc.loadPage(index); let found: ContentGlyph[];
       try { found = contentGlyphs(moved); } finally { moved.destroy(); }
       // Positions are written rounded: a glyph may land some hundredths of a point off (well inside the gap to the next one).
-      const at = glyph => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .25 && Math.abs(other.origin[1] - glyph.origin[1]) < .25);
+      const at = (glyph: Moved) => found.filter(other => Math.abs(other.origin[0] - glyph.origin[0]) < .25 && Math.abs(other.origin[1] - glyph.origin[1]) < .25);
       if (expected.some(glyph => !at(glyph).length) || expected.filter(glyph => !at(glyph).some(other => other.c === glyph.c)).length > Math.max(3, expected.length * .05))
         fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
     }
@@ -2040,15 +2156,18 @@ function moveContent(doc, page, index, target, options) {
 /** What moving a selected text or image to `target` (device space) draws: the
  * text's own glyphs, or the image fitted and turned there, with where each moved
  * character must end up. `release` frees the fonts or image it holds. */
-function movedDrawing(page, selection, text, sourceBox, target, options) {
+/** Where a moved character must be found after the move. */
+type Moved = { c: string; origin: mupdf.Point };
+type MovedDrawing = { draw: (device: mupdf.Device, screen?: boolean) => void; expected: Moved[]; glyphs?: CapturedGlyph[]; release: () => void };
+function movedDrawing(page: mupdf.PDFPage, selection: Removal, text: boolean, sourceBox: mupdf.Rect, target: mupdf.Rect, options: { operation?: string; rotation?: number; opacity?: number }): MovedDrawing {
   if (text) {
     // Text is moved, not scaled: a new size means retyping it.
     if (Math.abs((target[2] - target[0]) - (sourceBox[2] - sourceBox[0])) > .5 || Math.abs((target[3] - target[1]) - (sourceBox[3] - sourceBox[1])) > .5) fail('Para cambiar el tamaño del texto, edítalo.');
     const captured = captureGlyphs(page);
     try {
-      const dx = target[0] - sourceBox[0], dy = target[1] - sourceBox[1], used = new Set(), moved = [], expected = [];
-      const near = (a, b) => Math.abs(a[0] - b[0]) < .02 && Math.abs(a[1] - b[1]) < .02;
-      for (const glyph of selection.selected) {
+      const dx = target[0] - sourceBox[0], dy = target[1] - sourceBox[1], used = new Set<CapturedGlyph>(), moved: CapturedGlyph[] = [], expected: Moved[] = [];
+      const near = (a: mupdf.Point, b: mupdf.Point) => Math.abs(a[0] - b[0]) < .02 && Math.abs(a[1] - b[1]) < .02;
+      for (const glyph of selection.selected!) {
         const matches = captured.glyphs.filter(g => !used.has(g) && near(g.origin, glyph.origin));
         // Re-emitted glyphs carry the character text extraction reported, so copying and searching stay the same.
         const unicode = [...glyph.c].length === 1 ? glyph.c.codePointAt(0) : undefined;
@@ -2058,11 +2177,11 @@ function movedDrawing(page, selection, text, sourceBox, target, options) {
         if (!matches.length && glyph.c.trim() && !ligature) fail('Este texto no se puede mover sin cambiar su aspecto. Edítalo para reescribirlo.');
         if (matches.length && glyph.c.trim()) expected.push({ c: glyph.c, origin: [glyph.origin[0] + dx, glyph.origin[1] + dy] });
       }
-      return { draw: device => glyphDrawing(device, moved, dx, dy), expected, glyphs: moved, release: captured.release };
+      return { draw: (device: mupdf.Device) => glyphDrawing(device, moved, dx, dy), expected, glyphs: moved, release: captured.release };
     } catch (error) { captured.release(); throw error; }
   }
   const { image, info } = selection;
-  if (!image) fail('La imagen seleccionada ya no existe en esta página.');
+  if (!image || !info) fail('La imagen seleccionada ya no existe en esta página.');
   try {
     const turn = options.rotation ?? 0, alpha = options.opacity ?? info.alpha;
     if (![0, 90, 180, 270].includes(turn)) fail('Giro de imagen inválido.');
@@ -2071,11 +2190,11 @@ function movedDrawing(page, selection, text, sourceBox, target, options) {
     const from = info.fullBox, turned = turn === 90 || turn === 270, cx = (target[0] + target[2]) / 2, cy = (target[1] + target[3]) / 2;
     const w = turned ? target[3] - target[1] : target[2] - target[0], h = turned ? target[2] - target[0] : target[3] - target[1];
     const sx = w / (from[2] - from[0]), sy = h / (from[3] - from[1]);
-    const fit = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
+    const fit: mupdf.Matrix = [sx, 0, 0, sy, cx - w / 2 - from[0] * sx, cy - h / 2 - from[1] * sy];
     const spin = mupdf.Matrix.concat(mupdf.Matrix.concat(mupdf.Matrix.translate(-cx, -cy), mupdf.Matrix.rotate(turn)), mupdf.Matrix.translate(cx, cy));
     const matrix = mupdf.Matrix.concat(mupdf.Matrix.concat(info.matrix, fit), spin);
     // On screen an image's own soft mask is a clip, as the PDF interpreter draws it; a PDF writer keeps it with the image.
-    const draw = (device, screen = false) => {
+    const draw = (device: mupdf.Device, screen = false) => {
       const mask = screen ? image.getMask() : null;
       try { if (mask) device.clipImageMask(mask, matrix); device.fillImage(image, matrix, alpha); if (mask) device.popClip(); } finally { mask?.destroy(); }
     };
@@ -2090,15 +2209,15 @@ const SHOWN = new Set(['Tj', 'TJ', "'", '"', 'Do', 'sh', 'BI', 'ID']);
  * it: a text's own glyphs, an image, or a drawing's own operators with the state
  * around them. `fill`/`stroke` show a drawing in other colours. The document is
  * not changed. Returns a PNG and the area it covers, in PDF coordinates. */
-export function itemSprite(doc, options) {
+export function itemSprite(doc: mupdf.PDFDocument, options: { page: number; id: string; kind: 'text' | 'image' | 'graphic'; rect: Area['rect']; scale: number; fill?: string; stroke?: string }): PagePlate {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
   const index = pageIndex(doc, options.page), area = rect(options.rect), scale = Number(options.scale);
   if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
   if (!['text', 'image', 'graphic'].includes(options.kind)) fail('La selección de contenido no es válida.');
-  const page = doc.loadPage(index); let pixmap, device, scratch, release = () => {};
+  const page = doc.loadPage(index); let pixmap: mupdf.Pixmap | undefined, device: mupdf.Device | undefined, scratch: mupdf.PDFDocument | undefined, release = () => {};
   try {
     const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom), sourceBox = mupdf.Rect.transform(area, page.getTransform());
-    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
+    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v)) as mupdf.Rect;
     if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
     pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, true); pixmap.clear();
     device = new mupdf.DrawDevice(zoom, pixmap);
@@ -2107,13 +2226,14 @@ export function itemSprite(doc, options) {
       // in a scratch document that shares the page's geometry and graphics resources.
       const { found, drawing } = drawingAt(page, { sourceId: options.id, sourceRect: area });
       const keep = new Set(drawing.paints.map(paint => paint.start)), colors = options.fill || options.stroke ? recolorEdits(drawing, options) : [];
-      const content = found.texts.map((text, si) => applyEdits(text, [...contentOperators(text).flatMap(({ op, start, end }) =>
+      const content = found.texts.map((text, si) => applyEdits(text, [...contentOperators(text).flatMap(({ op, start, end }): Edit[] =>
         PAINT.has(op) && !(si === drawing.si && keep.has(start)) ? [[start, end, 'n']] : SHOWN.has(op) ? [[start, end, '']] : []), ...(si === drawing.si ? colors : [])])).join('\n');
       scratch = new mupdf.PDFDocument();
       const object = page.getObject(), resources = scratch.newDictionary();
-      object.getInheritable('Resources').forEach((value, key) => { if (key !== 'XObject' && key !== 'Font') resources.put(key, scratch.graftObject(value)); });
-      const copy = scratch.addPage(object.getInheritable('MediaBox').asJS(), object.getInheritable('Rotate').asNumber(), resources, Uint8Array.from(content, c => c.charCodeAt(0)));
-      const crop = object.getInheritable('CropBox'); if (!crop.isNull()) copy.put('CropBox', crop.asJS());
+      const into = scratch;
+      object.getInheritable('Resources').forEach((value, key) => { if (key !== 'XObject' && key !== 'Font') resources.put(key, into.graftObject(value)); });
+      const copy = scratch.addPage(object.getInheritable('MediaBox').asJS() as mupdf.Rect, object.getInheritable('Rotate').asNumber() as mupdf.Rotate, resources, Uint8Array.from(content, c => c.charCodeAt(0)));
+      const crop = object.getInheritable('CropBox'); if (!crop.isNull()) copy.put('CropBox', crop.asJS() as mupdf.Rect);
       scratch.insertPage(-1, copy);
       const alone = scratch.loadPage(0);
       try { alone.runPageContents(device, mupdf.Matrix.identity); } finally { alone.destroy(); }
@@ -2129,17 +2249,18 @@ export function itemSprite(doc, options) {
 
 // The changes Editar makes. Each one edits an open document and checks it there:
 // operateDocument saves the result, a live session (session.worker.ts) keeps it.
-export const EDITS = new Set(['add-text', 'replace-text', 'add-image', 'replace-image', 'move-text', 'move-image', 'remove-content', 'move-graphic', 'remove-graphic', 'recolor-graphic']);
+type EditOperation = Extract<Operation, { operation: 'add-text' | 'replace-text' | 'add-image' | 'replace-image' | 'move-text' | 'move-image' | 'remove-content' | 'move-graphic' | 'remove-graphic' | 'recolor-graphic' }>;
+export const EDITS = new Set<string>(['add-text', 'replace-text', 'add-image', 'replace-image', 'move-text', 'move-image', 'remove-content', 'move-graphic', 'remove-graphic', 'recolor-graphic']);
 
 /** Applies one change in place. A failure can leave `doc` half changed: the caller discards or undoes it. */
-export function editDocument(doc, options) {
-  const operation = options.operation;
-  if (!EDITS.has(operation)) fail('Operación desconocida.');
+export function editDocument(doc: mupdf.PDFDocument, change: Operation): void {
+  if (!EDITS.has(change.operation)) fail('Operación desconocida.');
+  const options = change as EditOperation;
   allowed(doc, 'edit');
   const index = pageIndex(doc, options.page), page = doc.loadPage(index);
   try {
-    if (['move-graphic', 'remove-graphic', 'recolor-graphic'].includes(operation)) return editDrawing(doc, page, index, options);
-    if (operation === 'remove-content') {
+    if (options.operation === 'move-graphic' || options.operation === 'remove-graphic' || options.operation === 'recolor-graphic') return editDrawing(doc, page, index, options);
+    if (options.operation === 'remove-content') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
       if (!['text', 'image'].includes(options.kind) || typeof options.id !== 'string' || !/^(?:image-\d{1,5}|text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4}|text-folio-\d{1,4})$/.test(options.id)) fail('La selección de contenido no es válida.');
       const placed = options.kind === 'image' && folioImage(folioImages(page), rect(options.rect));
@@ -2153,39 +2274,43 @@ export function editDocument(doc, options) {
       return verifyRetainedGlyphs(doc, index, selection.retainedGlyphs);
     }
     const box = mupdf.Rect.transform(rect(options.rect), page.getTransform());
-    if (operation === 'move-text' || operation === 'move-image') return moveContent(doc, page, index, box, options);
-    if (operation === 'add-image' || operation === 'replace-image') {
+    if (options.operation === 'move-text' || options.operation === 'move-image') return moveContent(doc, page, index, box, options);
+    if (options.operation === 'add-image' || options.operation === 'replace-image') {
       const image = new mupdf.Image(options.image);
       try {
         const placement = imagePlacement(image, box, options, options.image instanceof Uint8Array ? jpegOrientation(options.image) : 1);
         // Image editing removes pixels in the source area; text and annotations remain.
-        if (operation === 'replace-image') redactPage(doc, page, [mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform())], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
-        return appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
+        if (options.operation === 'replace-image') redactPage(doc, page, [mupdf.Rect.transform(rect(options.sourceRect ?? options.rect), page.getTransform())], { black: false, images: true, graphics: false, text: false, preserveAnnotations: true });
+        appendDrawing(doc, page, device => imageDrawing(device, box, image, placement));
+        return;
       } finally { image.destroy(); }
     }
-    if (operation === 'add-text') return appendDrawing(doc, page, device => textDrawing(device, box, options), options.text);
-    // replace-text. Fit validation happens before redaction.
+    if (options.operation === 'add-text') { appendDrawing(doc, page, device => textDrawing(device, box, options), options.text); return; }
+    // Only replace-text is left. Fit validation happens before redaction.
+    if (options.operation !== 'replace-text') return fail('Operación desconocida.');
     if (options.originalFont !== undefined && typeof options.originalFont !== 'boolean') fail('Opción de fuente inválida.');
-    if (!options.originalFont) textDrawing({ fillText() {} }, box, options);
+    // A device that draws nothing: the text is only measured and checked.
+    const measuring = { fillText() {} } as unknown as mupdf.Device;
+    if (!options.originalFont) textDrawing(measuring, box, options);
     const source = rect(options.sourceRect ?? options.rect);
     // A selected line or paragraph removes exactly its glyphs, like remove-content.
-    let selection, glyphFont;
+    let selection: Removal, glyphFont: GlyphFont | undefined;
     // Text Folio wrote is retyped by replacing its wrapper: what overlaps it stays untouched.
     const written = options.sourceId !== undefined && folioText(folioTexts(page), source);
     if (written) {
-      const area = mupdf.Rect.transform(written.box, page.getTransform()), inside = ({ origin: [x, y] }) => x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3];
+      const area = mupdf.Rect.transform(written.box, page.getTransform()), inside = ({ origin: [x, y] }: ContentGlyph) => x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3];
       selection = { boxes: [], retainedGlyphs: [], selected: contentGlyphs(page).filter(inside) };
     } else if (options.sourceId !== undefined) {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer contenido para verificar la selección.');
       if (typeof options.sourceId !== 'string' || !/^(?:text-line-b\d{1,4}-l\d{1,5}|text-paragraph-b\d{1,4}|text-folio-\d{1,4})$/.test(options.sourceId)) fail('La selección de contenido no es válida.');
       selection = pageContent(doc, page, undefined, { id: options.sourceId, kind: 'text', rect: source });
-    } else if (options.originalFont) fail('La fuente original necesita un texto seleccionado.');
+    } else if (options.originalFont) return fail('La fuente original necesita un texto seleccionado.');
     else selection = areaRemoval(page, mupdf.Rect.transform(source, page.getTransform()));
     try {
       if (options.originalFont) {
         // The predominant font of the selection, with every glyph it painted on this page.
-        const counts = new Map();
-        for (const glyph of selection.selected) if (glyph.c.trim()) counts.set(glyph.fontName, (counts.get(glyph.fontName) || 0) + 1);
+        const counts = new Map<string, number>();
+        for (const glyph of selection.selected!) if (glyph.c.trim()) counts.set(glyph.fontName, (counts.get(glyph.fontName) || 0) + 1);
         const fontName = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0], captured = captureGlyphs(page);
         try {
           const painted = captured.glyphs.find(glyph => glyph.fontName === fontName);
@@ -2193,7 +2318,7 @@ export function editDocument(doc, options) {
           // A subset font has only what it painted; a whole or standard font has its full map.
           glyphFont = { font: new mupdf.Font(painted.font.pointer), glyphs: fontCensus(captured.glyphs, fontName), complete: !/^[A-Z]{6}\+/.test(fontName) };
         } finally { captured.release(); }
-        textDrawing({ fillText() {} }, box, { ...options, glyphFont });
+        textDrawing(measuring, box, { ...options, glyphFont });
       }
       if (selection.boxes.length) {
         redactPage(doc, page, selection.boxes, { black: false, images: false, graphics: false, preserveAnnotations: true });
@@ -2201,18 +2326,20 @@ export function editDocument(doc, options) {
       }
       if (written) rewrap(doc, page, written, null);
       try { appendDrawing(doc, page, device => textDrawing(device, box, { ...options, glyphFont }), options.text); }
-      catch (error) { throw glyphFont && !/no incluye|no cabe/.test(error?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
+      catch (error) { throw glyphFont && !/no incluye|no cabe/.test((error as Error)?.message) ? new Error('La fuente original no se puede volver a usar en este PDF.') : error; }
     } finally { glyphFont?.font.destroy(); }
   } finally { page.destroy(); }
 }
 
 /** A page's editable items (page-content) or one image's pixels (page-image). */
-export function readPage(doc, options) {
+export function readPage(doc: mupdf.PDFDocument, options: Extract<Operation, { operation: 'page-content' }>): PageContentInfo;
+export function readPage(doc: mupdf.PDFDocument, options: Extract<Operation, { operation: 'page-image' }>): PageImageInfo;
+export function readPage(doc: mupdf.PDFDocument, options: Extract<Operation, { operation: 'page-content' | 'page-image' }>): PageContentInfo | PageImageInfo;
+export function readPage(doc: mupdf.PDFDocument, options: Extract<Operation, { operation: 'page-content' | 'page-image' }>): PageContentInfo | PageImageInfo {
   if (!doc.hasPermission('copy')) fail('El PDF no permite extraer su contenido.');
-  const image = options.operation === 'page-image';
-  if (image && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
+  if (options.operation === 'page-image' && typeof options.id !== 'string') fail('La imagen seleccionada ya no es válida.');
   const page = doc.loadPage(pageIndex(doc, options.page));
-  try { return pageContent(doc, page, image ? options.id : undefined, undefined, options.graphics === true); }
+  try { return options.operation === 'page-image' ? pageContent(doc, page, options.id) : pageContent(doc, page, undefined, undefined, options.graphics === true); }
   finally { page.destroy(); }
 }
 
@@ -2220,18 +2347,21 @@ export function readPage(doc, options) {
  * earlier change can renumber the page's items, so each later one finds its
  * item again by kind and place. Moves and copies go front first, along their
  * shift, so nothing lands where an item still to be changed is. */
-export function editDocumentAll(doc, operations) {
+export function editDocumentAll(doc: mupdf.PDFDocument, operations: Operation[]): void {
   if (!Array.isArray(operations) || !operations.length || operations.length > 500) fail('La selección no es válida.');
-  if (operations.some(options => options?.page !== operations[0].page)) fail('Los elementos deben estar en la misma página.');
-  const source = options => options.operation === 'remove-content' ? ['id', 'rect'] : ['sourceId', 'sourceRect'];
-  const ahead = options => {
+  const pageOf = (options: Operation) => (options as { page?: number })?.page;
+  if (operations.some(options => pageOf(options) !== pageOf(operations[0]))) fail('Los elementos deben estar en la misma página.');
+  // Each item is named and placed by these keys (an Editar change is one of EDITS).
+  type Change = Operation & { page: number; rect: Area['rect']; sourceRect: Area['rect'] } & Record<string, unknown>;
+  const source = (options: Change) => options.operation === 'remove-content' ? ['id', 'rect'] as const : ['sourceId', 'sourceRect'] as const;
+  const ahead = (options: Change) => {
     if (!/^move-/.test(options.operation)) return 0;
     const from = options.sourceRect, to = options.rect, dx = to[0] - from[0], dy = to[1] - from[1];
     return (from[0] + from[2]) / 2 * dx + (from[1] + from[3]) / 2 * dy;
   };
-  [...operations].sort((a, b) => ahead(b) - ahead(a)).forEach((options, index) => {
+  ([...operations] as Change[]).sort((a, b) => ahead(b) - ahead(a)).forEach((options, index) => {
     if (index) {
-      const [idKey, rectKey] = source(options), id = options[idKey], place = rect(options[rectKey]);
+      const [idKey, rectKey] = source(options), id = options[idKey] as string, place = rect(options[rectKey]);
       const kind = /^text-/.test(id) ? 'text' : /^image-/.test(id) ? 'image' : 'graphic', level = id.startsWith('text-line-') ? 'line' : kind === 'text' ? 'paragraph' : undefined;
       const found = readPage(doc, { operation: 'page-content', page: options.page, graphics: kind === 'graphic' }).items
         .find(item => item.kind === kind && item.level === level && item.rect.every((value, i) => Math.abs(value - place[i]) <= .02));
@@ -2245,8 +2375,8 @@ export function editDocumentAll(doc, operations) {
 /** Paints a page as the reader shows it, on white: contents, then annotations
  * and fields, leaving out the annotations Folio draws itself. `box` is in device
  * space; with `alpha` the pixels are RGBA, still opaque. */
-export function renderPage(page, matrix, box, alpha = false) {
-  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, alpha); let device;
+export function renderPage(page: mupdf.PDFPage, matrix: mupdf.Matrix, box: mupdf.Rect, alpha = false): mupdf.Pixmap {
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, alpha); let device: mupdf.Device | undefined;
   try {
     pixmap.clear(255); device = new mupdf.DrawDevice(matrix, pixmap);
     page.runPageContents(device, mupdf.Matrix.identity);
@@ -2260,28 +2390,28 @@ export function renderPage(page, matrix, box, alpha = false) {
 /** The page around one item as it looks without it: shown where the item was
  * while it is dragged, moved, or removed, until the page shows the result.
  * Removes the item from `doc`, which the caller discards or undoes. */
-export function pagePlate(doc, options) {
+export function pagePlate(doc: mupdf.PDFDocument, options: Extract<Operation, { operation: 'page-plate' }>): PagePlate {
   const area = rect(options.rect), scale = Number(options.scale);
   if (!(scale > 0 && scale <= 8)) fail('Escala inválida.');
   editDocument(doc, options.kind === 'graphic' ? { operation: 'remove-graphic', page: options.page, sourceId: options.id, sourceRect: area, rect: area } : { operation: 'remove-content', page: options.page, id: options.id, kind: options.kind, rect: area });
-  const page = doc.loadPage(pageIndex(doc, options.page)); let pixmap;
+  const page = doc.loadPage(pageIndex(doc, options.page)); let pixmap: mupdf.Pixmap | undefined;
   try {
     const zoom = mupdf.Matrix.scale(scale, scale), toDevice = mupdf.Matrix.concat(page.getTransform(), zoom);
-    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v));
+    const box = mupdf.Rect.transform([area[0] - 4, area[1] - 4, area[2] + 4, area[3] + 4], toDevice).map((v, i) => i < 2 ? Math.floor(v) : Math.ceil(v)) as mupdf.Rect;
     if ((box[2] - box[0]) * (box[3] - box[1]) > 16000000) fail('El área es demasiado grande.');
     pixmap = renderPage(page, zoom, box);
     return { png: new Uint8Array(pixmap.asPNG()), rect: mupdf.Rect.transform(box, mupdf.Matrix.invert(toDevice)) };
   } finally { pixmap?.destroy(); page.destroy(); }
 }
 
-export function operateDocument(bytes, options, password = '', onPart) {
+export function operateDocument(bytes: Uint8Array, options: Operation, password = '', onPart?: (index: number, part: Uint8Array) => void): number | Uint8Array | Field[] | string[] | AreaContentInfo | PageContentInfo | PageImageInfo | PagePlate | TextLayers[] {
   // Each part reopens the same bytes (streamed above 32 MB, so a large book is not
   // copied per part) and reuses the page plan, which keeps outlines, links and forms.
   // Parts go to `onPart` as soon as they are ready instead of piling up next to the book.
   if (options.operation === 'split') {
     if (!Array.isArray(options.parts) || !options.parts.length || options.parts.length > 5000) fail('La división no tiene partes o tiene demasiadas.');
     if (typeof onPart !== 'function') fail('Falta el destino de las partes.');
-    options.parts.forEach((plan, index) => onPart(index, operateDocument(bytes, { operation: 'pages', plan }, password)));
+    options.parts.forEach((plan, index) => onPart(index, operateDocument(bytes, { operation: 'pages', plan }, password) as Uint8Array));
     return options.parts.length;
   }
   const doc = open(bytes, password);
@@ -2298,11 +2428,11 @@ export function operateDocument(bytes, options, password = '', onPart) {
       return options.pages.map(number => {
         const page = doc.loadPage(pageIndex(doc, number)), bounds = page.getBounds(), area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]);
         let visible = 0, hidden = 0, covered = false, above = 0;
-        const letters = text => { let n = 0; text.walk({ showGlyph: () => { n++; } }); return n; };
-        const painted = text => { visible++; if (covered) above += letters(text); };
+        const letters = (text: mupdf.Text) => { let n = 0; text.walk({ showGlyph: () => { n++; } }); return n; };
+        const painted = (text: mupdf.Text) => { visible++; if (covered) above += letters(text); };
         const device = new mupdf.Device({
           fillText: painted, strokeText: painted, ignoreText: () => { hidden++; },
-          fillImage: (image, ctm) => { const box = mupdf.Rect.transform([0, 0, 1, 1], ctm); if ((box[2] - box[0]) * (box[3] - box[1]) >= area * .8) { covered = true; above = 0; } },
+          fillImage: (_image: mupdf.Image, ctm: mupdf.Matrix) => { const box = mupdf.Rect.transform([0, 0, 1, 1], ctm); if ((box[2] - box[0]) * (box[3] - box[1]) >= area * .8) { covered = true; above = 0; } },
         });
         try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); }
         return { page: number, visible, hidden, scan: covered && above < 120 };
@@ -2318,26 +2448,26 @@ export function operateDocument(bytes, options, password = '', onPart) {
     if (operation === 'text') {
       if (!doc.hasPermission('copy')) fail('El PDF no permite extraer texto.');
       return Array.from({ length: doc.countPages() }, (_, i) => {
-        const page = doc.loadPage(i); let text;
-        try { text = page.toStructuredText(); return text.asText(); } finally { text?.destroy(); page.destroy(); }
+        const page = doc.loadPage(i); let text: mupdf.StructuredText | undefined;
+        try { text = page.toStructuredText(undefined); return text.asText(); } finally { text?.destroy(); page.destroy(); }
       });
     }
     if (operation === 'pages') {
       allowed(doc, 'assemble');
       if (!Array.isArray(options.plan) || !options.plan.length || options.plan.length > 10000) fail('La lista de páginas está vacía o es demasiado larga.');
       // Preserve the original document dictionaries and use MuPDF to remap destinations.
-      const sources = [];
+      const sources: mupdf.PDFDocument[] = [];
       try {
         for (const source of options.sources || []) { const other = open(source.bytes, source.password); sources.push(other); allowed(other, 'assemble'); }
-        const order = [], used = new Set(), importedPages = new Map(), pendingLinks = [];
+        const order: number[] = [], used = new Set<number>(), importedPages = new Map<string, mupdf.PDFObject>(), pendingLinks: PendingLink[] = [];
         for (const entry of options.plan) {
-          let index;
+          let index: number;
           if (entry.blank) {
             if (!finite(entry.blank) || entry.blank.length !== 2 || entry.blank.some(n => n < 10 || n > 14400)) fail('Tamaño de página inválido.');
             const object = doc.addPage([0, 0, ...entry.blank], 0, {}, ''); index = doc.countPages(); doc.insertPage(-1, object);
           } else if (entry.source != null) {
             const source = sources[entry.source]; if (!source) fail('Documento de origen inválido.');
-            const sourceIndex = pageIndex(source, entry.page);
+            const sourceIndex = pageIndex(source, entry.page!);
             index = doc.countPages(); const map = doc.newGraftMap();
             try {
               map.graftPage(-1, source, sourceIndex);
@@ -2347,7 +2477,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
             }
             finally { map.destroy(); }
           } else {
-            index = pageIndex(doc, entry.page);
+            index = pageIndex(doc, entry.page!);
             if (used.has(index)) {
               const original = doc.findPage(index), copy = doc.newDictionary();
               original.forEach((value, key) => { if (key !== 'Parent' && key !== 'Annots') copy.put(key, value); });
@@ -2357,7 +2487,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
               const object = doc.addObject(copy), annots = original.get('Annots'), copies = doc.newArray();
               for (let n = 0; n < annots.length; n++) {
                 const annotation = annots.get(n), clone = doc.newDictionary();
-                annotation.forEach((value, key) => { if (!['P', 'Popup'].includes(key)) clone.put(key, value); });
+                annotation.forEach((value, key) => { if (!['P', 'Popup'].includes(String(key))) clone.put(key, value); });
                 clone.put('P', object);
                 const name = annotation.get('NM').asString(); if (name) clone.put('NM', doc.newString(`${name}-copy-${object.asIndirect()}`));
                 const ref = doc.addObject(clone); copies.push(ref);
@@ -2370,7 +2500,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
               if (copies.length) copy.put('Annots', copies);
               index = doc.countPages(); doc.insertPage(-1, object);
             }
-            used.add(pageIndex(doc, entry.page));
+            used.add(pageIndex(doc, entry.page!));
           }
           if (entry.rotation != null && (!Number.isInteger(entry.rotation) || entry.rotation % 90)) fail('Giro de página inválido.');
           order.push(index);
@@ -2401,19 +2531,19 @@ export function operateDocument(bytes, options, password = '', onPart) {
         pruneFields(doc);
         for (let i = 0; i < options.plan.length; i++) if (options.plan[i].rotation) {
           const object = doc.findPage(i), angle = object.getInheritable('Rotate').asNumber();
-          object.put('Rotate', ((angle + options.plan[i].rotation) % 360 + 360) % 360);
+          object.put('Rotate', ((angle + options.plan[i].rotation!) % 360 + 360) % 360);
         }
       } finally { sources.forEach(source => source.destroy()); }
     } else if (operation === 'fill') {
       allowed(doc, 'form');
-      const pending = new Map(Object.entries(options.values || {})), seen = new Set(), groups = new Map();
+      const pending = new Map(Object.entries(options.values || {})), seen = new Set<string>(), groups = new Map<string, string>();
       for (let i = 0; i < doc.countPages(); i++) {
         const page = doc.loadPage(i);
         try {
           for (const [position, widget] of page.getWidgets().entries()) {
             const id = `${i + 1}:${position}:${widget.getName()}`, key = fieldKey(widget, id);
             if (!groups.has(key)) groups.set(key, id);
-            const field = groups.get(key); if (!pending.has(field)) continue;
+            const field = groups.get(key)!; if (!pending.has(field)) continue;
             if (widget.isReadOnly()) fail(`El campo «${widget.getName()}» es de solo lectura.`);
             // Later widgets of a field usually share the value already and only
             // need their appearance updated; same-named separate fields still get it.
@@ -2461,7 +2591,7 @@ export function operateDocument(bytes, options, password = '', onPart) {
         } else if (options.fieldType === 'checkbox') {
           object.put('FT', 'Btn'); object.put('V', 'Off'); object.put('AS', 'Off');
           const w = box[2] - box[0], h = box[3] - box[1], base = `.5 w 0 0 0 RG 1 1 ${w - 2} ${h - 2} re S\n`;
-          const appearance = content => doc.addStream(content, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, w, h], Resources: {} });
+          const appearance = (content: string) => doc.addStream(content, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, w, h], Resources: {} });
           object.put('AP', { N: { Off: appearance(base), Yes: appearance(base + `2 w 3 3 m ${w - 3} ${h - 3} l 3 ${h - 3} m ${w - 3} 3 l S`) } });
         } else fail('Tipo de campo desconocido.');
         object.put('BS', { W: 1, S: 'S' }); object.put('MK', { BC: [0.6, 0.6, 0.6], BG: [1, 1, 1] });
@@ -2474,14 +2604,14 @@ export function operateDocument(bytes, options, password = '', onPart) {
     } else if (operation === 'ocr') {
       allowed(doc, 'edit');
       const font = options.font ? new mupdf.Font('Folio Sans', options.font) : new mupdf.Font('Helvetica');
-      let faces = null;
+      let faces: Face[] | null = null;
       try {
         for (const result of options.pages) {
           const index = pageIndex(doc, result.page);
           // The scan's own resolution, before its image is replaced (the page is read from a render
           // that can be finer than the scan, which adds no detail).
           let native = 0;
-          { const page = doc.loadPage(index), device = new mupdf.Device({ fillImage: (image, ctm) => { native = Math.max(native, image.getWidth() / (Math.hypot(ctm[0], ctm[1]) || 1)); } }); try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); } }
+          { const page = doc.loadPage(index), device = new mupdf.Device({ fillImage: (image: mupdf.Image, ctm: mupdf.Matrix) => { native = Math.max(native, image.getWidth() / (Math.hypot(ctm[0], ctm[1]) || 1)); } }); try { page.run(device, mupdf.Matrix.identity); device.close(); } finally { device.destroy(); page.destroy(); } }
           // Straightened before OCR: a flattened image replaces the scan, or a tilt turns the content.
           if (result.image) replaceWithImage(doc, index, result.image, result.size);
           else if (result.angle) { const page = doc.loadPage(index); try { turnContent(doc, page, result.angle); } finally { page.destroy(); } }
@@ -2515,13 +2645,13 @@ export function operateDocument(bytes, options, password = '', onPart) {
           } finally { page.destroy(); }
         }
       } finally { font.destroy(); for (const face of faces ?? []) face.font.destroy(); }
-    } else if (['remove-image', 'redact', 'crop'].includes(operation)) {
+    } else if (operation === 'remove-image' || operation === 'redact' || operation === 'crop') {
       allowed(doc, 'edit');
       if (operation === 'redact') {
         if (!Array.isArray(options.areas) || !options.areas.length) fail('Selecciona al menos un área.');
         // Forms can retain sensitive values outside their appearance streams.
         doc.bake(false, true);
-        const grouped = new Map();
+        const grouped = new Map<number, mupdf.Rect[]>();
         for (const area of options.areas) {
           const index = pageIndex(doc, area.page), boxes = grouped.get(index) || []; boxes.push(rect(area.rect)); grouped.set(index, boxes);
         }

@@ -1,5 +1,5 @@
 import type { PDFDocument } from 'mupdf';
-import type { Operation } from './operations.mjs';
+import type { Operation } from './operations.ts';
 
 // Editar's live document: opened once when Editar starts and changed in place,
 // each change one step of MuPDF's journal (undo/redo). It is written out only
@@ -13,7 +13,7 @@ export type SessionRequest =
   | { type: 'render'; page: number; scale: number; rotation: number }
   | { type: 'undo' | 'redo' | 'save' };
 
-const engine = Promise.all([import('mupdf'), import('./mupdf-engine.mjs'), import('./operations.mjs')]);
+const engine = Promise.all([import('mupdf'), import('./mupdf-engine.mjs'), import('./operations.ts')]);
 let doc: PDFDocument | null = null;
 // A large PDF is read from these bytes on demand, so they live as long as the document.
 let source: Uint8Array | null = null;

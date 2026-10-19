@@ -8,7 +8,7 @@ import { findChrome } from './browser.mjs';
 import { androidTablet, openTabletEditor } from './ui-helpers.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 import { inspectDocument, writeAnnotations } from '../../src/engine/mupdf-engine.mjs';
 
 // Synthetic content only. Exercise the actual editor, PDF engine, download and

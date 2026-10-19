@@ -5,7 +5,7 @@ import Modal from './Modal';
 import FilePicker from './FilePicker';
 import { Thumbnail } from './PDFPage';
 import { inspectPdf, processPdf, readFields, readTextLayers, splitPdf } from '../engine/client';
-import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.mjs';
+import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.ts';
 import type { LoadedDocument, Tool } from '../types';
 import { formatSize, getDocument, plural } from '../pdf';
 import { errorMessage } from '../errors';

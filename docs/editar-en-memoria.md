@@ -19,7 +19,7 @@ Ahora:
   `endOperation`); si sus comprobaciones fallan, `abandonOperation` lo deshace y
   el documento queda como estaba.
 - Las operaciones son las de siempre, pero en el sitio: `editDocument(doc, op)`
-  en `operations.mjs` edita y verifica sobre el documento abierto (sin guardar ni
+  en `operations.ts` edita y verifica sobre el documento abierto (sin guardar ni
   reabrir). `operateDocument` usa la misma función y luego guarda, así que hay una
   sola implementación y todas las pruebas de motor la cubren.
 - La respuesta de un cambio es solo el número de página. La página cambiada sube
@@ -103,7 +103,7 @@ sin él). Antes se movía una copia de los píxeles de la página en su rectáng
 con lo que hubiera detrás (un texto sobre un recuadro de color arrastraba un
 trozo del recuadro).
 
-- `itemSprite` (`operations.mjs`) no cambia el documento. Texto e imagen se
+- `itemSprite` (`operations.ts`) no cambia el documento. Texto e imagen se
   dibujan con lo mismo que escribe «mover» (`movedDrawing`: las mismas glifos con
   sus fuentes y colores, o la imagen con su máscara), así que el sprite es lo que
   quedará en el PDF. Un dibujo se aísla quitando de los flujos de la página todo

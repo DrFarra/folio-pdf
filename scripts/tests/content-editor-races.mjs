@@ -7,7 +7,7 @@ import { chromium } from 'playwright-core';
 import { findChrome } from './browser.mjs';
 import { PDFDocument } from 'pdf-lib';
 import * as mupdf from 'mupdf';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 // The harness supplies delayed public props to the actual component. Only the
 // page-image worker's dispatch is gated; extraction and preview use the real

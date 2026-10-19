@@ -10,6 +10,7 @@ import {
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail, inView } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
+import IconButton from './components/IconButton';
 import DocumentLibrary from './components/DocumentLibrary';
 import NotePopover from './components/NotePopover';
 import { DriveBrowser, TransferCard, advance, type Transfer } from './components/DriveBrowser';
@@ -17,22 +18,25 @@ import { driveLookup, driveOpen, driveStage, driveStageNative, driveStatus as re
 import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentOutline from './components/DocumentOutline';
 import ViewSettings from './components/ViewSettings';
-import { exportAnnotated, formatSize, getDocument, hideAnnotations, plural, readOutline, searchText, pageText, readPageLabels, readPageLabel } from './pdf';
+import { exportAnnotated, formatSize, getDocument, plural, readOutline, searchText, pageText, readPageLabels, readPageLabel } from './pdf';
 import { errorMessage } from './errors';
-import { openNativePdf, isNativePdfDocument, isNativePdfPasswordError, nativePdfPageAnnotations, subscribeNativePdfAnnotations } from './nativePdf';
+import { isNativePdfDocument, nativePdfPageAnnotations, subscribeNativePdfAnnotations } from './nativePdf';
 import { migrateLegacyNativePage } from './native-session';
-import type { Inspection } from './engine/mupdf-engine.mjs';
 import type { NativeDocument } from './platform';
-import { inspectOwnedPdf, inspectPdf, processPdf } from './engine/client';
-import type { Area, Operation, PageEntry } from './engine/operations.mjs';
+import { processPdf } from './engine/client';
+import { readDocument, type OpenSource } from './document-reader';
+import type { Area, Operation, PageEntry } from './engine/operations.ts';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
 import BookmarkTree from './components/BookmarkTree';
 import TextSelectionMenu from './components/TextSelectionMenu';
 import HighlightColorPicker from './components/HighlightColorPicker';
-import DrawingSettings, { INK_DEFAULTS, inkRange, type InkKind, type InkStyle } from './components/DrawingSettings';
+import DrawingSettings from './components/DrawingSettings';
 import ReadingSettings from './components/ReadingSettings';
 import { readReadingPreferences } from './reading-preferences';
+import { preference } from './preferences';
+import { useInkPreferences } from './ink-preferences';
+import { useDesktopWindow } from './desktop-window';
 import { addPageBookmark, deleteBookmark, hasBookmarkPage, normalizeBookmarks, remapBookmarks } from './bookmarks';
 import { commentSelection, highlightSelection } from './text-selection';
 import type { AnnotationDraft } from './text-selection';
@@ -61,8 +65,8 @@ import { MarkedSnippet, clearRecentSearches, recentSearches, rememberSearch } fr
 import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
-import { assetUrl, pdfAssetSettings } from './assets';
-import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, readNativeDocument, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
+import { pdfAssetSettings } from './assets';
+import { isDesktop, isNative, isIOS, isAndroid, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, startupDocuments, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
 import { clearSavedState, forgetDocument, listLibrary, readLibraryData, readLibrarySource, readSession, rememberDocument, touchDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigationTarget, RecentDocument, Session, SideTab, Tool } from './types';
 
@@ -78,7 +82,6 @@ const annotationFingerprint = (items: Annotation[]) => {
   return fingerprint;
 };
 const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const preference = (key: string, fallback: string) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
 const searchTerm = (value: string) => value.trim().length >= 2 ? value : '';
 // Saving a copy of a copy keeps a single suffix.
 const copyName = (name: string) => `${name.replace(/\.pdf$/i, '').replace(/( — copia)+$/, '')} — copia.pdf`;
@@ -89,15 +92,10 @@ const fileSaveLabel = savesInPlace ? 'Guardar' : isNative ? 'Guardar una copia' 
 const here = isDesktop ? 'este equipo' : isNative ? 'este dispositivo' : 'este navegador';
 const saveAdvice = savesInPlace ? 'Guarda el PDF para no perderlos.' : isNative ? 'Guarda una copia del PDF para no perderlos.' : 'Descarga el PDF para no perderlos.';
 const redoShortcut = isMac || isIOS ? shortcutLabel('Z', true) : shortcutLabel('Y');
-// Fingers draw until a pen appears; an explicit choice always wins. The old
-// folio.ink.penOnly default was stored unasked, so only its 'false' is a choice.
-const penMode = () => preference('folio.ink.penMode', preference('folio.ink.penOnly', '') === 'false' ? 'finger' : '');
 // The theme follows the system until chosen. The old folio.theme was stored
 // unasked as 'light', so only its 'dark' is a choice.
 const themeChoice = () => preference('folio.themeChoice', preference('folio.theme', '') === 'dark' ? 'dark' : 'system');
-type OpenSource = Blob | Uint8Array | 'sample' | NativeDocument;
 type ToastKind = 'success' | 'info' | 'error';
-const nativeReadingThreshold = 32 * 1024 * 1024;
 // Small print stays readable: the visible part of the page is repainted at screen density.
 const MAX_ZOOM = 8;
 type NoteDraft = Omit<Annotation, 'id' | 'created'> & { id?: string };
@@ -109,10 +107,6 @@ const PARK_LIMIT = 512 * 1024 * 1024;
 type History = { annotations: Annotation[]; bytes?: Uint8Array; password?: string; page?: number; bookmarks?: BookmarkNode[]; session?: true; base?: true };
 type TabView = { page: number; dimensions: { width: number; height: number; rotation: number }; zoomMode: string; customScale: number; rotation: number; readingMode: 'continuous' | 'single' | 'spread'; annotating: boolean; tool: Tool; color: string; sidebar: boolean; sideTab: SideTab; notesOpen: boolean; outline: OutlineEntry[] | null; textIndex: string[]; indexing: boolean; searchOpen: boolean; query: string; resultIndex: number; activeNote: string | null; redactions: Area[]; editArea: Area | null; sessionFailed: boolean; draftFailed: boolean };
 type DocumentTab = TabView & { key: string; doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[]; undo: History[]; redo: History[]; scrollTop: number; scrollLeft: number };
-
-function IconButton({ children, label, onClick, onMouseDown, disabled = false, active = false, toggle = false, className = '' }: { children: React.ReactNode; label: string; onClick: () => void; onMouseDown?: React.MouseEventHandler<HTMLButtonElement>; disabled?: boolean; active?: boolean; toggle?: boolean; className?: string }) {
-  return <button className={`icon-button ${active ? 'active' : ''} ${className}`} aria-label={label} aria-pressed={toggle ? active : undefined} title={label} onClick={onClick} onMouseDown={onMouseDown} disabled={disabled}>{children}</button>;
-}
 
 export default function App() {
   const layout = useDeviceLayout(), phone = layout === 'phone', tablet = layout === 'tablet', touchLayout = phone || tablet;
@@ -154,32 +148,7 @@ export default function App() {
   const [rotation, setRotation] = useState(0);
   const [readingMode, setReadingMode] = useState<'continuous' | 'single' | 'spread'>(() => readReadingPreferences().mode);
   const [tool, setTool] = useState<Tool>('select');
-  const [inkKind, setInkKind] = useState<InkKind>(() => preference('folio.ink.kind', 'pen') === 'marker' ? 'marker' : 'pen');
-  const [inkStyles, setInkStyles] = useState<Record<InkKind, InkStyle>>(() => {
-    // Older versions kept one pen color and width; they become the pen's style.
-    const legacy = { ...INK_DEFAULTS.pen, color: preference('folio.ink.color', INK_DEFAULTS.pen.color), width: Number(preference('folio.ink.width', '2')) || 2 };
-    let saved: Partial<Record<InkKind, Partial<InkStyle>>> = {};
-    try { saved = JSON.parse(preference('folio.ink.styles', '{}')) || {}; } catch {}
-    const valid = (kind: InkKind, style: Partial<InkStyle> | undefined, fallback: InkStyle): InkStyle => {
-      const range = inkRange(kind), width = Number(style?.width), opacity = Number(style?.opacity);
-      return { color: typeof style?.color === 'string' && /^#[0-9a-f]{6}$/i.test(style.color) ? style.color.toLowerCase() : fallback.color,
-        width: Number.isFinite(width) ? Math.min(range.max, Math.max(range.min, width)) : fallback.width, opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(.1, opacity)) : fallback.opacity };
-    };
-    return { pen: valid('pen', saved.pen, legacy), marker: valid('marker', saved.marker, INK_DEFAULTS.marker) };
-  });
-  const [inkRecentColors, setInkRecentColors] = useState<string[]>(() => { try { const value = JSON.parse(preference('folio.ink.recentColors', '[]')); return Array.isArray(value) ? value.filter(item => typeof item === 'string' && /^#[0-9a-f]{6}$/.test(item)).slice(0, 5) : []; } catch { return []; } });
-  const inkStyle = inkStyles[inkKind];
-  const [eraserSize, setEraserSize] = useState(() => Number(preference('folio.ink.eraserSize', '16')) || 16);
-  const [penOnly, setPenOnly] = useState(() => penMode() === 'pen');
-  const choosePenOnly = useCallback((value: boolean) => { setPenOnly(value); try { localStorage.setItem('folio.ink.penMode', value ? 'pen' : 'finger'); } catch {} }, []);
-  const [penDetected, setPenDetected] = useState(false);
-  useEffect(() => {
-    const detect = (event: PointerEvent) => { if (event.pointerType !== 'pen') return; setPenDetected(true); if (!penMode()) choosePenOnly(true); };
-    window.addEventListener('pointerover', detect, { passive: true, capture: true });
-    window.addEventListener('pointerdown', detect, { passive: true, capture: true });
-    return () => { window.removeEventListener('pointerover', detect, true); window.removeEventListener('pointerdown', detect, true); };
-  }, [choosePenOnly]);
-  useEffect(() => { try { localStorage.setItem('folio.ink.kind', inkKind); localStorage.setItem('folio.ink.styles', JSON.stringify(inkStyles)); localStorage.setItem('folio.ink.recentColors', JSON.stringify(inkRecentColors)); localStorage.setItem('folio.ink.eraserSize', String(eraserSize)); } catch {} }, [inkKind, inkStyles, inkRecentColors, eraserSize]);
+  const { inkKind, setInkKind, setInkStyles, inkStyle, inkRecentColors, setInkRecentColors, eraserSize, setEraserSize, penOnly, choosePenOnly, penDetected } = useInkPreferences();
   const [color, setColor] = useState(() => { const saved = preference('folio.highlightColor', DEFAULT_HIGHLIGHT_COLOR); return /^#[0-9a-f]{6}$/i.test(saved) ? saved : DEFAULT_HIGHLIGHT_COLOR; });
   const [sidebar, setSidebar] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>('pages');
@@ -265,7 +234,6 @@ export default function App() {
   const lastToast = useRef(toast); if (toast) lastToast.current = toast;
   const shownToast = toast || (toastLeaving ? lastToast.current : null);
   const toastRef = useRef<HTMLDivElement>(null);
-  const [windowState, setWindowState] = useState({ maximized: false, fullscreen: false });
   const [driveAvailable, setDriveAvailable] = useState(isNative);
   const [driveRefresh, setDriveRefresh] = useState<Transfer | null>(null);
   const menuAction = useRef((_id: string) => {});
@@ -291,6 +259,8 @@ export default function App() {
   const restoreScroll = useRef<{ key: string; top: number; left: number } | null>(null);
   const scrollRestoreFrame = useRef<number | null>(null);
   const taskRef = useRef<PDFDocumentLoadingTask | null>(null);
+  // The PDF.js load in progress, given up when another starts or it fails.
+  const dropTask = () => { void taskRef.current?.destroy(); taskRef.current = null; };
   const engineRef = useRef<AbortController | null>(null);
   const docRef = useRef<LoadedDocument | null>(null);
   const annotationRef = useRef<Annotation[]>([]);
@@ -505,7 +475,7 @@ export default function App() {
     const request = ++loadRequest.current;
     engineRef.current?.abort();
     const controller = new AbortController(); engineRef.current = controller;
-    if (taskRef.current) { void taskRef.current.destroy(); taskRef.current = null; }
+    dropTask();
     passwordCancelled.current = false;
     setPassword(null);
     loadingRef.current = true;
@@ -517,107 +487,33 @@ export default function App() {
         const priorTab = captureTab(); if (priorTab) persistInBackground(priorTab);
       }
       const nativeInput = typeof source === 'object' && 'token' in source ? source : null;
-      let nativeFile = nativeInput;
-      nativeSource = nativeFile?.token || nativeSource;
+      nativeSource = nativeInput?.token || nativeSource;
       const drive = context?.drive || (context?.preserveHistory ? priorDocument?.drive : undefined) || (nativeSource && isNative ? await driveLookup(nativeSource) : undefined) || undefined;
-      if (!context && nativeInput?.id && !drive) {
-        const existing = tabsRef.current.find(tab => tab.doc.id === nativeInput.id);
-        if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
-      }
-      const fileBacked = isNative && isIOS && !!nativeFile && nativeFile.size > nativeReadingThreshold;
-      const digest = async (data: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', data as Uint8Array<ArrayBuffer>))].map(n => n.toString(16).padStart(2, '0')).join('');
-      // Identical PDFs in different Drive files/accounts must never share drafts
-      // or annotations. Distinct remote bases also retain separate recovery data.
-      const driveId = drive ? await digest(new TextEncoder().encode(`${drive.account}:${drive.fileId}:${drive.baseChecksum}`)) : undefined;
-      let bytes = new Uint8Array(0) as Uint8Array;
-      let id: string, revision: string, pdf: PDFDocumentProxy, inspection: Inspection;
-      let originalBytes = bytes;
-      let modified = context?.modified || false;
-      let documentPassword = context?.password || '';
-      let size = 0;
-      if (fileBacked) {
-        if (!context && nativeInput?.id) {
-          const draft = await nativeDraftDocument(driveId || nativeInput.id, name);
-          if (draft) { nativeFile = draft; nativeSource = draft.token; modified = true; notify('Se recuperaron tus cambios sin guardar.'); }
-        }
-        let opened;
-        while (!opened) {
-          try { opened = await openNativePdf(nativeFile!, documentPassword, controller.signal); }
-          catch (error) {
-            if (!isNativePdfPasswordError(error)) throw error;
-            documentPassword = await new Promise<string>((resolve, reject) => {
-              const cancel = () => reject(new DOMException('Operación cancelada', 'AbortError'));
-              controller.signal.addEventListener('abort', cancel, { once: true });
-              setPassword({ name, retry: error.retry, submit: value => { controller.signal.removeEventListener('abort', cancel); resolve(value); } });
-              setPasswordText('');
-            });
-          }
-        }
-        pdf = opened.pdf;
-        taskRef.current = pdf.loadingTask;
-        id = context?.id || driveId || nativeInput?.id || opened.metadata.id; revision = opened.metadata.revision; size = opened.metadata.size;
-        inspection = { ...opened.metadata.permissions, canEdit: false, canAssemble: false, canFill: false,
-          signed: opened.metadata.signed, pages: opened.metadata.numPages, annotations: await nativePdfPageAnnotations(pdf, 1) };
-      } else {
-        // A native file's id is already the SHA-256 of its bytes.
-        const knownId = context?.id || driveId || nativeInput?.id;
-        // Its draft replaces it, so the draft is looked for first: reading a book's
-        // original over IPC only to discard it doubled the time to open it.
-        const nativeDraft = !context && isNative && knownId ? await nativeDraftDocument(knownId, name) : null;
-        let draftId: string | undefined;
-        if (source === 'sample') {
-          const response = await fetch(assetUrl('/sample.pdf'));
-          if (!response.ok) throw new Error('No se pudo abrir el documento de ejemplo.');
-          bytes = new Uint8Array(await response.arrayBuffer());
-        } else if (nativeDraft) { bytes = await readNativeDocument(nativeDraft); modified = true; draftId = nativeDraft.id; notify('Se recuperaron tus cambios sin guardar.'); }
-        else if (nativeFile) bytes = await readNativeDocument(nativeFile);
-        else bytes = source instanceof Uint8Array ? source : new Uint8Array(await (source as Blob).arrayBuffer());
-        if (request !== loadRequest.current) return;
-        if (!nativeDraft) originalBytes = bytes;
-        const contentId = knownId ? undefined : await digest(bytes);
-        id = knownId || contentId!;
-        if (!context) {
-          const existing = tabsRef.current.find(tab => tab.doc.id === id);
-          if (existing) { retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs(); setLoading(false); loadingRef.current = false; return true; }
-        }
-        if (!context && !(isNative && knownId)) {
-          // A native draft is read in slices, as an opened PDF (one response of hundreds of MB stops
-          // the page on Windows), and its id is already the SHA-256 of its bytes.
-          const native = isNative ? await nativeDraftDocument(id, name) : null;
-          const draft = native ? await readNativeDocument(native) : isNative ? null : await readDraft(id);
-          if (draft) { bytes = draft; modified = true; draftId = native?.id; notify('Se recuperaron tus cambios sin guardar.'); }
-        }
-        revision = bytes === originalBytes && (nativeInput?.id || contentId) || draftId || await digest(bytes); size = bytes.length;
-        const task = getDocument({ data: new Uint8Array(bytes), password: documentPassword, ...pdfAssetSettings() });
-        taskRef.current = task;
-        task.onPassword = (submit: (value: string) => void, reason: number) => { if (request === loadRequest.current) { setPassword({ name, retry: reason === 2, submit: value => { documentPassword = value; submit(value); } }); setPasswordText(''); } };
-        pdf = await task.promise;
-        try {
-          // Bytes read here belong to this load and are lent to the engine; a caller's array is copied.
-          if (bytes === source) inspection = await inspectPdf(bytes, documentPassword, controller.signal);
-          else {
-            const { bytes: returned, ...inspected } = await inspectOwnedPdf(bytes, documentPassword, controller.signal);
-            if (originalBytes === bytes) originalBytes = returned;
-            bytes = returned; inspection = inspected;
-          }
-        }
-        catch (error) { await pdf.loadingTask.destroy(); throw error; }
-        if (inspection.previewBytes) {
-          await pdf.loadingTask.destroy();
-          const preview = getDocument({ data: inspection.previewBytes, password: documentPassword, ...pdfAssetSettings() });
-          taskRef.current = preview; pdf = await preview.promise;
-        }
-        hideAnnotations(pdf, inspection.hidden || []);
-      }
-      if (request !== loadRequest.current) { await pdf.loadingTask.destroy(); return; }
-      if (!context) {
+      // A document already in a tab is shown there instead of opened twice.
+      const showTab = (id: string) => {
         const existing = tabsRef.current.find(tab => tab.doc.id === id);
-        if (existing) {
-          // Avoid closing the native token shared by the existing adapter.
-          if (!fileBacked || existing.doc.nativeSource !== nativeSource) await pdf.loadingTask.destroy();
-          retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs();
-          setLoading(false); loadingRef.current = false; taskRef.current = null; return true;
-        }
+        if (!existing) return false;
+        // Keeping the current tab replaces its entry: the one to show is found again.
+        retainCurrentTab(); activateTab(tabsRef.current.find(tab => tab.key === existing.key)!); publishTabs();
+        setLoading(false); loadingRef.current = false; taskRef.current = null;
+        return true;
+      };
+      if (!context && nativeInput?.id && !drive && showTab(nativeInput.id)) return true;
+      const read = await readDocument({ source, name, nativeSource, drive, context, signal: controller.signal,
+        current: () => request === loadRequest.current,
+        isOpen: id => tabsRef.current.some(tab => tab.doc.id === id),
+        onTask: task => { taskRef.current = task; },
+        askPassword: ask => { setPassword({ name, ...ask }); setPasswordText(''); },
+        onRecovered: () => notify('Se recuperaron tus cambios sin guardar.') });
+      if (!read) return;
+      if ('open' in read) { showTab(read.open); return true; }
+      const { pdf, bytes, originalBytes, id, revision, size, modified, password: documentPassword, inspection, fileBacked } = read;
+      nativeSource = read.nativeSource;
+      const existing = context ? undefined : tabsRef.current.find(tab => tab.doc.id === id);
+      if (existing) {
+        // Avoid closing the native token shared by the existing adapter.
+        if (!fileBacked || existing.doc.nativeSource !== nativeSource) await pdf.loadingTask.destroy();
+        showTab(id); return true;
       }
       const first = await pdf.getPage(1);
       const view = first.getViewport({ scale: 1 });
@@ -699,8 +595,8 @@ export default function App() {
         console.error('Folio: no se pudo abrir el PDF.', error);
         notify(`No se pudo abrir «${name}». ${errorMessage(error, 'El archivo puede estar dañado.')}`, 'error');
       }
-      void taskRef.current?.destroy();
-      setLoading(false); loadingRef.current = false; setPassword(null); taskRef.current = null;
+      dropTask();
+      setLoading(false); loadingRef.current = false; setPassword(null);
       return false;
     }
   }, [notify]);
@@ -928,19 +824,8 @@ export default function App() {
     });
     return () => { alive = false; void listener.then(unlisten => unlisten()); };
   }, [notify]);
-  useEffect(() => {
-    if (isDesktop) void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().setTitle(doc ? `${doc.name} — Folio` : 'Folio')).catch(() => {});
-  }, [doc?.name]);
-  useEffect(() => {
-    if (!isDesktop) return;
-    let alive = true;
-    const listener = import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-      const window = getCurrentWindow();
-      const sync = () => void Promise.all([window.isMaximized(), window.isFullscreen()]).then(([maximized, fullscreen]) => { if (alive) setWindowState({ maximized, fullscreen }); }).catch(() => {});
-      sync(); return window.onResized(sync);
-    });
-    return () => { alive = false; void listener.then(unlisten => unlisten()).catch(() => {}); };
-  }, []);
+  const windowError = useCallback(() => notify('No se pudo cambiar el estado de la ventana.', 'error'), [notify]);
+  const { windowState, windowAction } = useDesktopWindow(doc?.name, windowError);
   useEffect(() => {
     if (!isDesktop || !isMac) return;
     // The macOS menu bar; its shortcuts reach it only when the page leaves them unhandled.
@@ -2212,12 +2097,6 @@ export default function App() {
     if (phoneRef.current || window.innerWidth < 1000) setNotesOpen(false);
     setSidebar(!(sidebar && !searchOpen && sideTab === tab));
     setSearchOpen(false); setSideTab(tab);
-  }
-  async function windowAction(action: 'minimize' | 'toggleMaximize' | 'close') {
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow()[action]();
-    } catch { notify('No se pudo cambiar el estado de la ventana.', 'error'); }
   }
   async function clearLibrary() {
     if (!confirmClear) { setConfirmClear(true); return; }

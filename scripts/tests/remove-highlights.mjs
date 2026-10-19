@@ -11,7 +11,7 @@ import { findChrome } from './browser.mjs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import * as mupdf from 'mupdf';
 import { inspectDocument } from '../../src/engine/mupdf-engine.mjs';
-import { operateDocument } from '../../src/engine/operations.mjs';
+import { operateDocument } from '../../src/engine/operations.ts';
 
 // Exercise the public UI with real pointer gestures. Imported highlights are
 // authored directly as PDF annotations by MuPDF, without Folio's annotation writer.
