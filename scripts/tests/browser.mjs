@@ -13,4 +13,6 @@ export const chromeCandidates = [
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
 ];
-export function findChrome() { return process.env.CHROME_PATH || chromeCandidates.find(file => fs.existsSync(file)); }
+export function findChrome() {
+  return process.env.CHROME_PATH || chromeCandidates.find(file => fs.existsSync(file));
+}

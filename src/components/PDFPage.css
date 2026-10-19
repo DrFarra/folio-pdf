@@ -1,14 +1,66 @@
-.page-render-error{position:absolute;top:10px;right:10px;z-index:4;max-width:calc(100% - 20px);padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px}
-.page-content{isolation:isolate}
+.page-render-error {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  max-width: calc(100% - 20px);
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+.page-content {
+  isolation: isolate;
+}
 /* Blend the whole highlight stacking context with the PDF bitmap. A child
    alone cannot blend through the isolated annotation-layer stacking context. */
-.highlight-layer{position:absolute;inset:0;z-index:3;mix-blend-mode:multiply;pointer-events:none;overflow:hidden}
-.highlight-layer .highlight-annotation{opacity:1}
-.highlight-layer .highlight-annotation:is([data-selected=true],[role=button]:focus-visible){outline-offset:-2px}
-.page-content>.annotation-layer{z-index:4}
-.textLayer mark[data-search-active=true]{background:rgba(255,156,58,.45);outline:2px solid #c36a00;outline-offset:1px;border-radius:1px}
-.page-content canvas.page-detail{inset:auto;width:0;height:0}
-.pdf-link-layer{position:absolute;inset:0;z-index:2;pointer-events:none}
-.pdf-document-link{position:absolute;display:block;pointer-events:none;border-radius:2px}
-.page-content[data-over-link=true] :is(.textLayer,.textLayer span){cursor:pointer}
-.pdf-document-link:focus-visible{outline:2px solid var(--accent,#2763b8);outline-offset:2px;background:rgba(60,120,230,.12)}
+.highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  overflow: hidden;
+}
+.highlight-layer .highlight-annotation {
+  opacity: 1;
+}
+.highlight-layer .highlight-annotation:is([data-selected='true'], [role='button']:focus-visible) {
+  outline-offset: -2px;
+}
+.page-content > .annotation-layer {
+  z-index: 4;
+}
+.textLayer mark[data-search-active='true'] {
+  background: rgba(255, 156, 58, 0.45);
+  outline: 2px solid #c36a00;
+  outline-offset: 1px;
+  border-radius: 1px;
+}
+.page-content canvas.page-detail {
+  inset: auto;
+  width: 0;
+  height: 0;
+}
+.pdf-link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.pdf-document-link {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  border-radius: 2px;
+}
+.page-content[data-over-link='true'] :is(.textLayer, .textLayer span) {
+  cursor: pointer;
+}
+.pdf-document-link:focus-visible {
+  outline: 2px solid var(--accent, #2763b8);
+  outline-offset: 2px;
+  background: rgba(60, 120, 230, 0.12);
+}

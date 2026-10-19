@@ -27,9 +27,40 @@ export function useDialogs() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // The tab key, or 'window', whose closing waits because its session could not be saved.
   const [closeBlocked, setCloseBlocked] = useState<string | null>(null);
-  return { mobileActions, setMobileActions, mobileTabs, setMobileTabs, creating, setCreating, pageJump, setPageJump, viewSettings, setViewSettings,
-    annotationOptions, setAnnotationOptions, capabilityNotice, setCapabilityNotice, deleteTarget, setDeleteTarget, help, setHelp, settings, setSettings,
-    confirmClear, setConfirmClear, info, setInfo, palette, setPalette, whatsNew, setWhatsNew, shortcutsOpen, setShortcutsOpen, closeBlocked, setCloseBlocked };
+  return {
+    mobileActions,
+    setMobileActions,
+    mobileTabs,
+    setMobileTabs,
+    creating,
+    setCreating,
+    pageJump,
+    setPageJump,
+    viewSettings,
+    setViewSettings,
+    annotationOptions,
+    setAnnotationOptions,
+    capabilityNotice,
+    setCapabilityNotice,
+    deleteTarget,
+    setDeleteTarget,
+    help,
+    setHelp,
+    settings,
+    setSettings,
+    confirmClear,
+    setConfirmClear,
+    info,
+    setInfo,
+    palette,
+    setPalette,
+    whatsNew,
+    setWhatsNew,
+    shortcutsOpen,
+    setShortcutsOpen,
+    closeBlocked,
+    setCloseBlocked,
+  };
 }
 
 /** The note being written or edited, its text, where it was opened from (the page or the
@@ -39,22 +70,41 @@ export function useNoteEditor() {
   const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null);
   const [noteText, setNoteText] = useState('');
   const noteOrigin = useRef<'document' | 'list'>('document');
-  const [noteAnchor, setNoteAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const [noteAnchor, setNoteAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(
+    null,
+  );
   const lastPointer = useRef({ x: 0, y: 0 });
   useEffect(() => {
-    const remember = (event: PointerEvent) => { lastPointer.current = { x: event.clientX, y: event.clientY }; };
+    const remember = (event: PointerEvent) => {
+      lastPointer.current = { x: event.clientX, y: event.clientY };
+    };
     document.addEventListener('pointerdown', remember, true);
     return () => document.removeEventListener('pointerdown', remember, true);
   }, []);
-  const noteKey = noteDraft ? noteDraft.id ?? 'new' : null;
+  const noteKey = noteDraft ? (noteDraft.id ?? 'new') : null;
   useLayoutEffect(() => {
     if (!noteKey) return;
-    const marker = noteKey !== 'new' ? document.querySelector(`.note-marker[data-note-id="${CSS.escape(noteKey)}"]`)?.getBoundingClientRect() : null;
+    const marker =
+      noteKey !== 'new'
+        ? document.querySelector(`.note-marker[data-note-id="${CSS.escape(noteKey)}"]`)?.getBoundingClientRect()
+        : null;
     const { x, y } = lastPointer.current;
-    setNoteAnchor(marker ? (marker.bottom > 0 && marker.top < innerHeight ? marker : null) : x || y ? { left: x, top: y, right: x + 26, bottom: y + 27 } : null);
+    setNoteAnchor(
+      marker
+        ? marker.bottom > 0 && marker.top < innerHeight
+          ? marker
+          : null
+        : x || y
+          ? { left: x, top: y, right: x + 26, bottom: y + 27 }
+          : null,
+    );
   }, [noteKey]);
   /** Opens the note card on a note (`origin`: where it was chosen) or a new one, with its text. */
-  const editNote = (draft: NoteDraft | Annotation, origin: 'document' | 'list', text: string) => { noteOrigin.current = origin; setNoteDraft(draft); setNoteText(text); };
+  const editNote = (draft: NoteDraft | Annotation, origin: 'document' | 'list', text: string) => {
+    noteOrigin.current = origin;
+    setNoteDraft(draft);
+    setNoteText(text);
+  };
   return { noteDraft, setNoteDraft, noteText, setNoteText, noteOrigin, noteAnchor, editNote };
 }
 
@@ -67,6 +117,21 @@ export function useDriveState() {
   const [driveConflicts, setDriveConflicts] = useState<string[]>([]);
   const [driveRefresh, setDriveRefresh] = useState<Transfer | null>(null);
   // Builds without Google's OAuth client cannot connect to Drive.
-  useEffect(() => { if (isNative) void driveStatus().then(status => setDriveAvailable(status.available !== false)).catch(() => {}); }, []);
-  return { driveAvailable, driveLibrary, setDriveLibrary, driveMessage, setDriveMessage, driveConflicts, setDriveConflicts, driveRefresh, setDriveRefresh };
+  useEffect(() => {
+    if (isNative)
+      void driveStatus()
+        .then(status => setDriveAvailable(status.available !== false))
+        .catch(() => {});
+  }, []);
+  return {
+    driveAvailable,
+    driveLibrary,
+    setDriveLibrary,
+    driveMessage,
+    setDriveMessage,
+    driveConflicts,
+    setDriveConflicts,
+    driveRefresh,
+    setDriveRefresh,
+  };
 }

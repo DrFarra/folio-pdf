@@ -16,21 +16,28 @@ export function haptic(kind: 'selection' | 'light' | 'medium' | 'success'): void
 }
 /** iOS: while PDF text is selected Folio's toolbar replaces the system edit menu, which would cover it. */
 export function setCustomTextMenu(on: boolean): void {
-  (window as Window & { webkit?: { messageHandlers?: { folioTextMenu?: { postMessage(value: boolean): void } } } }).webkit?.messageHandlers?.folioTextMenu?.postMessage(on);
+  (
+    window as Window & { webkit?: { messageHandlers?: { folioTextMenu?: { postMessage(value: boolean): void } } } }
+  ).webkit?.messageHandlers?.folioTextMenu?.postMessage(on);
 }
 /** Keeps the screen on while reading on a phone or tablet; elsewhere it does nothing. */
 export async function setKeepAwake(on: boolean): Promise<void> {
   if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
   await invoke('set_keep_awake', { on }).catch(() => {});
 }
-export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+export const isIOS =
+  /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isMobile = isIOS || isAndroid;
 export const isDesktop = isNative && !isMobile;
-export const isMac = !isIOS && /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform);
+export const isMac =
+  !isIOS &&
+  /mac/i.test(
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform,
+  );
 // Apple writes ⇧⌘S; Windows and Linux write Ctrl+Mayús+S.
-export const shortcutLabel = (key: string, shift = false) => isMac || isIOS ? `${shift ? '⇧' : ''}⌘${key}` : `Ctrl+${shift ? 'Mayús+' : ''}${key}`;
+export const shortcutLabel = (key: string, shift = false) =>
+  isMac || isIOS ? `${shift ? '⇧' : ''}⌘${key}` : `Ctrl+${shift ? 'Mayús+' : ''}${key}`;
 export type NativeDocument = { token: string; name: string; size: number; id?: string; revision?: string };
 // The control that opened Share or Print, in CSS pixels: iPad shows its popover there.
 export type Anchor = { left: number; top: number; width: number; height: number };
@@ -47,8 +54,22 @@ export const checkUpdate = () => invoke<DesktopUpdate | null>('check_update');
 /** Downloads and starts the installer; Folio closes and the installer reopens it. */
 export const installUpdate = (update: DesktopUpdate) => invoke('install_update', { url: update.url });
 
-export async function presentNativePdf(token: string, name: string, action: 'save' | 'share' | 'print', annotations: Annotation[], removedSourceRefs: string[], anchor?: Anchor): Promise<NativeDocument | boolean | null> {
-  return invoke('native_pdf_present', { token, name, action, annotations, removedSourceRefs, anchor: anchor ? [anchor.left, anchor.top, anchor.width, anchor.height] : null });
+export async function presentNativePdf(
+  token: string,
+  name: string,
+  action: 'save' | 'share' | 'print',
+  annotations: Annotation[],
+  removedSourceRefs: string[],
+  anchor?: Anchor,
+): Promise<NativeDocument | boolean | null> {
+  return invoke('native_pdf_present', {
+    token,
+    name,
+    action,
+    annotations,
+    removedSourceRefs,
+    anchor: anchor ? [anchor.left, anchor.top, anchor.width, anchor.height] : null,
+  });
 }
 export async function nativeDraftDocument(id: string, name: string): Promise<NativeDocument | null> {
   return invoke('native_draft_document', { id, name });
@@ -65,14 +86,19 @@ export async function readNativeDocument(document: NativeDocument): Promise<Uint
   if (isAndroid || document.size > 4 * 1024 * 1024) {
     const shared = isAndroid ? null : await readShared(document.token, document.size);
     if (shared) return shared;
-    const bytes = new Uint8Array(document.size), step = isAndroid ? 256 * 1024 : 4 * 1024 * 1024;
+    const bytes = new Uint8Array(document.size),
+      step = isAndroid ? 256 * 1024 : 4 * 1024 * 1024;
     // On desktop several slices are in flight, so Folio reads the next ones from disk while
     // the WebView hands over this one; one at a time, a 396 MB book took 9 s from Google Drive.
     let next = 0;
     const reader = async () => {
       while (next < bytes.length) {
-        const offset = next, length = Math.min(step, bytes.length - offset); next += length;
-        const chunk = new Uint8Array(await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }));
+        const offset = next,
+          length = Math.min(step, bytes.length - offset);
+        next += length;
+        const chunk = new Uint8Array(
+          await invoke<ArrayBuffer>('read_document_range', { token: document.token, offset, length }),
+        );
         if (chunk.length !== length) throw new Error('El PDF cambió durante la lectura. Vuelve a abrirlo.');
         bytes.set(chunk, offset);
       }
@@ -86,29 +112,46 @@ export async function startupDocuments(): Promise<NativeDocument[]> {
   return isNative ? invoke<NativeDocument[]>('startup_documents') : [];
 }
 export async function savePdf(bytes: Uint8Array, name: string, source?: string): Promise<NativeDocument | boolean> {
-  if (!isNative) { downloadBytes(bytes, name); return true; }
+  if (!isNative) {
+    downloadBytes(bytes, name);
+    return true;
+  }
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
-  return await invokeBinary<NativeDocument | null>('write_pdf_copy', bytes, { headers: { 'x-folio-output-token': token } }) || false;
+  return (
+    (await invokeBinary<NativeDocument | null>('write_pdf_copy', bytes, {
+      headers: { 'x-folio-output-token': token },
+    })) || false
+  );
 }
 
 // Windows and macOS replace the opened file without a dialog and throw if it
 // changed on disk since it was opened; Android writes through its document provider.
-export async function saveOriginalPdf(bytes: Uint8Array, name: string, source: string): Promise<NativeDocument | false> {
+export async function saveOriginalPdf(
+  bytes: Uint8Array,
+  name: string,
+  source: string,
+): Promise<NativeDocument | false> {
   const headers: Record<string, string> = { 'x-folio-source-token': source };
   if (isAndroid) {
     const token = await invoke<string | null>('choose_output', { source, name });
     if (!token) return false;
     headers['x-folio-output-token'] = token;
   }
-  return await invokeBinary<NativeDocument | null>('write_pdf_original', bytes, { headers }) || false;
+  return (await invokeBinary<NativeDocument | null>('write_pdf_original', bytes, { headers })) || false;
 }
 // Android and iOS: deletes the private PDF copies that neither the library nor these open documents use.
 export async function prunePrivateCopies(keep: string[]): Promise<void> {
   if (isNative && isMobile) await invoke('prune_private_copies', { keep });
 }
 
-async function presentMobilePdf(command: 'share_pdf_copy' | 'print_pdf_copy', bytes: Uint8Array, name: string, source?: string, anchor?: Anchor): Promise<boolean> {
+async function presentMobilePdf(
+  command: 'share_pdf_copy' | 'print_pdf_copy',
+  bytes: Uint8Array,
+  name: string,
+  source?: string,
+  anchor?: Anchor,
+): Promise<boolean> {
   const token = await invoke<string | null>('choose_output', { source: source || null, name });
   if (!token) return false;
   const headers: Record<string, string> = { 'x-folio-output-token': token };
@@ -119,10 +162,15 @@ export async function sharePdf(bytes: Uint8Array, name: string, source?: string,
   if (isNative && isMobile) return presentMobilePdf('share_pdf_copy', bytes, name, source, anchor);
   const file = new File([new Uint8Array(bytes).buffer], name, { type: 'application/pdf' });
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); return true; }
-    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return false; throw error; }
+    try {
+      await navigator.share({ files: [file] });
+      return true;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return false;
+      throw error;
+    }
   }
-  return !!await savePdf(bytes, name, source);
+  return !!(await savePdf(bytes, name, source));
 }
 export async function printPdf(bytes: Uint8Array, name: string, source?: string, anchor?: Anchor): Promise<boolean> {
   return presentMobilePdf('print_pdf_copy', bytes, name, source, anchor);
@@ -132,26 +180,58 @@ export async function copyNativeText(text: string): Promise<void> {
 }
 /** Windows and macOS: the user picks a folder before splitting and each part is
  * written there as soon as it is ready, under its own name; no file is replaced. */
-export async function choosePartsFolder(names: string[], source?: string): Promise<{ folder: string; write: (index: number, bytes: Uint8Array) => Promise<void> } | null> {
-  const chosen = await invoke<{ folder: string; tokens: string[] } | null>('choose_folder', { source: source || null, names });
-  return chosen && { folder: chosen.folder, write: async (index, bytes) => { await invokeBinary('write_export', bytes, { headers: { 'x-folio-output-token': chosen.tokens[index] } }); } };
+export async function choosePartsFolder(
+  names: string[],
+  source?: string,
+): Promise<{ folder: string; write: (index: number, bytes: Uint8Array) => Promise<void> } | null> {
+  const chosen = await invoke<{ folder: string; tokens: string[] } | null>('choose_folder', {
+    source: source || null,
+    names,
+  });
+  return (
+    chosen && {
+      folder: chosen.folder,
+      write: async (index, bytes) => {
+        await invokeBinary('write_export', bytes, { headers: { 'x-folio-output-token': chosen.tokens[index] } });
+      },
+    }
+  );
 }
 /** Phones and the browser save the parts as one ZIP. Resolves with its name, or null if cancelled. */
-export async function savePartsZip(parts: Uint8Array[], names: string[], zipName: string, source?: string): Promise<string | null> {
+export async function savePartsZip(
+  parts: Uint8Array[],
+  names: string[],
+  zipName: string,
+  source?: string,
+): Promise<string | null> {
   const { zipSync } = await import('fflate');
   // PDF streams are already compressed; storing them is as small and much faster.
   const zip = zipSync(Object.fromEntries(names.map((name, index) => [name, [parts[index], { level: 0 }]])));
-  if (isNative && zip.length > 128 * 1024 * 1024) throw new Error('Las partes ocupan más de 128 MB, el máximo que Folio puede guardar en un ZIP en el móvil. Divide menos páginas a la vez.');
-  return await saveExport(zip, zipName, 'zip', source) ? zipName : null;
+  if (isNative && zip.length > 128 * 1024 * 1024)
+    throw new Error(
+      'Las partes ocupan más de 128 MB, el máximo que Folio puede guardar en un ZIP en el móvil. Divide menos páginas a la vez.',
+    );
+  return (await saveExport(zip, zipName, 'zip', source)) ? zipName : null;
 }
-export async function saveExport(bytes: Uint8Array, name: string, format: 'txt' | 'zip' | 'docx', source?: string): Promise<boolean> {
+export async function saveExport(
+  bytes: Uint8Array,
+  name: string,
+  format: 'txt' | 'zip' | 'docx',
+  source?: string,
+): Promise<boolean> {
   if (!isNative) {
     const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer]));
-    const link = document.createElement('a'); link.href = url; link.download = name; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 15000); return true;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    return true;
   }
   const token = await invoke<string | null>('choose_export', { source: source || null, name, format });
   if (!token) return false;
-  const saved = await invokeBinary<boolean | null>('write_export', bytes, { headers: { 'x-folio-output-token': token } });
+  const saved = await invokeBinary<boolean | null>('write_export', bytes, {
+    headers: { 'x-folio-output-token': token },
+  });
   return saved !== false;
 }

@@ -29,7 +29,10 @@ export function useDocumentSearch(doc: LoadedDocument | null, open: boolean, not
     // 4000-page book would otherwise keep the PDF worker busy for minutes
     // while the reader waits for the pages on screen. Results appear as it runs.
     if (!doc) return;
-    if (!requested || indexed.current.length === doc.pdf.numPages) { setIndexing(false); return; }
+    if (!requested || indexed.current.length === doc.pdf.numPages) {
+      setIndexing(false);
+      return;
+    }
     let alive = true;
     setIndexing(true);
     void (async () => {
@@ -40,19 +43,57 @@ export function useDocumentSearch(doc: LoadedDocument | null, open: boolean, not
         if (alive && (number % 25 === 0 || number === doc.pdf.numPages)) setTextIndex([...text]);
       }
       if (alive) setIndexing(false);
-    })().catch(error => { if (alive) { console.error('Folio: no se pudo indexar el PDF.', error); setIndexing(false); notify(errorMessage(error, 'Algunas páginas no se pudieron indexar para la búsqueda.'), 'error'); } });
-    return () => { alive = false; };
+    })().catch(error => {
+      if (alive) {
+        console.error('Folio: no se pudo indexar el PDF.', error);
+        setIndexing(false);
+        notify(errorMessage(error, 'Algunas páginas no se pudieron indexar para la búsqueda.'), 'error');
+      }
+    });
+    return () => {
+      alive = false;
+    };
   }, [doc, requested, notify]);
   useEffect(() => {
-    const term = searchTerm(query), apply = () => { setSearchQuery(term); setResultLimit(200); };
-    if (!term) { apply(); return; }
+    const term = searchTerm(query),
+      apply = () => {
+        setSearchQuery(term);
+        setResultLimit(200);
+      };
+    if (!term) {
+      apply();
+      return;
+    }
     const timer = setTimeout(apply, 250);
     return () => clearTimeout(timer);
   }, [query]);
   // Every occurrence is counted; the first 1000 are navigable and listed in steps.
-  const { results, total: occurrences } = useMemo(() => searchText(textIndex, searchQuery, 1000), [textIndex, searchQuery]);
+  const { results, total: occurrences } = useMemo(
+    () => searchText(textIndex, searchQuery, 1000),
+    [textIndex, searchQuery],
+  );
   /** Searches `term` now, without waiting for the typing pause. */
-  const searchNow = (term: string) => { setSearchQuery(term); setResultLimit(200); };
-  return { textIndex, setTextIndex, indexing, setIndexing, query, setQuery, searchQuery, setSearchQuery, searchNow, resultIndex, setResultIndex,
-    resultLimit, setResultLimit, results, occurrences, history, setHistory };
+  const searchNow = (term: string) => {
+    setSearchQuery(term);
+    setResultLimit(200);
+  };
+  return {
+    textIndex,
+    setTextIndex,
+    indexing,
+    setIndexing,
+    query,
+    setQuery,
+    searchQuery,
+    setSearchQuery,
+    searchNow,
+    resultIndex,
+    setResultIndex,
+    resultLimit,
+    setResultLimit,
+    results,
+    occurrences,
+    history,
+    setHistory,
+  };
 }

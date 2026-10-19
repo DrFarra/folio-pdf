@@ -5,7 +5,8 @@ export function assetUrl(path: string): string {
 
 export function pdfAssetSettings() {
   return {
-    cMapUrl: assetUrl('/pdfjs/cmaps/'), cMapPacked: true,
+    cMapUrl: assetUrl('/pdfjs/cmaps/'),
+    cMapPacked: true,
     standardFontDataUrl: assetUrl('/pdfjs/standard_fonts/'),
     wasmUrl: assetUrl('/pdfjs/wasm/'),
   };

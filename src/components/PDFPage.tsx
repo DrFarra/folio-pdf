@@ -27,18 +27,35 @@ function watch(node: Element, root: Element | null, rootMargin: string, listener
   let watcher = byMargin.get(rootMargin);
   if (!watcher) {
     const listeners = new Map<Element, (inside: boolean) => void>();
-    watcher = { listeners, observer: new IntersectionObserver(entries => { for (const entry of entries) listeners.get(entry.target)?.(entry.isIntersecting); }, { root, rootMargin }) };
+    watcher = {
+      listeners,
+      observer: new IntersectionObserver(
+        entries => {
+          for (const entry of entries) listeners.get(entry.target)?.(entry.isIntersecting);
+        },
+        { root, rootMargin },
+      ),
+    };
     byMargin.set(rootMargin, watcher);
   }
   const { observer, listeners } = watcher;
-  listeners.set(node, listener); observer.observe(node);
-  return () => { listeners.delete(node); observer.unobserve(node); };
+  listeners.set(node, listener);
+  observer.observe(node);
+  return () => {
+    listeners.delete(node);
+    observer.unobserve(node);
+  };
 }
 /** The items of a vertical stack or grid, in document order, that overlap the
  * band between two viewport coordinates: a binary search, then the band itself. */
 export function inView<T>(items: T[], node: (item: T) => Element, top: number, bottom: number): T[] {
-  let low = 0, high = items.length;
-  while (low < high) { const mid = (low + high) >> 1; if (node(items[mid]).getBoundingClientRect().bottom < top) low = mid + 1; else high = mid; }
+  let low = 0,
+    high = items.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (node(items[mid]).getBoundingClientRect().bottom < top) low = mid + 1;
+    else high = mid;
+  }
   const found: T[] = [];
   // Items in a grid row share a top but not a bottom, so start a row early.
   for (let index = Math.max(0, low - 4); index < items.length; index++) {
@@ -52,7 +69,14 @@ export function inView<T>(items: T[], node: (item: T) => Element, top: number, b
 // so the nearby ones are found by a binary search on scroll. Observers would make
 // the browser recompute every page of a 4000-page book on each frame.
 type Tracked = { node: Element; listener: (near: boolean) => void };
-type Stack = { items: Tracked[]; near: Set<Tracked>; sorted: boolean; schedule: () => void; observe: (node: Element) => void; release: () => void };
+type Stack = {
+  items: Tracked[];
+  near: Set<Tracked>;
+  sorted: boolean;
+  schedule: () => void;
+  observe: (node: Element) => void;
+  release: () => void;
+};
 const stacks = new WeakMap<Element, Stack>();
 function stackFor(root: Element): Stack {
   const existing = stacks.get(root);
@@ -61,32 +85,65 @@ function stackFor(root: Element): Stack {
   const update = () => {
     frame = 0;
     const { items, near } = stack;
-    if (!stack.sorted) { items.sort((a, b) => a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1); stack.sorted = true; }
-    const box = root.getBoundingClientRect(), screen = box.height;
-    for (const item of inView(items, item => item.node, box.top - screen, box.bottom + screen)) if (!near.has(item)) { near.add(item); item.listener(true); }
+    if (!stack.sorted) {
+      items.sort((a, b) => (a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+      stack.sorted = true;
+    }
+    const box = root.getBoundingClientRect(),
+      screen = box.height;
+    for (const item of inView(items, item => item.node, box.top - screen, box.bottom + screen))
+      if (!near.has(item)) {
+        near.add(item);
+        item.listener(true);
+      }
     for (const item of near) {
       const rect = item.node.getBoundingClientRect();
-      if (rect.bottom < box.top - 2 * screen || rect.top > box.bottom + 2 * screen) { near.delete(item); item.listener(false); }
+      if (rect.bottom < box.top - 2 * screen || rect.top > box.bottom + 2 * screen) {
+        near.delete(item);
+        item.listener(false);
+      }
     }
   };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(update);
+  };
   // Zoom, rotation and pages taking their real size move pages without scrolling.
   const resized = new ResizeObserver(schedule);
-  resized.observe(root); root.addEventListener('scroll', schedule, { passive: true });
-  const stack: Stack = { items: [], near: new Set(), sorted: true, schedule, observe: node => resized.observe(node), release: () => {
-    cancelAnimationFrame(frame); resized.disconnect(); root.removeEventListener('scroll', schedule); stacks.delete(root);
-  } };
+  resized.observe(root);
+  root.addEventListener('scroll', schedule, { passive: true });
+  const stack: Stack = {
+    items: [],
+    near: new Set(),
+    sorted: true,
+    schedule,
+    observe: node => resized.observe(node),
+    release: () => {
+      cancelAnimationFrame(frame);
+      resized.disconnect();
+      root.removeEventListener('scroll', schedule);
+      stacks.delete(root);
+    },
+  };
   stacks.set(root, stack);
   return stack;
 }
-function track(root: Element, node: Element, content: Element | null, near: boolean, listener: (near: boolean) => void) {
-  const stack = stackFor(root), item = { node, listener };
+function track(
+  root: Element,
+  node: Element,
+  content: Element | null,
+  near: boolean,
+  listener: (near: boolean) => void,
+) {
+  const stack = stackFor(root),
+    item = { node, listener };
   if (content) stack.observe(content);
-  stack.items.push(item); stack.sorted = false;
+  stack.items.push(item);
+  stack.sorted = false;
   if (near) stack.near.add(item);
   stack.schedule();
   return () => {
-    stack.items.splice(stack.items.indexOf(item), 1); stack.near.delete(item);
+    stack.items.splice(stack.items.indexOf(item), 1);
+    stack.near.delete(item);
     if (!stack.items.length) stack.release();
   };
 }
@@ -99,9 +156,16 @@ function useNearby(ref: React.RefObject<HTMLDivElement | null>, scroller: string
     if (!node) return;
     const root = node.closest(scroller);
     if (root) return track(root, node, content ? node.closest(content) : null, first, setNearby);
-    const near = watch(node, root, '100% 50%', inside => { if (inside) setNearby(true); });
-    const far = watch(node, root, '200% 100%', inside => { if (!inside) setNearby(false); });
-    return () => { near(); far(); };
+    const near = watch(node, root, '100% 50%', inside => {
+      if (inside) setNearby(true);
+    });
+    const far = watch(node, root, '200% 100%', inside => {
+      if (!inside) setNearby(false);
+    });
+    return () => {
+      near();
+      far();
+    };
     // `first` only seeds the initial state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, scroller, content]);
@@ -110,14 +174,26 @@ function useNearby(ref: React.RefObject<HTMLDivElement | null>, scroller: string
 // Text layers wait until scrolling pauses: a fling through a long book would
 // otherwise lay out thousands of text spans on the main thread mid-scroll.
 let lastScroll = 0;
-document.addEventListener('scroll', event => { if ((event.target as Element).classList?.contains('reading-area')) lastScroll = performance.now(); }, { capture: true, passive: true });
-const scrollSettled = () => new Promise<void>(resolve => {
-  const check = () => { const wait = lastScroll + 150 - performance.now(); if (wait > 0) setTimeout(check, wait); else resolve(); };
-  check();
-});
+document.addEventListener(
+  'scroll',
+  event => {
+    if ((event.target as Element).classList?.contains('reading-area')) lastScroll = performance.now();
+  },
+  { capture: true, passive: true },
+);
+const scrollSettled = () =>
+  new Promise<void>(resolve => {
+    const check = () => {
+      const wait = lastScroll + 150 - performance.now();
+      if (wait > 0) setTimeout(check, wait);
+      else resolve();
+    };
+    check();
+  });
 const pixelBudget = isMobile ? 4_000_000 : 16_000_000;
 const density = () => Math.min(window.devicePixelRatio || 1, 3);
-const outputRatio = (view: { width: number; height: number }) => Math.min(density(), Math.sqrt(pixelBudget / (view.width * view.height)));
+const outputRatio = (view: { width: number; height: number }) =>
+  Math.min(density(), Math.sqrt(pixelBudget / (view.width * view.height)));
 
 type Props = {
   pdf: PDFDocumentProxy;
@@ -129,7 +205,9 @@ type Props = {
   tool: Tool;
   color: string;
   inkColor?: string;
-  inkWidth?: number; inkOpacity?: number; eraserSize?: number;
+  inkWidth?: number;
+  inkOpacity?: number;
+  eraserSize?: number;
   penOnly?: boolean;
   query: string;
   activeSearch?: SearchResult | null;
@@ -159,26 +237,73 @@ export default memo(function PDFPage(props: Props) {
   const [error, setError] = useState('');
   // A page of a revision already closed cannot be used, even for its old pixels:
   // PDF.js throws on it (a page scrolled back into view after an edit).
-  const page = loaded && (loaded.pdf === props.pdf || nearby && !loaded.pdf.loadingTask.destroyed) ? loaded.page : null;
+  const page =
+    loaded && (loaded.pdf === props.pdf || (nearby && !loaded.pdf.loadingTask.destroyed)) ? loaded.page : null;
   useEffect(() => {
     if (!nearby || loaded?.pdf === props.pdf) return;
     let alive = true;
-    props.pdf.getPage(props.number).then(p => { if (alive) setLoaded({ pdf: props.pdf, page: p }); }).catch(() => { if (alive) setError('No se pudo cargar esta página.'); });
-    return () => { alive = false; };
+    props.pdf
+      .getPage(props.number)
+      .then(p => {
+        if (alive) setLoaded({ pdf: props.pdf, page: p });
+      })
+      .catch(() => {
+        if (alive) setError('No se pudo cargar esta página.');
+      });
+    return () => {
+      alive = false;
+    };
   }, [nearby, loaded, props.pdf, props.number]);
   const rotated = props.rotation % 180 !== 0;
   const viewport = page?.getViewport({ scale: props.scale, rotation: (page.rotate + props.rotation) % 360 });
   const width = viewport?.width ?? (rotated ? props.dimensions.height : props.dimensions.width) * props.scale;
   const height = viewport?.height ?? (rotated ? props.dimensions.width : props.dimensions.height) * props.scale;
-  return <div className="pdf-page-wrap" ref={ref} data-page-number={props.number} style={{ width }}>
-    <div className="pdf-page" style={{ width, height }}>
-      {nearby && page ? <PageContent {...props} page={page} /> : <div className="page-loading">{error || nearby && <LoaderCircle size={22} className="spin" />}</div>}
+  return (
+    <div className="pdf-page-wrap" ref={ref} data-page-number={props.number} style={{ width }}>
+      <div className="pdf-page" style={{ width, height }}>
+        {nearby && page ? (
+          <PageContent {...props} page={page} />
+        ) : (
+          <div className="page-loading">{error || (nearby && <LoaderCircle size={22} className="spin" />)}</div>
+        )}
+      </div>
+      <div className="page-caption">
+        Página {props.pageLabel || (page as (PDFPageProxy & { label?: string }) | null)?.label || props.number}{' '}
+        <span>de {props.pdf.numPages}</span>
+      </div>
     </div>
-    <div className="page-caption">Página {props.pageLabel || (page as PDFPageProxy & { label?: string } | null)?.label || props.number} <span>de {props.pdf.numPages}</span></div>
-  </div>;
+  );
 });
 
-function PageContent({ pdf, page, scale, rotation, annotations, tool, color, inkColor = '#2455b5', inkWidth = 2, inkOpacity = 1, eraserSize = 16, penOnly = true, query, activeSearch, onNavigate, canCopy, canAnnotate, onAnnotate, onNoteClick, onRemoveAnnotation, onUpdateAnnotation, onCommentHighlight, onArea, redactions, number, edit, live }: Props & { page: PDFPageProxy }) {
+function PageContent({
+  pdf,
+  page,
+  scale,
+  rotation,
+  annotations,
+  tool,
+  color,
+  inkColor = '#2455b5',
+  inkWidth = 2,
+  inkOpacity = 1,
+  eraserSize = 16,
+  penOnly = true,
+  query,
+  activeSearch,
+  onNavigate,
+  canCopy,
+  canAnnotate,
+  onAnnotate,
+  onNoteClick,
+  onRemoveAnnotation,
+  onUpdateAnnotation,
+  onCommentHighlight,
+  onArea,
+  redactions,
+  number,
+  edit,
+  live,
+}: Props & { page: PDFPageProxy }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detailRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -194,7 +319,14 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
   const [failed, setFailed] = useState(false);
   const [highlightMenu, setHighlightMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [notePreview, setNotePreview] = useState<string | null>(null);
-  const [noteDrag, setNoteDrag] = useState<{ id: string; x: number; y: number; dx: number; dy: number; moved: boolean } | null>(null);
+  const [noteDrag, setNoteDrag] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    moved: boolean;
+  } | null>(null);
   const noteMoved = useRef(false);
   const pointerOrigin = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   const rendering = useRef(false);
@@ -207,33 +339,59 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
   activeSearchRef.current = activeSearch;
   const lastSearchScroll = useRef('');
   const [links, setLinks] = useState<{ rect: number[]; target: PDFNavigationTarget }[]>([]);
-  const viewport = useMemo(() => page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 }), [page, scale, rotation]);
+  const viewport = useMemo(
+    () => page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 }),
+    [page, scale, rotation],
+  );
   const shapes = useMemo(() => annotations.filter(annotation => annotation.kind === 'shape'), [annotations]);
 
   function revealActiveSearch() {
     const active = activeSearchRef.current;
-    if (!active || active.page !== number || !queryRef.current.trim()) { lastSearchScroll.current = ''; return; }
+    if (!active || active.page !== number || !queryRef.current.trim()) {
+      lastSearchScroll.current = '';
+      return;
+    }
     const key = `${active.offset}:${queryRef.current}`;
     if (lastSearchScroll.current === key) return;
     const mark = textRef.current?.querySelector<HTMLElement>(`mark[data-search-offset="${active.offset}"]`);
     if (!mark) return;
     lastSearchScroll.current = key;
     // A newer result chosen before this frame (key repeat, F3 held) keeps its own scroll.
-    requestAnimationFrame(() => { const current = activeSearchRef.current; if (mark.isConnected && current?.page === number && current.offset === active.offset) mark.scrollIntoView({ block: 'center', inline: 'nearest' }); });
+    requestAnimationFrame(() => {
+      const current = activeSearchRef.current;
+      if (mark.isConnected && current?.page === number && current.offset === active.offset)
+        mark.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
   }
 
   useEffect(() => {
     let alive = true;
-    void page.getAnnotations({ intent: 'display' }).then(async annotations => {
-      const resolved = await Promise.all(annotations.filter(annotation => annotation.subtype === 'Link' || annotation.annotationType === 2).map(async annotation => {
-        if (!Array.isArray(annotation.rect) || annotation.rect.length !== 4 || !annotation.rect.every(Number.isFinite)) return null;
-        const url = safePDFLink(annotation.url);
-        const target = url ? { url } : await resolvePDFDestination(pdf, annotation.dest);
-        return target ? { rect: annotation.rect as number[], target } : null;
-      }));
-      if (alive) setLinks(resolved.filter((link): link is NonNullable<typeof link> => link !== null));
-    }).catch(() => { if (alive) setLinks([]); });
-    return () => { alive = false; };
+    void page
+      .getAnnotations({ intent: 'display' })
+      .then(async annotations => {
+        const resolved = await Promise.all(
+          annotations
+            .filter(annotation => annotation.subtype === 'Link' || annotation.annotationType === 2)
+            .map(async annotation => {
+              if (
+                !Array.isArray(annotation.rect) ||
+                annotation.rect.length !== 4 ||
+                !annotation.rect.every(Number.isFinite)
+              )
+                return null;
+              const url = safePDFLink(annotation.url);
+              const target = url ? { url } : await resolvePDFDestination(pdf, annotation.dest);
+              return target ? { rect: annotation.rect as number[], target } : null;
+            }),
+        );
+        if (alive) setLinks(resolved.filter((link): link is NonNullable<typeof link> => link !== null));
+      })
+      .catch(() => {
+        if (alive) setLinks([]);
+      });
+    return () => {
+      alive = false;
+    };
   }, [page, pdf]);
 
   useEffect(() => {
@@ -258,109 +416,201 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       surface.width = Math.ceil(view.width * ratio);
       surface.height = Math.ceil(view.height * ratio);
       const nextText = container.cloneNode(false) as HTMLDivElement;
-      const fromReader = () => (renderTask = page.render({ canvas: surface, viewport: view, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined })).promise;
+      const fromReader = () =>
+        (renderTask = page.render({
+          canvas: surface,
+          viewport: view,
+          transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined,
+        })).promise;
       // A page changed in Editar is drawn by its live document; if that has closed, by the reader.
-      const drawing = liveVersion && live ? live.render(number, view.scale * ratio, rotation).then(image => {
-        if (!alive) return;
-        surface.width = image.width; surface.height = image.height; surface.getContext('2d')?.putImageData(image, 0, 0);
-      }, fromReader) : fromReader();
+      const drawing =
+        liveVersion && live
+          ? live.render(number, view.scale * ratio, rotation).then(image => {
+              if (!alive) return;
+              surface.width = image.width;
+              surface.height = image.height;
+              surface.getContext('2d')?.putImageData(image, 0, 0);
+            }, fromReader)
+          : fromReader();
       // Pixels are shown as soon as they exist; the text layer follows once scrolling pauses.
-      const pixels = drawing.then(() => {
-        if (!alive) return;
-        canvas.width = surface.width; canvas.height = surface.height;
-        canvas.getContext('2d')?.drawImage(surface, 0, 0);
-        // A text layer laid out for another rotation must not linger over the new pixels.
-        if (!keepText) container.replaceChildren();
-        canvas.dataset.renderScale = String(scale);
-        // Which change of Editar's live document these pixels show, if any.
-        if (liveVersion) canvas.dataset.live = String(liveVersion); else delete canvas.dataset.live;
-        canvas.dataset.renderRotation = String(rotation);
-        setRendered(true); setDrawn({ page, version: liveVersion });
-      }).finally(() => { surface.width = 0; surface.height = 0; });
-      const textReady = keepText ? Promise.resolve(true) : scrollSettled().then(() => alive ? page.getTextContent() : null).then(async source => {
-        if (!source || !alive) return false;
-        textLayer = new TextLayer({ textContentSource: source, container: nextText, viewport: view });
-        if (isNativePdfDocument(pdf)) sizeNativeTextLayer(nextText, view);
-        await textLayer.render();
-        const model = pageTextModel(source);
-        nextText.dataset.searchText = model.text;
-        textLayer.textDivs.forEach((span, index) => {
-          const segment = model.segments[index];
-          if (segment) { span.dataset.original = segment.text; span.dataset.searchStart = String(segment.start); span.dataset.searchEnd = String(segment.end); }
+      const pixels = drawing
+        .then(() => {
+          if (!alive) return;
+          canvas.width = surface.width;
+          canvas.height = surface.height;
+          canvas.getContext('2d')?.drawImage(surface, 0, 0);
+          // A text layer laid out for another rotation must not linger over the new pixels.
+          if (!keepText) container.replaceChildren();
+          canvas.dataset.renderScale = String(scale);
+          // Which change of Editar's live document these pixels show, if any.
+          if (liveVersion) canvas.dataset.live = String(liveVersion);
+          else delete canvas.dataset.live;
+          canvas.dataset.renderRotation = String(rotation);
+          setRendered(true);
+          setDrawn({ page, version: liveVersion });
+        })
+        .finally(() => {
+          surface.width = 0;
+          surface.height = 0;
         });
-        return true;
-      }).catch(error => { if (alive && error?.name !== 'AbortException') console.error('No se pudo preparar la selección de texto.', error); return false; });
-      void Promise.all([pixels, textReady]).then(([, textAvailable]) => {
-        if (!alive) return;
-        if (!textAvailable) container.replaceChildren();
-        else if (!keepText) {
-          container.style.cssText = nextText.style.cssText;
-          container.setAttribute('data-main-rotation', nextText.getAttribute('data-main-rotation') || '0');
-          container.dataset.searchText = nextText.dataset.searchText;
-          container.replaceChildren(...nextText.childNodes);
-          textRotation.current = rotation; textPage.current = page;
-          markSearch(container, queryRef.current, activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined);
-          revealActiveSearch();
-        }
-        canvas.dataset.rendering = 'false'; rendering.current = false;
-      }).catch(err => {
-        if (alive && err?.name !== 'RenderingCancelledException') {
-          setFailed(true); rendering.current = false; canvas.dataset.rendering = 'false';
-        }
-      });
+      const textReady = keepText
+        ? Promise.resolve(true)
+        : scrollSettled()
+            .then(() => (alive ? page.getTextContent() : null))
+            .then(async source => {
+              if (!source || !alive) return false;
+              textLayer = new TextLayer({ textContentSource: source, container: nextText, viewport: view });
+              if (isNativePdfDocument(pdf)) sizeNativeTextLayer(nextText, view);
+              await textLayer.render();
+              const model = pageTextModel(source);
+              nextText.dataset.searchText = model.text;
+              textLayer.textDivs.forEach((span, index) => {
+                const segment = model.segments[index];
+                if (segment) {
+                  span.dataset.original = segment.text;
+                  span.dataset.searchStart = String(segment.start);
+                  span.dataset.searchEnd = String(segment.end);
+                }
+              });
+              return true;
+            })
+            .catch(error => {
+              if (alive && error?.name !== 'AbortException')
+                console.error('No se pudo preparar la selección de texto.', error);
+              return false;
+            });
+      void Promise.all([pixels, textReady])
+        .then(([, textAvailable]) => {
+          if (!alive) return;
+          if (!textAvailable) container.replaceChildren();
+          else if (!keepText) {
+            container.style.cssText = nextText.style.cssText;
+            container.setAttribute('data-main-rotation', nextText.getAttribute('data-main-rotation') || '0');
+            container.dataset.searchText = nextText.dataset.searchText;
+            container.replaceChildren(...nextText.childNodes);
+            textRotation.current = rotation;
+            textPage.current = page;
+            markSearch(
+              container,
+              queryRef.current,
+              activeSearchRef.current?.page === number ? activeSearchRef.current.offset : undefined,
+            );
+            revealActiveSearch();
+          }
+          canvas.dataset.rendering = 'false';
+          rendering.current = false;
+        })
+        .catch(err => {
+          if (alive && err?.name !== 'RenderingCancelledException') {
+            setFailed(true);
+            rendering.current = false;
+            canvas.dataset.rendering = 'false';
+          }
+        });
     };
     // A zoom waits a moment for the next one; a change made in Editar is drawn at once.
-    const timer = keepText && canvas.width && paintedVersion.current === liveVersion ? setTimeout(start, 120) : undefined;
+    const timer =
+      keepText && canvas.width && paintedVersion.current === liveVersion ? setTimeout(start, 120) : undefined;
     paintedVersion.current = liveVersion;
     if (!timer) start();
-    return () => { alive = false; clearTimeout(timer); renderTask?.cancel(); textLayer?.cancel(); };
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      renderTask?.cancel();
+      textLayer?.cancel();
+    };
     // Search is updated separately to avoid rerendering the PDF canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, scale, rotation, liveVersion]);
   // PDF.js keeps operator lists and decoded images until cleanup(). WebKit frees
   // a canvas backing store only when it is resized or collected, but a new
   // revision of the page draws over the old bitmap instead of blanking it first.
-  useEffect(() => () => { page.cleanup(); }, [page]);
+  useEffect(
+    () => () => {
+      page.cleanup();
+    },
+    [page],
+  );
   useEffect(() => {
     const canvas = canvasRef.current;
-    return () => { if (canvas) canvas.width = canvas.height = 0; };
+    return () => {
+      if (canvas) canvas.width = canvas.height = 0;
+    };
   }, []);
   useEffect(() => {
     // The full-page bitmap is capped by the pixel budget. When zoom drops it
     // below the screen density, repaint only the visible part at full density.
-    const detail = detailRef.current, frame = frameRef.current, reader = frame?.closest('.reading-area');
+    const detail = detailRef.current,
+      frame = frameRef.current,
+      reader = frame?.closest('.reading-area');
     // The reader's copy would paint over a change made in Editar.
     // shortcut: a changed page stays at the capped density until Editar closes; upgrade with stage 2's tiles.
     if (!detail || !frame || !reader || liveVersion) return;
-    let task: RenderTask | null = null, timer: ReturnType<typeof setTimeout> | undefined;
-    const hide = () => { task?.cancel(); task = null; detail.width = detail.height = 0; detail.removeAttribute('style'); };
+    let task: RenderTask | null = null,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const hide = () => {
+      task?.cancel();
+      task = null;
+      detail.width = detail.height = 0;
+      detail.removeAttribute('style');
+    };
     const paint = () => {
-      if (reader.classList.contains('pinching')) { schedule(); return; }
-      const box = frame.getBoundingClientRect(), bounds = reader.getBoundingClientRect();
-      const left = Math.max(0, bounds.left - box.left), top = Math.max(0, bounds.top - box.top);
-      const width = Math.min(box.width, bounds.right - box.left) - left, height = Math.min(box.height, bounds.bottom - box.top) - top;
-      if (width < 1 || height < 1) { hide(); return; }
+      if (reader.classList.contains('pinching')) {
+        schedule();
+        return;
+      }
+      const box = frame.getBoundingClientRect(),
+        bounds = reader.getBoundingClientRect();
+      const left = Math.max(0, bounds.left - box.left),
+        top = Math.max(0, bounds.top - box.top);
+      const width = Math.min(box.width, bounds.right - box.left) - left,
+        height = Math.min(box.height, bounds.bottom - box.top) - top;
+      if (width < 1 || height < 1) {
+        hide();
+        return;
+      }
       const ratio = Math.min(density(), Math.sqrt(pixelBudget / (width * height)));
       const surface = document.createElement('canvas');
-      surface.width = Math.ceil(width * ratio); surface.height = Math.ceil(height * ratio);
+      surface.width = Math.ceil(width * ratio);
+      surface.height = Math.ceil(height * ratio);
       task?.cancel();
-      const current = task = page.render({ canvas: surface, viewport, transform: [ratio, 0, 0, ratio, -left * ratio, -top * ratio] });
-      current.promise.then(() => {
-        if (task !== current) return;
-        task = null;
-        detail.width = surface.width; detail.height = surface.height;
-        detail.getContext('2d')?.drawImage(surface, 0, 0);
-        detail.style.cssText = `left:${left}px;top:${top}px;width:${width}px;height:${height}px`;
-      }).catch(() => {}).finally(() => { surface.width = surface.height = 0; });
+      const current = (task = page.render({
+        canvas: surface,
+        viewport,
+        transform: [ratio, 0, 0, ratio, -left * ratio, -top * ratio],
+      }));
+      current.promise
+        .then(() => {
+          if (task !== current) return;
+          task = null;
+          detail.width = surface.width;
+          detail.height = surface.height;
+          detail.getContext('2d')?.drawImage(surface, 0, 0);
+          detail.style.cssText = `left:${left}px;top:${top}px;width:${width}px;height:${height}px`;
+        })
+        .catch(() => {})
+        .finally(() => {
+          surface.width = surface.height = 0;
+        });
     };
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(paint, 150); };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(paint, 150);
+    };
     schedule();
-    reader.addEventListener('scroll', schedule, { passive: true }); window.addEventListener('resize', schedule);
-    return () => { clearTimeout(timer); reader.removeEventListener('scroll', schedule); window.removeEventListener('resize', schedule); hide(); };
+    reader.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      clearTimeout(timer);
+      reader.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      hide();
+    };
   }, [page, viewport, liveVersion]);
 
   useEffect(() => {
-    if (textRef.current) markSearch(textRef.current, query, activeSearch?.page === number ? activeSearch.offset : undefined);
+    if (textRef.current)
+      markSearch(textRef.current, query, activeSearch?.page === number ? activeSearch.offset : undefined);
     revealActiveSearch();
   }, [query, activeSearch?.page, activeSearch?.offset, number]);
   useEffect(() => {
@@ -373,8 +623,12 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     window.addEventListener('folio:reveal-search-result', reveal);
     return () => window.removeEventListener('folio:reveal-search-result', reveal);
   }, [number]);
-  useEffect(() => { setHighlightMenu(null); }, [page, scale, rotation, tool, canAnnotate]);
-  useEffect(() => { if (highlightMenu && !annotations.some(annotation => annotation.id === highlightMenu.id)) setHighlightMenu(null); }, [annotations, highlightMenu]);
+  useEffect(() => {
+    setHighlightMenu(null);
+  }, [page, scale, rotation, tool, canAnnotate]);
+  useEffect(() => {
+    if (highlightMenu && !annotations.some(annotation => annotation.id === highlightMenu.id)) setHighlightMenu(null);
+  }, [annotations, highlightMenu]);
 
   useEffect(() => {
     const applySelection = (event: Event) => {
@@ -384,38 +638,81 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       if (!selection) return;
       const frame = frameRef.current.getBoundingClientRect();
       const quads = selection.rects.map((rect, index) => {
-        const left = Math.max(0, rect.left - frame.left), top = Math.max(0, rect.top - frame.top);
-        const right = Math.min(viewport.width, rect.right - frame.left), bottom = Math.min(viewport.height, rect.bottom - frame.top);
-        const corners = [[left, top], [right, top], [left, bottom], [right, bottom]];
+        const left = Math.max(0, rect.left - frame.left),
+          top = Math.max(0, rect.top - frame.top);
+        const right = Math.min(viewport.width, rect.right - frame.left),
+          bottom = Math.min(viewport.height, rect.bottom - frame.top);
+        const corners = [
+          [left, top],
+          [right, top],
+          [left, bottom],
+          [right, bottom],
+        ];
         // QuadPoints follow the text's upper/lower edges, even in a rotated view.
         // Screen-corner order at 90° would make MuPDF's end caps span the line width.
-        const orders = [[0, 1, 2, 3], [1, 3, 0, 2], [3, 2, 1, 0], [2, 0, 3, 1]];
-        return orders[Math.round(selection.angles[index] / 90) % 4].flatMap(i => viewport.convertToPdfPoint(corners[i][0], corners[i][1]));
+        const orders = [
+          [0, 1, 2, 3],
+          [1, 3, 0, 2],
+          [3, 2, 1, 0],
+          [2, 0, 3, 1],
+        ];
+        return orders[Math.round(selection.angles[index] / 90) % 4].flatMap(i =>
+          viewport.convertToPdfPoint(corners[i][0], corners[i][1]),
+        );
       });
-      const points = quads.flat(), xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1);
-      request.annotations.push({ page: number, kind: 'highlight', rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], color, opacity: DEFAULT_HIGHLIGHT_OPACITY, text: selection.text, quads });
+      const points = quads.flat(),
+        xs = points.filter((_, i) => i % 2 === 0),
+        ys = points.filter((_, i) => i % 2 === 1);
+      request.annotations.push({
+        page: number,
+        kind: 'highlight',
+        rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+        color,
+        opacity: DEFAULT_HIGHLIGHT_OPACITY,
+        text: selection.text,
+        quads,
+      });
       request.commit ||= onAnnotate;
       request.applied = true;
     };
     const comment = (event: Event) => {
       const request = (event as CustomEvent<TextSelectionRequest>).detail;
-      if (request.applied || !canCopy || rendering.current || !textRef.current?.contains(request.range.startContainer) || !frameRef.current) return;
+      if (
+        request.applied ||
+        !canCopy ||
+        rendering.current ||
+        !textRef.current?.contains(request.range.startContainer) ||
+        !frameRef.current
+      )
+        return;
       const selection = selectedTextRects(textRef.current, request.range);
       if (!selection) return;
       // Like a highlight's comment, the marker sits in the right margin, level with the selection.
-      const rect = selection.rects[0], frame = frameRef.current.getBoundingClientRect();
-      const [, top] = viewport.convertToPdfPoint(rect.left - frame.left, rect.top - frame.top), [, bottom] = viewport.convertToPdfPoint(rect.right - frame.left, rect.bottom - frame.top);
-      const x = viewport.viewBox[2] - 24, y = Math.max(top, bottom);
+      const rect = selection.rects[0],
+        frame = frameRef.current.getBoundingClientRect();
+      const [, top] = viewport.convertToPdfPoint(rect.left - frame.left, rect.top - frame.top),
+        [, bottom] = viewport.convertToPdfPoint(rect.right - frame.left, rect.bottom - frame.top);
+      const x = viewport.viewBox[2] - 24,
+        y = Math.max(top, bottom);
       onAnnotate({ page: number, kind: 'note', rect: [x, y, x, y], color, text: '' });
       request.applied = true;
     };
     window.addEventListener('folio:highlight-selection', applySelection);
     window.addEventListener('folio:comment-selection', comment);
-    return () => { window.removeEventListener('folio:highlight-selection', applySelection); window.removeEventListener('folio:comment-selection', comment); };
+    return () => {
+      window.removeEventListener('folio:highlight-selection', applySelection);
+      window.removeEventListener('folio:comment-selection', comment);
+    };
   }, [canCopy, color, number, onAnnotate, viewport]);
   useEffect(() => () => selectionCleanup.current?.(), [tool, canCopy, scale, rotation, query]);
   useEffect(() => {
-    const cancelGesture = () => { pointerOrigin.current = null; dragRef.current = null; setDrag(null); setHighlightMenu(null); selectionCleanup.current?.(); };
+    const cancelGesture = () => {
+      pointerOrigin.current = null;
+      dragRef.current = null;
+      setDrag(null);
+      setHighlightMenu(null);
+      selectionCleanup.current?.();
+    };
     window.addEventListener('folio:pinch-start', cancelGesture);
     return () => window.removeEventListener('folio:pinch-start', cancelGesture);
   }, []);
@@ -430,13 +727,21 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       if (timer) clearTimeout(timer);
       if (fingers || rendering.current || selectionCleanup.current) return;
       const selection = window.getSelection();
-      if (!selection?.rangeCount || selection.isCollapsed ||
-          !textRef.current?.contains(selection.getRangeAt(0).startContainer)) return;
+      if (
+        !selection?.rangeCount ||
+        selection.isCollapsed ||
+        !textRef.current?.contains(selection.getRangeAt(0).startContainer)
+      )
+        return;
       timer = setTimeout(() => {
-        if (!fingers && !selectionCleanup.current && !rendering.current && !document.querySelector('dialog[open]')) highlightSelection();
+        if (!fingers && !selectionCleanup.current && !rendering.current && !document.querySelector('dialog[open]'))
+          highlightSelection();
       }, 450);
     };
-    const touched = (event: TouchEvent) => { fingers = event.touches.length; schedule(); };
+    const touched = (event: TouchEvent) => {
+      fingers = event.touches.length;
+      schedule();
+    };
     document.addEventListener('selectionchange', schedule);
     document.addEventListener('touchstart', touched, { passive: true });
     document.addEventListener('touchend', touched, { passive: true });
@@ -452,18 +757,25 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
 
   function localPoint(event: React.PointerEvent) {
     const rect = frameRef.current!.getBoundingClientRect();
-    return { x: Math.max(0, Math.min(viewport.width, event.clientX - rect.left)), y: Math.max(0, Math.min(viewport.height, event.clientY - rect.top)) };
+    return {
+      x: Math.max(0, Math.min(viewport.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(viewport.height, event.clientY - rect.top)),
+    };
   }
   function pointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
     pointerOrigin.current = { x: event.clientX, y: event.clientY, at: Date.now(), pointerId: event.pointerId };
     if (tool === 'select' || tool === 'highlight') {
-      if (rendering.current) { event.preventDefault(); return; }
+      if (rendering.current) {
+        event.preventDefault();
+        return;
+      }
       if (event.pointerType === 'touch') return;
       // Let the browser select characters naturally, including across lines/pages.
       // A gesture on an image or a blank margin never creates an area highlight.
       selectionCleanup.current?.();
-      if (!canCopy || !textRef.current?.contains(event.target as Node) || !(event.target as Element).closest('span')) return;
+      if (!canCopy || !textRef.current?.contains(event.target as Node) || !(event.target as Element).closest('span'))
+        return;
       const anchor = textCaretAtPoint(event.clientX, event.clientY, event.target as Element);
       if (!anchor) return;
       const pointerId = event.pointerId;
@@ -471,17 +783,25 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       // selection gesture and finish on the matching pointerup instead.
       if (event.pointerType === 'pen') event.preventDefault();
       const origin = { x: event.clientX, y: event.clientY };
-      let point = origin, moved = false, frame = 0;
+      let point = origin,
+        moved = false,
+        frame = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const update = () => {
         frame = 0;
         if (!moved || !anchor.startContainer.isConnected) return;
         const end = textCaretAtPoint(point.x, point.y);
-        if (end) window.getSelection()?.setBaseAndExtent(anchor.startContainer, anchor.startOffset, end.startContainer, end.startOffset);
+        if (end)
+          window
+            .getSelection()
+            ?.setBaseAndExtent(anchor.startContainer, anchor.startOffset, end.startContainer, end.startOffset);
       };
       const move = (next: PointerEvent) => {
         if (next.pointerId !== pointerId) return;
-        if (!(next.buttons & 1)) { cleanup(); return; }
+        if (!(next.buttons & 1)) {
+          cleanup();
+          return;
+        }
         point = { x: next.clientX, y: next.clientY };
         moved ||= Math.hypot(point.x - origin.x, point.y - origin.y) > 3;
         if (!frame) frame = requestAnimationFrame(update);
@@ -489,15 +809,38 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
       const finish = (up: PointerEvent) => {
         if (up.pointerId !== pointerId) return;
         point = { x: up.clientX, y: up.clientY };
-        if (frame) { cancelAnimationFrame(frame); frame = 0; }
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
         update();
         document.removeEventListener('pointermove', move);
         document.removeEventListener('pointerup', finish, true);
-        if (tool === 'select') { window.dispatchEvent(new Event('folio:text-selection-finished')); cleanup(); return; }
-        timer = setTimeout(() => { if (tool === 'highlight') highlightSelection(); cleanup(); }, 0);
+        if (tool === 'select') {
+          window.dispatchEvent(new Event('folio:text-selection-finished'));
+          cleanup();
+          return;
+        }
+        timer = setTimeout(() => {
+          if (tool === 'highlight') highlightSelection();
+          cleanup();
+        }, 0);
       };
-      const cancelled = (next: PointerEvent) => { if (next.pointerId === pointerId) { cleanup(); window.getSelection()?.removeAllRanges(); } };
-      const cleanup = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', finish, true); document.removeEventListener('pointercancel', cancelled); window.removeEventListener('blur', cleanup); if (timer) clearTimeout(timer); if (frame) cancelAnimationFrame(frame); selectionCleanup.current = null; };
+      const cancelled = (next: PointerEvent) => {
+        if (next.pointerId === pointerId) {
+          cleanup();
+          window.getSelection()?.removeAllRanges();
+        }
+      };
+      const cleanup = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', finish, true);
+        document.removeEventListener('pointercancel', cancelled);
+        window.removeEventListener('blur', cleanup);
+        if (timer) clearTimeout(timer);
+        if (frame) cancelAnimationFrame(frame);
+        selectionCleanup.current = null;
+      };
       selectionCleanup.current = cleanup;
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', finish, true);
@@ -522,7 +865,8 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     event.preventDefault();
   }
   function pointerMove(event: React.PointerEvent) {
-    if (event.pointerType !== 'touch' && tool === 'select') event.currentTarget.setAttribute('data-over-link', String(!!linkAt(event.clientX, event.clientY)));
+    if (event.pointerType !== 'touch' && tool === 'select')
+      event.currentTarget.setAttribute('data-over-link', String(!!linkAt(event.clientX, event.clientY)));
     if (!dragRef.current) return;
     const p = localPoint(event);
     dragRef.current = { ...dragRef.current, ex: p.x, ey: p.y };
@@ -532,10 +876,21 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     if (event.pointerType === 'touch' && tool === 'note') {
       const origin = pointerOrigin.current;
       pointerOrigin.current = null;
-      if (canAnnotate && origin?.pointerId === event.pointerId && Date.now() - origin.at < 400 &&
-          Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5) {
-        const point = localPoint(event), coordinates = viewport.convertToPdfPoint(point.x, point.y);
-        onAnnotate({ page: number, kind: 'note', rect: [coordinates[0], coordinates[1], coordinates[0], coordinates[1]], color, text: '' });
+      if (
+        canAnnotate &&
+        origin?.pointerId === event.pointerId &&
+        Date.now() - origin.at < 400 &&
+        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5
+      ) {
+        const point = localPoint(event),
+          coordinates = viewport.convertToPdfPoint(point.x, point.y);
+        onAnnotate({
+          page: number,
+          kind: 'note',
+          rect: [coordinates[0], coordinates[1], coordinates[0], coordinates[1]],
+          color,
+          text: '',
+        });
       }
       return;
     }
@@ -546,11 +901,16 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const a = viewport.convertToPdfPoint(d.x, d.y);
     const b = viewport.convertToPdfPoint(d.ex, d.ey);
     onArea({ page: number, rect: [a[0], a[1], b[0], b[1]] });
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   }
   function notePosition(note: Annotation) {
-    const p = viewport.convertToViewportPoint(note.rect[0], note.rect[1]), size = isMobile ? 44 : 28;
-    return { left: Math.max(0, Math.min(p[0], viewport.width - size)), top: Math.max(0, Math.min(p[1], viewport.height - size)) };
+    const p = viewport.convertToViewportPoint(note.rect[0], note.rect[1]),
+      size = isMobile ? 44 : 28;
+    return {
+      left: Math.max(0, Math.min(p[0], viewport.width - size)),
+      top: Math.max(0, Math.min(p[1], viewport.height - size)),
+    };
   }
   function openHighlight(id: string, x: number, y: number) {
     if (!canAnnotate) return;
@@ -559,19 +919,33 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     setHighlightMenu({ id, x, y });
   }
   function highlightAt(x: number, y: number) {
-    return [...(frameRef.current?.querySelectorAll<HTMLElement>('.highlight-annotation[data-annotation-id]') || [])].reverse().find(element => {
-      const box = element.getBoundingClientRect();
-      return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
-    });
+    return [...(frameRef.current?.querySelectorAll<HTMLElement>('.highlight-annotation[data-annotation-id]') || [])]
+      .reverse()
+      .find(element => {
+        const box = element.getBoundingClientRect();
+        return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+      });
   }
   function clickHighlight(event: React.MouseEvent) {
-    if (!['select', 'highlight'].includes(tool) || !pointerOrigin.current || window.getSelection()?.isCollapsed === false) return;
+    if (
+      !['select', 'highlight'].includes(tool) ||
+      !pointerOrigin.current ||
+      window.getSelection()?.isCollapsed === false
+    )
+      return;
     if (Math.hypot(event.clientX - pointerOrigin.current.x, event.clientY - pointerOrigin.current.y) > 3) return;
     const target = highlightAt(event.clientX, event.clientY);
-    if (canAnnotate && target?.dataset.annotationId) { event.stopPropagation(); openHighlight(target.dataset.annotationId, event.clientX, event.clientY); return; }
+    if (canAnnotate && target?.dataset.annotationId) {
+      event.stopPropagation();
+      openHighlight(target.dataset.annotationId, event.clientX, event.clientY);
+      return;
+    }
     if (tool !== 'select' || Date.now() - pointerOrigin.current.at > 450) return;
     const link = linkAt(event.clientX, event.clientY);
-    if (link && onNavigate) { event.stopPropagation(); navigateLink(link.target); }
+    if (link && onNavigate) {
+      event.stopPropagation();
+      navigateLink(link.target);
+    }
   }
   function navigateLink(destination: PDFNavigationTarget) {
     window.dispatchEvent(new Event('folio:reader-interaction'));
@@ -581,104 +955,349 @@ function PageContent({ pdf, page, scale, rotation, annotations, tool, color, ink
     const frame = frameRef.current?.getBoundingClientRect();
     if (!frame) return;
     const point = viewport.convertToPdfPoint(x - frame.left, y - frame.top);
-    return links.find(link => point[0] >= Math.min(link.rect[0], link.rect[2]) && point[0] <= Math.max(link.rect[0], link.rect[2]) && point[1] >= Math.min(link.rect[1], link.rect[3]) && point[1] <= Math.max(link.rect[1], link.rect[3]));
+    return links.find(
+      link =>
+        point[0] >= Math.min(link.rect[0], link.rect[2]) &&
+        point[0] <= Math.max(link.rect[0], link.rect[2]) &&
+        point[1] >= Math.min(link.rect[1], link.rect[3]) &&
+        point[1] <= Math.max(link.rect[1], link.rect[3]),
+    );
   }
   // Escape returns focus to the highlight that opened the menu; a deletion, to the reader.
   const closeHighlight = (restoreFocus?: unknown) => {
-    const id = highlightMenu?.id; setHighlightMenu(null);
-    if (restoreFocus === true && id) requestAnimationFrame(() => frameRef.current?.querySelector<HTMLElement>(`.highlight-annotation[data-annotation-id="${CSS.escape(id)}"][tabindex="0"]`)?.focus({ preventScroll: true }));
+    const id = highlightMenu?.id;
+    setHighlightMenu(null);
+    if (restoreFocus === true && id)
+      requestAnimationFrame(() =>
+        frameRef.current
+          ?.querySelector<HTMLElement>(`.highlight-annotation[data-annotation-id="${CSS.escape(id)}"][tabindex="0"]`)
+          ?.focus({ preventScroll: true }),
+      );
   };
   function highlightAccess(annotation: Annotation, first = true) {
-    return { 'data-annotation-id': annotation.id, 'data-selected': highlightMenu?.id === annotation.id,
-      role: first && canAnnotate ? 'button' : undefined, tabIndex: first && canAnnotate ? 0 : undefined,
+    return {
+      'data-annotation-id': annotation.id,
+      'data-selected': highlightMenu?.id === annotation.id,
+      role: first && canAnnotate ? 'button' : undefined,
+      tabIndex: first && canAnnotate ? 0 : undefined,
       'aria-hidden': !first || !canAnnotate ? true : undefined,
       'aria-label': first && canAnnotate ? `Opciones del resaltado en página ${number}` : undefined,
       onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault(); event.stopPropagation();
-        const box = event.currentTarget.getBoundingClientRect(); openHighlight(annotation.id, box.left, box.bottom);
-      } };
+        event.preventDefault();
+        event.stopPropagation();
+        const box = event.currentTarget.getBoundingClientRect();
+        openHighlight(annotation.id, box.left, box.bottom);
+      },
+    };
   }
-  return <div ref={frameRef} className={`page-content tool-${tool}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onClick={clickHighlight} onContextMenu={event => {
-    if (!canAnnotate) return;
-    const target = highlightAt(event.clientX, event.clientY);
-    if (target?.dataset.annotationId) { event.preventDefault(); openHighlight(target.dataset.annotationId, event.clientX, event.clientY); }
-  }} onPointerCancel={() => { dragRef.current = null; setDrag(null); pointerOrigin.current = null; }}>
-    <canvas ref={canvasRef} aria-label={`Página ${number} del documento`} style={{ width: viewport.width, height: viewport.height }} />
-    {outputRatio(viewport) < density() && <canvas ref={detailRef} className="page-detail" aria-hidden="true" />}
-    <div ref={textRef} className="textLayer" data-copy-allowed={canCopy} style={{ '--scale-factor': scale, '--total-scale-factor': scale, ...(canCopy ? {} : { userSelect: 'none', WebkitUserSelect: 'none' }) } as React.CSSProperties} />
-    {tool === 'select' && onNavigate && <div className="pdf-link-layer">{links.map((link, index) => {
-      const first = viewport.convertToViewportPoint(link.rect[0], link.rect[1]), second = viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
-      const left = Math.min(first[0], second[0]), top = Math.min(first[1], second[1]);
-      // Pointer taps are hit-tested by the page so link text remains selectable
-      // through native long-press, drags and pinch. The anchor serves keyboards
-      // and assistive technology without covering the browser's text layer.
-      return <a key={index} className="pdf-document-link" href={'url' in link.target ? link.target.url : `#page=${link.target.page}`} aria-label={'url' in link.target ? `Abrir enlace: ${link.target.url}` : `Ir a página ${link.target.page}`} style={{ left, top, width: Math.abs(second[0] - first[0]), height: Math.abs(second[1] - first[1]) }} onClick={event => { event.preventDefault(); event.stopPropagation(); navigateLink(link.target); }} />;
-    })}</div>}
-    <div className="highlight-layer">
-      {annotations.filter(a => a.kind === 'highlight').map(a => {
-        // Older native drafts omitted opacity; their native exporter uses .35.
-        // New selections carry an explicit opacity, and imported values survive.
-        const opacity = a.opacity ?? (isNativePdfDocument(pdf) ? .35 : DEFAULT_HIGHLIGHT_OPACITY);
-        const p1 = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
-        const p2 = viewport.convertToViewportPoint(a.rect[2], a.rect[3]);
-        return a.quads?.length ? a.quads.map((q, index) => {
-          const points = [0, 2, 4, 6].map(i => viewport.convertToViewportPoint(q[i], q[i + 1]));
-          const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
-          const left = Math.min(...xs), top = Math.min(...ys), width = Math.max(...xs) - left, height = Math.max(...ys) - top;
-          const clipPath = width && height ? `polygon(${[0, 1, 3, 2].map(i => `${(points[i][0] - left) / width * 100}% ${(points[i][1] - top) / height * 100}%`).join(',')})` : undefined;
-          return <div key={`${a.id}-${index}`} className="highlight-annotation" {...highlightAccess(a, index === 0)} style={{ left, top, width, height, clipPath, background: a.color, opacity }} />;
-        }) : <div key={a.id} className="highlight-annotation" {...highlightAccess(a)} style={{ left: Math.min(p1[0], p2[0]), top: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]), background: a.color, opacity }} />;
-      })}
+  return (
+    <div
+      ref={frameRef}
+      className={`page-content tool-${tool}`}
+      onPointerDown={pointerDown}
+      onPointerMove={pointerMove}
+      onPointerUp={pointerUp}
+      onClick={clickHighlight}
+      onContextMenu={event => {
+        if (!canAnnotate) return;
+        const target = highlightAt(event.clientX, event.clientY);
+        if (target?.dataset.annotationId) {
+          event.preventDefault();
+          openHighlight(target.dataset.annotationId, event.clientX, event.clientY);
+        }
+      }}
+      onPointerCancel={() => {
+        dragRef.current = null;
+        setDrag(null);
+        pointerOrigin.current = null;
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        aria-label={`Página ${number} del documento`}
+        style={{ width: viewport.width, height: viewport.height }}
+      />
+      {outputRatio(viewport) < density() && <canvas ref={detailRef} className="page-detail" aria-hidden="true" />}
+      <div
+        ref={textRef}
+        className="textLayer"
+        data-copy-allowed={canCopy}
+        style={
+          {
+            '--scale-factor': scale,
+            '--total-scale-factor': scale,
+            ...(canCopy ? {} : { userSelect: 'none', WebkitUserSelect: 'none' }),
+          } as React.CSSProperties
+        }
+      />
+      {tool === 'select' && onNavigate && (
+        <div className="pdf-link-layer">
+          {links.map((link, index) => {
+            const first = viewport.convertToViewportPoint(link.rect[0], link.rect[1]),
+              second = viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
+            const left = Math.min(first[0], second[0]),
+              top = Math.min(first[1], second[1]);
+            // Pointer taps are hit-tested by the page so link text remains selectable
+            // through native long-press, drags and pinch. The anchor serves keyboards
+            // and assistive technology without covering the browser's text layer.
+            return (
+              <a
+                key={index}
+                className="pdf-document-link"
+                href={'url' in link.target ? link.target.url : `#page=${link.target.page}`}
+                aria-label={
+                  'url' in link.target ? `Abrir enlace: ${link.target.url}` : `Ir a página ${link.target.page}`
+                }
+                style={{ left, top, width: Math.abs(second[0] - first[0]), height: Math.abs(second[1] - first[1]) }}
+                onClick={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigateLink(link.target);
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+      <div className="highlight-layer">
+        {annotations
+          .filter(a => a.kind === 'highlight')
+          .map(a => {
+            // Older native drafts omitted opacity; their native exporter uses .35.
+            // New selections carry an explicit opacity, and imported values survive.
+            const opacity = a.opacity ?? (isNativePdfDocument(pdf) ? 0.35 : DEFAULT_HIGHLIGHT_OPACITY);
+            const p1 = viewport.convertToViewportPoint(a.rect[0], a.rect[1]);
+            const p2 = viewport.convertToViewportPoint(a.rect[2], a.rect[3]);
+            return a.quads?.length ? (
+              a.quads.map((q, index) => {
+                const points = [0, 2, 4, 6].map(i => viewport.convertToViewportPoint(q[i], q[i + 1]));
+                const xs = points.map(p => p[0]),
+                  ys = points.map(p => p[1]);
+                const left = Math.min(...xs),
+                  top = Math.min(...ys),
+                  width = Math.max(...xs) - left,
+                  height = Math.max(...ys) - top;
+                const clipPath =
+                  width && height
+                    ? `polygon(${[0, 1, 3, 2].map(i => `${((points[i][0] - left) / width) * 100}% ${((points[i][1] - top) / height) * 100}%`).join(',')})`
+                    : undefined;
+                return (
+                  <div
+                    key={`${a.id}-${index}`}
+                    className="highlight-annotation"
+                    {...highlightAccess(a, index === 0)}
+                    style={{ left, top, width, height, clipPath, background: a.color, opacity }}
+                  />
+                );
+              })
+            ) : (
+              <div
+                key={a.id}
+                className="highlight-annotation"
+                {...highlightAccess(a)}
+                style={{
+                  left: Math.min(p1[0], p2[0]),
+                  top: Math.min(p1[1], p2[1]),
+                  width: Math.abs(p2[0] - p1[0]),
+                  height: Math.abs(p2[1] - p1[1]),
+                  background: a.color,
+                  opacity,
+                }}
+              />
+            );
+          })}
+      </div>
+      <ShapeSvg viewport={viewport} shapes={shapes} />
+      <InkLayer
+        viewport={viewport}
+        page={number}
+        annotations={annotations}
+        tool={tool}
+        color={inkColor}
+        width={inkWidth}
+        opacity={inkOpacity}
+        eraserSize={eraserSize}
+        penOnly={penOnly}
+        enabled={canAnnotate}
+        onAdd={onAnnotate}
+        onRemove={onRemoveAnnotation}
+      />
+      <div className="annotation-layer">
+        {redactions
+          .filter(area => area.page === number)
+          .map((area, index) => {
+            const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]),
+              b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);
+            return (
+              <div
+                key={index}
+                className="redaction-preview"
+                style={{
+                  left: Math.min(a[0], b[0]),
+                  top: Math.min(a[1], b[1]),
+                  width: Math.abs(a[0] - b[0]),
+                  height: Math.abs(a[1] - b[1]),
+                }}
+              >
+                Censurar
+              </div>
+            );
+          })}
+        {annotations
+          .filter(a => a.kind === 'note')
+          .map(a => {
+            const { left, top } = notePosition(a),
+              dragging = noteDrag?.id === a.id && noteDrag.moved ? noteDrag : null;
+            return (
+              <button
+                key={a.id}
+                className={`note-marker${dragging ? ' dragging' : ''}`}
+                data-note-id={a.id}
+                aria-label={`Ver nota en página ${number}`}
+                style={
+                  {
+                    left: left + (dragging?.dx ?? 0),
+                    top: top + (dragging?.dy ?? 0),
+                    '--note': a.color,
+                  } as React.CSSProperties
+                }
+                onPointerDown={event => {
+                  event.stopPropagation();
+                  noteMoved.current = false;
+                  if (!canAnnotate || !onUpdateAnnotation || event.button !== 0) return;
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setNoteDrag({ id: a.id, x: event.clientX, y: event.clientY, dx: 0, dy: 0, moved: false });
+                }}
+                onPointerMove={event => {
+                  if (noteDrag?.id !== a.id) return;
+                  const size = isMobile ? 44 : 28,
+                    dx = Math.max(-left, Math.min(viewport.width - size - left, event.clientX - noteDrag.x)),
+                    dy = Math.max(-top, Math.min(viewport.height - size - top, event.clientY - noteDrag.y));
+                  if (noteDrag.moved || Math.hypot(dx, dy) > 3) {
+                    setNotePreview(null);
+                    setNoteDrag({ ...noteDrag, dx, dy, moved: true });
+                  }
+                }}
+                onPointerUp={() => {
+                  if (noteDrag?.id !== a.id) return;
+                  setNoteDrag(null);
+                  if (!noteDrag.moved) return;
+                  noteMoved.current = true;
+                  const [x, y] = viewport.convertToPdfPoint(left + noteDrag.dx, top + noteDrag.dy);
+                  onUpdateAnnotation?.(a.id, { rect: [x, y, x, y] });
+                }}
+                onPointerCancel={() => setNoteDrag(null)}
+                onClick={event => {
+                  event.stopPropagation();
+                  if (noteMoved.current) {
+                    noteMoved.current = false;
+                    return;
+                  }
+                  setNotePreview(null);
+                  onNoteClick(a.id);
+                }}
+                onPointerEnter={event => {
+                  if (event.pointerType === 'mouse' && !highlightMenu && !noteDrag) setNotePreview(a.id);
+                }}
+                onPointerLeave={() => setNotePreview(null)}
+                onContextMenu={event => {
+                  if (!canAnnotate) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setNotePreview(null);
+                  openHighlight(a.id, event.clientX, event.clientY);
+                }}
+              >
+                <MessageSquare size={15} fill="currentColor" />
+              </button>
+            );
+          })}
+        {drag && tool !== 'highlight' && (
+          <div
+            className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`}
+            style={{
+              left: Math.min(drag.x, drag.ex),
+              top: Math.min(drag.y, drag.ey),
+              width: Math.abs(drag.ex - drag.x),
+              height: Math.abs(drag.ey - drag.y),
+            }}
+          />
+        )}
+      </div>
+      {(() => {
+        const note = notePreview && annotations.find(a => a.id === notePreview);
+        if (!note) return null;
+        const { left, top } = notePosition(note),
+          right = left > viewport.width - 290;
+        return (
+          <div
+            className="note-preview"
+            role="tooltip"
+            style={right ? { right: viewport.width - left + 6, top } : { left: left + 34, top }}
+          >
+            <p>{note.text.trim() || 'Nota vacía'}</p>
+            {canAnnotate && <span>Clic para editar · clic derecho para más opciones</span>}
+          </div>
+        );
+      })()}
+      {!rendered && (
+        <div className="page-loading">
+          {failed ? 'No se pudo mostrar la página.' : <LoaderCircle size={22} className="spin" />}
+        </div>
+      )}
+      {rendered && failed && (
+        <div className="page-render-error" role="alert">
+          No se pudo actualizar esta página.
+        </div>
+      )}
+      {edit && (
+        <EditLayer
+          store={edit.store}
+          doc={edit.doc}
+          number={number}
+          viewport={viewport}
+          page={page}
+          canvas={canvasRef}
+          shapes={shapes}
+          drawn={drawn?.page === page && drawn.version === liveVersion}
+        />
+      )}
+      {highlightMenu && canAnnotate && (
+        <HighlightAnnotationMenu
+          note={annotations.find(annotation => annotation.id === highlightMenu.id)?.kind === 'note'}
+          x={highlightMenu.x}
+          y={highlightMenu.y}
+          onClose={closeHighlight}
+          color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color}
+          onColorChange={
+            onUpdateAnnotation
+              ? (next: string) => {
+                  onUpdateAnnotation(highlightMenu.id, { color: next });
+                }
+              : undefined
+          }
+          onComment={
+            onCommentHighlight
+              ? () => {
+                  const annotation = annotations.find(annotation => annotation.id === highlightMenu.id);
+                  if (annotation?.kind === 'note') onNoteClick(annotation.id);
+                  else if (annotation) onCommentHighlight(annotation);
+                  setHighlightMenu(null);
+                }
+              : undefined
+          }
+          onRemove={() => {
+            onRemoveAnnotation(highlightMenu.id);
+            setHighlightMenu(null);
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true }),
+            );
+          }}
+        />
+      )}
     </div>
-    <ShapeSvg viewport={viewport} shapes={shapes} />
-    <InkLayer viewport={viewport} page={number} annotations={annotations} tool={tool} color={inkColor} width={inkWidth} opacity={inkOpacity} eraserSize={eraserSize} penOnly={penOnly} enabled={canAnnotate} onAdd={onAnnotate} onRemove={onRemoveAnnotation} />
-    <div className="annotation-layer">
-      {redactions.filter(area => area.page === number).map((area, index) => {
-        const a = viewport.convertToViewportPoint(area.rect[0], area.rect[1]), b = viewport.convertToViewportPoint(area.rect[2], area.rect[3]);
-        return <div key={index} className="redaction-preview" style={{ left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) }}>Censurar</div>;
-      })}
-      {annotations.filter(a => a.kind === 'note').map(a => {
-        const { left, top } = notePosition(a), dragging = noteDrag?.id === a.id && noteDrag.moved ? noteDrag : null;
-        return <button key={a.id} className={`note-marker${dragging ? ' dragging' : ''}`} data-note-id={a.id} aria-label={`Ver nota en página ${number}`} style={{ left: left + (dragging?.dx ?? 0), top: top + (dragging?.dy ?? 0), '--note': a.color } as React.CSSProperties}
-          onPointerDown={event => {
-            event.stopPropagation(); noteMoved.current = false;
-            if (!canAnnotate || !onUpdateAnnotation || event.button !== 0) return;
-            event.currentTarget.setPointerCapture(event.pointerId); setNoteDrag({ id: a.id, x: event.clientX, y: event.clientY, dx: 0, dy: 0, moved: false });
-          }}
-          onPointerMove={event => {
-            if (noteDrag?.id !== a.id) return;
-            const size = isMobile ? 44 : 28, dx = Math.max(-left, Math.min(viewport.width - size - left, event.clientX - noteDrag.x)), dy = Math.max(-top, Math.min(viewport.height - size - top, event.clientY - noteDrag.y));
-            if (noteDrag.moved || Math.hypot(dx, dy) > 3) { setNotePreview(null); setNoteDrag({ ...noteDrag, dx, dy, moved: true }); }
-          }}
-          onPointerUp={() => {
-            if (noteDrag?.id !== a.id) return;
-            setNoteDrag(null);
-            if (!noteDrag.moved) return;
-            noteMoved.current = true;
-            const [x, y] = viewport.convertToPdfPoint(left + noteDrag.dx, top + noteDrag.dy);
-            onUpdateAnnotation?.(a.id, { rect: [x, y, x, y] });
-          }}
-          onPointerCancel={() => setNoteDrag(null)}
-          onClick={event => { event.stopPropagation(); if (noteMoved.current) { noteMoved.current = false; return; } setNotePreview(null); onNoteClick(a.id); }}
-          onPointerEnter={event => { if (event.pointerType === 'mouse' && !highlightMenu && !noteDrag) setNotePreview(a.id); }} onPointerLeave={() => setNotePreview(null)}
-          onContextMenu={event => { if (!canAnnotate) return; event.preventDefault(); event.stopPropagation(); setNotePreview(null); openHighlight(a.id, event.clientX, event.clientY); }}><MessageSquare size={15} fill="currentColor" /></button>;
-      })}
-      {drag && tool !== 'highlight' && <div className={`highlight-annotation preview ${tool === 'redact' ? 'redaction-preview' : ''}`} style={{ left: Math.min(drag.x, drag.ex), top: Math.min(drag.y, drag.ey), width: Math.abs(drag.ex - drag.x), height: Math.abs(drag.ey - drag.y) }} />}
-    </div>
-    {(() => {
-      const note = notePreview && annotations.find(a => a.id === notePreview);
-      if (!note) return null;
-      const { left, top } = notePosition(note), right = left > viewport.width - 290;
-      return <div className="note-preview" role="tooltip" style={right ? { right: viewport.width - left + 6, top } : { left: left + 34, top }}>
-        <p>{note.text.trim() || 'Nota vacía'}</p>{canAnnotate && <span>Clic para editar · clic derecho para más opciones</span>}
-      </div>;
-    })()}
-    {!rendered && <div className="page-loading">{failed ? 'No se pudo mostrar la página.' : <LoaderCircle size={22} className="spin" />}</div>}
-    {rendered && failed && <div className="page-render-error" role="alert">No se pudo actualizar esta página.</div>}
-    {edit && <EditLayer store={edit.store} doc={edit.doc} number={number} viewport={viewport} page={page} canvas={canvasRef} shapes={shapes} drawn={drawn?.page === page && drawn.version === liveVersion} />}
-    {highlightMenu && canAnnotate && <HighlightAnnotationMenu note={annotations.find(annotation => annotation.id === highlightMenu.id)?.kind === 'note'} x={highlightMenu.x} y={highlightMenu.y} onClose={closeHighlight} color={annotations.find(annotation => annotation.id === highlightMenu.id)?.color} onColorChange={onUpdateAnnotation ? (next: string) => { onUpdateAnnotation(highlightMenu.id, { color: next }); } : undefined} onComment={onCommentHighlight ? () => { const annotation = annotations.find(annotation => annotation.id === highlightMenu.id); if (annotation?.kind === 'note') onNoteClick(annotation.id); else if (annotation) onCommentHighlight(annotation); setHighlightMenu(null); } : undefined} onRemove={() => { onRemoveAnnotation(highlightMenu.id); setHighlightMenu(null); requestAnimationFrame(() => document.querySelector<HTMLElement>('.reading-area')?.focus({ preventScroll: true })); }} />}
-  </div>;
+  );
 }
 
 export function markSearch(container: HTMLElement, query: string, activeOffset?: number) {
@@ -686,16 +1305,22 @@ export function markSearch(container: HTMLElement, query: string, activeOffset?:
   const matches = findTextMatches(container.dataset.searchText || '', query);
   for (const span of spans) {
     const original = span.dataset.original ?? span.textContent ?? '';
-    const base = Number(span.dataset.searchStart), end = base + original.length;
+    const base = Number(span.dataset.searchStart),
+      end = base + original.length;
     const fragments = matches.filter(match => match.start < end && match.end > base);
     const existing = span.querySelectorAll<HTMLElement>('mark');
     // Changing only the active occurrence preserves an existing DOM Selection.
-    if ((span.dataset.searchQuery ?? '') === query) { for (const mark of existing) mark.dataset.searchActive = String(Number(mark.dataset.searchOffset) === activeOffset); continue; }
+    if ((span.dataset.searchQuery ?? '') === query) {
+      for (const mark of existing)
+        mark.dataset.searchActive = String(Number(mark.dataset.searchOffset) === activeOffset);
+      continue;
+    }
     span.dataset.searchQuery = query;
     span.replaceChildren();
     let start = 0;
     for (const match of fragments) {
-      const offset = Math.max(0, match.start - base), finish = Math.min(original.length, match.end - base);
+      const offset = Math.max(0, match.start - base),
+        finish = Math.min(original.length, match.end - base);
       span.append(document.createTextNode(original.slice(start, offset)));
       const mark = document.createElement('mark');
       mark.textContent = original.slice(offset, finish);
@@ -708,7 +1333,21 @@ export function markSearch(container: HTMLElement, query: string, activeOffset?:
   }
 }
 
-export const Thumbnail = memo(function Thumbnail({ pdf, number, rotation = 0, selected, onClick, pageLabel }: { pdf: PDFDocumentProxy; number: number; rotation?: number; selected: boolean; onClick: () => void; pageLabel?: string }) {
+export const Thumbnail = memo(function Thumbnail({
+  pdf,
+  number,
+  rotation = 0,
+  selected,
+  onClick,
+  pageLabel,
+}: {
+  pdf: PDFDocumentProxy;
+  number: number;
+  rotation?: number;
+  selected: boolean;
+  onClick: () => void;
+  pageLabel?: string;
+}) {
   const button = useRef<HTMLButtonElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -720,38 +1359,66 @@ export const Thumbnail = memo(function Thumbnail({ pdf, number, rotation = 0, se
     // Scroll the thumbnail grid only; scrollIntoView could also move the viewer.
     const node = button.current;
     let grid = node?.parentElement;
-    while (grid && (grid.scrollHeight <= grid.clientHeight || !['auto', 'scroll'].includes(getComputedStyle(grid).overflowY))) grid = grid.parentElement;
+    while (
+      grid &&
+      (grid.scrollHeight <= grid.clientHeight || !['auto', 'scroll'].includes(getComputedStyle(grid).overflowY))
+    )
+      grid = grid.parentElement;
     if (!node || !grid) return;
-    const rect = node.getBoundingClientRect(), parent = grid.getBoundingClientRect();
-    if (rect.top < parent.top || rect.bottom > parent.bottom) grid.scrollTop += rect.top - parent.top - (parent.height - rect.height) / 2;
+    const rect = node.getBoundingClientRect(),
+      parent = grid.getBoundingClientRect();
+    if (rect.top < parent.top || rect.bottom > parent.bottom)
+      grid.scrollTop += rect.top - parent.top - (parent.height - rect.height) / 2;
   }, [selected]);
   useEffect(() => {
     if (!nearby) return;
     let alive = true;
-    let renderTask: RenderTask | null = null, page: PDFPageProxy | null = null, canvas: HTMLCanvasElement | null = null;
+    let renderTask: RenderTask | null = null,
+      page: PDFPageProxy | null = null,
+      canvas: HTMLCanvasElement | null = null;
     // Thumbnails are secondary: they wait for the reader to stop scrolling.
-    scrollSettled().then(() => alive ? pdf.getPage(number) : null).then(loaded => {
-      if (!loaded || !alive || !canvasRef.current) return;
-      page = loaded; canvas = canvasRef.current;
-      setNativeLabel((page as PDFPageProxy & { label?: string }).label);
-      // Match the reader's view rotation and the frame's real width on this screen.
-      const unscaled = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
-      const view = page.getViewport({ scale: (canvas.clientWidth || 145) / unscaled.width, rotation: unscaled.rotation });
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      setRatio(view.height / view.width);
-      canvas.width = Math.round(view.width * dpr);
-      canvas.height = Math.round(view.height * dpr);
-      renderTask = page.render({ canvas, viewport: view, transform: [dpr, 0, 0, dpr, 0, 0] });
-      renderTask.promise.catch(() => {});
-    }).catch(() => {});
-    return () => { alive = false; renderTask?.cancel(); if (canvas) canvas.width = canvas.height = 0; page?.cleanup(); };
+    scrollSettled()
+      .then(() => (alive ? pdf.getPage(number) : null))
+      .then(loaded => {
+        if (!loaded || !alive || !canvasRef.current) return;
+        page = loaded;
+        canvas = canvasRef.current;
+        setNativeLabel((page as PDFPageProxy & { label?: string }).label);
+        // Match the reader's view rotation and the frame's real width on this screen.
+        const unscaled = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
+        const view = page.getViewport({
+          scale: (canvas.clientWidth || 145) / unscaled.width,
+          rotation: unscaled.rotation,
+        });
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        setRatio(view.height / view.width);
+        canvas.width = Math.round(view.width * dpr);
+        canvas.height = Math.round(view.height * dpr);
+        renderTask = page.render({ canvas, viewport: view, transform: [dpr, 0, 0, dpr, 0, 0] });
+        renderTask.promise.catch(() => {});
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      renderTask?.cancel();
+      if (canvas) canvas.width = canvas.height = 0;
+      page?.cleanup();
+    };
   }, [pdf, number, nearby, rotation]);
   const label = pageLabel || nativeLabel || String(number);
-  return <button ref={button} className={`thumbnail-item ${selected ? 'selected' : ''}`} onClick={onClick} aria-label={`Ir a página ${label}`} aria-current={selected ? 'page' : undefined}>
-    <div className="thumbnail-frame" ref={frame} style={{ aspectRatio: `1 / ${ratio}` }}>
-      {nearby && <canvas ref={canvasRef} />}
-      {selected && <span className="thumbnail-active-dot" />}
-    </div>
-    <span className="thumbnail-label">{label}</span>
-  </button>;
+  return (
+    <button
+      ref={button}
+      className={`thumbnail-item ${selected ? 'selected' : ''}`}
+      onClick={onClick}
+      aria-label={`Ir a página ${label}`}
+      aria-current={selected ? 'page' : undefined}
+    >
+      <div className="thumbnail-frame" ref={frame} style={{ aspectRatio: `1 / ${ratio}` }}>
+        {nearby && <canvas ref={canvasRef} />}
+        {selected && <span className="thumbnail-active-dot" />}
+      </div>
+      <span className="thumbnail-label">{label}</span>
+    </button>
+  );
 });

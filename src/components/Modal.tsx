@@ -8,51 +8,112 @@ import './Modal.css';
  * only from the handle: scrolling, text selection and form inputs stay native.
  * It is a pointer gesture aid; keyboards and screen readers use the close button. */
 export function SheetHandle({ onClose, label = 'Cerrar hoja' }: { onClose: () => void; label?: string }) {
-  const gesture = useRef<{ pointerId: number; x: number; y: number; at: number; offset: number; target: HTMLElement } | null>(null);
+  const gesture = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    at: number;
+    offset: number;
+    target: HTMLElement;
+  } | null>(null);
   const suppressClick = useRef(false);
   const reset = () => {
     const active = gesture.current;
-    if (active) { active.target.style.removeProperty('translate'); active.target.classList.remove('sheet-dragging'); }
+    if (active) {
+      active.target.style.removeProperty('translate');
+      active.target.classList.remove('sheet-dragging');
+    }
     gesture.current = null;
   };
   useEffect(() => reset, []);
-  return <button type="button" className="sheet-handle" aria-label={label} tabIndex={-1} aria-hidden="true" onClick={event => {
-    if (suppressClick.current) { event.preventDefault(); suppressClick.current = false; return; }
-    onClose();
-  }} onPointerDown={event => {
-    if (!document.documentElement.hasAttribute('data-phone') || event.pointerType !== 'touch' || !event.isPrimary) return;
-    const target = event.currentTarget.closest<HTMLElement>('dialog.modal, .mobile-drawer');
-    if (!target) return;
-    suppressClick.current = false;
-    gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(), offset: 0, target };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }} onPointerMove={event => {
-    const active = gesture.current;
-    if (!active || active.pointerId !== event.pointerId) return;
-    const delta = event.clientY - active.y;
-    if (Math.abs(event.clientX - active.x) > 24 && Math.abs(delta) < 12) { suppressClick.current = true; reset(); return; }
-    active.offset = Math.max(0, delta);
-    if (Math.abs(delta) > 6) suppressClick.current = true;
-    if (active.offset > 0) {
-      active.target.classList.add('sheet-dragging');
-      active.target.style.translate = `0 ${active.offset}px`;
-    }
-  }} onPointerUp={event => {
-    const active = gesture.current;
-    if (!active || active.pointerId !== event.pointerId) return;
-    const velocity = active.offset / Math.max(1, performance.now() - active.at);
-    const dismiss = active.offset >= 80 || active.offset >= 36 && velocity > .7;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    // A dismissed sheet keeps its dragged offset and slides away from there.
-    if (dismiss) { active.target.classList.remove('sheet-dragging'); gesture.current = null; suppressClick.current = true; onClose(); }
-    else reset();
-  }} onPointerCancel={() => { suppressClick.current = true; reset(); }}><span aria-hidden="true" /></button>;
+  return (
+    <button
+      type="button"
+      className="sheet-handle"
+      aria-label={label}
+      tabIndex={-1}
+      aria-hidden="true"
+      onClick={event => {
+        if (suppressClick.current) {
+          event.preventDefault();
+          suppressClick.current = false;
+          return;
+        }
+        onClose();
+      }}
+      onPointerDown={event => {
+        if (!document.documentElement.hasAttribute('data-phone') || event.pointerType !== 'touch' || !event.isPrimary)
+          return;
+        const target = event.currentTarget.closest<HTMLElement>('dialog.modal, .mobile-drawer');
+        if (!target) return;
+        suppressClick.current = false;
+        gesture.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          at: performance.now(),
+          offset: 0,
+          target,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        const active = gesture.current;
+        if (!active || active.pointerId !== event.pointerId) return;
+        const delta = event.clientY - active.y;
+        if (Math.abs(event.clientX - active.x) > 24 && Math.abs(delta) < 12) {
+          suppressClick.current = true;
+          reset();
+          return;
+        }
+        active.offset = Math.max(0, delta);
+        if (Math.abs(delta) > 6) suppressClick.current = true;
+        if (active.offset > 0) {
+          active.target.classList.add('sheet-dragging');
+          active.target.style.translate = `0 ${active.offset}px`;
+        }
+      }}
+      onPointerUp={event => {
+        const active = gesture.current;
+        if (!active || active.pointerId !== event.pointerId) return;
+        const velocity = active.offset / Math.max(1, performance.now() - active.at);
+        const dismiss = active.offset >= 80 || (active.offset >= 36 && velocity > 0.7);
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        // A dismissed sheet keeps its dragged offset and slides away from there.
+        if (dismiss) {
+          active.target.classList.remove('sheet-dragging');
+          gesture.current = null;
+          suppressClick.current = true;
+          onClose();
+        } else reset();
+      }}
+      onPointerCancel={() => {
+        suppressClick.current = true;
+        reset();
+      }}
+    >
+      <span aria-hidden="true" />
+    </button>
+  );
 }
 
-export default function Modal({ title, children, onClose, className = '' }: { title: string; children: React.ReactNode; onClose: () => void; className?: string }) {
+export default function Modal({
+  title,
+  children,
+  onClose,
+  className = '',
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  className?: string;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   // Capture before child autoFocus runs during commit, especially note editors.
-  const previousFocus = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const previousFocus = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
   const backdropDown = useRef(false);
   // A sheet may open on touch pointerup. Its compatibility mouse click must not
   // activate a newly mounted button at that same screen coordinate. A fresh
@@ -61,15 +122,28 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
   const titleId = useId();
   // Closing plays the exit first; a parent that keeps the dialog open gets it back.
   const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false), mounted = useRef(true), onCloseRef = useRef(onClose);
+  const closingRef = useRef(false),
+    mounted = useRef(true),
+    onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
   const close = () => {
     if (closingRef.current) return;
-    closingRef.current = true; setClosing(true);
+    closingRef.current = true;
+    setClosing(true);
     setTimeout(() => {
       onCloseRef.current();
-      setTimeout(() => { if (!mounted.current) return; closingRef.current = false; setClosing(false); ref.current?.style.removeProperty('translate'); }, 0);
+      setTimeout(() => {
+        if (!mounted.current) return;
+        closingRef.current = false;
+        setClosing(false);
+        ref.current?.style.removeProperty('translate');
+      }, 0);
     }, exitDuration());
   };
   useEffect(() => {
@@ -82,24 +156,59 @@ export default function Modal({ title, children, onClose, className = '' }: { ti
     dialog?.showModal();
     (initialFocus ?? dialog?.querySelector<HTMLElement>('.modal-heading button'))?.focus({ preventScroll: true });
     const stopViewport = ref.current ? watchDesktopModalViewport(ref.current) : () => {};
-    return () => { stopViewport(); ref.current?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
+    return () => {
+      stopViewport();
+      ref.current?.close();
+      if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
+    };
   }, []);
-  return <dialog ref={ref} className={`modal mobile-sheet ${className}${closing ? ' closing' : ''}`} onCancel={event => {
-    // A dismissed file chooser inside the dialog fires a bubbling `cancel` of its own.
-    if (event.target !== event.currentTarget) return;
-    event.preventDefault(); close();
-  }} onPointerDownCapture={() => { pointerClickArmed.current = true; }} onClickCapture={event => {
-    if (event.detail > 0 && !pointerClickArmed.current) { event.preventDefault(); event.stopPropagation(); }
-    pointerClickArmed.current = false;
-  }} onPointerDown={event => {
-    const box = event.currentTarget.getBoundingClientRect();
-    backdropDown.current = event.target === event.currentTarget && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
-  }} onPointerCancel={() => { backdropDown.current = false; pointerClickArmed.current = false; }} onClick={event => {
-    if (event.target === ref.current && backdropDown.current) close();
-    backdropDown.current = false;
-  }} aria-labelledby={titleId}>
-    <SheetHandle onClose={close} />
-    <div className="modal-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={close} aria-label="Cerrar diálogo"><X size={19} /></button></div>
-    {children}
-  </dialog>;
+  return (
+    <dialog
+      ref={ref}
+      className={`modal mobile-sheet ${className}${closing ? ' closing' : ''}`}
+      onCancel={event => {
+        // A dismissed file chooser inside the dialog fires a bubbling `cancel` of its own.
+        if (event.target !== event.currentTarget) return;
+        event.preventDefault();
+        close();
+      }}
+      onPointerDownCapture={() => {
+        pointerClickArmed.current = true;
+      }}
+      onClickCapture={event => {
+        if (event.detail > 0 && !pointerClickArmed.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        pointerClickArmed.current = false;
+      }}
+      onPointerDown={event => {
+        const box = event.currentTarget.getBoundingClientRect();
+        backdropDown.current =
+          event.target === event.currentTarget &&
+          (event.clientX < box.left ||
+            event.clientX > box.right ||
+            event.clientY < box.top ||
+            event.clientY > box.bottom);
+      }}
+      onPointerCancel={() => {
+        backdropDown.current = false;
+        pointerClickArmed.current = false;
+      }}
+      onClick={event => {
+        if (event.target === ref.current && backdropDown.current) close();
+        backdropDown.current = false;
+      }}
+      aria-labelledby={titleId}
+    >
+      <SheetHandle onClose={close} />
+      <div className="modal-heading">
+        <h2 id={titleId}>{title}</h2>
+        <button className="icon-button" onClick={close} aria-label="Cerrar diálogo">
+          <X size={19} />
+        </button>
+      </div>
+      {children}
+    </dialog>
+  );
 }

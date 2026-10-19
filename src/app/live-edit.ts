@@ -55,16 +55,28 @@ export class LiveEdit {
   private rebinding = false;
 
   /** Parking or closing is under way: history steps wait for it. */
-  get settling() { return !!this.closing || !!this.parking; }
+  get settling() {
+    return !!this.closing || !!this.parking;
+  }
 
   /** Whether Editar keeps `doc` live (not on touch layouts, nor for PDFs PDFKit reads from their file). */
-  editable(doc: LoadedDocument | null) { return !!doc && !this.host.touch() && doc.canEdit && !isNativePdfDocument(doc.pdf); }
+  editable(doc: LoadedDocument | null) {
+    return !!doc && !this.host.touch() && doc.canEdit && !isNativePdfDocument(doc.pdf);
+  }
 
   /** Follows Editar opening and closing, and the document in front changing. */
   sync(editing: boolean, doc: LoadedDocument | null) {
     const { store } = this.host;
-    if (editing && this.editable(doc)) { if (!this.settling) this.open(doc!); }
-    else if (store.session && doc && !this.host.touch() && store.state.live?.pdf === doc.pdf && doc.bytes.length <= PARK_LIMIT) void this.park();
+    if (editing && this.editable(doc)) {
+      if (!this.settling) this.open(doc!);
+    } else if (
+      store.session &&
+      doc &&
+      !this.host.touch() &&
+      store.state.live?.pdf === doc.pdf &&
+      doc.bytes.length <= PARK_LIMIT
+    )
+      void this.park();
     else if (!this.rebinding) void this.close();
   }
 
@@ -72,79 +84,122 @@ export class LiveEdit {
     const { store } = this.host;
     if (store.session && !store.session.broken && store.state.live?.pdf === current.pdf) return;
     // The reader opened another copy under Editar (a save, an undo past its start): the old live document is closed first.
-    if (store.session) { void this.close(); return; }
+    if (store.session) {
+      void this.close();
+      return;
+    }
     const session = store.open(current);
-    this.start = this.doc = current; this.depth = 0; this.pending = false;
+    this.start = this.doc = current;
+    this.depth = 0;
+    this.pending = false;
     // Until a write is timed, about a millisecond per MB (a 238 MB book: ~250 ms here, longer on a laptop).
     this.writeMs = current.bytes.length / 1048576;
     // Too large a PDF is not kept to undo, as with any change (trimHistory).
     this.base = current.bytes.length <= this.host.historyBudget() ? this.host.snapshot() : null;
-    session.ready.catch(error => this.host.notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'));
+    session.ready.catch(error =>
+      this.host.notify(errorMessage(error, 'No se pudo abrir el documento para editarlo.'), 'error'),
+    );
   }
 
   /** A change was made on `page` of the live document, with `annotations` alongside: its undo step,
    * the first one marked as the return to the PDF before Editar. */
   changed(page: number, annotations: Annotation[]): History {
     const step: History = { annotations, session: true, ...(this.depth++ === 0 ? { base: true as const } : {}) };
-    this.host.store.changed(page); this.scheduleWrite();
+    this.host.store.changed(page);
+    this.scheduleWrite();
     return step;
   }
 
   // Writing holds the live document, so a change made meanwhile waits for it («Guardando el
   // cambio…»): a book that takes seconds to write waits for a longer pause than a short PDF.
   private scheduleWrite() {
-    this.pending = true; clearTimeout(this.timer);
-    this.timer = setTimeout(() => { void this.write().catch(() => {}); }, Math.min(15000, Math.max(800, this.writeMs * 4)));
+    this.pending = true;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(
+      () => {
+        void this.write().catch(() => {});
+      },
+      Math.min(15000, Math.max(800, this.writeMs * 4)),
+    );
   }
 
   /** Writes the live document's PDF and makes it the document's bytes (and its draft). The reader keeps its copy. */
   write(): Promise<void> {
     clearTimeout(this.timer);
-    const { store } = this.host, session = store.session;
+    const { store } = this.host,
+      session = store.session;
     if (!session || !this.pending) return this.writing;
     this.pending = false;
-    const write = this.writing.catch(() => {}).then(async () => {
-      const started = performance.now(), { bytes, revision } = await session.save();
-      this.writeMs = performance.now() - started;
-      const previous = this.doc;
-      if (store.session !== session || !previous) return;
-      const next: LoadedDocument = { ...previous, bytes, revision, size: bytes.length, modified: true };
-      this.doc = next;
-      this.host.written(previous, next);
-    });
+    const write = this.writing
+      .catch(() => {})
+      .then(async () => {
+        const started = performance.now(),
+          { bytes, revision } = await session.save();
+        this.writeMs = performance.now() - started;
+        const previous = this.doc;
+        if (store.session !== session || !previous) return;
+        const next: LoadedDocument = { ...previous, bytes, revision, size: bytes.length, modified: true };
+        this.doc = next;
+        this.host.written(previous, next);
+      });
     this.writing = write;
-    write.catch(error => { if (store.session === session) this.pending = true; this.host.notify(errorMessage(error, 'No se pudieron guardar los cambios de Editar.'), 'error'); });
+    write.catch(error => {
+      if (store.session === session) this.pending = true;
+      this.host.notify(errorMessage(error, 'No se pudieron guardar los cambios de Editar.'), 'error');
+    });
     return write;
   }
 
   /** Undoes or redoes one change in the live document. */
   step(direction: 'undo' | 'redo') {
     this.host.historyChanged();
-    const { store } = this.host, session = store.session; if (!session) return;
+    const { store } = this.host,
+      session = store.session;
+    if (!session) return;
     this.depth += direction === 'undo' ? -1 : 1;
-    void session[direction]().then(page => {
-      if (!page) return;
-      store.changed(page); this.scheduleWrite();
-      // Outside Editar the reader opens the result at once.
-      if (!this.host.editing()) void this.park();
-    },
-    error => this.host.notify(errorMessage(error, direction === 'undo' ? 'No se pudo deshacer el cambio.' : 'No se pudo rehacer el cambio.'), 'error'));
+    void session[direction]().then(
+      page => {
+        if (!page) return;
+        store.changed(page);
+        this.scheduleWrite();
+        // Outside Editar the reader opens the result at once.
+        if (!this.host.editing()) void this.park();
+      },
+      error =>
+        this.host.notify(
+          errorMessage(
+            error,
+            direction === 'undo' ? 'No se pudo deshacer el cambio.' : 'No se pudo rehacer el cambio.',
+          ),
+          'error',
+        ),
+    );
   }
 
   /** Keeps the live document open outside Editar: writes it, and the reader
    * opens what was written and draws its pages again. */
   park(): Promise<void> {
-    return this.parking ??= (async () => {
+    return (this.parking ??= (async () => {
       try {
         await this.write().catch(() => {});
         const current = this.doc;
         if (!current || current === this.start || this.host.current() !== current) return;
         this.rebinding = true;
-        try { await this.host.reopen(current); } finally { this.rebinding = false; }
-        const shown = this.host.current(), { store } = this.host;
-        if (store.session && shown && shown !== current && shown.id === current.id) { store.rebind(shown.pdf); this.start = this.doc = shown; }
-      } finally { this.parking = null; }
-    })();
+        try {
+          await this.host.reopen(current);
+        } finally {
+          this.rebinding = false;
+        }
+        const shown = this.host.current(),
+          { store } = this.host;
+        if (store.session && shown && shown !== current && shown.id === current.id) {
+          store.rebind(shown.pdf);
+          this.start = this.doc = shown;
+        }
+      } finally {
+        this.parking = null;
+      }
+    })());
   }
 
   /** Closes the live document: writes it, folds its steps into one return to
@@ -153,13 +208,27 @@ export class LiveEdit {
     const { store } = this.host;
     if (!store.session) return Promise.resolve();
     if (this.parking) return this.parking.then(() => this.close());
-    return this.closing ??= (async () => {
+    return (this.closing ??= (async () => {
       try {
         await this.write().catch(() => {});
-        const current = this.doc, base = this.base;
+        const current = this.doc,
+          base = this.base;
         const [undo, redo] = this.host.stacks(current);
-        for (const [stack, keepBase] of [[undo, true], [redo, false]] as const) {
-          stack.splice(0, stack.length, ...stack.flatMap(entry => !entry.session ? [entry] : keepBase && entry.base && base ? [{ ...base, annotations: entry.annotations }] : []));
+        for (const [stack, keepBase] of [
+          [undo, true],
+          [redo, false],
+        ] as const) {
+          stack.splice(
+            0,
+            stack.length,
+            ...stack.flatMap(entry =>
+              !entry.session
+                ? [entry]
+                : keepBase && entry.base && base
+                  ? [{ ...base, annotations: entry.annotations }]
+                  : [],
+            ),
+          );
           this.host.trim(stack);
         }
         this.host.historyChanged();
@@ -167,21 +236,37 @@ export class LiveEdit {
         if (this.host.current() === current) await this.host.reopen(current);
         else this.host.outdated(current);
       } finally {
-        store.close(); store.set({ live: null }); this.closing = null;
+        store.close();
+        store.set({ live: null });
+        this.closing = null;
         // Editar may be open on another copy or document by now: it gets its own live document.
         const shown = this.host.current();
         if (this.host.editing() && this.editable(shown)) this.open(shown!);
       }
-    })();
+    })());
   }
 }
 
 /** Editar's lifecycle around the document in front: each document starts Editar afresh;
  * on desktop its document stays live (LiveEdit) while Editar is open; leaving Editar drops
  * the selection and any pending image; while it is open, pasted images are placed. */
-export function useLiveEditing(editing: boolean, doc: LoadedDocument | null, touch: boolean, store: EditStore, live: LiveEdit, notify: Notify) {
-  useEffect(() => { store.reset(); }, [doc?.id, store]);
-  useEffect(() => { live.sync(editing, doc); }, [editing, doc, touch, live]);
-  useEffect(() => { if (!editing) store.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, store]);
+export function useLiveEditing(
+  editing: boolean,
+  doc: LoadedDocument | null,
+  touch: boolean,
+  store: EditStore,
+  live: LiveEdit,
+  notify: Notify,
+) {
+  useEffect(() => {
+    store.reset();
+  }, [doc?.id, store]);
+  useEffect(() => {
+    live.sync(editing, doc);
+  }, [editing, doc, touch, live]);
+  useEffect(() => {
+    if (!editing)
+      store.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null });
+  }, [editing, store]);
   usePastedImages(editing, store, message => notify(message, 'error'));
 }

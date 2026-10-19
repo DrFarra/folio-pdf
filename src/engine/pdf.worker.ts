@@ -2,21 +2,42 @@ import type { Annotation } from '../types';
 import type { Operation } from './operations.ts';
 
 const engine = import('./mupdf-engine.mjs');
-self.onmessage = async (event: MessageEvent<{ operation: 'inspect' | 'annotate' | 'operate'; bytes: Uint8Array; password?: string; annotations?: Annotation[]; options?: Operation; incremental?: boolean; lend?: boolean }>) => {
+self.onmessage = async (
+  event: MessageEvent<{
+    operation: 'inspect' | 'annotate' | 'operate';
+    bytes: Uint8Array;
+    password?: string;
+    annotations?: Annotation[];
+    options?: Operation;
+    incremental?: boolean;
+    lend?: boolean;
+  }>,
+) => {
   try {
     const { inspectDocument, writeAnnotations } = await engine;
     const request = event.data;
-    const result = request.operation === 'operate'
-      ? (await import('./operations.ts')).operateDocument(request.bytes, request.options!, request.password, (part, output) => self.postMessage({ part, output }, { transfer: [output.buffer] }))
-      : request.operation === 'inspect'
-      ? inspectDocument(request.bytes, request.password)
-      : writeAnnotations(request.bytes, request.annotations || [], request.password, request.incremental);
-    const buffers = result instanceof Uint8Array ? [result.buffer] : typeof result === 'object' && !Array.isArray(result) && 'previewBytes' in result && result.previewBytes ? [result.previewBytes.buffer] : [];
+    const result =
+      request.operation === 'operate'
+        ? (await import('./operations.ts')).operateDocument(
+            request.bytes,
+            request.options!,
+            request.password,
+            (part, output) => self.postMessage({ part, output }, { transfer: [output.buffer] }),
+          )
+        : request.operation === 'inspect'
+          ? inspectDocument(request.bytes, request.password)
+          : writeAnnotations(request.bytes, request.annotations || [], request.password, request.incremental);
+    const buffers =
+      result instanceof Uint8Array
+        ? [result.buffer]
+        : typeof result === 'object' && !Array.isArray(result) && 'previewBytes' in result && result.previewBytes
+          ? [result.previewBytes.buffer]
+          : [];
     // A lent source goes back to its owner; MuPDF no longer reads it once the document is destroyed.
     const lent = request.lend ? request.bytes : undefined;
     self.postMessage({ result, bytes: lent }, { transfer: [...buffers, ...(lent ? [lent.buffer] : [])] });
   } catch (error) {
     // The client discards a worker after any error, including an engine that failed to load.
-    self.postMessage({ error: error instanceof Error && error.message || 'No se pudo completar la operación.' });
+    self.postMessage({ error: (error instanceof Error && error.message) || 'No se pudo completar la operación.' });
   }
 };

@@ -23,7 +23,8 @@ try {
   assert.equal(report.verified, true);
   assert.equal(report.icons.length, 18);
   assert.equal(sha(path.join(staged, 'Contents.json')), sha(path.join(original, 'Contents.json')));
-  for (const icon of report.icons) assert.equal(sha(path.join(staged, icon.filename)), sha(path.join(original, icon.filename)));
+  for (const icon of report.icons)
+    assert.equal(sha(path.join(staged, icon.filename)), sha(path.join(original, icon.filename)));
   fs.writeFileSync(path.join(staged, 'AppIcon-60x60@2x.png'), 'a later init replaced this');
   syncIosIcons(temporary, project);
   assert.equal(sha(path.join(staged, 'AppIcon-60x60@2x.png')), sha(path.join(original, 'AppIcon-60x60@2x.png')));
@@ -33,7 +34,9 @@ try {
   const stagedHash = sha(path.join(staged, 'Contents.json'));
   assert.throws(() => syncIosIcons(temporary, project), /18 tamaños/);
   assert.equal(sha(path.join(staged, 'Contents.json')), stagedHash);
-  console.log('PASS: Tauri catalog replaced by all 18 original Folio assets, resync restores artwork, incomplete source rejected before staging.');
+  console.log(
+    'PASS: Tauri catalog replaced by all 18 original Folio assets, resync restores artwork, incomplete source rejected before staging.',
+  );
 } finally {
   assert.equal(path.dirname(path.resolve(temporary)), path.resolve(os.tmpdir()));
   assert(path.basename(temporary).startsWith('folio-iphone-icons-'));

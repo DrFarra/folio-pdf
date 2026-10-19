@@ -8,31 +8,68 @@ import './DocumentSwitcher.css';
 
 type OpenDocument = { key: string; id: string; name: string; page: number; pages: number };
 type Props = {
-  open: boolean; documents: OpenDocument[]; recents: RecentDocument[]; activeKey: string | null; disabled: boolean;
-  onDismiss: () => void; onSelect: (key: string) => void; onRecent: (document: RecentDocument) => void;
-  onCloseDocument: (key: string) => void; onImport: () => void; onLibrary: () => void;
+  open: boolean;
+  documents: OpenDocument[];
+  recents: RecentDocument[];
+  activeKey: string | null;
+  disabled: boolean;
+  onDismiss: () => void;
+  onSelect: (key: string) => void;
+  onRecent: (document: RecentDocument) => void;
+  onCloseDocument: (key: string) => void;
+  onImport: () => void;
+  onLibrary: () => void;
 };
 
 /** A modeless, anchored document picker. Closing stays mounted for its exit motion. */
-export default function DocumentSwitcher({ open, documents, recents, activeKey, disabled, onDismiss, onSelect, onRecent, onCloseDocument, onImport, onLibrary }: Props) {
+export default function DocumentSwitcher({
+  open,
+  documents,
+  recents,
+  activeKey,
+  disabled,
+  onDismiss,
+  onSelect,
+  onRecent,
+  onCloseDocument,
+  onImport,
+  onLibrary,
+}: Props) {
   const [present, setPresent] = useState(open);
   const [position, setPosition] = useState({ left: 12, top: 60, width: 360, maxHeight: 480 });
   const popup = useRef<HTMLDivElement>(null);
-  const dismiss = useRef(onDismiss); dismiss.current = onDismiss;
+  const dismiss = useRef(onDismiss);
+  dismiss.current = onDismiss;
   const [covers, setCovers] = useState<Record<string, string | null>>({});
   // Page-one covers, as in the library; a file icon until one exists.
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    for (const id of [...documents.map(doc => doc.id), ...recents.map(recent => recent.id)]) if (!(id in covers)) void readCover(id).then(image => { if (alive) setCovers(current => ({ ...current, [id]: image })); });
-    return () => { alive = false; };
+    for (const id of [...documents.map(doc => doc.id), ...recents.map(recent => recent.id)])
+      if (!(id in covers))
+        void readCover(id).then(image => {
+          if (alive) setCovers(current => ({ ...current, [id]: image }));
+        });
+    return () => {
+      alive = false;
+    };
   }, [open, documents.length, recents.length]);
-  const cover = (id: string) => covers[id] ? <img src={covers[id]!} alt="" draggable={false} /> : <FileText size={20} />;
-  const recentDocuments = recents.filter(recent => !documents.some(doc => doc.id === recent.id)).sort((a, b) => b.openedAt - a.openedAt).slice(0, 6);
+  const cover = (id: string) =>
+    covers[id] ? <img src={covers[id]!} alt="" draggable={false} /> : <FileText size={20} />;
+  const recentDocuments = recents
+    .filter(recent => !documents.some(doc => doc.id === recent.id))
+    .sort((a, b) => b.openedAt - a.openedAt)
+    .slice(0, 6);
 
   useEffect(() => {
-    if (open) { setPresent(true); return; }
-    const timer = window.setTimeout(() => setPresent(false), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 140);
+    if (open) {
+      setPresent(true);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setPresent(false),
+      matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 140,
+    );
     return () => clearTimeout(timer);
   }, [open]);
 
@@ -41,62 +78,167 @@ export default function DocumentSwitcher({ open, documents, recents, activeKey, 
     const anchor = document.getElementById('document-switcher-trigger');
     const place = () => {
       if (!anchor) return;
-      const bounds = anchor.getBoundingClientRect(), viewport = window.visualViewport;
-      const leftEdge = viewport?.offsetLeft || 0, topEdge = viewport?.offsetTop || 0;
-      const rightEdge = leftEdge + (viewport?.width || innerWidth), bottomEdge = topEdge + (viewport?.height || innerHeight);
+      const bounds = anchor.getBoundingClientRect(),
+        viewport = window.visualViewport;
+      const leftEdge = viewport?.offsetLeft || 0,
+        topEdge = viewport?.offsetTop || 0;
+      const rightEdge = leftEdge + (viewport?.width || innerWidth),
+        bottomEdge = topEdge + (viewport?.height || innerHeight);
       const width = Math.min(360, rightEdge - leftEdge - 24);
-      const safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--native-safe-bottom')) || 0;
+      const safeBottom =
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--native-safe-bottom')) || 0;
       const top = bounds.bottom + 6;
-      setPosition({ left: Math.max(leftEdge + 12, Math.min(bounds.left, rightEdge - width - 12)), top, width, maxHeight: Math.max(80, bottomEdge - top - 12 - safeBottom) });
+      setPosition({
+        left: Math.max(leftEdge + 12, Math.min(bounds.left, rightEdge - width - 12)),
+        top,
+        width,
+        maxHeight: Math.max(80, bottomEdge - top - 12 - safeBottom),
+      });
     };
     place();
-    const observer = new ResizeObserver(place); if (anchor) observer.observe(anchor);
-    window.addEventListener('resize', place); window.visualViewport?.addEventListener('resize', place);
+    const observer = new ResizeObserver(place);
+    if (anchor) observer.observe(anchor);
+    window.addEventListener('resize', place);
+    window.visualViewport?.addEventListener('resize', place);
     window.visualViewport?.addEventListener('scroll', place);
-    return () => { observer.disconnect(); window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); };
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', place);
+      window.visualViewport?.removeEventListener('resize', place);
+      window.visualViewport?.removeEventListener('scroll', place);
+    };
   }, [open, present]);
 
   useEffect(() => {
     if (!open || !present) return;
     const trigger = document.getElementById('document-switcher-trigger');
     const outside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !popup.current?.contains(event.target) && !trigger?.contains(event.target)) dismiss.current();
+      if (event.target instanceof Node && !popup.current?.contains(event.target) && !trigger?.contains(event.target))
+        dismiss.current();
     };
     const keyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); dismiss.current(); trigger?.focus({ preventScroll: true }); return; }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dismiss.current();
+        trigger?.focus({ preventScroll: true });
+        return;
+      }
       const focus = document.activeElement;
       if (focus !== trigger && !popup.current?.contains(focus)) return;
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
       const buttons = Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || []);
       if (!buttons.length) return;
-      event.preventDefault(); event.stopImmediatePropagation();
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const index = buttons.indexOf(focus as HTMLButtonElement);
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1) + buttons.length) % buttons.length;
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? buttons.length - 1
+            : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1) + buttons.length) % buttons.length;
       buttons[next].focus({ preventScroll: true });
     };
     const focusOutside = (event: FocusEvent) => {
-      if (event.target instanceof Node && event.target !== trigger && !popup.current?.contains(event.target)) dismiss.current();
+      if (event.target instanceof Node && event.target !== trigger && !popup.current?.contains(event.target))
+        dismiss.current();
     };
     // Opened from the keyboard, focus starts on the current document.
-    if (trigger?.matches(':focus-visible')) (popup.current?.querySelector<HTMLButtonElement>('.document-switcher-row.selected button:not(:disabled)') ?? popup.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus({ preventScroll: true });
+    if (trigger?.matches(':focus-visible'))
+      (
+        popup.current?.querySelector<HTMLButtonElement>('.document-switcher-row.selected button:not(:disabled)') ??
+        popup.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+      )?.focus({ preventScroll: true });
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', keyboard, true);
     document.addEventListener('focusin', focusOutside);
-    return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('focusin', focusOutside); };
+    return () => {
+      document.removeEventListener('pointerdown', outside, true);
+      document.removeEventListener('keydown', keyboard, true);
+      document.removeEventListener('focusin', focusOutside);
+    };
   }, [open, present]);
 
   if (!present) return null;
-  return createPortal(<div ref={popup} id="document-switcher" className={`document-switcher${open ? '' : ' is-closing'}`} role="dialog" aria-label="Documentos abiertos y recientes" inert={!open} style={position}>
-    <div className="document-switcher-heading">Documentos</div>
-    <div className="document-switcher-scroll">
-      <div className="document-switcher-label">Abiertos</div>
-      {documents.map(doc => <div key={doc.key} className={`document-switcher-row${doc.key === activeKey ? ' selected' : ''}`}>
-        <button className="document-switcher-document" aria-label={`Cambiar a ${doc.name}`} aria-current={doc.key === activeKey ? 'page' : undefined} disabled={disabled} onClick={() => onSelect(doc.key)}>
-          <span className="document-switcher-file">{cover(doc.id)}</span><span className="document-switcher-name"><strong>{doc.name}</strong><small>Página {doc.page} de {doc.pages}</small>{doc.pages > 1 && doc.page > 1 && <span className="document-switcher-progress" aria-hidden="true"><span style={{ transform: `scaleX(${doc.page / doc.pages})` }} /></span>}</span>{doc.key === activeKey && <Check size={17} />}
-        </button><button className="document-switcher-close" aria-label={`Cerrar ${doc.name}`} disabled={disabled} onClick={() => onCloseDocument(doc.key)}><X size={17} /></button>
-      </div>)}
-      {recentDocuments.length > 0 && <><div className="document-switcher-label recent">Recientes</div>{recentDocuments.map(recent => <button key={recent.id} className="document-switcher-document document-switcher-recent" aria-label={`Abrir reciente ${recent.name}`} disabled={disabled} onClick={() => onRecent(recent)}><span className="document-switcher-file">{cover(recent.id)}</span><span className="document-switcher-name"><strong>{recent.name}</strong><small>{plural(recent.pages, 'página', 'páginas')}</small></span></button>)}</>}
-    </div>
-    <div className="document-switcher-actions"><button onClick={onImport} disabled={disabled}><Plus size={19} /><span>Abrir PDF</span></button><button onClick={onLibrary} disabled={disabled}><FolderOpen size={19} /><span>Ir a la biblioteca</span></button></div>
-  </div>, document.body);
+  return createPortal(
+    <div
+      ref={popup}
+      id="document-switcher"
+      className={`document-switcher${open ? '' : ' is-closing'}`}
+      role="dialog"
+      aria-label="Documentos abiertos y recientes"
+      inert={!open}
+      style={position}
+    >
+      <div className="document-switcher-heading">Documentos</div>
+      <div className="document-switcher-scroll">
+        <div className="document-switcher-label">Abiertos</div>
+        {documents.map(doc => (
+          <div key={doc.key} className={`document-switcher-row${doc.key === activeKey ? ' selected' : ''}`}>
+            <button
+              className="document-switcher-document"
+              aria-label={`Cambiar a ${doc.name}`}
+              aria-current={doc.key === activeKey ? 'page' : undefined}
+              disabled={disabled}
+              onClick={() => onSelect(doc.key)}
+            >
+              <span className="document-switcher-file">{cover(doc.id)}</span>
+              <span className="document-switcher-name">
+                <strong>{doc.name}</strong>
+                <small>
+                  Página {doc.page} de {doc.pages}
+                </small>
+                {doc.pages > 1 && doc.page > 1 && (
+                  <span className="document-switcher-progress" aria-hidden="true">
+                    <span style={{ transform: `scaleX(${doc.page / doc.pages})` }} />
+                  </span>
+                )}
+              </span>
+              {doc.key === activeKey && <Check size={17} />}
+            </button>
+            <button
+              className="document-switcher-close"
+              aria-label={`Cerrar ${doc.name}`}
+              disabled={disabled}
+              onClick={() => onCloseDocument(doc.key)}
+            >
+              <X size={17} />
+            </button>
+          </div>
+        ))}
+        {recentDocuments.length > 0 && (
+          <>
+            <div className="document-switcher-label recent">Recientes</div>
+            {recentDocuments.map(recent => (
+              <button
+                key={recent.id}
+                className="document-switcher-document document-switcher-recent"
+                aria-label={`Abrir reciente ${recent.name}`}
+                disabled={disabled}
+                onClick={() => onRecent(recent)}
+              >
+                <span className="document-switcher-file">{cover(recent.id)}</span>
+                <span className="document-switcher-name">
+                  <strong>{recent.name}</strong>
+                  <small>{plural(recent.pages, 'página', 'páginas')}</small>
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+      <div className="document-switcher-actions">
+        <button onClick={onImport} disabled={disabled}>
+          <Plus size={19} />
+          <span>Abrir PDF</span>
+        </button>
+        <button onClick={onLibrary} disabled={disabled}>
+          <FolderOpen size={19} />
+          <span>Ir a la biblioteca</span>
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
 }

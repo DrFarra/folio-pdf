@@ -3,7 +3,17 @@ import { driveStage, driveStageNative, driveSync, type DriveOpened } from '../dr
 import { errorMessage } from '../errors';
 import { isNativePdfDocument, nativePdfPageAnnotations } from '../nativePdf';
 import { exportAnnotated } from '../pdf';
-import { isMobile, isNative, presentNativePdf, printPdf, saveOriginalPdf, savePdf, sharePdf, type Anchor, type NativeDocument } from '../platform';
+import {
+  isMobile,
+  isNative,
+  presentNativePdf,
+  printPdf,
+  saveOriginalPdf,
+  savePdf,
+  sharePdf,
+  type Anchor,
+  type NativeDocument,
+} from '../platform';
 import type { Annotation, BookmarkNode, LoadedDocument } from '../types';
 import { annotationFingerprint, copyName, savesInPlace, type OpenContext } from './model';
 import type { Notify } from './notices';
@@ -17,7 +27,8 @@ export type OutputHost = {
   reading: () => { page: number; bookmarks: BookmarkNode[] };
   /** An edit waits to be applied or discarded: nothing leaves Folio meanwhile. */
   draft: () => boolean;
-  busy: () => boolean; loading: () => boolean;
+  busy: () => boolean;
+  loading: () => boolean;
   setBusy: (task: 'download' | 'print' | null) => void;
   /** The Drive step shown while saving there. */
   setDriveMessage: (message: string) => void;
@@ -26,7 +37,12 @@ export type OutputHost = {
   /** Editar PDF is open and stays open on the saved document. */
   editing: () => boolean;
   /** Opens the saved file in place of the document. */
-  reopen: (source: Uint8Array | NativeDocument, name: string, token: string | undefined, context: OpenContext) => Promise<boolean | undefined>;
+  reopen: (
+    source: Uint8Array | NativeDocument,
+    name: string,
+    token: string | undefined,
+    context: OpenContext,
+  ) => Promise<boolean | undefined>;
   /** Drafts queued so far are written: a saved document's draft can be discarded. */
   draftsWritten: () => Promise<void>;
   /** Removes a library entry the saved document replaces. */
@@ -35,7 +51,8 @@ export type OutputHost = {
   driveConflict: (pendingId: string) => void;
   /** The web download holds the current changes: the document no longer reads as unsaved. */
   downloaded: (doc: LoadedDocument) => void;
-  notify: Notify; dismissNotice: () => void;
+  notify: Notify;
+  dismissNotice: () => void;
 };
 
 /** Getting a document out of Folio: saving it (over its file, as a copy, to Drive, or as a
@@ -53,42 +70,81 @@ export class DocumentOutput {
 
   /** The document in front as a file. Drive keeps the original bytes and appends the changes. */
   async currentBytes() {
-    const doc = this.host.current(); if (!doc) throw new Error('No hay documento abierto.');
+    const doc = this.host.current();
+    if (!doc) throw new Error('No hay documento abierto.');
     if (isNativePdfDocument(doc.pdf)) throw new Error('Usa Guardar una copia para guardar este PDF.');
     return this.annotated(doc, this.host.annotations(), !!doc.drive);
   }
 
   /** The annotations PDFKit's file-backed document had removed, all its pages read first when an older session left them unknown. */
   private async removedOriginals(doc: LoadedDocument, failure: string) {
-    if (doc.nativeLegacySession) for (let number = 1; number <= doc.pdf.numPages; number++) await nativePdfPageAnnotations(doc.pdf, number);
+    if (doc.nativeLegacySession)
+      for (let number = 1; number <= doc.pdf.numPages; number++) await nativePdfPageAnnotations(doc.pdf, number);
     if (doc.nativeLegacySession) throw new Error(failure);
     const annotations = this.host.annotations();
-    return (doc.nativeOriginalRefs || []).filter(ref => !annotations.some(annotation => annotation.nativeSourceRef === ref));
+    return (doc.nativeOriginalRefs || []).filter(
+      ref => !annotations.some(annotation => annotation.nativeSourceRef === ref),
+    );
   }
 
   /** iOS writes a file-backed PDF with its annotations itself, and presents it to save, share or print. */
   private async presentFileBacked(doc: LoadedDocument, action: 'save' | 'share' | 'print', anchor?: Anchor) {
-    const removed = await this.removedOriginals(doc, 'No se pudieron recuperar todas las anotaciones anteriores. La copia no se guardó.');
-    return presentNativePdf(doc.nativeSource!, action === 'save' ? copyName(doc.name) : doc.name, action, this.host.annotations(), removed, anchor);
+    const removed = await this.removedOriginals(
+      doc,
+      'No se pudieron recuperar todas las anotaciones anteriores. La copia no se guardó.',
+    );
+    return presentNativePdf(
+      doc.nativeSource!,
+      action === 'save' ? copyName(doc.name) : doc.name,
+      action,
+      this.host.annotations(),
+      removed,
+      anchor,
+    );
   }
 
   /** The saved file replaces the document, keeping the reader where it was. */
-  private reopenSaved(source: Uint8Array | NativeDocument, name: string, token: string | undefined, doc: LoadedDocument, keepEditing: boolean, drive?: DriveOpened) {
+  private reopenSaved(
+    source: Uint8Array | NativeDocument,
+    name: string,
+    token: string | undefined,
+    doc: LoadedDocument,
+    keepEditing: boolean,
+    drive?: DriveOpened,
+  ) {
     const { page, bookmarks } = this.host.reading();
-    return this.host.reopen(source, name, token, { drive, savedCopy: true, keepEditing, password: doc.password, useSession: false, page, bookmarks });
+    return this.host.reopen(source, name, token, {
+      drive,
+      savedCopy: true,
+      keepEditing,
+      password: doc.password,
+      useSession: false,
+      page,
+      bookmarks,
+    });
   }
 
   private async saveToDrive(doc: LoadedDocument, keepEditing: boolean) {
-    const { host } = this, binding = doc.drive!;
+    const { host } = this,
+      binding = doc.drive!;
     if (!binding.editable) throw new Error('Este archivo tiene permiso de solo lectura en Google Drive.');
     host.setDriveMessage('Preparando…');
     const pending = isNativePdfDocument(doc.pdf)
-      ? await driveStageNative(binding.binding, doc.nativeSource!, host.annotations(), await this.removedOriginals(doc, 'No se recuperaron todas las anotaciones. La edición no se subió.'))
+      ? await driveStageNative(
+          binding.binding,
+          doc.nativeSource!,
+          host.annotations(),
+          await this.removedOriginals(doc, 'No se recuperaron todas las anotaciones. La edición no se subió.'),
+        )
       : await driveStage(binding.binding, await this.currentBytes());
     host.setDriveMessage('Subiendo a Drive…');
     try {
       const result = await driveSync(pending.id);
-      if (result.status === 'conflict') { host.driveConflict(pending.id); host.notify(result.message, 'error'); return; }
+      if (result.status === 'conflict') {
+        host.driveConflict(pending.id);
+        host.notify(result.message, 'error');
+        return;
+      }
       if (!result.opened) throw new Error('No se pudo confirmar el archivo guardado.');
       const saved = result.opened;
       await host.draftsWritten().catch(() => {});
@@ -99,7 +155,9 @@ export class DocumentOutput {
       }
       host.notify(result.message, 'success');
     } catch (error) {
-      throw new Error(`${errorMessage(error)} Puedes reintentarlo en Biblioteca → Google Drive → Ediciones pendientes.`);
+      throw new Error(
+        `${errorMessage(error)} Puedes reintentarlo en Biblioteca → Google Drive → Ediciones pendientes.`,
+      );
     }
   }
 
@@ -107,7 +165,10 @@ export class DocumentOutput {
    * copy or a download; `copy` always asks for a new file. `keepEditing` keeps Editar PDF open. */
   async save(options?: { keepEditing?: boolean; copy?: boolean }) {
     const { host } = this;
-    if (host.draft()) { host.notify('Aplica o descarta la edición antes de guardar el PDF.'); return; }
+    if (host.draft()) {
+      host.notify('Aplica o descarta la edición antes de guardar el PDF.');
+      return;
+    }
     if (!this.saving) await host.writeLive().catch(() => {});
     const doc = host.current();
     if (!doc || host.busy() || host.loading() || this.saving) return;
@@ -115,7 +176,10 @@ export class DocumentOutput {
     this.saving = true;
     host.setBusy('download');
     try {
-      if (doc.drive && !options?.copy) { await this.saveToDrive(doc, keepEditing); return; }
+      if (doc.drive && !options?.copy) {
+        await this.saveToDrive(doc, keepEditing);
+        return;
+      }
       if (doc.drive) host.setDriveMessage('Guardando una copia…');
       if (isNativePdfDocument(doc.pdf)) {
         const saved = await this.presentFileBacked(doc, 'save');
@@ -125,9 +189,13 @@ export class DocumentOutput {
         }
         return;
       }
-      const saveInPlace = savesInPlace && !options?.copy, copy = isNative && !saveInPlace;
+      const saveInPlace = savesInPlace && !options?.copy,
+        copy = isNative && !saveInPlace;
       const overwrite = saveInPlace && !!doc.nativeSource && !doc.draftSource && !doc.sample;
-      if (overwrite && !doc.modified && annotationFingerprint(host.annotations()) === doc.savedAnnotations) { host.notify('No hay cambios que guardar.'); return; }
+      if (overwrite && !doc.modified && annotationFingerprint(host.annotations()) === doc.savedAnnotations) {
+        host.notify('No hay cambios que guardar.');
+        return;
+      }
       const bytes = await this.currentBytes();
       const saved = overwrite
         ? await saveOriginalPdf(bytes, doc.name, doc.nativeSource!)
@@ -136,30 +204,52 @@ export class DocumentOutput {
       // tab keeps its id, session, draft and library entry, so reopening the
       // original still shows the changes. Only the unsaved marks are cleared.
       if (saved && !isNative) {
-        doc.savedAnnotations = annotationFingerprint(host.annotations()); host.downloaded(doc);
-        host.notify('Descarga iniciada.', 'success'); return;
+        doc.savedAnnotations = annotationFingerprint(host.annotations());
+        host.downloaded(doc);
+        host.notify('Descarga iniciada.', 'success');
+        return;
       }
       if (saved) {
         await host.draftsWritten().catch(() => {});
         const name = typeof saved === 'object' ? saved.name : doc.name;
-        if (await this.reopenSaved(bytes, name, typeof saved === 'object' ? saved.token : undefined, doc, keepEditing)) {
+        if (
+          await this.reopenSaved(bytes, name, typeof saved === 'object' ? saved.token : undefined, doc, keepEditing)
+        ) {
           await discardDraft(doc.id);
           // The saved PDF replaces the previous library entry; after a copy the original stays listed.
           if (!copy && host.current()?.id !== doc.id) await host.retire(doc.id);
         }
-        host.notify(overwrite ? 'Cambios guardados en el PDF original.' : copy ? `Copia guardada. Ahora editas «${name}».` : 'PDF guardado.', 'success');
+        host.notify(
+          overwrite
+            ? 'Cambios guardados en el PDF original.'
+            : copy
+              ? `Copia guardada. Ahora editas «${name}».`
+              : 'PDF guardado.',
+          'success',
+        );
       }
-    } catch (error) { host.notify(errorMessage(error, 'No se pudo guardar el PDF. Tus cambios siguen en Folio.'), 'error'); }
-    finally { this.saving = false; host.setBusy(null); host.setDriveMessage(''); }
+    } catch (error) {
+      host.notify(errorMessage(error, 'No se pudo guardar el PDF. Tus cambios siguen en Folio.'), 'error');
+    } finally {
+      this.saving = false;
+      host.setBusy(null);
+      host.setDriveMessage('');
+    }
   }
 
   /** Prints through the system: phones and tablets hand the PDF to their print sheet (anchored on iPad). */
   async print(anchor?: Anchor) {
     const { host } = this;
-    if (host.draft()) { host.notify('Aplica o descarta la edición antes de imprimir el PDF.'); return; }
+    if (host.draft()) {
+      host.notify('Aplica o descarta la edición antes de imprimir el PDF.');
+      return;
+    }
     const doc = host.current();
     if (!doc || host.busy()) return;
-    if (!doc.canPrint) { host.notify('Este PDF no permite imprimir.', 'error'); return; }
+    if (!doc.canPrint) {
+      host.notify('Este PDF no permite imprimir.', 'error');
+      return;
+    }
     host.setBusy('print');
     try {
       if (isNative && isMobile) {
@@ -167,18 +257,33 @@ export class DocumentOutput {
         else await printPdf(await this.annotated(doc), doc.name, doc.nativeSource, anchor);
       }
       // Print the PDF's own bytes: the reader's preview leaves out its original annotations.
-      else await printRendered(doc.canAnnotate ? await this.annotated(doc) : new Uint8Array(doc.bytes), doc.password,
-        (page, total) => host.notify(`Preparando impresión… página ${page} de ${total}`), host.dismissNotice);
-    } catch (error) { host.notify(errorMessage(error, 'No se pudo preparar la impresión.'), 'error'); }
-    finally { host.setBusy(null); }
+      else
+        await printRendered(
+          doc.canAnnotate ? await this.annotated(doc) : new Uint8Array(doc.bytes),
+          doc.password,
+          (page, total) => host.notify(`Preparando impresión… página ${page} de ${total}`),
+          host.dismissNotice,
+        );
+    } catch (error) {
+      host.notify(errorMessage(error, 'No se pudo preparar la impresión.'), 'error');
+    } finally {
+      host.setBusy(null);
+    }
   }
 
   /** The system's share sheet (anchored on iPad). */
   async share(anchor?: Anchor) {
-    const { host } = this, doc = host.current(); if (!doc || host.busy() || this.saving) return;
+    const { host } = this,
+      doc = host.current();
+    if (!doc || host.busy() || this.saving) return;
     host.setBusy('download');
-    try { if (isNativePdfDocument(doc.pdf)) await this.presentFileBacked(doc, 'share', anchor); else await sharePdf(await this.annotated(doc), doc.name, doc.nativeSource, anchor); }
-    catch (error) { host.notify(errorMessage(error, 'No se pudo compartir el PDF.'), 'error'); }
-    finally { host.setBusy(null); }
+    try {
+      if (isNativePdfDocument(doc.pdf)) await this.presentFileBacked(doc, 'share', anchor);
+      else await sharePdf(await this.annotated(doc), doc.name, doc.nativeSource, anchor);
+    } catch (error) {
+      host.notify(errorMessage(error, 'No se pudo compartir el PDF.'), 'error');
+    } finally {
+      host.setBusy(null);
+    }
   }
 }

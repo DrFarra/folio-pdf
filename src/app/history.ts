@@ -8,7 +8,9 @@ export type HistoryHost = {
   /** Something else holds the document now (an unapplied edit, an operation, Editar writing). */
   blocked: () => boolean;
   /** Undo or redo of Editar's live document, and whether one is open. */
-  liveOpen: () => boolean; stepLive: (direction: 'undo' | 'redo') => void; writeLive: () => Promise<void>;
+  liveOpen: () => boolean;
+  stepLive: (direction: 'undo' | 'redo') => void;
+  writeLive: () => Promise<void>;
   /** The document as an undo step that holds its PDF. */
   snapshot: () => History;
   /** Reopens a PDF snapshot; on failure the step goes back where it came from. */
@@ -32,13 +34,17 @@ export class UndoHistory {
   private gesture: string | undefined;
 
   /** At most 50 steps, 20 of them PDF snapshots, within the memory budget. */
-  trim(stack: History[]) { trimHistory(stack, this.host.budget()); }
+  trim(stack: History[]) {
+    trimHistory(stack, this.host.budget());
+  }
 
   /** Records a step (one per `gesture`) and forgets what was undone. False when the step is too large to keep. */
   record(step: History, gesture?: string) {
     if (!gesture || this.gesture !== gesture) this.undo.push(step);
     this.gesture = gesture;
-    this.trim(this.undo); this.redo = []; this.host.changed();
+    this.trim(this.undo);
+    this.redo = [];
+    this.host.changed();
     return !!gesture || this.undo.at(-1) === step;
   }
 
@@ -50,12 +56,30 @@ export class UndoHistory {
     const step = from.pop();
     if (!step) return;
     this.gesture = undefined;
-    if (step.session) { to.push(step); host.stepLive(direction); return; }
+    if (step.session) {
+      to.push(step);
+      host.stepLive(direction);
+      return;
+    }
     // The PDF before Editar replaces the live document's: what it holds now is written first, to redo.
-    if (direction === 'undo' && step.bytes && host.liveOpen()) { void host.writeLive().catch(() => {}).then(() => { to.push(host.snapshot()); this.trim(to); return host.restore(step, from, to); }); return; }
+    if (direction === 'undo' && step.bytes && host.liveOpen()) {
+      void host
+        .writeLive()
+        .catch(() => {})
+        .then(() => {
+          to.push(host.snapshot());
+          this.trim(to);
+          return host.restore(step, from, to);
+        });
+      return;
+    }
     to.push(step.bytes ? host.snapshot() : { ...host.current() });
     this.trim(to);
-    if (step.bytes) { void host.restore(step, from, to); return; }
-    host.apply(step.annotations, step.bookmarks); host.changed();
+    if (step.bytes) {
+      void host.restore(step, from, to);
+      return;
+    }
+    host.apply(step.annotations, step.bookmarks);
+    host.changed();
   }
 }

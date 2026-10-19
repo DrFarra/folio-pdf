@@ -11,18 +11,32 @@ const output = path.join(root, 'test-results');
 await mkdir(output, { recursive: true });
 const chrome = findChrome();
 assert(chrome, 'CHROME_PATH debe apuntar a Chrome, Edge o Chromium.');
-const port = process.env.FOLIO_FOCUS_PORT || '4199', origin = `http://127.0.0.1:${port}`;
-const preview = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'),
-  'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'], { cwd: root, stdio: 'pipe', windowsHide: true });
-let log = '', browser;
-preview.stdout.on('data', chunk => { log += chunk; });
-preview.stderr.on('data', chunk => { log += chunk; });
-const results = [], errors = [];
+const port = process.env.FOLIO_FOCUS_PORT || '4199',
+  origin = `http://127.0.0.1:${port}`;
+const preview = spawn(
+  process.execPath,
+  [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', port, '--strictPort'],
+  { cwd: root, stdio: 'pipe', windowsHide: true },
+);
+let log = '',
+  browser;
+preview.stdout.on('data', chunk => {
+  log += chunk;
+});
+preview.stderr.on('data', chunk => {
+  log += chunk;
+});
+const results = [],
+  errors = [];
 async function appearance(locator) {
   return locator.evaluate(element => {
     const style = getComputedStyle(element);
-    return { focused: element === document.activeElement, nativeVisible: element.matches(':focus-visible'),
-      outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) };
+    return {
+      focused: element === document.activeElement,
+      nativeVisible: element.matches(':focus-visible'),
+      outlineStyle: style.outlineStyle,
+      outlineWidth: parseFloat(style.outlineWidth),
+    };
   });
 }
 const ring = state => state.outlineStyle !== 'none' && state.outlineWidth > 0;
@@ -43,7 +57,12 @@ async function keyboardFocus(locator) {
 try {
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) {
-    try { if ((await fetch(origin)).ok) { ready = true; break; } } catch {}
+    try {
+      if ((await fetch(origin)).ok) {
+        ready = true;
+        break;
+      }
+    } catch {}
     if (preview.exitCode !== null) throw new Error(log);
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -90,8 +109,12 @@ try {
 
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
   await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
-  for (const [index, modifier] of [[0, 'Control'], [1, 'Meta']]) {
-    const card = page.locator('.page-plan>article').nth(index), thumbnail = card.locator('.thumbnail-item');
+  for (const [index, modifier] of [
+    [0, 'Control'],
+    [1, 'Meta'],
+  ]) {
+    const card = page.locator('.page-plan>article').nth(index),
+      thumbnail = card.locator('.thumbnail-item');
     const unselectedBorder = await card.evaluate(element => getComputedStyle(element).borderColor);
     // A modifier-click on an already keyboard-focused control is the mixed
     // interaction that can retain the browser's :focus-visible heuristic.
@@ -100,11 +123,19 @@ try {
     await keyboardFocus(thumbnail);
     await thumbnail.click({ modifiers: [modifier] });
     const state = await pointerFocus(thumbnail);
-    assert.equal(await card.locator('input[type=checkbox]').isChecked(), true, 'La multiselección debe seguir funcionando.');
+    assert.equal(
+      await card.locator('input[type=checkbox]').isChecked(),
+      true,
+      'La multiselección debe seguir funcionando.',
+    );
     assert.equal(await card.evaluate(element => element.classList.contains('selected')), true);
     const selectedBorder = await card.evaluate(element => getComputedStyle(element).borderColor);
     assert.notEqual(selectedBorder, unselectedBorder, 'La selección conserva su borde de tarjeta.');
-    results.push({ id: `${modifier.toLowerCase()}-click-thumbnail`, passed: true, browserFocusVisible: state.nativeVisible });
+    results.push({
+      id: `${modifier.toLowerCase()}-click-thumbnail`,
+      passed: true,
+      browserFocusVisible: state.nativeVisible,
+    });
   }
   const checkbox = page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true });
   await checkbox.click({ modifiers: ['Control'] });
@@ -132,13 +163,22 @@ try {
   assert.equal(await page.locator('.app-header input[type=file]').getAttribute('tabindex'), '-1');
   const pagesRail = page.getByRole('button', { name: 'Páginas', exact: true });
   await pagesRail.click();
-  assert.equal((await pointerFocus(pagesRail)).nativeVisible, false, 'Un clic con el ratón no dibuja el anillo de foco.');
+  assert.equal(
+    (await pointerFocus(pagesRail)).nativeVisible,
+    false,
+    'Un clic con el ratón no dibuja el anillo de foco.',
+  );
   await page.getByRole('button', { name: 'Cerrar panel', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Páginas' && !document.querySelector('.sidebar'));
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute('aria-label') === 'Páginas' && !document.querySelector('.sidebar'),
+  );
   results.push({ id: 'closing-panel-returns-focus-to-rail', passed: true });
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, 'focus-modality-results.json'), JSON.stringify({ results, uncaughtErrors: errors }, null, 2));
+  await writeFile(
+    path.join(output, 'focus-modality-results.json'),
+    JSON.stringify({ results, uncaughtErrors: errors }, null, 2),
+  );
   console.log(JSON.stringify({ passed: results.length, results, errors }));
 } finally {
   await browser?.close();

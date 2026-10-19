@@ -4,7 +4,22 @@ import { useLatest } from './latest';
 
 /** What a key press asks for. `undefined` leaves it to the page. */
 export type Shortcut =
-  | { run: 'close-dialog' | 'undo' | 'redo' | 'close-tab' | 'palette' | 'open' | 'find' | 'print' | 'shortcuts' | 'actual-size' | 'escape' | 'settings' | 'help' }
+  | {
+      run:
+        | 'close-dialog'
+        | 'undo'
+        | 'redo'
+        | 'close-tab'
+        | 'palette'
+        | 'open'
+        | 'find'
+        | 'print'
+        | 'shortcuts'
+        | 'actual-size'
+        | 'escape'
+        | 'settings'
+        | 'help';
+    }
   | { run: 'switch-tab' | 'search-step'; step: 1 | -1 }
   | { run: 'save'; copy: boolean; keepEditing?: boolean }
   | { run: 'zoom'; delta: number }
@@ -21,11 +36,14 @@ export type KeyContext = {
   /** A dialog is open. */
   modal: boolean;
   /** Editar PDF is open in the reader's place (desktop), and holds an unapplied edit. */
-  editor: boolean; draft: boolean;
-  busy: boolean; loading: boolean;
+  editor: boolean;
+  draft: boolean;
+  busy: boolean;
+  loading: boolean;
   library: boolean;
   /** Open tabs, and whether one is shown. */
-  tabs: number; tab: boolean;
+  tabs: number;
+  tab: boolean;
   /** Search is open with results. */
   searchResults: boolean;
   canAnnotate: boolean;
@@ -38,7 +56,8 @@ export type KeyContext = {
 /** The shortcut a key press means in `context`, and whether the browser's default
  * action is stopped (it is for every shortcut Folio takes, even one that waits). */
 export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: boolean; shortcut?: Shortcut } {
-  const command = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
+  const command = e.ctrlKey || e.metaKey,
+    key = e.key.toLowerCase();
   // On Windows, WebView2's zoom stays on so that touchpad pinches reach the page as
   // Ctrl+wheel (Tauri ties both together); its key zoom would scale the whole interface.
   const prevent = command && ['+', '=', '-', '0'].includes(e.key);
@@ -56,7 +75,8 @@ export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: 
   }
   // Editar PDF keeps the reader's history, tab and save shortcuts, and none of its others.
   if (editor) {
-    if (command && !field && ['z', 'y'].includes(key)) return take(draft || busy || loading ? undefined : { run: key === 'y' || e.shiftKey ? 'redo' : 'undo' });
+    if (command && !field && ['z', 'y'].includes(key))
+      return take(draft || busy || loading ? undefined : { run: key === 'y' || e.shiftKey ? 'redo' : 'undo' });
     if (command && e.key === 'Tab') return draft ? take() : nextTab(e.shiftKey);
     if (command && key === 'w') return take(!draft && tab ? { run: 'close-tab' } : undefined);
     if (command && key === 's') return take({ run: 'save', keepEditing: true, copy: isNative && e.shiftKey });
@@ -64,7 +84,12 @@ export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: 
     return pass();
   }
   if (command && e.key === 'Tab') return nextTab(e.shiftKey);
-  if (isMac && e.metaKey && ((e.altKey && ['ArrowLeft', 'ArrowRight'].includes(e.key)) || (e.shiftKey && ['[', ']', '{', '}'].includes(e.key)))) return nextTab(['ArrowLeft', '[', '{'].includes(e.key));
+  if (
+    isMac &&
+    e.metaKey &&
+    ((e.altKey && ['ArrowLeft', 'ArrowRight'].includes(e.key)) || (e.shiftKey && ['[', ']', '{', '}'].includes(e.key)))
+  )
+    return nextTab(['ArrowLeft', '[', '{'].includes(e.key));
   // Without a document, ⌘W is left to the window menu.
   if (command && key === 'w' && tab) return take({ run: 'close-tab' });
   if (command && !e.shiftKey && !e.altKey && key === 'k') return take({ run: 'palette' });
@@ -72,17 +97,19 @@ export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: 
   if (command && key === 'f') return take({ run: 'find' });
   if (command && key === 'p') return take({ run: 'print' });
   if (command && key === 's') return take({ run: 'save', copy: isNative && e.shiftKey });
-  if (e.key === 'F3' && (!field || context.searchField) && !busy && !loading && !library && context.searchResults) return take({ run: 'search-step', step: e.shiftKey ? -1 : 1 });
+  if (e.key === 'F3' && (!field || context.searchField) && !busy && !loading && !library && context.searchResults)
+    return take({ run: 'search-step', step: e.shiftKey ? -1 : 1 });
   if (field) return pass();
   if (e.key === '?' && !e.ctrlKey && !e.metaKey) return take({ run: 'shortcuts' });
   if (busy || loading) return pass();
   if (command && key === 'z') return take({ run: e.shiftKey ? 'redo' : 'undo' });
   if (command && key === 'y') return take({ run: 'redo' });
-  if (command && ['+', '=', '-'].includes(e.key)) return take({ run: 'zoom', delta: e.key === '-' ? -.1 : .1 });
+  if (command && ['+', '=', '-'].includes(e.key)) return take({ run: 'zoom', delta: e.key === '-' ? -0.1 : 0.1 });
   if (command && e.key === '0') return take({ run: 'actual-size' });
   if (command || e.altKey || library) return pass();
   // A zoomed page that overflows sideways scrolls with ← and →; PageUp/PageDown still turn pages.
-  if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && context.overflows()) return take({ run: 'scroll', left: e.key === 'ArrowRight' ? 40 : -40 });
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && context.overflows())
+    return take({ run: 'scroll', left: e.key === 'ArrowRight' ? 40 : -40 });
   if (e.key === 'ArrowRight' || e.key === 'PageDown') return take({ run: 'turn', forward: true });
   if (e.key === 'ArrowLeft' || e.key === 'PageUp') return take({ run: 'turn', forward: false });
   if (key === 'h') return pass({ run: 'tool', tool: 'highlight' });
@@ -96,13 +123,16 @@ export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: 
 /** The macOS menu bar's commands, which behave as their keyboard shortcuts. A dialog in front
  * keeps them (⌘W closes it); the inline editor keeps all but settings, help and saving.
  * Zoom needs a document. */
-export function menuShortcut(id: string, context: { modal: boolean; editor: boolean; document: boolean }): Shortcut | undefined {
+export function menuShortcut(
+  id: string,
+  context: { modal: boolean; editor: boolean; document: boolean },
+): Shortcut | undefined {
   if (id === 'close-tab') return { run: context.modal ? 'close-dialog' : 'close-tab' };
-  if (context.modal || context.editor && !['settings', 'help', 'save', 'save-copy'].includes(id)) return undefined;
+  if (context.modal || (context.editor && !['settings', 'help', 'save', 'save-copy'].includes(id))) return undefined;
   if (id === 'settings' || id === 'help' || id === 'print' || id === 'find') return { run: id };
   if (id === 'save' || id === 'save-copy') return { run: 'save', keepEditing: true, copy: id === 'save-copy' };
   if (!context.document) return undefined;
-  if (id === 'zoom-in' || id === 'zoom-out') return { run: 'zoom', delta: id === 'zoom-in' ? .1 : -.1 };
+  if (id === 'zoom-in' || id === 'zoom-out') return { run: 'zoom', delta: id === 'zoom-in' ? 0.1 : -0.1 };
   if (id === 'zoom-reset') return { run: 'actual-size' };
   return undefined;
 }
@@ -111,7 +141,9 @@ export function menuShortcut(id: string, context: { modal: boolean; editor: bool
 export function useKeyboard(handle: (event: KeyboardEvent) => void) {
   const live = useLatest(handle);
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => { if (!event.defaultPrevented) live.current(event); };
+    const listener = (event: KeyboardEvent) => {
+      if (!event.defaultPrevented) live.current(event);
+    };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
   }, []);

@@ -14,10 +14,28 @@ export function useAppPreferences() {
   const preferencesRef = useRef({ rememberRecent, defaultZoom });
   useEffect(() => {
     preferencesRef.current = { rememberRecent, defaultZoom };
-    try { localStorage.setItem('folio.remember', String(rememberRecent)); localStorage.setItem('folio.defaultZoom', defaultZoom); } catch { /* Settings are still usable for this session. */ }
+    try {
+      localStorage.setItem('folio.remember', String(rememberRecent));
+      localStorage.setItem('folio.defaultZoom', defaultZoom);
+    } catch {
+      /* Settings are still usable for this session. */
+    }
   }, [rememberRecent, defaultZoom]);
   useEffect(() => {
-    try { localStorage.setItem('folio.readingPreferences', JSON.stringify(readingPreferences)); } catch { /* Preferences remain active for this session. */ }
+    try {
+      localStorage.setItem('folio.readingPreferences', JSON.stringify(readingPreferences));
+    } catch {
+      /* Preferences remain active for this session. */
+    }
   }, [readingPreferences]);
-  return { rememberRecent, setRememberRecent, defaultZoom, setDefaultZoom, readingPreferences, setReadingPreferences, readingPreferencesRef, preferencesRef };
+  return {
+    rememberRecent,
+    setRememberRecent,
+    defaultZoom,
+    setDefaultZoom,
+    readingPreferences,
+    setReadingPreferences,
+    readingPreferencesRef,
+    preferencesRef,
+  };
 }

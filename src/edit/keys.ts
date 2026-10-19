@@ -6,15 +6,38 @@ import { deleteSelection, duplicateSelection, editText, nudgeSelection, selectIt
 // (Shift, ten), letters pick tools, Intro types in the selected text and Esc
 // deselects, then leaves Editar.
 
-const TOOL_KEYS: Record<string, EditTool> = { v: 'select', t: 'text', i: 'image', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow' };
+const TOOL_KEYS: Record<string, EditTool> = {
+  v: 'select',
+  t: 'text',
+  i: 'image',
+  r: 'rect',
+  o: 'ellipse',
+  l: 'line',
+  a: 'arrow',
+};
 
 export function editKey(store: EditStore, event: KeyboardEvent, leave: () => void): boolean {
-  const state = store.state, command = event.ctrlKey || event.metaKey, key = event.key;
+  const state = store.state,
+    command = event.ctrlKey || event.metaKey,
+    key = event.key;
   if (state.draft) return false;
   const selection = state.selection;
-  if ((key === 'Delete' || key === 'Backspace') && selection) { event.preventDefault(); void deleteSelection(store); return true; }
-  if (command && !event.shiftKey && key.toLowerCase() === 'd' && selection) { event.preventDefault(); duplicateSelection(store); return true; }
-  const arrows: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+  if ((key === 'Delete' || key === 'Backspace') && selection) {
+    event.preventDefault();
+    void deleteSelection(store);
+    return true;
+  }
+  if (command && !event.shiftKey && key.toLowerCase() === 'd' && selection) {
+    event.preventDefault();
+    duplicateSelection(store);
+    return true;
+  }
+  const arrows: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+    ArrowUp: [0, 1],
+    ArrowDown: [0, -1],
+  };
   if (arrows[key] && selection && !command) {
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;
@@ -23,21 +46,46 @@ export function editKey(store: EditStore, event: KeyboardEvent, leave: () => voi
   }
   if (command && !event.shiftKey && key.toLowerCase() === 'a' && store.doc) {
     // The selection's page, or the page most in view.
-    const view = document.querySelector('.reading-area')?.getBoundingClientRect(), shown = (node: Element) => { const box = node.getBoundingClientRect(); return view ? Math.max(0, Math.min(box.bottom, view.bottom) - Math.max(box.top, view.top)) : 0; };
-    const page = selection?.page ?? Number([...document.querySelectorAll('.edit-layer')].sort((a, b) => shown(b) - shown(a))[0]?.getAttribute('data-edit-page'));
+    const view = document.querySelector('.reading-area')?.getBoundingClientRect(),
+      shown = (node: Element) => {
+        const box = node.getBoundingClientRect();
+        return view ? Math.max(0, Math.min(box.bottom, view.bottom) - Math.max(box.top, view.top)) : 0;
+      };
+    const page =
+      selection?.page ??
+      Number(
+        [...document.querySelectorAll('.edit-layer')]
+          .sort((a, b) => shown(b) - shown(a))[0]
+          ?.getAttribute('data-edit-page'),
+      );
     if (!page) return false;
     event.preventDefault();
-    void store.items(store.doc, page).then(info => store.set({ notice: '', selection: selectItems(page, info.items.filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph'))) })).catch(() => {});
+    void store
+      .items(store.doc, page)
+      .then(info =>
+        store.set({
+          notice: '',
+          selection: selectItems(
+            page,
+            info.items.filter(item => item.editable && (item.kind !== 'text' || item.level === 'paragraph')),
+          ),
+        }),
+      )
+      .catch(() => {});
     return true;
   }
   if (key === 'Enter' && selection?.kind === 'text' && !selection.others?.length) {
     event.preventDefault();
-    void store.items(store.doc!, selection.page).then(info => editText(store, selection.page, selection.item, info.items)).catch(() => {});
+    void store
+      .items(store.doc!, selection.page)
+      .then(info => editText(store, selection.page, selection.item, info.items))
+      .catch(() => {});
     return true;
   }
   if (key === 'Escape') {
     event.preventDefault();
-    if (selection || state.tool !== 'select' || state.image) store.set({ selection: null, tool: 'select', image: null, notice: '' });
+    if (selection || state.tool !== 'select' || state.image)
+      store.set({ selection: null, tool: 'select', image: null, notice: '' });
     else leave();
     return true;
   }
