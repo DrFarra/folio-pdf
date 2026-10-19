@@ -25,7 +25,10 @@ rules that break things when ignored. Read the files named before changing them.
 |---|---|
 | `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
 | `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection) and the document its session restores. |
-| `live-edit.ts` | Editar's live document: open, write after a pause, step, park, close. `App` sets its `host` on each render, as it does `editStore.actions`. |
+| `live-edit.ts` | Editar's live document: open, write after a pause, step, park, close. |
+| `persistence.ts` | Storing a tab: session, draft, pending Drive edit; shared and queued writes. |
+| `document-output.ts` | Saving (over the file, a copy, Drive, a download), sharing and printing, with the annotations written in. |
+| `palette-commands.tsx` | The command palette's entries for the current state. |
 | `reader-zoom.ts` | Zoom mode and scale, wheel, trackpad and pinch zoom keeping a point in place. |
 | `reader-navigation.ts` | The page being read (`usePageTracking`, smooth jumps), touch taps and single-page swipes. |
 | `search.ts` | Text index, query with its typing pause, results, recent searches. |
@@ -33,7 +36,7 @@ rules that break things when ignored. Read the files named before changing them.
 | `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave. |
 | `notices.tsx`, `theme.ts`, `print.ts`, `ink-preferences.ts`, `desktop-window.ts` | Toasts and the activity capsule, the theme, desktop printing, drawing preferences, the window's controls. |
 
-Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
+`LiveEdit`, `Persistence` and `DocumentOutput` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
 
 ## A document's life
 
@@ -41,8 +44,8 @@ Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`
 2. **Read**: `pageStack` renders `PDFPage` per page, keyed by page number; a new revision swaps pixels in place.
 3. **Annotate**: annotations live in React state (`commitAnnotations`, undo stack) and the session (`storage.ts`); written into the PDF only on save/export (`exportAnnotated` → `writeAnnotations`).
 4. **Edit content**: `applyOperation` → `exportAnnotated` (skipped when unchanged, `bytesAnnotations`) → `processPdf` → `openDocument(output, { preserveHistory, quiet })` → undo snapshot. `quiet` keeps scroll and hides the loading screen. Desktop Editar instead changes a live document (`LiveEdit` in `src/app/live-edit.ts` around `editStore.session`, see `docs/editar-en-memoria.md`): `session.edit` → the page's version goes up and `PDFPage` draws it from the session; `LiveEdit.write` makes the written PDF the document's bytes after a pause (four times as long as the last write took, at least 0.8 s: a change made while it writes waits, «Guardando el cambio…»); leaving Editar reopens the reader once and parks the live document (`LiveEdit.park`, up to `PARK_LIMIT`), so its steps still undo one by one; switching documents closes it (`LiveEdit.close`) and folds its steps into one.
-5. **Draft**: every modified revision is stored as a draft (`ensureDraft`, IndexedDB on web, Rust store natively) and recovered on reopen.
-6. **Save**: `download()` → `savePdf` / `saveOriginalPdf` / Drive (`saveDriveDocument`). Native writes need an output token from `choose_output`/`choose_export`/`choose_folder` and go through `write_*` (`atomic_write`, `protect_original`).
+5. **Draft**: every modified revision is stored as a draft (`Persistence.draft`, IndexedDB on web, Rust store natively) and recovered on reopen.
+6. **Save**: `DocumentOutput.save` → `savePdf` / `saveOriginalPdf` / Drive. Native writes need an output token from `choose_output`/`choose_export`/`choose_folder` and go through `write_*` (`atomic_write`, `protect_original`).
 
 ## Rules that bite
 

@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowDownToLine, BookOpen, Bookmark,
-  ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Cloud, FileText, FolderOpen,
-  PenLine, Eraser, Highlighter, Info, Layers, ListTree, LoaderCircle,
-  Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, MousePointer2,
-  Plus, Printer, Redo2, Search,
-  Settings, Settings2, StickyNote, Undo2, Upload, X, Wrench, Scissors, FilePlus2, Moon, Sun, Keyboard, Hash, Share2, Pencil, ZoomIn, ZoomOut,
-} from 'lucide-react';
+import { BookOpen, Bookmark, ChevronDown, ChevronLeft, Cloud, Info, Layers, ListTree, LoaderCircle, Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, Plus, Redo2, Undo2, Upload, X, Wrench, Hash } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import PDFPage, { Thumbnail } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
@@ -14,19 +7,19 @@ import IconButton from './components/IconButton';
 import DocumentLibrary from './components/DocumentLibrary';
 import NotePopover from './components/NotePopover';
 import { DriveBrowser, TransferCard, advance, type Transfer } from './components/DriveBrowser';
-import { driveLookup, driveOpen, driveStage, driveStageNative, driveStatus as readDriveStatus, driveSync, type DriveBinding, type DriveOpened } from './drive';
+import { driveLookup, driveOpen, driveStatus as readDriveStatus, type DriveBinding, type DriveOpened } from './drive';
 import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentTabStrip from './components/DocumentTabStrip';
 import DocumentOutline from './components/DocumentOutline';
 import ViewSettings from './components/ViewSettings';
-import { exportAnnotated, formatSize, plural, readOutline, readPageLabels, readPageLabel } from './pdf';
+import { formatSize, plural, readOutline, readPageLabels, readPageLabel } from './pdf';
 import { errorMessage } from './errors';
-import { isNativePdfDocument, nativePdfPageAnnotations, subscribeNativePdfAnnotations } from './nativePdf';
+import { isNativePdfDocument, subscribeNativePdfAnnotations } from './nativePdf';
 import { migrateLegacyNativePage } from './native-session';
 import type { NativeDocument } from './platform';
 import { processPdf } from './engine/client';
 import { readDocument, type OpenSource } from './app/document-reader';
-import { DEFAULT_HIGHLIGHT_COLOR, MAX_ZOOM, SAMPLE_NAME, annotationFingerprint, copyName, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, trimHistory as trimSteps, uid, type DocumentTab, type History, type NoteDraft, type OpenContext, type TabView } from './app/model';
+import { DEFAULT_HIGHLIGHT_COLOR, MAX_ZOOM, SAMPLE_NAME, annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, trimHistory as trimSteps, uid, type DocumentTab, type History, type NoteDraft, type OpenContext, type TabView } from './app/model';
 import type { Area, Operation, PageEntry } from './engine/operations.ts';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
@@ -48,11 +41,13 @@ import { useInkPreferences } from './app/ink-preferences';
 import { useDesktopWindow } from './app/desktop-window';
 import { useTheme } from './app/theme';
 import { Notices, useNotices } from './app/notices';
-import { printRendered } from './app/print';
 import { useReaderZoom } from './app/reader-zoom';
 import { usePageTracking, useReaderTaps, useSwipePages } from './app/reader-navigation';
 import { LiveEdit } from './app/live-edit';
 import { openedDocument } from './app/opened-document';
+import { Persistence } from './app/persistence';
+import { paletteCommands } from './app/palette-commands';
+import { DocumentOutput } from './app/document-output';
 import { useDocumentSearch } from './app/search';
 import { readShortcut, useKeyboard, type Shortcut } from './app/shortcuts';
 import { useAndroidBack, useDesktopDrops, useMacMenu, usePreserveOnLeave, useSystemOpens, useWindowCloseGuard } from './app/native-events';
@@ -75,16 +70,16 @@ import { ActivityPill } from './components/ActivityPill';
 import { ColumnSelectionPreview } from './components/ColumnSelectionPreview';
 import { addHighlights } from './highlight-merge';
 import { AnnotationsPanel } from './components/AnnotationsPanel';
-import { CommandPalette, type Command } from './components/CommandPalette';
+import { CommandPalette } from './components/CommandPalette';
 import { WhatsNew, shouldShowWhatsNew } from './components/WhatsNew';
 import { useEdgeSwipeBack } from './edge-swipe';
 import { PencilPalette, type PencilAction } from './components/PencilPalette';
 import { clearRecentSearches, rememberSearch } from './search-snippet';
-import { TabletReaderHeader, TabletAnnotationDock } from './components/TabletReaderControls';
+import { TabletReaderHeader, TabletAnnotationDock, TabletSearchBar } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
-import { isDesktop, isNative, isIOS, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, savePdf, saveOriginalPdf, sharePdf, printPdf, presentNativePdf, nativeDraftDocument, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
-import { clearSavedState, forgetDocument, listLibrary, readLibraryData, readLibrarySource, readSession, rememberDocument, touchDocument, saveSession, readDraft, storeDraft, discardDraft } from './storage';
+import { isDesktop, isNative, isIOS, isMobile, isMac, setReaderChrome, shortcutLabel, pickNativeDocuments, nativeDraftDocument, openExternalUrl, prunePrivateCopies, copyNativeText, saveExport, setKeepAwake, haptic, type Anchor } from './platform';
+import { clearSavedState, forgetDocument, listLibrary, readLibraryData, readLibrarySource, readSession, rememberDocument, touchDocument, saveSession, readDraft } from './storage';
 import type { Annotation, BookmarkNode, LoadedDocument, OutlineEntry, PDFNavigationTarget, RecentDocument, Session, SideTab, Tool } from './types';
 
 const NO_ANNOTATIONS: Annotation[] = [];
@@ -99,6 +94,8 @@ export default function App() {
   const editingRef = useRef(editing); editingRef.current = editing;
   const editStore = useMemo(() => new EditStore(), []);
   const liveEdit = useMemo(() => new LiveEdit(), []);
+  const persistence = useMemo(() => new Persistence(), []);
+  const output = useMemo(() => new DocumentOutput(), []);
   const [readerChromeHidden, setReaderChromeHidden] = useState(false);
   const [doc, setDoc] = useState<LoadedDocument | null>(null);
   const [loading, setLoading] = useState(true);
@@ -222,15 +219,10 @@ export default function App() {
   readingState.current = { page, bookmarks };
   const undoStack = useRef<History[]>([]);
   const redoStack = useRef<History[]>([]);
-  const draftSave = useRef<Promise<void>>(Promise.resolve());
   const sessionSaved = useRef<{ doc: LoadedDocument; annotations: Annotation[]; bookmarks: BookmarkNode[] } | null>(null);
-  const draftWrites = useRef(new WeakMap<LoadedDocument, Promise<void>>());
-  const tabWrites = useRef(new Map<string, { signature: string; promise: Promise<void> }>());
-  const driveWrites = useRef(new Map<string, { signature: string; promise: Promise<void> }>());
   const librarySave = useRef<Promise<void>>(Promise.resolve());
   const busyRef = useRef(busy);
   busyRef.current = busy;
-  const saving = useRef(false);
   const dragCounter = useRef(0);
   const passwordCancelled = useRef(false);
   const forgottenIds = useRef(new Set<string>());
@@ -298,57 +290,7 @@ export default function App() {
     if (tab.doc.outdated) void reopenWritten(tab.doc);
   }
   function setWorkBenchClosed() { setWorkbench(null); setInfo(false); setLibrary(false); setNoteDraft(null); setPageJump(false); setViewSettings(false); setAnnotationOptions(false); setCapabilityNotice(false); }
-  function ensureDraft(document: LoadedDocument): Promise<void> {
-    if (!document.modified || isNativePdfDocument(document.pdf) || forgottenIds.current.has(document.id)) return Promise.resolve();
-    const existing = draftWrites.current.get(document); if (existing) return existing;
-    const operation = draftSave.current.catch(() => {}).then(async () => {
-      if (forgottenIds.current.has(document.id)) return;
-      // A revision already replaced (Editar writes one per pause) is not written: the newer one, queued after it, is.
-      if (docRef.current !== document && !tabsRef.current.some(tab => tab.doc === document)) return;
-      await storeDraft(document.id, document.bytes);
-      if (document.draftSource && !forgottenIds.current.has(document.id)) {
-        await rememberDocument({ id: document.id, name: document.name, size: document.size, pages: document.pdf.numPages, openedAt: Date.now(), draft: true });
-      }
-    });
-    draftSave.current = operation; draftWrites.current.set(document, operation);
-    void operation.catch(() => { draftWrites.current.delete(document); });
-    return operation;
-  }
-  function persistTab(tab: DocumentTab, stageDrive = true): Promise<void> {
-    if (forgottenIds.current.has(tab.doc.id)) return Promise.resolve();
-    const fingerprint = annotationFingerprint(tab.annotations);
-    const signature = JSON.stringify([tab.doc.revision, fingerprint, tab.page, tab.bookmarks, tab.doc.nativeKnownPages, tab.doc.nativeOriginalRefs, tab.doc.nativeLegacySession]);
-    const key = `${tab.key}:${stageDrive}`;
-    const previous = tabWrites.current.get(key);
-    if (previous?.signature === signature) return previous.promise;
-    const operation = (previous?.promise || Promise.resolve()).catch(() => {}).then(async () => {
-      // Session metadata is small. Persist it before any PDF export, including
-      // on Android background events; an earlier failed draft is retryable.
-      // A session that could not be read is kept until the user changes something.
-      if (!unreadSessions.current.has(tab.doc.id)) {
-        const saved = await saveSession(tab.doc.id, { annotations: tab.annotations, lastPage: tab.page, bookmarks: tab.bookmarks, documentRevision: tab.doc.revision, nativeKnownPages: tab.doc.nativeKnownPages, nativeOriginalRefs: tab.doc.nativeOriginalRefs, nativeSavedAnnotations: tab.doc.savedAnnotations, nativeLegacySession: tab.doc.nativeLegacySession });
-        if (!saved) throw new Error(`No se pudieron guardar tus cambios en ${here}.`);
-      }
-      await ensureDraft(tab.doc);
-      if (!stageDrive || !tab.doc.drive?.editable || !tab.doc.modified && fingerprint === tab.doc.savedAnnotations) return;
-      const binding = tab.doc.drive.binding, edit = `${tab.doc.revision}:${fingerprint}`;
-      const staged = driveWrites.current.get(binding);
-      if (staged?.signature === edit) { await staged.promise; return; }
-      const stage = (staged?.promise || Promise.resolve()).catch(() => {}).then(async () => {
-        if (isNativePdfDocument(tab.doc.pdf)) {
-          if (tab.doc.nativeLegacySession) throw new Error('Guarda el PDF de Drive antes de cerrar para recuperar todas las anotaciones anteriores.');
-          const removed = (tab.doc.nativeOriginalRefs || []).filter(ref => !tab.annotations.some(a => a.nativeSourceRef === ref));
-          await driveStageNative(binding, tab.doc.nativeSource!, tab.annotations, removed);
-        } else await driveStage(binding, await annotatedBytes(tab.doc, tab.annotations, true));
-      });
-      driveWrites.current.set(binding, { signature: edit, promise: stage });
-      void stage.catch(() => { if (driveWrites.current.get(binding)?.promise === stage) driveWrites.current.delete(binding); });
-      await stage;
-    });
-    tabWrites.current.set(key, { signature, promise: operation });
-    void operation.catch(() => { if (tabWrites.current.get(key)?.promise === operation) tabWrites.current.delete(key); });
-    return operation;
-  }
+  const persistTab = (tab: DocumentTab, stageDrive = true) => persistence.tab(tab, stageDrive);
   // An open document stays in memory, so navigation never waits for its session
   // and a failure only marks the tab until the next successful write.
   function persistInBackground(tab: DocumentTab) {
@@ -469,7 +411,7 @@ export default function App() {
       const loaded = opened.doc;
       // A recovered draft is already on disk: writing it back sends the whole PDF to Folio again,
       // which on Windows holds the window for seconds (238 MB: it stopped answering and closed).
-      if (!context && modified) draftWrites.current.set(loaded, Promise.resolve());
+      if (!context && modified) persistence.stored(loaded);
       const replacing = !!context?.preserveHistory || !!context?.savedCopy;
       // Opening a document again after deleting its local copy starts a new record.
       if (!replacing) forgottenIds.current.delete(id);
@@ -542,7 +484,7 @@ export default function App() {
 
   useEffect(() => {
     if (!doc?.modified || isNativePdfDocument(doc.pdf) || forgottenIds.current.has(doc.id)) return;
-    void ensureDraft(doc).then(() => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setDraftFailed(false); })
+    void persistence.draft(doc).then(() => { if (docRef.current?.id === doc.id && docRef.current?.revision === doc.revision) setDraftFailed(false); })
       .catch(error => {
         if (docRef.current?.id !== doc.id || docRef.current?.revision !== doc.revision) return;
         // Saving a PDF over the size limit would fail too, so its message replaces the advice.
@@ -674,7 +616,7 @@ export default function App() {
   }, [doc]);
   useEffect(() => {
     let alive = true;
-    if (library || mobileTabs) { setLibraryLoading(true); Promise.allSettled([librarySave.current, draftSave.current]).then(() => listLibrary()).then(items => { if (alive) setRecents(items); }).catch(() => { if (alive) { setRecents([]); notify('No se pudo abrir la biblioteca local.', 'error'); } }).finally(() => { if (alive) setLibraryLoading(false); }); }
+    if (library || mobileTabs) { setLibraryLoading(true); Promise.allSettled([librarySave.current, persistence.draftsWritten]).then(() => listLibrary()).then(items => { if (alive) setRecents(items); }).catch(() => { if (alive) { setRecents([]); notify('No se pudo abrir la biblioteca local.', 'error'); } }).finally(() => { if (alive) setLibraryLoading(false); }); }
     return () => { alive = false; };
   }, [library, mobileTabs, notify]);
   useEffect(() => {
@@ -708,59 +650,22 @@ export default function App() {
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useEffect(() => { void setKeepAwake(reading); }, [reading]);
   useEffect(() => () => { void setKeepAwake(false); }, []);
-  // Everything the palette can do, built when it opens; unavailable actions are left out.
-  function paletteCommands(): Command[] {
-    const list: Command[] = [], add = (group: string, id: string, title: string, run: () => void, icon?: React.ReactNode, hint?: string, keywords?: string) => { list.push({ group, id, title, run, icon, hint, keywords }); };
-    const idle = !busy && !loading;
-    if (doc && idle) {
-      add('Documento', 'save', saveLabel, () => void download(), <ArrowDownToLine size={16} />, shortcutLabel('S'), 'guardar descargar exportar');
-      add('Documento', 'print', 'Imprimir', () => void printDocument(), <Printer size={16} />, shortcutLabel('P'));
-      if (isMobile) add('Documento', 'share', 'Compartir PDF', () => void shareDocument(), <Share2 size={16} />);
-      if (!isNativePdfDocument(doc.pdf)) { add('Documento', 'edit', 'Editar PDF', openEditor, <Pencil size={16} />, undefined, 'texto modificar'); add('Documento', 'tools', 'Herramientas', openTools, <Wrench size={16} />, undefined, 'organizar recortar formulario firmar convertir ocr comparar'); if (doc.canAssemble) add('Documento', 'split', 'Dividir PDF', () => { openTools(); setWorkbench('split'); }, <Scissors size={16} />, undefined, 'separar partes capitulos extraer'); }
-      add('Documento', 'info', 'Información del documento', () => setInfo(true), <Info size={16} />, undefined, 'propiedades metadatos');
-      add('Documento', 'close', 'Cerrar documento', () => { if (activeTabRef.current) void closeTab(activeTabRef.current); }, <X size={16} />, shortcutLabel('W'));
-      add('Navegación', 'jump', 'Ir a página…', () => { setPageInput(String(page)); setPageJump(true); }, <Hash size={16} />, undefined, 'saltar numero');
-      add('Navegación', 'first', 'Primera página', () => goToPage(1), <ChevronLeft size={16} />, undefined, 'inicio principio');
-      add('Navegación', 'last', 'Última página', () => goToPage(doc.pdf.numPages), <ChevronRight size={16} />, undefined, 'final fin');
-      if (returnLocation?.key === activeTabKey && returnLocation.page !== page) add('Navegación', 'back', `Volver a p. ${pageName(returnLocation.page)}`, returnToLocation, <ChevronLeft size={16} />, undefined, 'regresar atras');
-      add('Navegación', 'bookmark', hasBookmarkPage(bookmarks, page) ? 'Quitar marcador de esta página' : 'Guardar marcador de esta página', toggleBookmark, <Bookmark size={16} />, undefined, 'marcar');
-      add('Paneles', 'search', 'Buscar en el PDF', openSearch, <Search size={16} />, shortcutLabel('F'), 'encontrar texto');
-      add('Paneles', 'pages', 'Páginas', () => openExplorer('pages'), <Layers size={16} />, undefined, 'miniaturas');
-      add('Paneles', 'outline', 'Índice', () => openExplorer('outline'), <ListTree size={16} />, undefined, 'capitulos contenido tabla');
-      add('Paneles', 'bookmarks', 'Marcadores', () => openExplorer('bookmarks'), <Bookmark size={16} />);
-      add('Paneles', 'annotations', 'Anotaciones', () => { if (touchLayout) showExplorerTab('annotations'); else setNotesOpen(true); }, <MessageSquare size={16} />, undefined, 'resaltados notas resumen exportar');
-      if (doc.canAnnotate) {
-        add('Anotar', 'highlight', 'Resaltador', () => { setMobileAnnotating(true); activateHighlight(); }, <Highlighter size={16} />, 'H', 'subrayar');
-        add('Anotar', 'note', 'Nota', () => { setMobileAnnotating(true); setTool('note'); }, <StickyNote size={16} />, 'N', 'comentario');
-        add('Anotar', 'draw', 'Lápiz', () => { setMobileAnnotating(true); setTool('draw'); }, <PenLine size={16} />, 'D', 'dibujar rotulador');
-        add('Anotar', 'eraser', 'Goma', () => { setMobileAnnotating(true); setTool('eraser'); }, <Eraser size={16} />, undefined, 'borrar');
-        add('Anotar', 'select', 'Seleccionar texto', () => setTool('select'), <MousePointer2 size={16} />, 'V');
-      }
-      if (undoStack.current.length) add('Anotar', 'undo', 'Deshacer', undo, <Undo2 size={16} />, shortcutLabel('Z'));
-      if (redoStack.current.length) add('Anotar', 'redo', 'Rehacer', redo, <Redo2 size={16} />, shortcutLabel('Z', true));
-      add('Ver', 'zoom-in', 'Acercar', () => changeZoom(.1), <ZoomIn size={16} />, shortcutLabel('+'), 'zoom ampliar');
-      add('Ver', 'zoom-out', 'Alejar', () => changeZoom(-.1), <ZoomOut size={16} />, shortcutLabel('-'), 'zoom reducir');
-      add('Ver', 'fit-page', 'Ajustar página', () => setZoomMode('page'), <Minimize size={16} />, undefined, 'zoom');
-      add('Ver', 'fit-width', 'Ajustar ancho', () => setZoomMode('width'), <Maximize size={16} />, undefined, 'zoom');
-      add('Ver', 'actual', 'Tamaño real', () => { setCustomScale(1); setZoomMode('custom'); }, <Search size={16} />, shortcutLabel('0'), 'zoom 100');
-      for (const [tone, label] of [['normal', 'Páginas normales'], ['sepia', 'Páginas en sepia'], ['dark', 'Páginas oscuras']] as const) if (readingPreferences.pageTone !== tone) add('Ver', `tone-${tone}`, label, () => setReadingPreferences(current => ({ ...current, pageTone: tone })), tone === 'dark' ? <Moon size={16} /> : <Sun size={16} />, undefined, 'color pagina noche lectura invertir');
-      add('Ver', 'view', 'Vista del documento', () => setViewSettings(true), <Settings2 size={16} />, undefined, 'lectura continua pagina separacion');
-      for (const entry of (outline || []).filter(item => item.page !== null).slice(0, 400)) add('Capítulos', `outline-${entry.page}-${entry.title}`, entry.title, () => { if (!returnLocation) rememberLocation(); goToPage(entry.page!, false); }, <BookOpen size={16} />, `p. ${pageName(entry.page!)}`, 'indice seccion');
-    }
-    for (const tab of tabs) if (tab.key !== activeTabKey) add('Documentos abiertos', `tab-${tab.key}`, tab.doc.name, () => void switchTab(tab.key), <FileText size={16} />, undefined, 'pestaña cambiar');
-    const open = new Set(tabs.map(tab => tab.doc.id));
-    for (const recent of recents.filter(item => !open.has(item.id)).slice(0, 50)) add('Biblioteca', `recent-${recent.id}`, recent.name, () => void reopenRecent(recent), <BookOpen size={16} />, undefined, 'abrir reciente documento');
-    add('General', 'open', 'Abrir PDF…', () => void chooseFile(), <Upload size={16} />, shortcutLabel('O'), 'importar archivo');
-    add('General', 'create', 'Crear PDF', () => setCreating(true), <FilePlus2 size={16} />, undefined, 'nuevo combinar imagenes');
-    if (driveAvailable) add('General', 'drive', 'Google Drive', () => { setLibrary(true); setDriveLibrary(true); }, <Cloud size={16} />, undefined, 'nube');
-    if (doc) add('General', 'library', 'Biblioteca', () => void returnToLibrary(), <FolderOpen size={16} />, undefined, 'inicio documentos');
-    add('General', 'theme-dark', 'Tema oscuro', () => chooseTheme('dark'), <Moon size={16} />, undefined, 'noche apariencia');
-    add('General', 'theme-light', 'Tema claro', () => chooseTheme('light'), <Sun size={16} />, undefined, 'dia apariencia');
-    add('General', 'settings', 'Ajustes', () => setSettings(true), <Settings size={16} />, undefined, 'preferencias');
-    add('General', 'shortcuts', 'Atajos de teclado', () => setShortcutsOpen(true), <Keyboard size={16} />, '?');
-    add('General', 'help', 'Ayuda', () => setHelp(true), <CircleHelp size={16} />);
-    return list;
-  }
+  // The palette's commands, built when it opens.
+  const commands = () => paletteCommands({ doc, idle: !busy && !loading, pageName, saveLabel, bookmarked: hasBookmarkPage(bookmarks, page),
+    canUndo: undoStack.current.length > 0, canRedo: redoStack.current.length > 0, returnPage: returnLocation?.key === activeTabKey && returnLocation.page !== page ? returnLocation.page : null,
+    pageTone: readingPreferences.pageTone, outline, driveAvailable,
+    tabs: tabs.filter(tab => tab.key !== activeTabKey).map(tab => ({ key: tab.key, name: tab.doc.name })),
+    recents: recents.filter(item => !tabs.some(tab => tab.doc.id === item.id)),
+    run: { save: () => void download(), print: () => void printDocument(), share: () => void shareDocument(), edit: openEditor, tools: openTools,
+      split: () => { openTools(); setWorkbench('split'); }, info: () => setInfo(true), close: closeActiveTab,
+      jump: () => { setPageInput(String(page)); setPageJump(true); }, goTo: number => goToPage(number), back: returnToLocation, bookmark: toggleBookmark,
+      chapter: number => { if (!returnLocation) rememberLocation(); goToPage(number, false); },
+      search: openSearch, explorer: openExplorer, annotations: () => { if (touchLayout) showExplorerTab('annotations'); else setNotesOpen(true); },
+      highlight: () => { setMobileAnnotating(true); activateHighlight(); }, tool: next => { if (next !== 'select') setMobileAnnotating(true); setTool(next); }, undo, redo,
+      zoom: changeZoom, fit: setZoomMode, actualSize: () => { setCustomScale(1); setZoomMode('custom'); }, tone: pageTone => setReadingPreferences(current => ({ ...current, pageTone })),
+      view: () => setViewSettings(true), switchTab: key => void switchTab(key), reopen: recent => void reopenRecent(recent),
+      open: () => void chooseFile(), create: () => setCreating(true), drive: () => { setLibrary(true); setDriveLibrary(true); }, library: () => void returnToLibrary(),
+      theme: chooseTheme, settings: () => setSettings(true), shortcuts: () => setShortcutsOpen(true), help: () => setHelp(true) } });
   // The outline heading a page belongs to, shown while scrubbing.
   const outlineSection = useCallback((target: number) => {
     let best: { title: string; page: number } | undefined;
@@ -1142,15 +1047,10 @@ export default function App() {
       if (operation.operation === 'compress') notify(`PDF reducido de ${formatSize(source.length)} a ${formatSize(output.length)}.`, 'success');
     } finally { setBusy(null); }
   }
-  /** The PDF with Folio's annotations written into it (`incremental`: appended, keeping the original bytes). */
-  async function annotatedBytes(current: LoadedDocument, items = annotationRef.current, incremental = false) {
-    return current.canAnnotate ? exportAnnotated(current.bytes, items, current.password, undefined, incremental) : current.bytes;
-  }
-  async function currentBytes() {
-    const current = docRef.current; if (!current) throw new Error('No hay documento abierto.');
-    if (isNativePdfDocument(current.pdf)) throw new Error('Usa Guardar una copia para guardar este PDF.');
-    return annotatedBytes(current, annotationRef.current, !!current.drive);
-  }
+  const annotatedBytes = (current: LoadedDocument, items?: Annotation[], incremental?: boolean) => output.annotated(current, items, incremental);
+  const download = (options?: { keepEditing?: boolean; copy?: boolean }) => output.save(options);
+  const printDocument = (anchor?: Anchor) => output.print(anchor);
+  const shareDocument = (anchor?: Anchor) => output.share(anchor);
   async function replaceDocument(bytes: Uint8Array, context?: { extraction?: { name: string; plan: PageEntry[] } }) {
     const current = docRef.current; if (!current) return;
     setBusy('edit');
@@ -1195,12 +1095,6 @@ export default function App() {
     if (noteOrigin.current === 'list') setNotesOpen(true);
     if (!mobileAnnotating) setTool('select');
   }
-  async function presentFileBacked(current: LoadedDocument, action: 'save' | 'share' | 'print', anchor?: Anchor) {
-    if (current.nativeLegacySession) for (let number = 1; number <= current.pdf.numPages; number++) await nativePdfPageAnnotations(current.pdf, number);
-    if (current.nativeLegacySession) throw new Error('No se pudieron recuperar todas las anotaciones anteriores. La copia no se guardó.');
-    const removed = (current.nativeOriginalRefs || []).filter(ref => !annotationRef.current.some(annotation => annotation.nativeSourceRef === ref));
-    return presentNativePdf(current.nativeSource!, action === 'save' ? copyName(current.name) : current.name, action, annotationRef.current, removed, anchor);
-  }
   // Mobile keeps private copies of opened PDFs; those of forgotten entries are deleted.
   const pruneCopies = () => { void prunePrivateCopies(tabsRef.current.flatMap(tab => tab.doc.nativeSource ? [tab.doc.nativeSource] : [])).catch(() => {}); };
   // A leftover entry is harmless, so a failure here never reports the save as failed.
@@ -1222,104 +1116,6 @@ export default function App() {
     const binding: DriveBinding = { binding: file.binding, account: file.account, fileId: file.fileId, baseChecksum: file.baseChecksum, editable: file.editable };
     for (const tab of tabsRef.current) if (tab.doc.drive?.account === file.account && tab.doc.drive.fileId === file.fileId) tab.doc.drive = binding;
     publishTabs();
-  }
-  async function saveDriveDocument(current: LoadedDocument, keepEditing: boolean) {
-    const binding = current.drive!;
-    if (!binding.editable) throw new Error('Este archivo tiene permiso de solo lectura en Google Drive.');
-    setDriveMessage('Preparando…');
-    let pending;
-    if (isNativePdfDocument(current.pdf)) {
-      if (current.nativeLegacySession) for (let number = 1; number <= current.pdf.numPages; number++) await nativePdfPageAnnotations(current.pdf, number);
-      if (current.nativeLegacySession) throw new Error('No se recuperaron todas las anotaciones. La edición no se subió.');
-      const removed = (current.nativeOriginalRefs || []).filter(ref => !annotationRef.current.some(a => a.nativeSourceRef === ref));
-      pending = await driveStageNative(binding.binding, current.nativeSource!, annotationRef.current, removed);
-    } else pending = await driveStage(binding.binding, await currentBytes());
-    setDriveMessage('Subiendo a Drive…');
-    try {
-      const result = await driveSync(pending.id);
-      if (result.status === 'conflict') { setDriveConflicts(ids => [...new Set([...ids, pending.id])]); notify(result.message, 'error'); setDriveLibrary(true); setLibrary(true); return; }
-      if (!result.opened) throw new Error('No se pudo confirmar el archivo guardado.');
-      const saved = result.opened;
-      await draftSave.current.catch(() => {});
-      const success = await openDocument(saved.document, saved.document.name, false, saved.document.token, { drive: saved, savedCopy: true, keepEditing, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
-      if (success) {
-        await discardDraft(current.id);
-        // Each Drive revision has its own id: the saved one replaces the previous library entry.
-        if (docRef.current?.id !== current.id) await retireLibraryEntry(current.id);
-      }
-      notify(result.message, 'success');
-    } catch (error) {
-      throw new Error(`${errorMessage(error)} Puedes reintentarlo en Biblioteca → Google Drive → Ediciones pendientes.`);
-    }
-  }
-  async function download(options?: { keepEditing?: boolean; copy?: boolean }) {
-    if (editorDraftRef.current) { notify('Aplica o descarta la edición antes de guardar el PDF.'); return; }
-    if (editStore.session && !saving.current) await liveEdit.write().catch(() => {});
-    const current = docRef.current;
-    if (!current || busyRef.current || loadingRef.current || saving.current) return;
-    const keepEditing = !!options?.keepEditing && workbenchRef.current === 'edit-pdf' && !phoneRef.current;
-    saving.current = true;
-    setBusy('download');
-    try {
-      if (current.drive && !options?.copy) { await saveDriveDocument(current, keepEditing); return; }
-      if (current.drive) setDriveMessage('Guardando una copia…');
-      if (isNativePdfDocument(current.pdf)) {
-        const saved = await presentFileBacked(current, 'save');
-        if (saved && typeof saved === 'object') {
-          const opened = await openDocument(saved, saved.name, false, saved.token, { savedCopy: true, keepEditing, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
-          if (opened) await discardDraft(current.id);
-          notify(`Copia guardada. Ahora editas «${saved.name}».`, 'success');
-        }
-        return;
-      }
-      const saveInPlace = savesInPlace && !options?.copy, copy = isNative && !saveInPlace;
-      const overwrite = saveInPlace && !!current.nativeSource && !current.draftSource && !current.sample;
-      if (overwrite && !current.modified && annotationFingerprint(annotationRef.current) === current.savedAnnotations) { notify('No hay cambios que guardar.'); return; }
-      const bytes = await currentBytes();
-      const saved = overwrite
-        ? await saveOriginalPdf(bytes, current.name, current.nativeSource!)
-        : await savePdf(bytes, saveInPlace ? current.name : copyName(current.name), current.nativeSource);
-      // The web download is an independent copy that may never reach the disk: the
-      // tab keeps its id, session, draft and library entry, so reopening the
-      // original still shows the changes. Only the unsaved marks are cleared.
-      if (saved && !isNative) {
-        current.savedAnnotations = annotationFingerprint(annotationRef.current); downloadedDrafts.current.add(current);
-        publishTabs(); notify('Descarga iniciada.', 'success'); return;
-      }
-      if (saved) {
-        await draftSave.current.catch(() => {});
-        const name = typeof saved === 'object' ? saved.name : current.name;
-        const opened = await openDocument(bytes, name, false, typeof saved === 'object' ? saved.token : undefined,
-          { savedCopy: true, keepEditing, password: current.password, useSession: false, page: readingState.current.page, bookmarks: readingState.current.bookmarks });
-        if (opened) {
-          await discardDraft(current.id);
-          // The saved PDF replaces the previous library entry; after a copy the original stays listed.
-          if (!copy && docRef.current?.id !== current.id) await retireLibraryEntry(current.id);
-        }
-        notify(overwrite ? 'Cambios guardados en el PDF original.' : copy ? `Copia guardada. Ahora editas «${name}».` : 'PDF guardado.', 'success');
-      }
-    } catch (error) { notify(errorMessage(error, 'No se pudo guardar el PDF. Tus cambios siguen en Folio.'), 'error'); }
-    finally { saving.current = false; setBusy(null); setDriveMessage(''); }
-  }
-  async function printDocument(anchor?: Anchor) {
-    if (editorDraftRef.current) { notify('Aplica o descarta la edición antes de imprimir el PDF.'); return; }
-    const current = docRef.current;
-    if (!current || busyRef.current) return;
-    if (!current.canPrint) { notify('Este PDF no permite imprimir.', 'error'); return; }
-    if (isNative && isMobile) {
-      setBusy('print');
-      try { if (isNativePdfDocument(current.pdf)) await presentFileBacked(current, 'print', anchor); else await printPdf(await annotatedBytes(current), current.name, current.nativeSource, anchor); }
-      catch (error) { notify(errorMessage(error, 'No se pudo preparar la impresión.'), 'error'); }
-      finally { setBusy(null); }
-      return;
-    }
-    setBusy('print');
-    try {
-      // Print the PDF's own bytes: the reader's preview leaves out its original annotations.
-      await printRendered(current.canAnnotate ? await annotatedBytes(current) : new Uint8Array(current.bytes), current.password,
-        (page, total) => notify(`Preparando impresión… página ${page} de ${total}`), dismissToast);
-    } catch (error) { notify(errorMessage(error, 'No se pudo preparar la impresión.'), 'error'); }
-    finally { setBusy(null); }
   }
   function goToResult(index: number) {
     if (!results.length) return;
@@ -1344,13 +1140,6 @@ export default function App() {
     const returnFocus = !touchRef.current && !!document.activeElement?.closest('.sidebar');
     visitedSearch.current = null; setSearchOpen(false); setQuery(''); setSidebar(!touchRef.current && sidebarBeforeSearch.current);
     if (returnFocus) focusRail('Buscar en el PDF');
-  }
-  async function shareDocument(anchor?: Anchor) {
-    const current = docRef.current; if (!current || busyRef.current || saving.current) return;
-    setBusy('download');
-    try { if (isNativePdfDocument(current.pdf)) await presentFileBacked(current, 'share', anchor); else await sharePdf(await annotatedBytes(current), current.name, current.nativeSource, anchor); }
-    catch (error) { notify(errorMessage(error, 'No se pudo compartir el PDF.'), 'error'); }
-    finally { setBusy(null); }
   }
   // iPad anchors Share and Print to the control that opened them.
   const anchorOf = (element: Element | null): Anchor | undefined => { const box = element?.getBoundingClientRect(); return box && { left: box.left, top: box.top, width: box.width, height: box.height }; };
@@ -1476,7 +1265,7 @@ export default function App() {
     const pendingIds = tabsRef.current.map(tab => tab.doc.id).filter(id => !forgottenIds.current.has(id));
     for (const id of pendingIds) forgottenIds.current.add(id);
     try {
-      await Promise.allSettled([draftSave.current, librarySave.current]);
+      await Promise.allSettled([persistence.draftsWritten, librarySave.current]);
       await clearSavedState();
       discardOpenTabs(new Set(tabsRef.current.map(tab => tab.doc.id))); pruneCopies();
       setRecents([]); setConfirmClear(false);
@@ -1486,7 +1275,7 @@ export default function App() {
   async function forgetRecent(recent: RecentDocument) {
     forgottenIds.current.add(recent.id);
     try {
-      await Promise.allSettled([draftSave.current, librarySave.current]); await forgetDocument(recent.id);
+      await Promise.allSettled([persistence.draftsWritten, librarySave.current]); await forgetDocument(recent.id);
       discardOpenTabs(new Set([recent.id])); pruneCopies();
       publishTabs(); setRecents(await listLibrary()); setDeleteTarget(null); notify(isDesktop ? 'Documento quitado de la biblioteca. El archivo original no se modificó.' : 'Copia y cambios eliminados. El archivo original no se modificó.', 'success');
     } catch { forgottenIds.current.delete(recent.id); notify(isDesktop ? 'No se pudo quitar el documento de la biblioteca.' : 'No se pudo eliminar el documento de la biblioteca.', 'error'); }
@@ -1524,7 +1313,7 @@ export default function App() {
   const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc && !doc.sample ? { id: doc.id, name: doc.name, page, pages: doc.pdf.numPages } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
-  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={currentBytes} onNotify={message => notify(message, 'success')} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
+  const workbenchPanel = workbench && doc && !isNativePdfDocument(doc.pdf) ? <Workbench key={`${doc.revision}-${workbench}`} doc={doc} page={page} section={workbench} inline={inlineEditing} documentBusy={!!busy} area={editArea} onAreaChange={setEditArea} redactions={redactions} onClose={closeWorkbench} onSelectTool={next => { void selectWorkbenchTool(next); }} onOpenEditor={openEditor} onOpenSection={next => { void openWorkbenchSection(next); }} onDraftChange={setEditorDraft} onEditPageChange={next => { readingState.current.page = next; setPage(next); setPageInput(String(next)); }} onApply={applyOperation} getBytes={() => output.currentBytes()} onNotify={message => notify(message, 'success')} onSave={() => { void download({ keepEditing: true }); }} canSave={!busy && !loading && !editorDraft} onHistory={direction => { if (!busy) { if (direction === 'undo') undo(); else redo(); } }} canUndo={!!undoStack.current.length} canRedo={!!redoStack.current.length} onReplace={replaceDocument} /> : null;
 
   const saveLabel = doc?.drive ? 'Guardar en Drive' : fileSaveLabel;
   // Only an opened file can be updated; otherwise Guardar already asks where to save.
@@ -1564,6 +1353,13 @@ export default function App() {
   const pageEvents = useRef({ onAnnotate, onArea, navigatePDF, commentHighlight, mobilePage, openNote: (_id: string) => {} });
   // Editar writes content edits to the PDF in place and keeps shapes as Folio annotations.
   editStore.doc = doc;
+  output.host = { current: () => docRef.current, annotations: () => annotationRef.current, reading: () => readingState.current, draft: () => editorDraftRef.current,
+    busy: () => !!busyRef.current, loading: () => loadingRef.current, setBusy, setDriveMessage, writeLive: () => editStore.session ? liveEdit.write() : Promise.resolve(),
+    editing: () => workbenchRef.current === 'edit-pdf' && !phoneRef.current, reopen: (source, name, token, context) => openDocument(source, name, false, token, context),
+    draftsWritten: () => persistence.draftsWritten, retire: retireLibraryEntry, downloaded: current => { downloadedDrafts.current.add(current); publishTabs(); },
+    driveConflict: id => { setDriveConflicts(ids => [...new Set([...ids, id])]); setDriveLibrary(true); setLibrary(true); }, notify, dismissNotice: dismissToast };
+  persistence.host = { forgotten: id => forgottenIds.current.has(id), unread: id => unreadSessions.current.has(id),
+    held: document => docRef.current === document || tabsRef.current.some(tab => tab.doc === document), annotated: (document, items) => annotatedBytes(document, items, true) };
   liveEdit.host = { store: editStore, current: () => docRef.current, editing: () => editingRef.current, touch: () => touchRef.current, notify,
     snapshot, historyBudget, trim: trimHistory, historyChanged: () => setHistoryTick(v => v + 1), reopen: reopenWritten,
     stacks: current => { const owner = tabsRef.current.find(tab => tab.doc === current); return !owner || owner.key === activeTabRef.current ? [undoStack.current, redoStack.current] : [owner.undo, owner.redo]; },
@@ -1692,7 +1488,7 @@ export default function App() {
           settings={annotationSettings} onDone={() => { setMobileAnnotating(false); setTool('select'); }} />}
 
         {tablet && doc && mobileAnnotating && !inlineEditing && <TabletAnnotationDock tool={tool} setTool={setTool} disabled={!doc.canAnnotate || !!busy || loading} canCopy={doc.canCopy} settings={annotationSlot} hasSettings={!!annotationSettings} onHighlight={activateHighlight} />}
-        {tablet && doc && searchOpen && !sidebar && !inlineEditing && <div className="tablet-search-controls" role="toolbar" aria-label="Resultados de búsqueda"><IconButton label="Ver resultados" onClick={() => setSidebar(true)}><Search size={20} /></IconButton><span>{results.length ? `${resultIndex + 1} / ${results.length}` : 'Sin resultados'}</span><IconButton label="Resultado anterior" disabled={!results.length} onClick={() => goToResult(resultIndex - 1)}><ChevronLeft size={21} /></IconButton><IconButton label="Resultado siguiente" disabled={!results.length} onClick={() => goToResult(resultIndex + 1)}><ChevronRight size={21} /></IconButton><IconButton label="Cerrar búsqueda" onClick={closeSearch}><X size={21} /></IconButton></div>}
+        {tablet && doc && searchOpen && !sidebar && !inlineEditing && <TabletSearchBar results={results.length} result={resultIndex} onResult={goToResult} onResults={() => setSidebar(true)} onClose={closeSearch} />}
         {inlineEditing && workbenchPanel}
         <div className="reading-area" hidden={inlineEditing} style={inlineEditing ? { display: 'none' } : undefined} ref={viewer} aria-label="Área de lectura del PDF" tabIndex={-1}>
           {doc ? pageStack : !loading && <div className="welcome"><div className="welcome-icon"><BookOpen size={38} /></div><h2>Abrir PDF</h2><p>{!touchLayout ? 'Selecciona un archivo o arrástralo a esta ventana.' : isIOS ? 'Selecciona un PDF desde Archivos.' : 'Selecciona un PDF para abrirlo.'}</p></div>}
@@ -1752,7 +1548,7 @@ export default function App() {
         else setTool(action);
       }} />
     {whatsNew && <WhatsNew touch={touchLayout} onClose={() => setWhatsNew(false)} />}
-    {palette && <CommandPalette commands={paletteCommands()} onClose={() => setPalette(false)} pageCommand={number => doc && number >= 1 && number <= doc.pdf.numPages ? { id: 'page-number', group: 'Navegación', title: `Ir a la página ${number}`, icon: <Hash size={16} />, run: () => { if (!returnLocation) rememberLocation(); goToPage(number, false); } } : null} />}
+    {palette && <CommandPalette commands={commands()} onClose={() => setPalette(false)} pageCommand={number => doc && number >= 1 && number <= doc.pdf.numPages ? { id: 'page-number', group: 'Navegación', title: `Ir a la página ${number}`, icon: <Hash size={16} />, run: () => { if (!returnLocation) rememberLocation(); goToPage(number, false); } } : null} />}
     {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
     {doc && <ColumnSelectionPreview />}
     <Notices toast={toast} onDismiss={dismissToast} />
