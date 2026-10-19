@@ -45,7 +45,11 @@ for (const [layout, width, height] of [
   await page.locator('.textLayer span').first().waitFor();
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Páginas', exact: true }).first().click();
-  await page.waitForTimeout(600);
+  // Open, and done sliding in, however long a busy machine takes.
+  await page.locator('.mobile-drawer').waitFor();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.mobile-drawer')].every(drawer => !drawer.getAnimations().length),
+  );
   const state = () =>
     page.evaluate(() => ({
       drawers: [...document.querySelectorAll('.mobile-drawer')].map(d =>
@@ -58,23 +62,39 @@ for (const [layout, width, height] of [
         t => t.dataset.explorerTab,
       ),
     }));
+  // Each drawer animation that starts is recorded, so a busy machine that looks late still sees it.
+  await page.evaluate(() => {
+    window.drawerAnimations = [];
+    document.addEventListener(
+      'animationstart',
+      event => event.target.closest?.('.mobile-drawer') && window.drawerAnimations.push(event.animationName),
+      true,
+    );
+  });
+  const started = () => page.evaluate(() => window.drawerAnimations.splice(0));
   const steps = [];
   for (const tab of ['annotations', 'outline', 'annotations', 'pages']) {
     await page.locator(`.mobile-drawer:not(.closing) [data-explorer-tab="${tab}"]`).click();
-    steps.push({ tab, ...(await state()) });
+    await page.waitForFunction(
+      tab => document.querySelector('[data-explorer-tab][aria-selected="true"]')?.dataset.explorerTab === tab,
+      tab,
+    );
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // A swap happens in place: no drawer slides.
+    steps.push({ tab, ...(await state()), started: await started() });
   }
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(30);
-  const closing = await state();
-  await page.waitForTimeout(600);
+  await page.waitForFunction(() => !document.querySelector('.mobile-drawer'));
+  const closing = { ...(await state()), started: await started() };
   await page.getByRole('button', { name: 'Páginas', exact: true }).first().click();
-  await page.waitForTimeout(30);
-  const reopened = await state();
+  await page.locator('.mobile-drawer').waitFor();
+  await page.waitForFunction(() => window.drawerAnimations.length > 0);
+  const reopened = { ...(await state()), started: await started() };
   failed ||=
-    !closing.animating.length || !reopened.animating.length || reopened.drawers.some(d => d.includes('drawer-swap'));
+    !closing.started.length || !reopened.started.length || reopened.drawers.some(d => d.includes('drawer-swap'));
   console.log(layout, JSON.stringify(steps), 'close:', JSON.stringify(closing), 'reopen:', JSON.stringify(reopened));
   failed ||= steps.some(
-    s => s.drawers.length !== 1 || s.animating.length || s.selected.length !== 1 || s.selected[0] !== s.tab,
+    s => s.drawers.length !== 1 || s.started.length || s.selected.length !== 1 || s.selected[0] !== s.tab,
   );
   await context.close();
 }
