@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { usePastedImages } from '../edit/paste';
 import type { EditStore } from '../edit/store';
 import { errorMessage } from '../errors';
 import { isNativePdfDocument } from '../nativePdf';
@@ -172,4 +174,14 @@ export class LiveEdit {
       }
     })();
   }
+}
+
+/** Editar's lifecycle around the document in front: each document starts Editar afresh;
+ * on desktop its document stays live (LiveEdit) while Editar is open; leaving Editar drops
+ * the selection and any pending image; while it is open, pasted images are placed. */
+export function useLiveEditing(editing: boolean, doc: LoadedDocument | null, touch: boolean, store: EditStore, live: LiveEdit, notify: Notify) {
+  useEffect(() => { store.reset(); }, [doc?.id, store]);
+  useEffect(() => { live.sync(editing, doc); }, [editing, doc, touch, live]);
+  useEffect(() => { if (!editing) store.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, store]);
+  usePastedImages(editing, store, message => notify(message, 'error'));
 }

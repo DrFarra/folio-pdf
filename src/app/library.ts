@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { advance, type Transfer } from '../components/DriveBrowser';
 import { driveLookup, driveOpen, driveStatus, type DriveBinding, type DriveOpened } from '../drive';
 import { isDesktop, isNative, nativeDraftDocument, prunePrivateCopies, type NativeDocument } from '../platform';
@@ -202,4 +203,16 @@ export class Library {
 async function sessionUnsaved(id: string) {
   const session = await readSession(id).catch(() => null);
   return !!session?.annotations.length && (session.nativeSavedAnnotations === undefined || annotationFingerprint(session.annotations) !== session.nativeSavedAnnotations);
+}
+
+/** The library's documents, read again each time it (or the phone's document list, `shown`) opens. */
+export function useLibraryList(shown: boolean, library: Library, notify: Notify) {
+  const [recents, setRecents] = useState<RecentDocument[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (shown) { setLoading(true); library.list().then(items => { if (alive) setRecents(items); }).catch(() => { if (alive) { setRecents([]); notify('No se pudo abrir la biblioteca local.', 'error'); } }).finally(() => { if (alive) setLoading(false); }); }
+    return () => { alive = false; };
+  }, [shown, library, notify]);
+  return { recents, setRecents, libraryLoading: loading };
 }

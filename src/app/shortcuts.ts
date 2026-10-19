@@ -3,7 +3,7 @@ import { isMac, isNative } from '../platform';
 
 /** What a key press asks for. `undefined` leaves it to the page. */
 export type Shortcut =
-  | { run: 'close-dialog' | 'undo' | 'redo' | 'close-tab' | 'palette' | 'open' | 'find' | 'print' | 'shortcuts' | 'actual-size' | 'escape' }
+  | { run: 'close-dialog' | 'undo' | 'redo' | 'close-tab' | 'palette' | 'open' | 'find' | 'print' | 'shortcuts' | 'actual-size' | 'escape' | 'settings' | 'help' }
   | { run: 'switch-tab' | 'search-step'; step: 1 | -1 }
   | { run: 'save'; copy: boolean; keepEditing?: boolean }
   | { run: 'zoom'; delta: number }
@@ -90,6 +90,20 @@ export function readShortcut(e: KeyboardEvent, context: KeyContext): { prevent: 
   if (key === 'v') return pass({ run: 'tool', tool: 'select' });
   if (e.key === 'Escape') return pass({ run: 'escape' });
   return pass();
+}
+
+/** The macOS menu bar's commands, which behave as their keyboard shortcuts. A dialog in front
+ * keeps them (⌘W closes it); the inline editor keeps all but settings, help and saving.
+ * Zoom needs a document. */
+export function menuShortcut(id: string, context: { modal: boolean; editor: boolean; document: boolean }): Shortcut | undefined {
+  if (id === 'close-tab') return { run: context.modal ? 'close-dialog' : 'close-tab' };
+  if (context.modal || context.editor && !['settings', 'help', 'save', 'save-copy'].includes(id)) return undefined;
+  if (id === 'settings' || id === 'help' || id === 'print' || id === 'find') return { run: id };
+  if (id === 'save' || id === 'save-copy') return { run: 'save', keepEditing: true, copy: id === 'save-copy' };
+  if (!context.document) return undefined;
+  if (id === 'zoom-in' || id === 'zoom-out') return { run: 'zoom', delta: id === 'zoom-in' ? .1 : -.1 };
+  if (id === 'zoom-reset') return { run: 'actual-size' };
+  return undefined;
 }
 
 /** Calls `handle` for each key press the page has not handled yet. */

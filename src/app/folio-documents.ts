@@ -5,11 +5,12 @@ import { useDesktopWindow } from './desktop-window';
 import { useTheme } from './theme';
 import { useAutosave } from './autosave';
 import { useLibraryCover, useNativeAnnotations } from './document-data';
-import { usePastedImages } from '../edit/paste';
 import { useKeepAwake, useSystemBars, useDesktopDrops, usePreserveOnLeave, useSystemOpens, useWindowCloseGuard } from './native-events';
 import { useDocumentTabDrag } from '../useDocumentTabDrag';
 import { isNative, isMobile } from '../platform';
 import type { LoadedDocument } from '../types';
+import { useLibraryList } from './library';
+import { useLiveEditing } from './live-edit';
 import type { useFolioState } from './folio-state';
 import type { useFolioReader } from './folio-reader';
 
@@ -21,10 +22,10 @@ export function useFolioDocuments(f: Layer2) {
     editingRef, editorDraftRef, help, history, info, library, libraryRef, libraryStore, liveEdit, loading, loadingRef, mobileActions, mobileTabs, noteDraft, notify,
     opener, page, pageJump, passwordRef, persistence, phone, phoneRef, readerChromeHidden, readingPreferences, readingState, restoreScroll, setActiveTabKey,
     setAnnotationOptions, setBookmarkEditingId, setCapabilityNotice, setCloseBlocked, setCustomScale, setDoc, setDraftFailed, setDragOver, setEditArea, setEditing,
-    setHistoryTick, setIndexing, setInfo, setLibrary, setLibraryLoading, setLoading, setMobileAnnotating, setNoteDraft, setNotesOpen, setOutline, setPage, setPageJump,
-    setPassword, setQuery, setReaderChromeHidden, setRecents, setRedactions, setResultIndex, setReturnLocation, setSearchOpen, setSearchQuery, setSessionFailed,
-    setSidebar, setTextIndex, setTool, setViewSettings, setWorkbench, setZoomMode, settings, showAnnotations, showBookmarks, showPageInput, tabStore, tabs, toolSections,
-    touchLayout, touchRef, unreadSessions, viewer, workbench, workbenchRef } = f;
+    setHistoryTick, setIndexing, setInfo, setLibrary, setLoading, setMobileAnnotating, setNoteDraft, setNotesOpen, setOutline, setPage, setPageJump, setPassword,
+    setQuery, setReaderChromeHidden, setRedactions, setResultIndex, setReturnLocation, setSearchOpen, setSearchQuery, setSessionFailed, setSidebar, setTextIndex, setTool,
+    setViewSettings, setWorkbench, setZoomMode, settings, showAnnotations, showBookmarks, showPageInput, tabStore, tabs, toolSections, touchLayout, touchRef,
+    unreadSessions, viewer, workbench, workbenchRef } = f;
   const tabDrag = useDocumentTabDrag({ keys: tabs.map(tab => tab.key), activeKey: activeTabKey, disabled: phone || !!busy || loading,
     onReorder: keys => { if (!busyRef.current && !loadingRef.current) tabStore.reorder(keys, workbenchRef.current !== 'edit-pdf' || phoneRef.current); } });
   function captureTab(): DocumentTab | null {
@@ -81,12 +82,7 @@ export function useFolioDocuments(f: Layer2) {
   useAutosave(doc, annotations, bookmarks, page, { persistence, notify, forgotten: id => libraryStore.forgotten.has(id), unread: id => unreadSessions.current.has(id),
     shown: current => docRef.current?.id === current.id && docRef.current?.revision === current.revision,
     draftStored: stored => setDraftFailed(!stored), sessionStored: stored => setSessionFailed(!stored) });
-  // Each document starts Editar afresh; leaving it drops the selection and any pending image.
-  useEffect(() => { editStore.reset(); }, [doc?.id, editStore]);
-  // Editar on desktop keeps its document live (see LiveEdit).
-  useEffect(() => { liveEdit.sync(editing, doc); }, [editing, doc, touchLayout, liveEdit]);
-  useEffect(() => { if (!editing) editStore.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, editStore]);
-  usePastedImages(editing, editStore, message => notify(message, 'error'));
+  useLiveEditing(editing, doc, touchLayout, editStore, liveEdit, notify);
   const systemChromeVisible = !readerChromeHidden || !doc || library || !!workbench || !!noteDraft || mobileActions || mobileTabs || pageJump || settings || help || info;
   const { theme, chooseTheme } = useTheme(library ? '--bg' : systemChromeVisible ? '--surface' : '--canvas');
   usePreserveOnLeave(() => {
@@ -124,11 +120,7 @@ export function useFolioDocuments(f: Layer2) {
   const { windowState, windowAction } = useDesktopWindow(doc?.name, windowError);
   useNativeAnnotations(doc, { notify, current: () => annotationRef.current, shown: current => docRef.current?.pdf === current.pdf,
     set: showAnnotations });
-  useEffect(() => {
-    let alive = true;
-    if (library || mobileTabs) { setLibraryLoading(true); libraryStore.list().then(items => { if (alive) setRecents(items); }).catch(() => { if (alive) { setRecents([]); notify('No se pudo abrir la biblioteca local.', 'error'); } }).finally(() => { if (alive) setLibraryLoading(false); }); }
-    return () => { alive = false; };
-  }, [library, mobileTabs, notify]);
+  const { recents, setRecents, libraryLoading } = useLibraryList(library || mobileTabs, libraryStore, notify);
   // The screen stays on while a document is being read, never in the library.
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useKeepAwake(reading);
@@ -136,6 +128,6 @@ export function useFolioDocuments(f: Layer2) {
   useSystemBars(systemChromeVisible);
   const reopenWritten = (current: LoadedDocument) => changes.reopenWritten(current);
   const cancelPassword = () => opener.cancel();
-  return { activateTab, applyView, cancelPassword, captureTab, chooseTheme, closeTab, openDocument, presentTab, reading, reopenWritten, setWorkBenchClosed, showNoDocument,
+  return { recents, setRecents, libraryLoading, activateTab, applyView, cancelPassword, captureTab, chooseTheme, closeTab, openDocument, presentTab, reading, reopenWritten, setWorkBenchClosed, showNoDocument,
     switchTab, systemChromeVisible, tabDrag, theme, windowAction, windowError, windowState };
 }

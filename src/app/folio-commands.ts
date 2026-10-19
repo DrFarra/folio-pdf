@@ -1,11 +1,11 @@
 import { useCallback } from 'react';
 import { errorMessage } from '../errors';
 import { isNativePdfDocument } from '../nativePdf';
-import { annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, type History } from './model';
+import { type History } from './model';
 import type { Area, Operation, PageEntry } from '../engine/operations.ts';
 import { paletteCommands } from './palette-commands';
 import { commentFor, patched, toggledBookmark, withAdded, withNote, without } from './marks';
-import { readShortcut, useKeyboard, type Shortcut } from './shortcuts';
+import { menuShortcut, readShortcut, useKeyboard, type Shortcut } from './shortcuts';
 import { useAndroidBack, useMacMenu } from './native-events';
 import { hasBookmarkPage } from '../bookmarks';
 import { highlightSelection } from '../text-selection';
@@ -13,6 +13,8 @@ import type { AnnotationDraft } from '../text-selection';
 import { editKey } from '../edit/keys';
 import { isNative, pickNativeDocuments, haptic, type Anchor } from '../platform';
 import type { Annotation, LoadedDocument, RecentDocument, Tool } from '../types';
+import { documentStatus, isUnsaved, pageCounter as pageCounterOf, pageName as pageNameOf, turnedPage } from './document-status';
+import { centeredArea } from './tool-sections';
 import type { useFolioState } from './folio-state';
 import type { useFolioReader } from './folio-reader';
 import type { useFolioDocuments } from './folio-documents';
@@ -74,6 +76,8 @@ export function useFolioCommands(f: Layer3) {
       case 'redo': redo(); break;
       case 'switch-tab': void switchTab(tabStore.neighbour(shortcut.step).key); break;
       case 'close-tab': if (tabStore.activeKey) void closeTab(tabStore.activeKey); break;
+      case 'settings': setConfirmClear(false); setSettings(true); break;
+      case 'help': setHelp(true); break;
       case 'save': void download({ keepEditing: shortcut.keepEditing, copy: shortcut.copy }); break;
       case 'palette': setPalette(value => !value); break;
       case 'open': void chooseFile(); break;
@@ -84,7 +88,7 @@ export function useFolioCommands(f: Layer3) {
       case 'zoom': changeZoom(shortcut.delta); break;
       case 'actual-size': setCustomScale(1); setZoomMode('custom'); break;
       case 'scroll': viewer.current?.scrollBy({ left: shortcut.left }); break;
-      case 'turn': goToPage(shortcut.forward ? page + (spread ? 2 - (page + 1) % 2 : 1) : Math.max(1, page - (spread ? (page % 2 ? 2 : 3) : 1))); break;
+      case 'turn': goToPage(turnedPage(page, shortcut.forward, spread)); break;
       case 'tool':
         if (shortcut.tool === 'highlight') activateHighlight();
         else { if (shortcut.tool === 'draw') setMobileAnnotating(true); setTool(shortcut.tool); }
@@ -154,14 +158,10 @@ export function useFolioCommands(f: Layer3) {
     if (tool === 'redact') { setRedactions(previous => [...previous, area]); return; }
     setEditArea(area); setWorkbench(tool);
   }
-  // Keyboard and screen-reader access to the area tools: crop keeps most of the
-  // page, the others mark a band across its centre; Cambiar área draws another.
-  // The band is placed as the page is shown, /Rotate included, then converted to PDF space.
+  // Usar un área centrada; Cambiar área draws another.
   async function centerArea() {
     const current = docRef.current; if (!current) return;
-    const view = (await current.pdf.getPage(page)).getViewport({ scale: 1 }), [left, top, right, bottom] = tool === 'crop' ? [.1, .1, .9, .9] : [.25, .425, .75, .575];
-    const [ax, ay] = view.convertToPdfPoint(view.width * left, view.height * top), [bx, by] = view.convertToPdfPoint(view.width * right, view.height * bottom);
-    onArea({ page, rect: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)] });
+    onArea(centeredArea((await current.pdf.getPage(page)).getViewport({ scale: 1 }), tool, page));
   }
   function saveNote() {
     if (!doc?.canAnnotate || !noteDraft || !noteText.trim()) return;
@@ -233,38 +233,18 @@ export function useFolioCommands(f: Layer3) {
   // The phone shows the library when the document in front was removed from it.
   function discardOpenTabs(ids: Set<string>) { if (tabStore.discard(ids) && tabStore.list.length && phoneRef.current) setLibrary(true); }
   const inlineEditing = !phone && workbench === 'edit-pdf';
-  const saveLabel = doc?.drive ? 'Guardar en Drive' : fileSaveLabel;
-  // Only an opened file can be updated; otherwise Guardar already asks where to save.
-  const savesOriginal = savesInPlace && !!doc?.nativeSource && !doc.drive && !doc.draftSource && !doc.sample;
-  const sessionStatus = storageFailed ? `No se pudieron guardar tus cambios en ${here}. ${saveAdvice}` : `Los cambios se conservan en ${here}.`;
-  const driveDirty = !!doc?.drive && (doc.modified || annotationFingerprint(annotations) !== doc.savedAnnotations);
-  // A tab shows its unsaved dot, and Guardar lights up, exactly when this holds.
-  const unsaved = (document: LoadedDocument, items: Annotation[]) => document.modified && !downloadedDrafts.current.has(document) || annotationFingerprint(items) !== document.savedAnnotations;
-  const docDirty = !!doc && unsaved(doc, annotations);
-  const driveStatus = busy === 'download' && driveMessage ? driveMessage : driveDirty ? 'Google Drive: cambios pendientes de guardar' : 'Documento de Google Drive';
-  // Positions are physical page numbers; a printed label that differs follows them.
-  const pageName = (number: number) => { const label = pageLabels?.[number - 1]; return label && label !== String(number) ? `${number} (${label})` : String(number); };
-  const pageCounter = doc ? `${page} / ${doc.pdf.numPages}${currentPageLabel !== String(page) ? ` · ${currentPageLabel}` : ''}` : undefined;
+  const { saveLabel, savesOriginal, sessionStatus, docDirty, driveDirty, driveStatus, capabilitySummary } = documentStatus({ doc, annotations, storageFailed, driveMessage,
+    downloaded: !!doc && downloadedDrafts.current.has(doc), saving: busy === 'download' });
+  const unsaved = (document: LoadedDocument, items: Annotation[]) => isUnsaved(document, items, downloadedDrafts.current.has(document));
+  const pageName = (number: number) => pageNameOf(pageLabels, number);
+  const pageCounter = doc ? pageCounterOf(page, doc.pdf.numPages, currentPageLabel) : undefined;
   const listedResults = Math.max(resultLimit, resultIndex + 1);
   const sideCount = sideTab === 'pages' ? doc?.pdf.numPages : sideTab === 'bookmarks' ? bookmarks.filter(node => node.page !== null).length : 0;
-  // The macOS menu bar's commands behave as their keyboard shortcuts.
   useMacMenu(id => {
     const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
-    if (id === 'close-tab') { if (modal) modal.dispatchEvent(new Event('cancel', { cancelable: true })); else if (tabStore.activeKey) void closeTab(tabStore.activeKey); return; }
-    // As with the keyboard, a dialog in front or the inline editor keeps the reader's commands.
-    if (modal || workbenchRef.current === 'edit-pdf' && !['settings', 'help', 'save', 'save-copy'].includes(id)) return;
-    if (id === 'settings') { setConfirmClear(false); setSettings(true); }
-    else if (id === 'help') setHelp(true);
-    else if (id === 'save' || id === 'save-copy') void download({ keepEditing: true, copy: id === 'save-copy' });
-    else if (id === 'print') void printDocument();
-    else if (id === 'find') find();
-    else if (id === 'zoom-in' || id === 'zoom-out') { if (docRef.current) changeZoom(id === 'zoom-in' ? .1 : -.1); }
-    else if (id === 'zoom-reset' && docRef.current) { setCustomScale(1); setZoomMode('custom'); }
+    const shortcut = menuShortcut(id, { modal: !!modal, editor: workbenchRef.current === 'edit-pdf', document: !!docRef.current });
+    if (shortcut) runShortcut(shortcut, modal);
   });
-  const capabilitySummary = doc?.signed ? 'Este PDF está firmado. Puedes leerlo, buscar y añadir marcadores; editarlo invalidaría la firma.'
-    : doc?.drive && !doc.drive.editable ? 'Este archivo de Google Drive es de solo lectura. Puedes leerlo, buscar y añadir marcadores.'
-    : !doc?.canAnnotate ? 'El autor de este PDF no permite anotarlo. Puedes leerlo, buscar y añadir marcadores.'
-    : 'PDF grande: puedes leer, buscar, resaltar, dibujar y añadir notas. No se pueden editar páginas ni formularios.';
   return { activateHighlight, anchorOf, annotatedBytes, applyOperation, capabilitySummary, centerArea, chooseFile, clearLibrary, closeActiveTab, closeWorkbench, commands,
     commentHighlight, discardOpenTabs, docDirty, download, driveDirty, driveStatus, editNote, find, forgetRecent, fullscreen, inlineEditing, listedResults, mobilePage,
     navigatePDF, onAnnotate, onArea, openEditor, openFiles, openTools, openWorkbenchSection, pageCounter, pageName, printDocument, recordStep, redo, removeAnnotation,

@@ -22,7 +22,7 @@ import { EditStore } from '../edit/store';
 import { useExit } from '../motion';
 import { useDeviceLayout } from '../mobile';
 import { isNative } from '../platform';
-import type { LoadedDocument, RecentDocument } from '../types';
+import type { LoadedDocument } from '../types';
 
 /** Folio's state: the document in front and its view, the open dialogs, the preferences, and the controllers that act on documents. */
 export function useFolioState() {
@@ -64,8 +64,6 @@ export function useFolioState() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [library, setLibrary] = useState(true);
   const libraryRef = useRef(library); libraryRef.current = library;
-  const [libraryLoading, setLibraryLoading] = useState(false);
-  const [recents, setRecents] = useState<RecentDocument[]>([]);
   const { rememberRecent, setRememberRecent, defaultZoom, setDefaultZoom, readingPreferences, setReadingPreferences, readingPreferencesRef, preferencesRef } = useAppPreferences();
   const { noteDraft, setNoteDraft, noteText, setNoteText, noteOrigin, noteAnchor, editNote: openNote } = useNoteEditor();
   const [password, setPassword] = useState<PasswordRequest | null>(null);
@@ -118,16 +116,15 @@ export function useFolioState() {
     bookmarks, busy, busyRef, capabilityNotice, changeZoom, changes, choosePenOnly, chromeHiddenRef, closeBlocked, color, commitAnnotations, commitBookmarks,
     confirmClear, creating, currentScale, customScale, defaultZoom, deleteTarget, dimensions, dismissToast, doc, docRef, downloadedDrafts, draftFailed, dragCounter,
     dragOver, drawerSwap, driveAvailable, driveConflicts, driveLibrary, driveMessage, driveRefresh, editArea, editStore, editing, editingRef, editorDraft, editorDraftRef,
-    eraserSize, fileInput, fittedWidth, help, history, indexing, info, inkKind, inkRecentColors, inkStyle, lastDrawer, layout, library, libraryLoading, libraryRef,
+    eraserSize, fileInput, fittedWidth, help, history, indexing, info, inkKind, inkRecentColors, inkStyle, lastDrawer, layout, library, libraryRef,
     libraryStore, liveEdit, loading, loadingRef, mobileActions, mobileAnnotating, mobileTabs, noteAnchor, noteDraft, noteOrigin, noteText, notesLeaving, notesOpen,
     notesShown, notify, occurrences, openNote, opener, outline, output, page, pageJump, palette, password, passwordRef, penDetected, penOnly, persistence, phone,
-    phoneRef, picking, preferencesRef, query, readerChromeHidden, readingAnchor, readingMode, readingPreferences, readingPreferencesRef, readingState, recents,
-    redactions, rememberRecent, resultIndex, resultLimit, results, rotation, scale, search, searchHistory, searchInput, searchOpen, searchQuery, sessionFailed,
+    phoneRef, picking, preferencesRef, query, readerChromeHidden, readingAnchor, readingMode, readingPreferences, readingPreferencesRef, readingState, redactions, rememberRecent, resultIndex, resultLimit, results, rotation, scale, search, searchHistory, searchInput, searchOpen, searchQuery, sessionFailed,
     setActiveNote, setActiveTabKey, setAnnotationOptions, setBookmarkEditingId, setBusy, setCapabilityNotice, setCloseBlocked, setColor, setConfirmClear, setCreating,
     setCustomScale, setDefaultZoom, setDeleteTarget, setDoc, setDraftFailed, setDragOver, setDrawerSwap, setDriveConflicts, setDriveLibrary, setDriveMessage,
     setDriveRefresh, setEditArea, setEditing, setEditorDraft, setEraserSize, setHelp, setHistoryTick, setIndexing, setInfo, setInkKind, setInkRecentColors, setInkStyles,
-    setLibrary, setLibraryLoading, setLoading, setMobileActions, setMobileAnnotating, setMobileTabs, setNoteDraft, setNoteText, setNotesOpen, setOutline, setPage,
-    setPageJump, setPalette, setPassword, setQuery, setReaderChromeHidden, setReadingMode, setReadingPreferences, setRecents, setRedactions, setRememberRecent,
+    setLibrary, setLoading, setMobileActions, setMobileAnnotating, setMobileTabs, setNoteDraft, setNoteText, setNotesOpen, setOutline, setPage,
+    setPageJump, setPalette, setPassword, setQuery, setReaderChromeHidden, setReadingMode, setReadingPreferences, setRedactions, setRememberRecent,
     setResultIndex, setResultLimit, setRotation, setSearchHistory, setSearchOpen, setSearchQuery, setSessionFailed, setSettings, setShortcutsOpen, setSideTab, setSidebar,
     setTabs, setTextIndex, setTool, setViewSettings, setWhatsNew, setWorkbench, setZoomMode, settings, shortcutsOpen, showAnnotations, showBookmarks, sideTab, sidebar,
     sidebarLeaving, sidebarShown, spread, storageFailed, tabStore, tablet, tabs, textIndex, toast, toggleTapZoom, tool, toolSections, touchLayout, touchRef,

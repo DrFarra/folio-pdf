@@ -25,6 +25,7 @@ rules that break things when ignored. Read the files named before changing them.
 |---|---|
 | `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
 | `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection), the session it opens with, the document that session restores and the tab it opens in. |
+| `document-status.ts` | What the interface says about the document: save label and state, Drive state, why tools are unavailable, page names, the page ← and → turn to. |
 | `marks.ts` | Annotations and bookmarks (`useMarks`): shown state with refs, committed as edits with an undo step; pure list changes (`withAdded`, `withNote`, `toggledBookmark`…). |
 | `reader-position.ts` | Where the reader is (`useReaderPosition`): going to a page, the page field, the scroll a document reopens at, «Volver a p. N», the PDF's links. |
 | `panels.ts` | Side panels and search (`usePanels`): opening and closing them, stepping through results, the touch drawers' focus. |
@@ -85,4 +86,4 @@ rules that break things when ignored. Read the files named before changing them.
 
 ## Tests
 
-Plain Node + Playwright scripts in `scripts/tests` (`npm run test:<name>`; `npm test` runs all after a build). Engine suites import the engine directly; UI suites serve `dist/` with `vite preview`. Desktop editor: `edit-mode-ui.mjs` (also in WebKit on the Mac build); touch editor suites run as an Android tablet (`ui-helpers.mjs`). Mac packaging requires named evidence files (`scripts/package-macos.py`).
+Plain Node + Playwright scripts in `scripts/tests` (`npm run test:<name>`; `npm test` runs all after a build). Engine suites import the engine directly; UI suites serve `dist/` with `vite preview`. Desktop editor: `edit-mode-ui.mjs` (also in WebKit on the Mac build); touch editor suites run as an Android tablet (`ui-helpers.mjs`). Mac packaging requires named evidence files (`scripts/package-macos.py`). `app-logic.mjs` tests the app's pure decisions (shortcuts, the macOS menu, page turns, bookmarks, document status) without a browser, bundled with esbuild.

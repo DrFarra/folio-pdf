@@ -67,3 +67,14 @@ export class ToolSections {
     host.setSection(section);
   }
 }
+
+type PageView = { width: number; height: number; convertToPdfPoint: (x: number, y: number) => number[] };
+
+/** Keyboard and screen-reader access to the area tools: crop keeps most of the page, the
+ * others mark a band across its centre. The band is placed as the page is shown (`view`,
+ * /Rotate included), then converted to PDF space. */
+export function centeredArea(view: PageView, tool: Tool, page: number) {
+  const [left, top, right, bottom] = tool === 'crop' ? [.1, .1, .9, .9] : [.25, .425, .75, .575];
+  const [ax, ay] = view.convertToPdfPoint(view.width * left, view.height * top), [bx, by] = view.convertToPdfPoint(view.width * right, view.height * bottom);
+  return { page, rect: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)] as [number, number, number, number] };
+}
