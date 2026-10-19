@@ -1,12 +1,12 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
-import { getDocument, hideAnnotations } from './pdf';
-import { openNativePdf, isNativePdfPasswordError, nativePdfPageAnnotations } from './nativePdf';
-import type { Inspection } from './engine/mupdf-engine.mjs';
-import { inspectOwnedPdf, inspectPdf } from './engine/client';
-import type { DriveBinding } from './drive';
-import { assetUrl, pdfAssetSettings } from './assets';
-import { isNative, isIOS, readNativeDocument, nativeDraftDocument, type NativeDocument } from './platform';
-import { readDraft } from './storage';
+import { getDocument, hideAnnotations } from '../pdf';
+import { openNativePdf, isNativePdfPasswordError, nativePdfPageAnnotations } from '../nativePdf';
+import type { Inspection } from '../engine/mupdf-engine.mjs';
+import { inspectOwnedPdf, inspectPdf } from '../engine/client';
+import type { DriveBinding } from '../drive';
+import { assetUrl, pdfAssetSettings } from '../assets';
+import { isNative, isIOS, readNativeDocument, nativeDraftDocument, type NativeDocument } from '../platform';
+import { readDraft } from '../storage';
 
 /** What Folio opens: a file the user chose, bytes it made, its sample, or a native file by token. */
 export type OpenSource = Blob | Uint8Array | 'sample' | NativeDocument;

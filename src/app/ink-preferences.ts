@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { INK_DEFAULTS, inkRange, type InkKind, type InkStyle } from './components/DrawingSettings';
-import { preference } from './preferences';
+import { INK_DEFAULTS, inkRange, type InkKind, type InkStyle } from '../components/DrawingSettings';
+import { preference } from '../preferences';
 
 // Fingers draw until a pen appears; an explicit choice always wins. The old
 // folio.ink.penOnly default was stored unasked, so only its 'false' is a choice.

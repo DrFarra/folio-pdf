@@ -114,7 +114,8 @@ export default function TextSelectionMenu({ enabled, canAnnotate, color, onHighl
 
   useLayoutEffect(() => {
     if (!selected || !menu.current) return;
-    const box = menu.current.getBoundingClientRect();
+    // Layout size: the pop-in animation scales the menu while it is measured.
+    const box = { width: menu.current.offsetWidth, height: menu.current.offsetHeight };
     const bounds = visibleBounds();
     const left = Math.max(bounds.left + 8, Math.min(bounds.right - box.width - 8, (selected.left + selected.right - box.width) / 2));
     const below = selected.bottom + 8;

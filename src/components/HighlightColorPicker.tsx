@@ -48,7 +48,8 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
   useLayoutEffect(() => {
     if (!open || !palette.current || !trigger.current) return;
     const update = () => {
-      const anchor = trigger.current!.getBoundingClientRect(), box = palette.current!.getBoundingClientRect();
+      // Layout size: the pop-in animation scales the palette while it is measured.
+      const anchor = trigger.current!.getBoundingClientRect(), box = { width: palette.current!.offsetWidth, height: palette.current!.offsetHeight };
       const bounds = visibleBounds();
       setPosition({ left: Math.max(bounds.left + 8, Math.min(bounds.right - box.width - 8, anchor.left)), top: Math.max(bounds.top + 8, Math.min(bounds.bottom - box.height - 8, anchor.bottom + box.height + 8 <= bounds.bottom ? anchor.bottom + 5 : anchor.top - box.height - 5)) });
     };

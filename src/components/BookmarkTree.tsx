@@ -95,7 +95,8 @@ export default function BookmarkTree({ bookmarks, onChange, onFold, page, onGoTo
   // there is no room, and always inside the visible viewport.
   useLayoutEffect(() => {
     const element = menuElement.current; if (!menu || !element) return;
-    const box = element.getBoundingClientRect(), bounds = visibleBounds(), below = menu.bottom + 4, above = menu.top - 4 - box.height;
+    // Layout size: the pop-in animation scales the menu while it is measured.
+    const box = { width: element.offsetWidth, height: element.offsetHeight }, bounds = visibleBounds(), below = menu.bottom + 4, above = menu.top - 4 - box.height;
     const top = below + box.height <= bounds.bottom - 8 || above < bounds.top + 8 ? below : above;
     setMenuPlace({ menu, left: Math.max(bounds.left + 8, Math.min(menu.left, bounds.right - box.width - 8)), top: Math.max(bounds.top + 8, Math.min(top, bounds.bottom - box.height - 8)) });
   }, [menu]);

@@ -82,9 +82,9 @@ try {
   await page.getByRole('button', { name: 'Anotaciones', exact: true }).click();
   await page.locator('.notes-panel').waitFor({state:'detached'});
   const initialMaximized = await invoke('plugin:window|is_maximized', {label:'main'});
-  await page.getByRole('button', { name: 'Maximizar o restaurar ventana', exact: true }).click();
+  await page.getByRole('button', { name: /^(Maximizar|Restaurar) ventana$/ }).click();
   await page.waitForFunction(async previous => (await window.__TAURI_INTERNALS__.invoke('plugin:window|is_maximized', {label:'main'})) !== previous, initialMaximized);
-  await page.getByRole('button', { name: 'Maximizar o restaurar ventana', exact: true }).click();
+  await page.getByRole('button', { name: /^(Maximizar|Restaurar) ventana$/ }).click();
   await page.waitForFunction(async previous => (await window.__TAURI_INTERNALS__.invoke('plugin:window|is_maximized', {label:'main'})) === previous, initialMaximized);
   await page.getByRole('combobox', { name: 'Nivel de zoom' }).selectOption('125');
   await page.locator('.reading-area').evaluate(element => {element.scrollTop = 0});

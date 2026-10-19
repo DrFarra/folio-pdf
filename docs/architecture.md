@@ -8,7 +8,7 @@ rules that break things when ignored. Read the files named before changing them.
 
 | Layer | Where | Role |
 |---|---|---|
-| UI (React) | `src/App.tsx` (shell, tabs, open/save, undo), `src/components/*`; hooks `ink-preferences.ts`, `desktop-window.ts` | One big `App()`, being split; tools live in `Workbench.tsx`. |
+| UI (React) | `src/App.tsx` (state of the open documents: tabs, open/save, undo; composes the rest), `src/app/*` (its hooks and logic, below), `src/components/*` | Tools live in `Workbench.tsx`. |
 | Reader | `src/components/PDFPage.tsx`, `src/pdf.ts` | PDF.js renders pages; virtualized with `useNearby`. |
 | Editor (desktop) | `src/edit/*`, `src/engine/session.ts` | Edits on the reader pages: `store.ts` state, `EditLayer.tsx` per page, `actions.ts` commits, `fonts.ts`. The document lives in its own worker while Editar is open (`EditSession`). |
 | Editor (touch) | `Workbench` → `PdfContentPicker.tsx` + `ContentEditor.tsx` | Tablet inline, phone modal. |
@@ -17,12 +17,30 @@ rules that break things when ignored. Read the files named before changing them.
 | Native | `src-tauri/src/lib.rs` (desktop commands), `ios_commands.rs`, `android_commands.rs`, `drive*.rs`, `binary_ipc.rs`; shared Rust in `crates/folio-core` | File access by token, atomic writes, Drive, system fonts. |
 | Native plugins | `src-tauri/plugins/folio-ios` (Swift, PDFKit reader for big PDFs), `folio-android` (Kotlin) | |
 
+## App's parts
+
+`App()` holds the open documents' state (tabs, each tab's view, undo, open and save) and wires the rest. Each concern it delegates is self-contained:
+
+| Module (`src/app/`) | What it owns |
+|---|---|
+| `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
+| `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection) and the document its session restores. |
+| `live-edit.ts` | Editar's live document: open, write after a pause, step, park, close. `App` sets its `host` on each render, as it does `editStore.actions`. |
+| `reader-zoom.ts` | Zoom mode and scale, wheel, trackpad and pinch zoom keeping a point in place. |
+| `reader-navigation.ts` | The page being read (`usePageTracking`, smooth jumps), touch taps and single-page swipes. |
+| `search.ts` | Text index, query with its typing pause, results, recent searches. |
+| `shortcuts.ts` | `readShortcut`: a key press and its context → a `Shortcut` (pure); `App.runShortcut` carries it out. |
+| `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave. |
+| `notices.tsx`, `theme.ts`, `print.ts`, `ink-preferences.ts`, `desktop-window.ts` | Toasts and the activity capsule, the theme, desktop printing, drawing preferences, the window's controls. |
+
+Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
+
 ## A document's life
 
-1. **Open**: `loadDocument` in `App.tsx` applies to the reader what `readDocument` (`src/document-reader.ts`) reads and parses. Native files are read by token (on Windows in one go through shared memory, `read_document_shared`; elsewhere `read_document` / `read_document_range` in chunks, four in flight); a native draft is looked for before the original, which is then not read at all. A file's id is the SHA-256 of its bytes; a library entry keeps it with the file's size and modification time (`KnownFile`, a draft beside it in `drafts/<id>.json`), so an unchanged book is not hashed again; iOS PDFs over 32 MB stay file-backed in PDFKit (`openNativePdf`, `isNativePdfDocument`) and most tools refuse them. Bytes are lent to the engine (`inspectOwnedPdf`) so a big book is held twice, not three times. `inspectDocument` removes the annotations Folio draws itself (highlight, note, ink, its own shapes) from the PDF.js copy.
+1. **Open**: `loadDocument` in `App.tsx` applies to the reader what `readDocument` (`src/app/document-reader.ts`) reads and parses, and `openedDocument` (`src/app/opened-document.ts`) restores its session. Native files are read by token (on Windows in one go through shared memory, `read_document_shared`; elsewhere `read_document` / `read_document_range` in chunks, four in flight); a native draft is looked for before the original, which is then not read at all. A file's id is the SHA-256 of its bytes; a library entry keeps it with the file's size and modification time (`KnownFile`, a draft beside it in `drafts/<id>.json`), so an unchanged book is not hashed again; iOS PDFs over 32 MB stay file-backed in PDFKit (`openNativePdf`, `isNativePdfDocument`) and most tools refuse them. Bytes are lent to the engine (`inspectOwnedPdf`) so a big book is held twice, not three times. `inspectDocument` removes the annotations Folio draws itself (highlight, note, ink, its own shapes) from the PDF.js copy.
 2. **Read**: `pageStack` renders `PDFPage` per page, keyed by page number; a new revision swaps pixels in place.
 3. **Annotate**: annotations live in React state (`commitAnnotations`, undo stack) and the session (`storage.ts`); written into the PDF only on save/export (`exportAnnotated` → `writeAnnotations`).
-4. **Edit content**: `applyOperation` → `exportAnnotated` (skipped when unchanged, `bytesAnnotations`) → `processPdf` → `openDocument(output, { preserveHistory, quiet })` → undo snapshot. `quiet` keeps scroll and hides the loading screen. Desktop Editar instead changes a live document (`editStore.session`, see `docs/editar-en-memoria.md`): `session.edit` → the page's version goes up and `PDFPage` draws it from the session; `writeEditSession` makes the written PDF the document's bytes after a pause (four times as long as the last write took, at least 0.8 s: a change made while it writes waits, «Guardando el cambio…»); leaving Editar reopens the reader once and parks the live document (`parkEditSession`, up to `PARK_LIMIT`), so its steps still undo one by one; switching documents closes it (`closeEditSession`) and folds its steps into one.
+4. **Edit content**: `applyOperation` → `exportAnnotated` (skipped when unchanged, `bytesAnnotations`) → `processPdf` → `openDocument(output, { preserveHistory, quiet })` → undo snapshot. `quiet` keeps scroll and hides the loading screen. Desktop Editar instead changes a live document (`LiveEdit` in `src/app/live-edit.ts` around `editStore.session`, see `docs/editar-en-memoria.md`): `session.edit` → the page's version goes up and `PDFPage` draws it from the session; `LiveEdit.write` makes the written PDF the document's bytes after a pause (four times as long as the last write took, at least 0.8 s: a change made while it writes waits, «Guardando el cambio…»); leaving Editar reopens the reader once and parks the live document (`LiveEdit.park`, up to `PARK_LIMIT`), so its steps still undo one by one; switching documents closes it (`LiveEdit.close`) and folds its steps into one.
 5. **Draft**: every modified revision is stored as a draft (`ensureDraft`, IndexedDB on web, Rust store natively) and recovered on reopen.
 6. **Save**: `download()` → `savePdf` / `saveOriginalPdf` / Drive (`saveDriveDocument`). Native writes need an output token from `choose_output`/`choose_export`/`choose_folder` and go through `write_*` (`atomic_write`, `protect_original`).
 
@@ -34,7 +52,7 @@ rules that break things when ignored. Read the files named before changing them.
 - Moved text is re-emitted one glyph per text object (`glyphDrawing`): as one run, MuPDF's writer rounds glyph places to whole thousandths of an em and long lines drift. Its ToUnicode is rebuilt from the glyphs' own characters (`mapCharacters`), since the writer's, taken from a subset font's cmap, can misname glyphs (Segoe UI's «(»).
 - Page item ids (`text-paragraph-b3`, `image-2`) are positional: valid only for the revision they were read from (in Editar, for the page's live version: `EditStore.key`).
 - A selection in Editar can hold several items of one page (`Selection.others`); their changes go to the live document as one batch (`editDocumentAll`), each item found again by kind and place because earlier changes renumber the page.
-- Editar's live document undoes with MuPDF's journal. Saving it with `garbage>=2` silently breaks the journal: it is written with `garbage=1`. Anything that reads `doc.bytes` during Editar must `writeEditSession()` first (save, tab switch and close, quitting do).
+- Editar's live document undoes with MuPDF's journal. Saving it with `garbage>=2` silently breaks the journal: it is written with `garbage=1`. Anything that reads `doc.bytes` during Editar must `liveEdit.write()` first (save, tab switch and close, quitting do).
 - Shapes are Folio annotations (Square/Circle/Line), editable only when created by Folio (`NM` starts with `Folio:`).
 - The PDF's own drawings (boxes, rules) are read from the page's content streams (`pageDrawings`) and edited by rewriting their operators in place (`editDrawing`), so stacking order is kept; paths inside Form XObjects are not listed. Ids `graphic-N` are positional like the others.
 - Editar's saves use `QUICK` (no object deduplication): deduplicating a PDF with thousands of objects takes seconds per edit.

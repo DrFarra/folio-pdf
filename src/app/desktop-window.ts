@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { isDesktop } from './platform';
+import { isDesktop } from '../platform';
 
 /** The desktop app's own window, which Folio draws the controls of: its title follows the
  * open document, and its state (maximized, full screen) follows the window. */

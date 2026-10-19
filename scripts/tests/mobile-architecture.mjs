@@ -382,7 +382,7 @@ try {
     await open(page); await visibleButton(page, 'Herramientas').click();
     const catalog = page.getByRole('dialog', { name: 'Herramientas', exact: true }); await catalog.waitFor();
     assert.equal(await catalog.locator('.tool-category').count(), 6);
-    assert.equal(await catalog.locator('.operation-grid > button').count(), 14, 'The catalog lists each operation once; adding and replacing content lives in Editar PDF.');
+    assert.equal(await catalog.locator('.operation-grid > button').count(), 15, 'The catalog lists each operation once (Dividir PDF included); adding and replacing content lives in Editar PDF.');
     for (const name of ['Páginas', 'Contenido', 'Formularios', 'Revisión y firmas', 'Exportación y OCR', 'Protección']) assert.equal(await catalog.getByRole('heading', { name, exact: true }).count(), 1);
     await visibleButton(page, 'Organizar páginas').click(); await visibleButton(page, 'Página en blanco').click();
     assert.equal(await page.locator('.page-plan > article').count(), 6);

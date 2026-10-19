@@ -14,7 +14,8 @@ export default function HighlightAnnotationMenu({ x, y, onRemove, onClose, color
   useLayoutEffect(() => {
     const element = menu.current;
     if (!element) return;
-    const box = element.getBoundingClientRect();
+    // Layout size: the pop-in animation scales the menu while it is measured.
+    const box = { width: element.offsetWidth, height: element.offsetHeight };
     const bounds = visibleBounds();
     setPosition({ left: Math.max(bounds.left + 8, Math.min(x, bounds.right - box.width - 8)), top: Math.max(bounds.top + 8, Math.min(y + 8, bounds.bottom - box.height - 8)) });
     element.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
