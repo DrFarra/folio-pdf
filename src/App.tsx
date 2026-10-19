@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Bookmark, ChevronDown, ChevronLeft, Cloud, Info, Layers, ListTree, LoaderCircle, Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, Plus, Redo2, Undo2, Upload, X, Wrench, Hash } from 'lucide-react';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BookOpen, ChevronDown, ChevronLeft, Cloud, Info, LoaderCircle, Maximize, Minimize, MessageSquare, Minus, MoreHorizontal, Plus, Redo2, Undo2, Upload, X, Wrench, Hash } from 'lucide-react';
 import PDFPage, { Thumbnail } from './components/PDFPage';
 import Modal, { SheetHandle } from './components/Modal';
 import IconButton from './components/IconButton';
 import DocumentLibrary from './components/DocumentLibrary';
 import NotePopover from './components/NotePopover';
-import { DriveBrowser, TransferCard, type Transfer } from './components/DriveBrowser';
-import { driveStatus as readDriveStatus } from './drive';
+import { DriveBrowser, TransferCard } from './components/DriveBrowser';
 import DocumentSwitcher from './components/DocumentSwitcher';
 import DocumentTabStrip from './components/DocumentTabStrip';
 import DocumentOutline from './components/DocumentOutline';
@@ -16,7 +14,7 @@ import { plural } from './pdf';
 import { errorMessage } from './errors';
 import { isNativePdfDocument } from './nativePdf';
 
-import { annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, uid, type DocumentTab, type History, type NoteDraft, type TabView } from './app/model';
+import { annotationFingerprint, fileSaveLabel, here, saveAdvice, savesInPlace, searchTerm, uid, type DocumentTab, type History, type TabView } from './app/model';
 import type { Area, Operation, PageEntry } from './engine/operations.ts';
 import Workbench from './components/Workbench';
 import CreatePDF from './components/CreatePDF';
@@ -38,6 +36,9 @@ import { useTheme } from './app/theme';
 import { Notices, useNotices } from './app/notices';
 import { useReaderZoom, useViewportSize } from './app/reader-zoom';
 import { usePageTracking, useReaderTaps, useSwipePages } from './app/reader-navigation';
+import { useReaderPosition } from './app/reader-position';
+import { usePanels } from './app/panels';
+import ExplorerTabs from './components/ExplorerTabs';
 import { LiveEdit } from './app/live-edit';
 import { Persistence } from './app/persistence';
 import { paletteCommands } from './app/palette-commands';
@@ -47,7 +48,8 @@ import { Tabs } from './app/tabs';
 import { DocumentOpener } from './app/opener';
 import { UndoHistory } from './app/history';
 import { useTabView } from './app/tab-view';
-import { useMarks } from './app/marks';
+import { commentFor, patched, toggledBookmark, useMarks, withAdded, withNote, without } from './app/marks';
+import { useDialogs, useDriveState, useNoteEditor } from './app/dialogs';
 import { ToolSections } from './app/tool-sections';
 import { useAutosave } from './app/autosave';
 import { useAppPreferences } from './app/app-preferences';
@@ -57,7 +59,7 @@ import { DocumentChanges } from './app/document-changes';
 import { useDocumentSearch } from './app/search';
 import { readShortcut, useKeyboard, type Shortcut } from './app/shortcuts';
 import { useAndroidBack, useKeepAwake, useSystemBars, useDesktopDrops, useMacMenu, usePreserveOnLeave, useSystemOpens, useWindowCloseGuard } from './app/native-events';
-import { addPageBookmark, deleteBookmark, hasBookmarkPage } from './bookmarks';
+import { hasBookmarkPage } from './bookmarks';
 import { commentSelection, highlightSelection } from './text-selection';
 import type { AnnotationDraft } from './text-selection';
 import { EditStore } from './edit/store';
@@ -73,26 +75,27 @@ import { useExit } from './motion';
 import { PageScrubber } from './components/PageScrubber';
 import { ActivityPill } from './components/ActivityPill';
 import { ColumnSelectionPreview } from './components/ColumnSelectionPreview';
-import { addHighlights } from './highlight-merge';
 import { AnnotationsPanel } from './components/AnnotationsPanel';
 import { CommandPalette } from './components/CommandPalette';
-import { WhatsNew, shouldShowWhatsNew } from './components/WhatsNew';
+import { WhatsNew } from './components/WhatsNew';
 import { useEdgeSwipeBack } from './edge-swipe';
 import { PencilPalette, type PencilAction } from './components/PencilPalette';
-import { clearRecentSearches, rememberSearch } from './search-snippet';
+import { clearRecentSearches } from './search-snippet';
 import { TabletReaderHeader, TabletAnnotationDock, TabletSearchBar } from './components/TabletReaderControls';
 import { useDeviceLayout } from './mobile';
 import { useDocumentTabDrag } from './useDocumentTabDrag';
-import { isDesktop, isNative, isIOS, isMobile, isMac, shortcutLabel, pickNativeDocuments, openExternalUrl, copyNativeText, saveExport, haptic, type Anchor } from './platform';
+import { isDesktop, isNative, isIOS, isMobile, isMac, shortcutLabel, pickNativeDocuments, copyNativeText, saveExport, haptic, type Anchor } from './platform';
 import { touchDocument } from './storage';
-import type { Annotation, LoadedDocument, PDFNavigationTarget, RecentDocument, SideTab, Tool } from './types';
+import type { Annotation, LoadedDocument, PDFNavigationTarget, RecentDocument, Tool } from './types';
 
 const NO_ANNOTATIONS: Annotation[] = [];
 
 export default function App() {
   const layout = useDeviceLayout(), phone = layout === 'phone', tablet = layout === 'tablet', touchLayout = phone || tablet;
-  const [mobileActions, setMobileActions] = useState(false);
-  const [mobileTabs, setMobileTabs] = useState(false);
+  const { mobileActions, setMobileActions, mobileTabs, setMobileTabs, creating, setCreating, pageJump, setPageJump, viewSettings, setViewSettings,
+    annotationOptions, setAnnotationOptions, capabilityNotice, setCapabilityNotice, deleteTarget, setDeleteTarget, help, setHelp, settings, setSettings,
+    confirmClear, setConfirmClear, info, setInfo, palette, setPalette, whatsNew, setWhatsNew, shortcutsOpen, setShortcutsOpen, closeBlocked, setCloseBlocked } = useDialogs();
+  const { driveAvailable, driveLibrary, setDriveLibrary, driveMessage, setDriveMessage, driveConflicts, setDriveConflicts, driveRefresh, setDriveRefresh } = useDriveState();
   // Editar inside the reader (desktop): the pages stay, with an edit layer and toolbar.
   const [editing, setEditing] = useState(false);
   const editingRef = useRef(editing); editingRef.current = editing;
@@ -114,11 +117,9 @@ export default function App() {
   const workbenchRef = useRef(workbench); workbenchRef.current = workbench;
   const [editorDraft, setEditorDraft] = useState(false);
   const editorDraftRef = useRef(editorDraft); editorDraftRef.current = editorDraft;
-  const [creating, setCreating] = useState(false);
   const { page, setPage, dimensions, rotation, setRotation, readingMode, setReadingMode, annotating: mobileAnnotating, setAnnotating: setMobileAnnotating,
     tool, setTool, color, setColor, sidebar, setSidebar, sideTab, setSideTab, notesOpen, setNotesOpen, outline, setOutline, activeNote, setActiveNote,
     redactions, setRedactions, editArea, setEditArea, sessionFailed, setSessionFailed, draftFailed, setDraftFailed, apply: applyTabView } = useTabView();
-  const [pageInput, setPageInput] = useState('1');
   const { inkKind, setInkKind, setInkStyles, inkStyle, inkRecentColors, setInkRecentColors, eraserSize, setEraserSize, penOnly, choosePenOnly, penDetected } = useInkPreferences();
   const { annotations, annotationRef, showAnnotations, commitAnnotations, bookmarks, bookmarkRef, showBookmarks, commitBookmarks } = useMarks(
     (step, gesture) => history.record(step, gesture), () => { if (docRef.current) unreadSessions.current.delete(docRef.current.id); });
@@ -126,48 +127,12 @@ export default function App() {
   const [tabs, setTabs] = useState<DocumentTab[]>([]);
   const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const visitedSearch = useRef<string | null>(null);
-  const submitPending = useRef(false);
-  const sidebarBeforeSearch = useRef(false);
   const [library, setLibrary] = useState(true);
   const libraryRef = useRef(library); libraryRef.current = library;
-  const [driveLibrary, setDriveLibrary] = useState(false);
-  const [driveMessage, setDriveMessage] = useState('');
-  const [driveConflicts, setDriveConflicts] = useState<string[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
-  const [pageJump, setPageJump] = useState(false);
-  const [viewSettings, setViewSettings] = useState(false);
-  const [annotationOptions, setAnnotationOptions] = useState(false);
-  const [capabilityNotice, setCapabilityNotice] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<RecentDocument | null>(null);
-  const [returnLocation, setReturnLocation] = useState<{ key: string; page: number; top: number; left: number } | null>(null);
   const [recents, setRecents] = useState<RecentDocument[]>([]);
-  const [help, setHelp] = useState(false);
-  const [settings, setSettings] = useState(false);
   const { rememberRecent, setRememberRecent, defaultZoom, setDefaultZoom, readingPreferences, setReadingPreferences, readingPreferencesRef, preferencesRef } = useAppPreferences();
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [info, setInfo] = useState(false);
-  const [palette, setPalette] = useState(false);
-  const [whatsNew, setWhatsNew] = useState(shouldShowWhatsNew);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null);
-  const noteOrigin = useRef<'document' | 'list'>('document');
-  const [noteText, setNoteText] = useState('');
-  // Where the note card opens: beside the note's marker, or where a new note was clicked.
-  const [noteAnchor, setNoteAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
-  const lastPointer = useRef({ x: 0, y: 0 });
-  useEffect(() => {
-    const remember = (event: PointerEvent) => { lastPointer.current = { x: event.clientX, y: event.clientY }; };
-    document.addEventListener('pointerdown', remember, true);
-    return () => document.removeEventListener('pointerdown', remember, true);
-  }, []);
-  const noteKey = noteDraft ? noteDraft.id ?? 'new' : null;
-  useLayoutEffect(() => {
-    if (!noteKey) return;
-    const marker = noteKey !== 'new' ? document.querySelector(`.note-marker[data-note-id="${CSS.escape(noteKey)}"]`)?.getBoundingClientRect() : null;
-    const { x, y } = lastPointer.current;
-    setNoteAnchor(marker ? (marker.bottom > 0 && marker.top < innerHeight ? marker : null) : x || y ? { left: x, top: y, right: x + 26, bottom: y + 27 } : null);
-  }, [noteKey]);
+  const { noteDraft, setNoteDraft, noteText, setNoteText, noteOrigin, noteAnchor, editNote: openNote } = useNoteEditor();
   const [password, setPassword] = useState<PasswordRequest | null>(null);
   const passwordRef = useRef(password); passwordRef.current = password;
   const [dragOver, setDragOver] = useState(false);
@@ -179,20 +144,13 @@ export default function App() {
   if (sidebar) lastDrawer.current = 'sidebar'; else if (notesOpen) lastDrawer.current = 'notes';
   const sidebarShown = sidebar || sidebarLeaving && lastDrawer.current === 'sidebar', notesShown = notesOpen || notesLeaving && lastDrawer.current === 'notes';
   useEffect(() => { if (!sidebar && !notesOpen) setDrawerSwap(false); }, [sidebar, notesOpen]);
-  const [driveAvailable, setDriveAvailable] = useState(isNative);
-  const [driveRefresh, setDriveRefresh] = useState<Transfer | null>(null);
   const storageFailed = sessionFailed || draftFailed;
-  // The tab key, or 'window', whose closing waits because its session could not be saved.
-  const [closeBlocked, setCloseBlocked] = useState<string | null>(null);
   const [, setHistoryTick] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const picking = useRef(false);
   const viewer = useRef<HTMLDivElement>(null);
-  const pageInputDirty = useRef(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const loadingRef = useRef(loading); loadingRef.current = loading;
-  const restoreScroll = useRef<{ key: string; top: number; left: number } | null>(null);
-  const scrollRestoreFrame = useRef<number | null>(null);
   const docRef = useRef<LoadedDocument | null>(null);
   const readingState = useRef({ page });
   readingState.current = { page };
@@ -211,8 +169,9 @@ export default function App() {
   const activityLabel = busy === 'download' ? doc?.drive ? driveMessage || 'Guardando en Google Drive…' : savesInPlace ? 'Guardando el PDF…' : isNative ? 'Guardando una copia…' : 'Preparando el PDF…'
     : busy === 'print' ? 'Preparando la impresión…' : busy === 'edit' ? 'Aplicando los cambios…' : '';
   const { toast, notify, dismiss: dismissToast, activity, activityDone } = useNotices(activityLabel);
-  const { textIndex, setTextIndex, indexing, setIndexing, query, setQuery, searchQuery, setSearchQuery, searchNow, resultIndex, setResultIndex,
-    resultLimit, setResultLimit, results, occurrences, history: searchHistory, setHistory: setSearchHistory } = useDocumentSearch(doc, searchOpen, notify);
+  const search = useDocumentSearch(doc, searchOpen, notify);
+  const { textIndex, setTextIndex, indexing, setIndexing, query, setQuery, searchQuery, setSearchQuery, resultIndex, setResultIndex,
+    resultLimit, setResultLimit, results, occurrences, history: searchHistory, setHistory: setSearchHistory } = search;
   // Two pages side by side share the width.
   const spread = readingMode === 'spread' && !phone;
   const { zoomMode, setZoomMode, customScale, setCustomScale, scale, currentScale, readingAnchor, changeZoom, toggleTapZoom } = useReaderZoom({ viewer, documentId: doc?.id, currentId: () => docRef.current?.id,
@@ -232,7 +191,6 @@ export default function App() {
       undo: history.undo, redo: history.redo, scrollTop: viewer.current?.scrollTop || 0, scrollLeft: viewer.current?.scrollLeft || 0 };
   }
   function activateTab(tab: DocumentTab, focusSelectedTab = document.activeElement?.getAttribute('role') === 'tab') {
-    pageInputDirty.current = false;
     if (tab.key !== tabStore.activeKey) setEditing(false);
     tabStore.activeKey = tab.key; setActiveTabKey(tab.key);
     docRef.current = tab.doc; readingState.current = { page: tab.page };
@@ -247,13 +205,13 @@ export default function App() {
   /** Shows a tab's view of its document: page, zoom, mode, tool, panels and search. On touch
    * layouts (`closeDrawers`) the drawers start closed, whatever the tab had open. */
   function applyView(view: TabView, closeDrawers: boolean) {
-    applyTabView(view, closeDrawers); setPageInput(String(view.page)); setZoomMode(view.zoomMode); setCustomScale(view.customScale);
+    applyTabView(view, closeDrawers); showPageInput(view.page); setZoomMode(view.zoomMode); setCustomScale(view.customScale);
     setTextIndex(view.textIndex); setIndexing(view.indexing); setSearchOpen(view.searchOpen); setQuery(view.query); setSearchQuery(searchTerm(view.query)); setResultIndex(view.resultIndex);
     setBookmarkEditingId(null);
   }
   /** The last document closed: the reader empties and the library shows. */
   function showNoDocument() {
-    pageInputDirty.current = false; setPageInput('1'); setPage(1);
+    showPageInput(1); setPage(1);
     tabStore.activeKey = null; setActiveTabKey(null); docRef.current = null; history.undo = []; history.redo = [];
     setReaderChromeHidden(false); setDoc(null); showAnnotations([]); showBookmarks([]); setOutline(null); setTextIndex([]); setQuery(''); setSearchOpen(false); setNotesOpen(false); setSidebar(false);
     setTool('select'); setRedactions([]); setEditArea(null); setMobileAnnotating(false); setReturnLocation(null); setWorkBenchClosed(); setLibrary(true);
@@ -267,7 +225,6 @@ export default function App() {
   /** Shows a document that just opened, in its new tab or in place of its earlier copy. */
   function presentTab(tab: DocumentTab, { replacing, quiet, resumeEditing, previous }: { replacing: boolean; quiet: boolean; resumeEditing: boolean; previous: DocumentTab | null }) {
     tabStore.activeKey = tab.key; setActiveTabKey(tab.key);
-    pageInputDirty.current = false;
     if (quiet && viewer.current) restoreScroll.current = { key: tab.key, top: viewer.current.scrollTop, left: viewer.current.scrollLeft };
     if (!replacing) setEditing(false);
     docRef.current = tab.doc; readingState.current = { page: tab.page };
@@ -290,13 +247,8 @@ export default function App() {
   useEffect(() => { if (!editing) editStore.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null }); }, [editing, editStore]);
   usePastedImages(editing, editStore, message => notify(message, 'error'));
 
-  // Builds without Google's OAuth client cannot connect to Drive.
-  useEffect(() => { if (isNative) void readDriveStatus().then(status => setDriveAvailable(status.available !== false)).catch(() => {}); }, []);
   const systemChromeVisible = !readerChromeHidden || !doc || library || !!workbench || !!noteDraft || mobileActions || mobileTabs || pageJump || settings || help || info;
   const { theme, chooseTheme } = useTheme(library ? '--bg' : systemChromeVisible ? '--surface' : '--canvas');
-  useEffect(() => { if (!pageInputDirty.current) setPageInput(String(page)); }, [page]);
-  // Reaching the remembered page again, by any means, retires «Volver a p. N».
-  useEffect(() => { setReturnLocation(current => current?.page === page ? null : current); }, [page]);
   usePreserveOnLeave(() => {
     tabStore.retain();
     for (const tab of tabStore.list) void persistence.tab(tab, false).catch(() => { setSessionFailed(true); });
@@ -339,16 +291,12 @@ export default function App() {
     return () => { alive = false; };
   }, [library, mobileTabs, notify]);
   const { pageLabels, currentPageLabel } = usePageLabels(doc?.pdf, page);
-  useEffect(() => setReturnLocation(null), [doc?.pdf]);
-  useEffect(() => {
-    if (searchOpen) { setSidebar(true); setTimeout(() => searchInput.current?.focus(), 50); }
-  }, [searchOpen]);
   // The screen stays on while a document is being read, never in the library.
   const reading = !!doc && !library && readingPreferences.keepAwake;
   useKeepAwake(reading);
   // The palette's commands, built when it opens.
   const commands = () => paletteCommands({ doc, idle: !busy && !loading, pageName, saveLabel, bookmarked: hasBookmarkPage(bookmarks, page),
-    canUndo: history.undo.length > 0, canRedo: history.redo.length > 0, returnPage: returnLocation?.key === activeTabKey && returnLocation.page !== page ? returnLocation.page : null,
+    canUndo: history.undo.length > 0, canRedo: history.redo.length > 0, returnPage,
     pageTone: readingPreferences.pageTone, outline, driveAvailable,
     tabs: tabs.filter(tab => tab.key !== activeTabKey).map(tab => ({ key: tab.key, name: tab.doc.name })),
     recents: recents.filter(item => !tabs.some(tab => tab.doc.id === item.id)),
@@ -375,24 +323,6 @@ export default function App() {
     } });
 
 
-  useEffect(() => {
-    if (!touchLayout || !(sidebar || notesOpen)) return;
-    const drawer = document.querySelector<HTMLElement>('.mobile-drawer'); if (!drawer) return;
-    const previous = document.activeElement as HTMLElement | null;
-    if (!bookmarkEditingId) drawer.querySelector<HTMLButtonElement>('button:not([tabindex="-1"])')?.focus({ preventScroll: true });
-    const keyboard = (event: KeyboardEvent) => {
-      if (document.querySelector('dialog[open], .bookmark-menu')) return;
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSidebar(false); setSearchOpen(false); setNotesOpen(false); }
-      if (event.key !== 'Tab') return;
-      const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter(element => element.getClientRects().length);
-      const first = focusable[0], last = focusable.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    };
-    document.addEventListener('keydown', keyboard, true);
-    return () => { document.removeEventListener('keydown', keyboard, true); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
-  }, [touchLayout, sidebar, notesOpen, bookmarkEditingId]);
-  useEffect(() => { if (submitPending.current) { submitPending.current = false; goToResult(0); } }, [results]);
   const pages = useMemo(() => Array.from({ length: doc?.pdf.numPages || 0 }, (_, i) => i + 1), [doc]);
   const annotationPages = useMemo(() => {
     const map = new Map<number, Annotation[]>();
@@ -400,57 +330,19 @@ export default function App() {
     return map;
   }, [annotations]);
 
-  // The phone header overlays the reader and the notch; pages are placed below it.
-  function readingInset() {
-    const header = phoneRef.current ? document.querySelector('.app-header') : null;
-    return header && viewer.current ? header.getBoundingClientRect().bottom - viewer.current.getBoundingClientRect().top + 12 : 16;
-  }
-  const goToPage = useCallback((number: number, smooth = true, preserveScrollRestore = false) => {
-    const pdf = docRef.current?.pdf;
-    if (!pdf || !viewer.current) return;
-    if (!preserveScrollRestore && scrollRestoreFrame.current !== null) { cancelAnimationFrame(scrollRestoreFrame.current); scrollRestoreFrame.current = null; }
-    pageInputDirty.current = false;
-    const next = Math.max(1, Math.min(pdf.numPages, number));
-    setPage(next); setPageInput(String(next));
-    const root = viewer.current, node = root.querySelector<HTMLElement>(`[data-page-number="${next}"]`);
-    const distance = node ? node.getBoundingClientRect().top - root.getBoundingClientRect().top - readingInset() : null;
-    // While a smooth jump passes other pages, the counter keeps the target and «Volver a p. N» stays.
-    scrollReaderBy(root, distance, smooth && distance !== null && readingPreferencesRef.current.smoothScroll && Math.abs(distance) < root.clientHeight * 4 && !matchMedia('(prefers-reduced-motion: reduce)').matches);
-  }, [scrollReaderBy]);
 
-  function commitPageInput() {
-    pageInputDirty.current = false;
-    const next = Number(pageInput);
-    if (Number.isInteger(next) && next > 0) goToPage(next);
-    else setPageInput(String(page));
-  }
 
-  useLayoutEffect(() => {
-    if (readingMode === 'single' && viewer.current) viewer.current.scrollTop = 0;
-  }, [page, readingMode]);
-  useEffect(() => {
-    if (docRef.current) goToPage(readingState.current.page, false, true);
-  }, [readingMode, goToPage]);
-
+  const { pageInput, setPageInput, pageInputDirty, editPageInput, showPageInput, commitPageInput, goToPage, restoreScroll, cancelScrollRestore,
+    returnLocation, setReturnLocation, returnPage, rememberLocation, returnToLocation: returnToPlace, navigate } = useReaderPosition({ viewer, doc, page, setPage, readingMode, rotation, phone,
+    current: () => docRef.current, currentPage: () => readingState.current.page, activeKey: () => tabStore.activeKey, scale: () => currentScale.current,
+    smoothScroll: () => readingPreferencesRef.current.smoothScroll, scrollBy: scrollReaderBy, notify });
+  const { goToResult, submitSearch, stepResult, typeQuery, openSearch, closeSearch, closeMobilePanel, openExplorer, toggleSidePanel, showExplorerTab, showPage, focusRail } = usePanels({
+    touch: touchLayout, phone, sidebar, setSidebar, sideTab, setSideTab, notesOpen, setNotesOpen, searchOpen, setSearchOpen, search, input: searchInput, bookmarkEditing: !!bookmarkEditingId,
+    setTool, setAnnotating: setMobileAnnotating, showChrome: () => setReaderChromeHidden(false), setDrawerSwap, activeKey: () => tabStore.activeKey, goToPage,
+    hasReturn: () => !!returnLocation, rememberLocation });
   useSwipePages(viewer, touchLayout && !!doc && readingMode === 'single' && tool === 'select' && !mobileAnnotating && !library && !sidebar && !notesOpen && !busy && !loading,
     step => goToPage(readingState.current.page + step, false));
 
-  // A document the reader opens is shown where it was left; new bytes for the same
-  // reader copy (Editar writing its changes) leave the view where it is.
-  const scrolledPdf = useRef<PDFDocumentProxy | null>(null);
-  useEffect(() => {
-    if (!doc || scrolledPdf.current === doc.pdf) return;
-    scrolledPdf.current = doc.pdf;
-    const restored = restoreScroll.current;
-    restoreScroll.current = null;
-    const frame = requestAnimationFrame(() => {
-      scrollRestoreFrame.current = null;
-      if (restored?.key === tabStore.activeKey && viewer.current) viewer.current.scrollTo({ top: restored.top, left: restored.left, behavior: 'instant' });
-      else goToPage(doc.initialPage, false);
-    });
-    scrollRestoreFrame.current = frame;
-    return () => { cancelAnimationFrame(frame); if (scrollRestoreFrame.current === frame) scrollRestoreFrame.current = null; };
-  }, [doc, goToPage]);
 
   const recordStep = (step: History, gesture?: string) => history.record(step, gesture);
   const trimHistory = (stack: History[]) => history.trim(stack);
@@ -459,13 +351,12 @@ export default function App() {
   const toggleBookmark = useCallback(() => {
     if (!docRef.current || busyRef.current || loadingRef.current) return;
     haptic('light');
-    const current = bookmarkRef.current;
     // On touch the filled bookmark toggles; Deshacer restores a removed one.
-    if (touchRef.current && hasBookmarkPage(current, page)) { commitBookmarks(current.filter(node => node.page === page).reduce((nodes, node) => deleteBookmark(nodes, node.id), current)); notify('Marcador eliminado.', 'success'); return; }
-    const next = addPageBookmark(current, page);
+    const next = toggledBookmark(bookmarkRef.current, page, touchRef.current);
     commitBookmarks(next.bookmarks);
-    if (touchRef.current) notify('Marcador guardado.', 'success');
-    else { setSidebar(true); setSearchOpen(false); setSideTab('bookmarks'); setBookmarkEditingId(next.id); }
+    if (!next.added) notify('Marcador eliminado.', 'success');
+    else if (touchRef.current) notify('Marcador guardado.', 'success');
+    else { setSidebar(true); setSearchOpen(false); setSideTab('bookmarks'); setBookmarkEditingId(next.added); }
   }, [page, commitBookmarks, notify]);
   function activateHighlight() {
     if (!docRef.current?.canAnnotate || !docRef.current.canCopy || busyRef.current || loadingRef.current) return;
@@ -487,7 +378,7 @@ export default function App() {
       case 'open': void chooseFile(); break;
       case 'find': find(); break;
       case 'print': void printDocument(); break;
-      case 'search-step': goToResult(visitedSearch.current === `${tabStore.activeKey}\0${searchQuery}` ? resultIndex + shortcut.step : resultIndex); break;
+      case 'search-step': stepResult(shortcut.step); break;
       case 'shortcuts': setShortcutsOpen(true); break;
       case 'zoom': changeZoom(shortcut.delta); break;
       case 'actual-size': setCustomScale(1); setZoomMode('custom'); break;
@@ -538,17 +429,17 @@ export default function App() {
     if (Array.isArray(annotation)) {
       // A selection spanning several pages is one action in the document history.
       // Highlights over a highlight of the same color join it.
-      commitAnnotations(addHighlights(annotationRef.current, annotation.map(item => ({ ...item, id: uid(), created: Date.now() }))));
+      commitAnnotations(withAdded(annotationRef.current, annotation));
       if (annotation.some(item => item.kind === 'highlight')) haptic('light');
       return;
     }
-    if (annotation.kind === 'note') { noteOrigin.current = 'document'; setNoteDraft(annotation); setNoteText(''); return; }
-    commitAnnotations(addHighlights(annotationRef.current, [{ ...annotation, id: uid(), created: Date.now() }]));
+    if (annotation.kind === 'note') { openNote(annotation, 'document', ''); return; }
+    commitAnnotations(withAdded(annotationRef.current, [annotation]));
     if (annotation.kind === 'highlight') haptic('light');
   }
   const removeAnnotation = useCallback((id: string, gesture?: string) => {
     if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current || !annotationRef.current.some(annotation => annotation.id === id)) return;
-    commitAnnotations(annotationRef.current.filter(annotation => annotation.id !== id), gesture);
+    commitAnnotations(without(annotationRef.current, id), gesture);
     setActiveNote(current => current === id ? null : current);
   }, [commitAnnotations]);
   const snapshot = () => changes.snapshot();
@@ -575,88 +466,34 @@ export default function App() {
   }
   function saveNote() {
     if (!doc?.canAnnotate || !noteDraft || !noteText.trim()) return;
-    const next = { ...noteDraft, id: noteDraft.id || uid(), text: noteText.trim(), created: Date.now() } as Annotation;
-    commitAnnotations(noteDraft.id ? annotationRef.current.map(a => a.id === next.id ? next : a) : [...annotationRef.current, next]);
-    setNoteDraft(null); setActiveNote(next.id);
+    const { list, note } = withNote(annotationRef.current, noteDraft, noteText);
+    commitAnnotations(list);
+    setNoteDraft(null); setActiveNote(note.id);
     if (noteOrigin.current === 'list') setNotesOpen(true);
     if (!mobileAnnotating) setTool('select');
   }
   // Mobile keeps private copies of opened PDFs; those of forgotten entries are deleted.
   const retireLibraryEntry = (id: string) => libraryStore.retire(id);
-  function goToResult(index: number) {
-    if (!results.length) return;
-    const next = (index + results.length) % results.length;
-    const searchKey = `${tabStore.activeKey}\0${searchQuery}`;
-    if (!returnLocation) rememberLocation(); visitedSearch.current = searchKey;
-    setSearchHistory(current => rememberSearch(searchQuery, current));
-    setResultIndex(next); goToPage(results[next].page, false);
-    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('folio:reveal-search-result', { detail: { page: results[next].page, offset: results[next].offset } })));
-    if (touchRef.current) { searchInput.current?.blur(); setSidebar(false); setNotesOpen(false); setReaderChromeHidden(false); }
-  }
-  function submitSearch(step: number) {
-    // Enter before the typing pause searches at once and then shows the first result.
-    const term = searchTerm(query);
-    if (term !== searchQuery) { if (term) { submitPending.current = true; searchNow(term); } return; }
-    goToResult(visitedSearch.current === `${tabStore.activeKey}\0${searchQuery}` ? resultIndex + step : resultIndex);
-  }
-  // A desktop panel closed from inside returns keyboard focus to its rail button.
-  function focusRail(label: string) { requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.tool-rail [aria-label="${label}"]`)?.focus({ preventScroll: true })); }
-  function closeSearch() {
-    // Restore the panel that was open before searching; keyboard focus returns to Buscar.
-    const returnFocus = !touchRef.current && !!document.activeElement?.closest('.sidebar');
-    visitedSearch.current = null; setSearchOpen(false); setQuery(''); setSidebar(!touchRef.current && sidebarBeforeSearch.current);
-    if (returnFocus) focusRail('Buscar en el PDF');
-  }
   // iPad anchors Share and Print to the control that opened them.
   const anchorOf = (element: Element | null): Anchor | undefined => { const box = element?.getBoundingClientRect(); return box && { left: box.left, top: box.top, width: box.width, height: box.height }; };
   function showDrive() { setDriveLibrary(true); setLibrary(true); }
   function closeActiveTab() { if (tabStore.activeKey) void closeTab(tabStore.activeKey); }
-  function closeMobilePanel() { setSidebar(false); setSearchOpen(false); setQuery(''); setNotesOpen(false); if (phoneRef.current) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[aria-label="Páginas"]')?.focus({ preventScroll: true })); }
-  function rememberLocation() {
-    if (tabStore.activeKey && viewer.current) setReturnLocation({ key: tabStore.activeKey, page: readingState.current.page, top: viewer.current.scrollTop, left: viewer.current.scrollLeft });
-  }
-  function returnToLocation() {
-    if (!returnLocation || returnLocation.key !== tabStore.activeKey) return;
-    if (searchOpen) closeSearch();
-    goToPage(returnLocation.page, false); const location = returnLocation; setReturnLocation(null);
-    requestAnimationFrame(() => viewer.current?.scrollTo({ top: location.top, left: location.left, behavior: 'instant' }));
-  }
-  function mobilePage(number: number) { rememberLocation(); goToPage(number); if (touchRef.current) closeMobilePanel(); }
-  function navigatePDF(destination: PDFNavigationTarget) {
-    if ('url' in destination) { void openExternalUrl(destination.url).catch(() => notify('No se pudo abrir el enlace.', 'error')); return; }
-    rememberLocation(); goToPage(destination.page, false);
-    if (destination.top !== undefined && doc) void doc.pdf.getPage(destination.page).then(pdfPage => {
-      requestAnimationFrame(() => {
-        const node = viewer.current?.querySelector<HTMLElement>(`[data-page-number="${destination.page}"] .page-content`);
-        if (!node || !viewer.current) return;
-        const point = pdfPage.getViewport({ scale: currentScale.current, rotation: (pdfPage.rotate + rotation) % 360 }).convertToViewportPoint(destination.left || 0, destination.top!);
-        const box = node.getBoundingClientRect(), bounds = viewer.current.getBoundingClientRect();
-        viewer.current.scrollTo({ top: viewer.current.scrollTop + box.top - bounds.top + point[1] - readingInset() - 8, behavior: 'instant' });
-      });
-    }).catch(() => {});
-  }
-  function openExplorer(tab: SideTab = 'pages') { setReaderChromeHidden(false); setSearchOpen(false); setQuery(''); setNotesOpen(false); setSideTab(tab); setSidebar(true); }
-  function openSearch() {
-    const view = activeView.current;
-    if (!view.searchOpen) { visitedSearch.current = null; sidebarBeforeSearch.current = view.sidebar; }
-    setReaderChromeHidden(false); setMobileAnnotating(false); setTool('select'); setNotesOpen(false); setSearchOpen(true); setSidebar(true);
-    if (view.searchOpen) { searchInput.current?.focus(); searchInput.current?.select(); }
-  }
+  function returnToLocation() { returnToPlace(() => { if (searchOpen) closeSearch(); }); }
+  const mobilePage = showPage;
+  const navigatePDF = navigate;
   function startAnnotating() {
     if (!doc?.canAnnotate) { setCapabilityNotice(true); return; }
     setEditing(false);
     if (touchRef.current) closeMobilePanel(); setReaderChromeHidden(false); setMobileAnnotating(true); setTool('select');
   }
-  function editNote(annotation: Annotation, origin: 'document' | 'list') { noteOrigin.current = origin; setNoteDraft(annotation); setNoteText(annotation.text); }
+  const editNote = (annotation: Annotation, origin: 'document' | 'list') => openNote(annotation, origin, annotation.text);
   const updateAnnotation = useCallback((id: string, patch: Partial<Pick<Annotation, 'color' | 'text' | 'rect'>>) => {
     if (!docRef.current?.canAnnotate || busyRef.current || loadingRef.current) return;
-    commitAnnotations(annotationRef.current.map(item => item.id === id ? { ...item, ...patch } : item));
+    commitAnnotations(patched(annotationRef.current, id, patch));
   }, [commitAnnotations]);
-  // The comment's marker sits in the right margin, level with the top of the
-  // highlight, so it does not cover the highlighted words; its 20 pt PDF icon stays on the page.
+  // The comment's 20 pt PDF icon stays on the page.
   async function commentHighlight(annotation: Annotation) {
-    const view = (await docRef.current?.pdf.getPage(annotation.page).catch(() => null))?.view, x = view ? view[2] - 24 : annotation.rect[2], y = Math.max(annotation.rect[1], annotation.rect[3]);
-    noteOrigin.current = 'document'; setNoteDraft({ page: annotation.page, kind: 'note', rect: [x, y, x, y], text: '', color: annotation.color }); setNoteText('');
+    openNote(commentFor(annotation, (await docRef.current?.pdf.getPage(annotation.page).catch(() => null))?.view), 'document', '');
   }
   function openTools() { if (!doc || isNativePdfDocument(doc.pdf)) { setCapabilityNotice(true); return; } setMobileAnnotating(false); setTool('select'); setWorkbench('home'); }
   function openEditor() {
@@ -690,11 +527,6 @@ export default function App() {
     try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
     catch { notify('No se pudo activar la pantalla completa.', 'error'); }
   }
-  function toggleSidePanel(tab: SideTab) {
-    if (phoneRef.current || window.innerWidth < 1000) setNotesOpen(false);
-    setSidebar(!(sidebar && !searchOpen && sideTab === tab));
-    setSearchOpen(false); setSideTab(tab);
-  }
   async function clearLibrary() {
     if (!confirmClear) { setConfirmClear(true); return; }
     if (await libraryStore.clear()) setConfirmClear(false);
@@ -702,25 +534,8 @@ export default function App() {
   async function forgetRecent(recent: RecentDocument) { if (await libraryStore.forget(recent)) setDeleteTarget(null); }
   // The phone shows the library when the document in front was removed from it.
   function discardOpenTabs(ids: Set<string>) { if (tabStore.discard(ids) && tabStore.list.length && phoneRef.current) setLibrary(true); }
-  const explorerIds = ['pages', 'outline', 'bookmarks', 'annotations'] as const;
-  function showExplorerTab(id: typeof explorerIds[number], focus = false) {
-    // Annotations and the other tabs are separate drawers in the same place:
-    // switching between them swaps the content instead of closing and reopening.
-    if (id === 'annotations' ? sidebar : notesOpen) setDrawerSwap(true);
-    setSearchOpen(false); setQuery(''); setNotesOpen(id === 'annotations'); setSidebar(id !== 'annotations'); if (id !== 'annotations') setSideTab(id);
-    // Annotations live in their own drawer, so the tab is focused once it renders.
-    if (focus) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.mobile-panel-tabs [data-explorer-tab="${id}"]`)?.focus({ preventScroll: true }));
-  }
-  const explorerTabs = <div className="mobile-panel-tabs" role="tablist" aria-label="Explorar PDF">{explorerIds.map((id, index) => {
-    const Symbol = id === 'pages' ? Layers : id === 'outline' ? ListTree : id === 'bookmarks' ? Bookmark : MessageSquare;
-    const label = id === 'pages' ? 'Páginas' : id === 'outline' ? 'Índice' : id === 'bookmarks' ? 'Marcadores' : 'Anotaciones';
-    // A drawer sliding away keeps showing the tab it was on.
-    const selected = id === 'annotations' ? notesShown : sidebarShown && !searchOpen && sideTab === id;
-    return <button key={id} role="tab" data-explorer-tab={id} aria-selected={selected} aria-controls={selected ? 'explorer-panel' : undefined} tabIndex={selected ? 0 : -1} onClick={() => showExplorerTab(id)} onKeyDown={event => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault(); showExplorerTab(explorerIds[event.key === 'Home' ? 0 : event.key === 'End' ? explorerIds.length - 1 : (index + (event.key === 'ArrowLeft' ? explorerIds.length - 1 : 1)) % explorerIds.length], true);
-    }}><Symbol size={19} /><span>{label}</span></button>;
-  })}</div>;
+  // A drawer sliding away keeps showing the tab it was on.
+  const explorerTabs = <ExplorerTabs onSelect={showExplorerTab} selected={id => id === 'annotations' ? notesShown : sidebarShown && !searchOpen && sideTab === id} />;
   const libraryContent = <DocumentLibrary onDrive={driveAvailable ? () => setDriveLibrary(true) : undefined} documents={recents} loading={libraryLoading} activeDocument={doc && !doc.sample ? { id: doc.id, name: doc.name, page, pages: doc.pdf.numPages } : undefined} busy={!!busy || loading} onContinue={doc ? () => setLibrary(false) : undefined} onOpen={recent => void reopenRecent(recent)} onImport={() => requestAnimationFrame(() => void chooseFile())} onCreate={() => setCreating(true)} onDelete={setDeleteTarget} onSettings={() => { setConfirmClear(false); setSettings(true); }} onHelp={() => setHelp(true)} onDemo={() => void openDocument('sample')} />;
 
   const inlineEditing = !phone && workbench === 'edit-pdf';
@@ -767,7 +582,7 @@ export default function App() {
   // Undo keeps less on a phone.
   toolSections.host = { section: () => workbenchRef.current, setSection: setWorkbench, inline: () => !phoneRef.current, draft: () => editorDraftRef.current,
     page: () => readingState.current.page, revision: () => docRef.current?.revision, activeKey: () => tabStore.activeKey, tool: () => tool, setTool, clearArea: () => setEditArea(null),
-    cancelScrollRestore: () => { if (scrollRestoreFrame.current !== null) { cancelAnimationFrame(scrollRestoreFrame.current); scrollRestoreFrame.current = null; } },
+    cancelScrollRestore,
     showAt: (number, top, left) => { setPage(number); setPageInput(String(number)); viewer.current?.scrollTo({ top, left, behavior: 'instant' }); }, goToPage: number => goToPage(number, false) };
   history.host = { budget: () => (phoneRef.current ? 40 : 200) * 1024 * 1024, changed: () => setHistoryTick(v => v + 1),
     blocked: () => editorDraftRef.current || !!busyRef.current || loadingRef.current || editStore.state.committing || liveEdit.settling,
@@ -907,7 +722,7 @@ export default function App() {
       {sidebarShown && <aside className={`sidebar${touchLayout ? ' mobile-drawer' : ''}${sidebarLeaving ? ' closing' : ''}${drawerSwap ? ' drawer-swap' : ''}`} role={touchLayout ? 'dialog' : undefined} aria-modal={touchLayout ? true : undefined} aria-label={touchLayout ? searchOpen ? 'Buscar en el PDF' : 'Explorar documento' : undefined} style={touchLayout ? undefined : { width: readingPreferences.panelWidth, minWidth: readingPreferences.panelWidth }}>
         {touchLayout && <><SheetHandle onClose={closeMobilePanel} label="Cerrar explorador" /><div className="mobile-drawer-heading"><h2>{searchOpen ? 'Buscar' : 'Explorar'}</h2><IconButton label={searchOpen ? 'Cerrar búsqueda' : 'Cerrar panel'} onClick={closeMobilePanel}><X size={20} /></IconButton></div>{!searchOpen && explorerTabs}</>}
         {searchOpen ? <SearchPanel touch={touchLayout} input={searchInput} query={query} searchQuery={searchQuery} onClose={closeSearch}
-          onQuery={value => { visitedSearch.current = null; setQuery(value); setResultIndex(0); }} onClear={() => setQuery('')}
+          onQuery={typeQuery} onClear={() => setQuery('')}
           onSubmit={backwards => submitSearch(backwards ? -1 : phone ? 0 : 1)}
           history={searchHistory} onClearHistory={() => { clearRecentSearches(); setSearchHistory([]); }}
           indexing={indexing} indexed={textIndex} pages={doc?.pdf.numPages || 0} results={results} occurrences={occurrences} selected={resultIndex}
@@ -928,7 +743,7 @@ export default function App() {
         {!touchLayout && !inlineEditing && <ReaderToolbar doc={doc} busy={!!busy} loading={loading} mode={editing ? 'edit' : mobileAnnotating ? 'annotate' : 'read'}
           onRead={() => { setEditing(false); setMobileAnnotating(false); setTool('select'); }} onAnnotate={startAnnotating} onEdit={openEditor} onTools={openTools}
           canUndo={!!history.undo.length} canRedo={!!history.redo.length} onUndo={undo} onRedo={redo}
-          page={page} pageInput={pageInput} onPageInput={value => { pageInputDirty.current = true; setPageInput(value); }} onPageCommit={commitPageInput} onPageBlur={() => { if (pageInputDirty.current) commitPageInput(); }} onPage={goToPage}
+          page={page} pageInput={pageInput} onPageInput={editPageInput} onPageCommit={commitPageInput} onPageBlur={() => { if (pageInputDirty.current) commitPageInput(); }} onPage={goToPage}
           zoomMode={zoomMode} scale={scale} onZoom={changeZoom} onZoomChoice={value => { if (['page', 'width'].includes(value)) setZoomMode(value); else { setCustomScale(Number(value) / 100); setZoomMode('custom'); } }}
           bookmarked={hasBookmarkPage(bookmarks, page)} onBookmark={toggleBookmark} saveLabel={saveLabel} unsaved={docDirty} onSave={() => void download()} onMore={() => setMobileActions(true)} />}
         {!touchLayout && !inlineEditing && doc && editing && <EditToolbar store={editStore} doc={doc} onDone={() => setEditing(false)} />}
@@ -943,13 +758,13 @@ export default function App() {
           {loading && <div className="loading-overlay" role="status"><svg className="activity-ring large" viewBox="0 0 24 24" aria-hidden="true"><circle className="activity-ring-track" cx="12" cy="12" r="9" /><circle className="activity-ring-arc" cx="12" cy="12" r="9" /></svg><span>Abriendo PDF…</span></div>}
         </div>
         {touchLayout && doc && !inlineEditing && !loading && !(mobileAnnotating && (tool === 'draw' || tool === 'eraser')) && <PageScrubber pdf={doc.pdf} page={page} pages={doc.pdf.numPages} viewer={viewer.current} continuous={readingMode !== 'single'} label={pageName} section={outlineSection} onJump={target => { if (!returnLocation) rememberLocation(); goToPage(target, false); }} />}
-        {touchLayout && doc && returnLocation?.key === activeTabKey && returnLocation.page !== page && <button className="touch-return-location" onClick={returnToLocation}><ChevronLeft size={18} /><span>Volver a p. {pageName(returnLocation.page)}</span></button>}
+        {touchLayout && doc && returnPage !== null && <button className="touch-return-location" onClick={returnToLocation}><ChevronLeft size={18} /><span>Volver a p. {pageName(returnPage)}</span></button>}
 
         {phone && doc && <PhoneReadingBar doc={doc} disabled={!!busy || loading} page={page} counter={pageCounter ?? ''} singlePage={readingMode === 'single'} onPage={next => goToPage(next, false)}
           onJump={() => { setPageInput(String(page)); setPageJump(true); }} bookmarked={hasBookmarkPage(bookmarks, page)} onBookmark={toggleBookmark} annotating={mobileAnnotating}
           searching={searchOpen && !sidebar} results={results.length} result={resultIndex} onResult={goToResult} onResults={() => setSidebar(true)} onCloseSearch={closeSearch}
           onPages={() => openExplorer()} onSearch={openSearch} onAnnotate={startAnnotating} onShare={button => void shareDocument(anchorOf(button))} />}
-        {!touchLayout && doc && returnLocation?.key === activeTabKey && returnLocation.page !== page && <button className="desktop-return-location" onClick={returnToLocation}><ChevronLeft size={16} /><span>Volver a p. {returnLocation.page}</span></button>}
+        {!touchLayout && doc && returnPage !== null && <button className="desktop-return-location" onClick={returnToLocation}><ChevronLeft size={16} /><span>Volver a p. {returnPage}</span></button>}
         {phone && doc && mobileAnnotating && <PhoneAnnotationToolbar doc={doc} disabled={!!busy || loading} tool={tool} onTool={setTool} onHighlight={activateHighlight} settings={annotationSlot} onMore={() => setAnnotationOptions(true)} />}
 
         {tool !== 'select' && tool !== 'highlight' && tool !== 'draw' && tool !== 'eraser' && doc && (touchLayout || !mobileAnnotating) && <div className="annotation-tool-hint">

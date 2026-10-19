@@ -25,7 +25,10 @@ rules that break things when ignored. Read the files named before changing them.
 |---|---|
 | `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
 | `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection), the session it opens with, the document that session restores and the tab it opens in. |
-| `marks.ts` | Annotations and bookmarks (`useMarks`): shown state with refs, committed as edits with an undo step. |
+| `marks.ts` | Annotations and bookmarks (`useMarks`): shown state with refs, committed as edits with an undo step; pure list changes (`withAdded`, `withNote`, `toggledBookmark`…). |
+| `reader-position.ts` | Where the reader is (`useReaderPosition`): going to a page, the page field, the scroll a document reopens at, «Volver a p. N», the PDF's links. |
+| `panels.ts` | Side panels and search (`usePanels`): opening and closing them, stepping through results, the touch drawers' focus. |
+| `dialogs.ts` | Which dialogs are open (`useDialogs`), the note being written (`useNoteEditor`), Google Drive's state (`useDriveState`). |
 | `tool-sections.ts` | Tool sections and Editar PDF over the reader (`ToolSections`); closing Editar PDF puts the reader back where it was. |
 | `autosave.ts` | Storing the document in front while it is read: its draft and, shortly after each change, its session. |
 | `document-data.ts` | What is read from the document: outline, page labels, the library cover, iOS's own annotations page by page. |
@@ -47,7 +50,7 @@ rules that break things when ignored. Read the files named before changing them.
 | `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave, keeping the screen on, the system bars. |
 | `notices.tsx`, `theme.ts`, `print.ts`, `ink-preferences.ts`, `desktop-window.ts` | Toasts and the activity capsule, the theme, desktop printing, drawing preferences, the window's controls. |
 
-`Tabs`, `DocumentOpener`, `UndoHistory`, `DocumentChanges`, `ToolSections`, `LiveEdit`, `Persistence`, `DocumentOutput` and `Library` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
+`Tabs`, `DocumentOpener`, `UndoHistory`, `DocumentChanges`, `ToolSections`, `LiveEdit`, `Persistence`, `DocumentOutput` and `Library` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `ExplorerTabs`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
 
 ## A document's life
 
