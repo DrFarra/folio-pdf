@@ -38,7 +38,8 @@ def fields():
     assert len(a.get_fields())==3
     assert any(v.get('/V')=='Imported value' for v in a.get_fields().values())
     assert any(x.info['content']=='Imported note' for x in (b[1].annots() or []))
-    assert any(x.get('page')==2 for x in b[1].get_links())
+    # MuPDF 1.29 reports an explicit /Dest as a named link with its 1-based page as text.
+    assert any(x.get('page')==2 or x['kind']==fitz.LINK_NAMED and x.get('page')=='3' for x in b[1].get_links())
     return {'unicode':True,'mergedFieldsCommentsAndLinks':True}
 def crops():
     for rotation in [0,90,180,270]:
