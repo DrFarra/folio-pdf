@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readImage } from '../edit/EditToolbar';
 import { errorMessage } from '../errors';
-import { isAndroid, isDesktop, isMac, isNative, startupDocuments, type NativeDocument } from '../platform';
+import { isAndroid, isDesktop, isMac, isMobile, isNative, setKeepAwake, setReaderChrome, startupDocuments, type NativeDocument } from '../platform';
 import type { Notify } from './notices';
 
 /** The latest value, so listeners registered once still see the current render's handlers. */
@@ -174,4 +174,20 @@ export function useAndroidBack(handlers: { root: () => boolean; back: (toolsBack
     window.addEventListener('folio:android-back', back);
     return () => window.removeEventListener('folio:android-back', back);
   }, [live]);
+}
+
+/** Phones and tablets keep the screen on while `on` (a document is being read). */
+export function useKeepAwake(on: boolean) {
+  useEffect(() => { void setKeepAwake(on); }, [on]);
+  useEffect(() => () => { void setKeepAwake(false); }, []);
+}
+
+/** Phones and tablets show the system's status and navigation bars while `visible`; the page
+ * hears `folio:system-bars-changed` once they have changed. */
+export function useSystemBars(visible: boolean) {
+  const update = useRef(Promise.resolve());
+  useEffect(() => {
+    if (!isNative || !isMobile) return;
+    update.current = update.current.catch(() => {}).then(() => setReaderChrome(visible)).then(() => { window.dispatchEvent(new Event('folio:system-bars-changed')); }).catch(() => {});
+  }, [visible]);
 }

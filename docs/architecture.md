@@ -10,7 +10,7 @@ rules that break things when ignored. Read the files named before changing them.
 |---|---|---|
 | UI (React) | `src/App.tsx` (state of the open documents: tabs, open/save, undo; composes the rest), `src/app/*` (its hooks and logic, below), `src/components/*` | Tools live in `Workbench.tsx`. |
 | Reader | `src/components/PDFPage.tsx`, `src/pdf.ts` | PDF.js renders pages; virtualized with `useNearby`. |
-| Editor (desktop) | `src/edit/*`, `src/engine/session.ts` | Edits on the reader pages: `store.ts` state, `EditLayer.tsx` per page, `actions.ts` commits, `fonts.ts`. The document lives in its own worker while Editar is open (`EditSession`). |
+| Editor (desktop) | `src/edit/*`, `src/engine/session.ts` | Edits on the reader pages: `store.ts` state, `EditLayer.tsx` per page, `actions.ts` commits, `fonts.ts`, `paste.ts` (pasted images). The document lives in its own worker while Editar is open (`EditSession`). |
 | Editor (touch) | `Workbench` → `PdfContentPicker.tsx` + `ContentEditor.tsx` | Tablet inline, phone modal. |
 | Engine | `src/engine/operations.ts` (`operateDocument`; TypeScript, run directly by Node's type stripping in the engine tests, so only erasable syntax), `mupdf-engine.mjs` (open, save, annotations) | MuPDF WASM in a Web Worker (`pdf.worker.ts`), called through `client.ts` (`processPdf`, `splitPdf`, `getPageContent`…). |
 | Platform glue | `src/platform.ts`, `src/binary.ts`, `src/nativePdf.ts`, `src/drive.ts`, `src/storage.ts` | Picks web / desktop / iOS / Android paths. |
@@ -25,12 +25,17 @@ rules that break things when ignored. Read the files named before changing them.
 |---|---|
 | `model.ts` | Types (`DocumentTab`, `History`, `OpenContext`), constants, `annotationFingerprint`, `trimHistory`. |
 | `document-reader.ts`, `opened-document.ts` | Reading a PDF (bytes, draft, PDF.js, inspection), the session it opens with, the document that session restores and the tab it opens in. |
+| `marks.ts` | Annotations and bookmarks (`useMarks`): shown state with refs, committed as edits with an undo step. |
+| `tool-sections.ts` | Tool sections and Editar PDF over the reader (`ToolSections`); closing Editar PDF puts the reader back where it was. |
+| `autosave.ts` | Storing the document in front while it is read: its draft and, shortly after each change, its session. |
+| `document-data.ts` | What is read from the document: outline, page labels, the library cover, iOS's own annotations page by page. |
+| `app-preferences.ts` | The settings chosen in Ajustes, kept across sessions. |
 | `tab-view.ts` | The per-tab view state (`useTabView`): page, rotation, mode, tool and colour, panels, active note, area tools. |
 | `history.ts` | Undo and redo (`UndoHistory`): annotation steps, PDF snapshots and Editar's live steps. |
 | `document-changes.ts` | Changes to the PDF (`DocumentChanges`): a tool's operation, a result put in its place, an undo snapshot or Editar's copy reopened. |
 | `tabs.ts` | The open tabs (`Tabs`): switching, closing, reordering, storing each one's changes on the way; quitting stores them all. |
 | `opener.ts` | Opening documents (`DocumentOpener`): one at a time, a newer open replacing one still running; an open document is shown in its tab; an edit reopens in place. `App.presentTab` puts the result on screen. |
-| `library.ts` | Opening from the library and Google Drive, checking Drive for a newer revision first; reopening the tabs a phone had open. |
+| `library.ts` | The library (`Library`): opening from it and from Google Drive (checking Drive for a newer revision first), reopening a phone's tabs, removing entries, clearing it, and its queued writes. |
 | `live-edit.ts` | Editar's live document: open, write after a pause, step, park, close. |
 | `persistence.ts` | Storing a tab: session, draft, pending Drive edit; shared and queued writes. |
 | `document-output.ts` | Saving (over the file, a copy, Drive, a download), sharing and printing, with the annotations written in. |
@@ -39,10 +44,10 @@ rules that break things when ignored. Read the files named before changing them.
 | `reader-navigation.ts` | The page being read (`usePageTracking`, smooth jumps), touch taps and single-page swipes. |
 | `search.ts` | Text index, query with its typing pause, results, recent searches. |
 | `shortcuts.ts` | `readShortcut`: a key press and its context → a `Shortcut` (pure); `App.runShortcut` carries it out. |
-| `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave. |
+| `native-events.ts` | The native app's events: files the system opens, desktop drops, closing the window, the macOS menu, Android's Back, storing on leave, keeping the screen on, the system bars. |
 | `notices.tsx`, `theme.ts`, `print.ts`, `ink-preferences.ts`, `desktop-window.ts` | Toasts and the activity capsule, the theme, desktop printing, drawing preferences, the window's controls. |
 
-`Tabs`, `DocumentOpener`, `UndoHistory`, `DocumentChanges`, `LiveEdit`, `Persistence`, `DocumentOutput` and `Library` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
+`Tabs`, `DocumentOpener`, `UndoHistory`, `DocumentChanges`, `ToolSections`, `LiveEdit`, `Persistence`, `DocumentOutput` and `Library` are classes whose `host` (what they need from `App`) is set on each render, as `editStore.actions` is. Their UI is in `src/components` (`ReaderToolbar`, `ToolRail`, `DocumentTabStrip`, `SearchPanel`, `PhoneReaderControls`, `TabletReaderControls`, `DocumentActions`, `DocumentDialogs`, `HelpDialogs`). Hooks that register listeners once read their handlers through a ref, so they always see the current render.
 
 ## A document's life
 

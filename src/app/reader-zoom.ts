@@ -184,3 +184,21 @@ export function useReaderZoom(options: ZoomOptions) {
 
   return { zoomMode, setZoomMode, customScale, setCustomScale, scale, currentScale, readingAnchor, zoomAt, changeZoom, toggleTapZoom };
 }
+
+/** The reader's size, which page and width fits follow. `keepWidth`: the reader chrome or
+ * Android's system bars are hidden, and the height they free does not refit the page. */
+export function useViewportSize(viewer: RefObject<HTMLDivElement | null>, layoutKey: unknown, keepWidth: () => boolean) {
+  const [size, setSize] = useState({ width: 1000, height: 700 });
+  const keep = useRef(keepWidth); keep.current = keepWidth;
+  useEffect(() => {
+    const root = viewer.current;
+    if (!root) return;
+    const observer = new ResizeObserver(() => {
+      // The reader remains mounted while editing; hiding it must not change its fit zoom.
+      if (root.clientWidth > 0 && root.clientHeight > 0) setSize(previous => keep.current() && previous.width === root.clientWidth ? previous : { width: root.clientWidth, height: root.clientHeight });
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [viewer, layoutKey]);
+  return size;
+}

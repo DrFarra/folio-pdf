@@ -1,8 +1,8 @@
 import { advance, type Transfer } from '../components/DriveBrowser';
 import { driveLookup, driveOpen, driveStatus, type DriveBinding, type DriveOpened } from '../drive';
-import { isNative, nativeDraftDocument, type NativeDocument } from '../platform';
+import { isDesktop, isNative, nativeDraftDocument, prunePrivateCopies, type NativeDocument } from '../platform';
 import { preference } from '../preferences';
-import { forgetDocument, listLibrary, readDraft, readLibraryData, readLibrarySource, readSession } from '../storage';
+import { clearSavedState, forgetDocument, listLibrary, readDraft, readLibraryData, readLibrarySource, readSession } from '../storage';
 import type { RecentDocument } from '../types';
 import { annotationFingerprint, type DocumentTab, type OpenContext } from './model';
 import type { Notify } from './notices';
@@ -18,8 +18,12 @@ export type LibraryHost = {
   driveAvailable: () => boolean;
   /** The Drive download in progress, shown as a card. */
   setTransfer: (update: Transfer | null | ((current: Transfer | null) => Transfer | null)) => void;
-  /** A library entry replaced by a newer Drive revision. */
-  forgotten: (id: string) => void;
+  /** Library entries gone (removed, or replaced by a newer Drive revision): the list shown follows. */
+  removed: (ids: string[] | 'all') => void;
+  /** Drops the open tabs of documents removed from the library. */
+  discard: (ids: Set<string>) => void;
+  /** Drafts queued so far are written. */
+  draftsWritten: () => Promise<void>;
   notify: Notify;
 };
 
@@ -31,6 +35,66 @@ type Latest = { file: DriveOpened; replaced: boolean };
 export class Library {
   /** Set on each render, as EditStore's actions are. */
   host!: LibraryHost;
+  /** Documents removed from the library: nothing of them is stored again until reopened. */
+  forgotten = new Set<string>();
+  // Library writes, in order.
+  private writes: Promise<void> = Promise.resolve();
+
+  /** Runs a library write after those queued (`failed`: what to do when it fails). */
+  enqueue(write: () => Promise<unknown>, failed: () => void = () => {}) {
+    this.writes = this.writes.catch(() => {}).then(async () => { await write(); }).catch(failed);
+  }
+
+  /** The library's documents, once pending writes and drafts are done. */
+  async list() {
+    await Promise.allSettled([this.writes, this.host.draftsWritten()]);
+    return listLibrary();
+  }
+
+  /** Mobile keeps private copies of opened PDFs; those of forgotten entries are deleted. */
+  private prune() { void prunePrivateCopies(this.host.tabs().flatMap(tab => tab.doc.nativeSource ? [tab.doc.nativeSource] : [])).catch(() => {}); }
+
+  /** Removes an entry a saved document replaced. A leftover entry is harmless, so a failure is not reported. */
+  async retire(id: string) {
+    this.forgotten.add(id);
+    await this.writes.catch(() => {}); await forgetDocument(id).catch(() => {}); this.prune();
+  }
+
+  /** Removes a document from the library, with its copy, session and draft; its open tab closes. True when done. */
+  async forget(recent: RecentDocument) {
+    const { host } = this;
+    this.forgotten.add(recent.id);
+    try {
+      await Promise.allSettled([host.draftsWritten(), this.writes]); await forgetDocument(recent.id);
+      host.discard(new Set([recent.id])); this.prune();
+      host.removed([recent.id]);
+      host.notify(isDesktop ? 'Documento quitado de la biblioteca. El archivo original no se modificó.' : 'Copia y cambios eliminados. El archivo original no se modificó.', 'success');
+      return true;
+    } catch {
+      this.forgotten.delete(recent.id);
+      host.notify(isDesktop ? 'No se pudo quitar el documento de la biblioteca.' : 'No se pudo eliminar el documento de la biblioteca.', 'error');
+      return false;
+    }
+  }
+
+  /** Removes the whole library and every annotation stored here; open tabs close. True when done. */
+  async clear() {
+    const { host } = this;
+    const pending = host.tabs().map(tab => tab.doc.id).filter(id => !this.forgotten.has(id));
+    for (const id of pending) this.forgotten.add(id);
+    try {
+      await Promise.allSettled([host.draftsWritten(), this.writes]);
+      await clearSavedState();
+      host.discard(new Set(host.tabs().map(tab => tab.doc.id))); this.prune();
+      host.removed('all');
+      host.notify('Biblioteca y anotaciones locales eliminadas.', 'success');
+      return true;
+    } catch {
+      for (const id of pending) this.forgotten.delete(id);
+      host.notify('No se pudo eliminar la biblioteca local.', 'error');
+      return false;
+    }
+  }
 
   /** Opens a library entry: its tab if open, its file, or its unsaved changes. */
   async reopen(recent: RecentDocument) {
@@ -129,7 +193,7 @@ export class Library {
     const opened = host.tabs().some(tab => tab.doc.drive?.fileId === latest.file.fileId && tab.doc.drive.baseChecksum === latest.file.baseChecksum);
     if (!opened || !latest.replaced) return;
     if (previousTab && host.tabs().some(tab => tab.key === previousTab)) await host.closeTab(previousTab);
-    await forgetDocument(previousId).catch(() => {}); host.forgotten(previousId);
+    await forgetDocument(previousId).catch(() => {}); host.removed([previousId]);
     host.notify('Se abrió la versión más reciente guardada en Google Drive.');
   }
 }

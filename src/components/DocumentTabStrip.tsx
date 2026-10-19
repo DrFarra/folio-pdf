@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Cloud, FileText, X } from 'lucide-react';
 import { isDesktop, shortcutLabel } from '../platform';
 import type { LoadedDocument } from '../types';
@@ -25,6 +25,15 @@ type Props<T extends Tab> = {
 export default function DocumentTabStrip<T extends Tab>({ tabs, activeKey, modified, disabled, driveIndicator, drag, onShow, onSwitch, onClose }: Props<T>) {
   const wheel = useRef(0);
   const dragged = tabs.find(tab => tab.key === drag.draggingKey);
+  // The active tab scrolls into view.
+  useEffect(() => {
+    const selected = document.querySelector<HTMLElement>('.document-tab.selected'), strip = selected?.parentElement;
+    if (!selected || !strip) return;
+    const start = (tab: Element) => (tab as HTMLElement).offsetLeft - strip.offsetLeft, left = start(selected);
+    if (left < strip.scrollLeft) strip.scrollLeft = left;
+    // Revealing to the right stops at a tab's start, so no half-hidden tab shows only its close button.
+    else if (left + selected.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = Math.min(left, [...strip.children].map(start).find(value => value >= left + selected.offsetWidth - strip.clientWidth) ?? left);
+  }, [activeKey]);
   return <>
     <div className={`document-tab-strip${drag.enabled ? ' drag-enabled' : ''}${drag.draggingKey ? ' is-dragging' : ''}`} ref={drag.strip} onClickCapture={drag.clickCapture} onDragStart={event => { if (drag.enabled) event.preventDefault(); }} onWheel={event => {
       if (event.deltaX || event.ctrlKey || event.metaKey) return;
