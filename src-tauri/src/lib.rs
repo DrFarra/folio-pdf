@@ -207,10 +207,10 @@ const REOPEN: &str = "Vuelve a abrir el PDF para guardarlo.";
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn replace_original(desktop: &Desktop, token: &str, bytes: &[u8]) -> Result<DocumentInfo, String> {
     validate_pdf(bytes)?;
-    let (path, digest) = {
+    let (path, digest, opened) = {
         let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
         let source = files.sources.get(token).ok_or(REOPEN)?;
-        (source.path.clone(), source.digest.clone())
+        (source.path.clone(), source.digest.clone(), source.snapshot.clone())
     };
     // A symbolic link keeps pointing to the saved file.
     let target = if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) { fs::canonicalize(&path).map_err(|_| REOPEN)? } else { path.clone() };
@@ -219,12 +219,18 @@ fn replace_original(desktop: &Desktop, token: &str, bytes: &[u8]) -> Result<Docu
     let locked = fs::metadata(&target).is_ok_and(|m| m.permissions().readonly())
         || fs::OpenOptions::new().write(true).open(&target).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
     if locked { return Err("Este PDF es de solo lectura. Usa «Guardar una copia…» para no perder tus cambios.".into()); }
-    atomic_write(&target, &bytes, Some(&digest)).map_err(|error| match error.as_str() {
+    // The saved file's SHA-256 (its id) is worked out while it is written, not after (~2 s for a book).
+    let (written, saved) = std::thread::scope(|scope| {
+        let hashing = scope.spawn(|| folio_core::digest(bytes));
+        (folio_core::atomic_replace(&target, bytes, &opened, &digest), hashing.join())
+    });
+    written.map_err(|error| match error.as_str() {
         folio_core::DESTINATION_CHANGED if target.exists() => "Otro programa modificó este PDF después de abrirlo. Usa «Guardar una copia…» para no perder tus cambios.".into(),
         folio_core::DESTINATION_CHANGED => "El PDF original ya no está en su carpeta. Usa «Guardar una copia…» para no perder tus cambios.".into(),
         _ => error,
     })?;
-    register_written(desktop, path, bytes)
+    let saved = saved.map_err(|_| "No se pudo identificar el PDF guardado.")?;
+    register_file(desktop, path.clone(), PdfFileInfo { snapshot: file_snapshot(&path)?, digest: saved })
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]

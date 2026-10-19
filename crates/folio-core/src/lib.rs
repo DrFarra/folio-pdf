@@ -271,6 +271,21 @@ pub fn atomic_write(path: &Path, bytes: &[u8], expected: Option<&str>) -> Result
     Ok(())
 }
 
+/// Replaces the file Folio opened, as atomic_write does, unless it changed on disk since.
+/// A file with the size and modification time it had when opened is the one Folio read, as
+/// opening it again already trusts (hashing a 396 MB book took ~2.7 s); otherwise its
+/// content decides, so a sync tool that only touched the time does not block the save.
+pub fn atomic_replace(path: &Path, bytes: &[u8], opened: &FileSnapshot, digest: &str) -> Result<(), String> {
+    let temporary = write_temporary(path, bytes, true)?;
+    #[cfg(unix)]
+    keep_metadata(path, temporary.path());
+    let unchanged = file_snapshot(path).ok().as_ref() == Some(opened) || fingerprint(path)?.as_deref() == Some(digest);
+    if !unchanged { return Err(DESTINATION_CHANGED.into()); }
+    replace(path, temporary)?;
+    sync_folder(path);
+    Ok(())
+}
+
 /// Folio's own data (drafts, sessions, the library and Drive records) has a
 /// single writer behind the caller's lock: it skips the hash precondition.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -342,6 +357,26 @@ mod tests {
         fs::write(&p, b"previous").unwrap(); let expected = fingerprint(&p).unwrap().unwrap();
         atomic_write(&p, b"complete new result", Some(&expected)).unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"complete new result");
+    }
+    #[test]
+    fn the_opened_file_is_replaced_unless_another_program_changed_it() {
+        let folder = tempfile::tempdir().unwrap(); let p = folder.path().join("libro.pdf");
+        fs::write(&p, b"opened").unwrap();
+        let (opened, digest) = (file_snapshot(&p).unwrap(), fingerprint(&p).unwrap().unwrap());
+        // Unchanged: replaced.
+        atomic_replace(&p, b"saved", &opened, &digest).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"saved");
+        // Its time touched, its content the same: still replaced.
+        let (opened, digest) = (file_snapshot(&p).unwrap(), fingerprint(&p).unwrap().unwrap());
+        fs::File::options().write(true).open(&p).unwrap().set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        atomic_replace(&p, b"saved again", &opened, &digest).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"saved again");
+        // Changed by another program: kept, and nothing left behind.
+        let (opened, digest) = (file_snapshot(&p).unwrap(), fingerprint(&p).unwrap().unwrap());
+        fs::write(&p, b"another program").unwrap();
+        assert_eq!(atomic_replace(&p, b"mine", &opened, &digest).unwrap_err(), DESTINATION_CHANGED);
+        assert_eq!(fs::read(&p).unwrap(), b"another program");
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
     }
     #[test]
     fn another_writer_is_not_overwritten() {

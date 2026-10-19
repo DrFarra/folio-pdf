@@ -26,6 +26,8 @@ export class Persistence {
   /** Set on each render, as EditStore's actions are. */
   host!: PersistenceHost;
   private drafts: Promise<void> = Promise.resolve();
+  /** A save is running: the PDF it writes is not stored as a draft as well. */
+  holding = false;
   private draftWrites = new WeakMap<LoadedDocument, Promise<void>>();
   private tabWrites = new Map<string, Write>();
   private driveWrites = new Map<string, Write>();
@@ -50,7 +52,7 @@ export class Persistence {
   /** Stores a modified document's PDF as its draft, once per revision. */
   draft(document: LoadedDocument): Promise<void> {
     const { host } = this;
-    if (!document.modified || isNativePdfDocument(document.pdf) || host.forgotten(document.id))
+    if (this.holding || !document.modified || isNativePdfDocument(document.pdf) || host.forgotten(document.id))
       return Promise.resolve();
     const existing = this.draftWrites.get(document);
     if (existing) return existing;

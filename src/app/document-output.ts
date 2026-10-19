@@ -47,6 +47,8 @@ export type OutputHost = {
   adopt: (previous: LoadedDocument, next: LoadedDocument) => void;
   /** The document's file now has `revision`: undo steps holding other bytes read as unsaved. */
   savedAs: (revision: string) => void;
+  /** While a save runs, the PDF it writes is not also stored as a draft; afterwards an unsaved one is. */
+  holdDrafts: (hold: boolean) => void;
   /** Drafts queued so far are written: a saved document's draft can be discarded. */
   draftsWritten: () => Promise<void>;
   /** Removes a library entry the saved document replaces. */
@@ -171,6 +173,17 @@ export class DocumentOutput {
   /** Guardar: over the opened file where the platform allows it (or to Drive), otherwise as a
    * copy or a download; `copy` always asks for a new file. `keepEditing` keeps Editar PDF open. */
   async save(options?: { keepEditing?: boolean; copy?: boolean }) {
+    // Storing the PDF about to be saved as a draft too wrote a book twice, the draft only to be discarded.
+    const hold = !this.saving;
+    if (hold) this.host.holdDrafts(true);
+    try {
+      await this.saveNow(options);
+    } finally {
+      if (hold) this.host.holdDrafts(false);
+    }
+  }
+
+  private async saveNow(options?: { keepEditing?: boolean; copy?: boolean }) {
     const { host } = this;
     if (host.draft()) {
       host.notify('Aplica o descarta la edición antes de guardar el PDF.');

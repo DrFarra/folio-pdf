@@ -77,6 +77,7 @@ export function useFolioWiring(f: Layer5) {
     setActiveNote,
     setBusy,
     setCloseBlocked,
+    setDraftFailed,
     setDoc,
     setDriveConflicts,
     setDriveLibrary,
@@ -277,6 +278,11 @@ export function useFolioWiring(f: Layer5) {
     editing: () => workbenchRef.current === 'edit-pdf' && !phoneRef.current,
     reopen: (source, name, token, context) => openDocument(source, name, false, token, context),
     draftsWritten: () => persistence.draftsWritten,
+    holdDrafts: hold => {
+      persistence.holding = hold;
+      // A save that did not complete leaves the document unsaved: its draft is stored now.
+      if (!hold && docRef.current?.modified) void persistence.draft(docRef.current).catch(() => setDraftFailed(true));
+    },
     retire: retireLibraryEntry,
     adopt: (previous, next) => {
       tabStore.list = tabStore.list.map(tab => (tab.doc === previous ? { ...tab, doc: next } : tab));
