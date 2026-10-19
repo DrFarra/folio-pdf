@@ -392,8 +392,9 @@ try {
     return { highlightedPages: [1, 2], separatePageAnnotations: 2, pageCaptionExcluded: true, standardTextQuads: true, selectionUndoRedoAsOneAction: true };
   });
 
-  const realPdf = process.env.FOLIO_HIGHLIGHT_REAL_PDF || 'C:/Users/Emilio/Downloads/Reumatologia_Nefrologia_Guia_Clinica.pdf';
-  if (fs.existsSync(realPdf)) await check('real-user-pdf-paragraph-selection', async page => {
+  // An optional real document, from the machine running the tests.
+  const realPdf = process.env.FOLIO_HIGHLIGHT_REAL_PDF;
+  if (realPdf && fs.existsSync(realPdf)) await check('real-user-pdf-paragraph-selection', async page => {
     const sourceHash = createHash('sha256').update(fs.readFileSync(realPdf)).digest('hex');
     const first = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'Dos guías' }).first();
     const last = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: 'renales.' }).first();
