@@ -91,7 +91,8 @@ Para conectar Google Drive en una compilación propia, consulta
 
 ```sh
 npm run test:engine   # motor PDF, sin navegador
-npm test              # compila y ejecuta las suites de motor e interfaz
+npm run format        # formatea el código con Prettier
+npm test              # comprueba el formato, compila y ejecuta las suites de motor e interfaz
 npm run test:native   # pruebas Rust del núcleo de archivos
 ```
 
