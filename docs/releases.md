@@ -10,6 +10,15 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.19
+
+- Guardar en Windows es mucho más rápido después de editar: Folio ya no vuelve a leer el PDF entero ni reescribe las anotaciones si no cambiaron.
+- Si deshaces todos los cambios, el documento vuelve a ser el archivo original: Guardar se apaga y salir de Editar ya no guarda ni vuelve a abrir el documento.
+- En Editar, al mover un elemento aparecen guías y se alinea con los bordes y centros de los demás y con el centro de la página; mantén Alt mientras arrastras para moverlo libremente.
+- En Editar, si hay varios elementos uno encima de otro, cada clic sobre el seleccionado elige el de debajo.
+- El deslizador de opacidad de una imagen la muestra con esa opacidad mientras lo mueves.
+- El botón «Volver a p. N» desaparece solo a los 15 segundos.
+
 ## Cambios en 0.9.18
 
 - En Windows, los PDF muy grandes (libros de cientos de MB) se abren mucho más rápido.
