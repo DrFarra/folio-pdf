@@ -8,7 +8,7 @@ rules that break things when ignored. Read the files named before changing them.
 
 | Layer | Where | Role |
 |---|---|---|
-| UI (React) | `src/App.tsx` (state of the open documents: tabs, open/save, undo; composes the rest), `src/app/*` (its hooks and logic, below), `src/components/*` | Tools live in `Workbench.tsx`. |
+| UI (React) | `src/App.tsx` (the shell), `src/app/use-folio.tsx` (state and coordination), `src/app/*` (its modules, below), `src/components/shell/*` (the view's parts), `src/components/*` | Tools live in `Workbench.tsx`. |
 | Reader | `src/components/PDFPage.tsx`, `src/pdf.ts` | PDF.js renders pages; virtualized with `useNearby`. |
 | Editor (desktop) | `src/edit/*`, `src/engine/session.ts` | Edits on the reader pages: `store.ts` state, `EditLayer.tsx` per page, `actions.ts` commits, `fonts.ts`, `paste.ts` (pasted images). The document lives in its own worker while Editar is open (`EditSession`). |
 | Editor (touch) | `Workbench` → `PdfContentPicker.tsx` + `ContentEditor.tsx` | Tablet inline, phone modal. |
@@ -19,7 +19,7 @@ rules that break things when ignored. Read the files named before changing them.
 
 ## App's parts
 
-`App()` holds the open documents' state and wires the rest. A tab's view (page, zoom, mode, tool, panels, search) is shown by one function, `applyView`, whether a tab is switched to or a document opens; `showNoDocument` empties the reader. Each concern it delegates is self-contained:
+`App()` is the shell: it calls `useFolio()` (`src/app/use-folio.tsx`), which holds the open documents' state and wires the modules below, and shares the result through `FolioContext` (`folio-context.ts`) with the view's parts in `src/components/shell` (`AppHeader`, `AppWorkspace`, `AppOverlays`, and `parts.tsx`: the page stack, the library, the tool section, the Drive indicator, the annotation tool's options). `useFolio` returns state and actions only; the view draws them. A tab's view (page, zoom, mode, tool, panels, search) is shown by one function, `applyView`, whether a tab is switched to or a document opens; `showNoDocument` empties the reader. Each concern it delegates is self-contained:
 
 | Module (`src/app/`) | What it owns |
 |---|---|
