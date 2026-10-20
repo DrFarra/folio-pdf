@@ -839,3 +839,7 @@ html[data-phone] .tool-categories .operation-grid > button {
 html[data-phone] .tool-categories .tool-text {
   align-items: flex-start;
 }
+/* Only the desktop index shows each tool's picture (redesign-desktop.css). */
+.tool-art {
+  display: none;
+}

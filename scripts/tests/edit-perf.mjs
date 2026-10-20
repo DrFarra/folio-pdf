@@ -221,13 +221,13 @@ try {
         }),
     );
   let leaving = busy();
-  await page.getByRole('button', { name: 'Listo' }).click();
+  await page.getByRole('button', { name: 'Modo lectura' }).click();
   const leaveMs = await leaving;
   await settle();
   // Again into Editar (the live document stayed open) and out, then the last move undone outside Editar.
   enterMs.push(await enter());
   leaving = busy();
-  await page.getByRole('button', { name: 'Listo' }).click();
+  await page.getByRole('button', { name: 'Modo lectura' }).click();
   await leaving;
   await settle();
   leaving = busy();

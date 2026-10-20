@@ -1,3 +1,4 @@
+import ToolArt from './ToolArt';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
@@ -847,7 +848,12 @@ export default function Workbench(props: Props) {
       {section === 'home' && (
         <div className="tool-categories">
           {categories.map(category => (
-            <section className="tool-category" key={category.id} aria-labelledby={`tool-category-${category.id}`}>
+            <section
+              className="tool-category"
+              key={category.id}
+              data-section={category.id}
+              aria-labelledby={`tool-category-${category.id}`}
+            >
               <h3 className="tool-category-heading" id={`tool-category-${category.id}`}>
                 {category.title}
               </h3>
@@ -864,6 +870,7 @@ export default function Workbench(props: Props) {
                       onClick={() => chooseAction(key)}
                       aria-label={label}
                     >
+                      <ToolArt tool={key} />
                       <span className="tool-icon" aria-hidden="true">
                         <Icon size={22} />
                       </span>

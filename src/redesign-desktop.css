@@ -1,0 +1,766 @@
+/* Rediseño de escritorio: one header (tabs, mode, actions), an icon rail, the
+ * page and zoom in a floating bar over the pages, and Anotar's and Editar's
+ * tools floating above them. Touch layouts keep their own controls, so every
+ * rule here is scoped to html:not([data-touch]). Loaded after desktop.css. */
+html:not([data-touch]) .app-shell {
+  --app-header-height: 56px;
+  --pill-bg: #1f2430f2;
+  --pill-text: #fff;
+  --pill-muted: #c4c9d3;
+  --pill-hover: #ffffff1f;
+  --float-shadow: 0 1px 2px #14182014, 0 10px 28px #14182024;
+}
+
+/* Header: the mode switch stays centred; the tabs only use the left zone. */
+html:not([data-touch]) .app-shell .app-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--surface);
+}
+html:not([data-touch]) .app-shell.native-mac:not(.mac-fullscreen) .app-header {
+  padding-left: 78px;
+}
+html:not([data-touch]) .app-shell .header-start,
+html:not([data-touch]) .app-shell .header-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+}
+html:not([data-touch]) .app-shell .header-start .document-tab-strip {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+html:not([data-touch]) .app-shell .header-start .header-drag-space {
+  flex: 1 1 0;
+  min-width: 12px;
+  align-self: stretch;
+}
+html:not([data-touch]) .app-shell .header-center {
+  display: flex;
+  justify-content: center;
+}
+html:not([data-touch]) .app-shell .header-end {
+  justify-content: flex-end;
+}
+html:not([data-touch]) .app-shell .header-end .header-actions {
+  margin-left: 0;
+}
+html:not([data-touch]) .app-shell .brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 0;
+}
+html:not([data-touch]) .app-shell .header-document-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+html:not([data-touch]) .app-shell .header-document-actions .icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+html:not([data-touch]) .app-shell .header-document-actions .undo-group {
+  gap: 0;
+}
+html:not([data-touch]) .app-shell .palette-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  width: 240px;
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+}
+html:not([data-touch]) .app-shell .palette-button > span {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html:not([data-touch]) .app-shell .palette-button > kbd {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+@media (hover: hover) {
+  html:not([data-touch]) .app-shell .palette-button:hover {
+    color: var(--text);
+  }
+}
+html:not([data-touch]) .app-shell .header-document-actions .download-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+html:not([data-touch]) .app-shell .desktop-mode-switch {
+  gap: 2px;
+  padding: 3px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--hover);
+}
+html:not([data-touch]) .app-shell .desktop-mode-switch button {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+}
+html:not([data-touch]) .app-shell .desktop-mode-switch button[aria-pressed='true'] {
+  font-weight: 600;
+  box-shadow: 0 1px 2px #1418201f;
+}
+@media (max-width: 1240px) {
+  html:not([data-touch]) .app-shell .palette-button {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+  html:not([data-touch]) .app-shell .palette-button > :not(svg) {
+    display: none;
+  }
+}
+@media (max-width: 1040px) {
+  html:not([data-touch]) .app-shell .header-document-actions .undo-group,
+  html:not([data-touch]) .app-shell .desktop-mode-switch button > span,
+  html:not([data-touch]) .app-shell .header-document-actions .download-button > span {
+    display: none;
+  }
+  html:not([data-touch]) .app-shell .header-document-actions .download-button {
+    width: 36px;
+    padding: 0;
+  }
+}
+
+/* The rail: icons only, their names as tooltips. */
+html:not([data-touch]) .app-shell .tool-rail {
+  width: 60px;
+  min-width: 60px;
+  padding: 10px 0;
+  gap: 4px;
+  align-items: center;
+  background: var(--surface);
+}
+html:not([data-touch]) .app-shell .rail-primary {
+  gap: 4px;
+}
+html:not([data-touch]) .app-shell .rail-button {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  gap: 0;
+  border-radius: 12px;
+}
+html:not([data-touch]) .app-shell .rail-button > span:not(.rail-count) {
+  display: none;
+}
+html:not([data-touch]) .app-shell .rail-count {
+  top: 5px;
+  right: 4px;
+}
+html:not([data-touch]) .app-shell .rail-bottom .icon-button {
+  width: 44px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+/* The pages sit on the canvas; page and zoom float over it. */
+html:not([data-touch]) .app-shell .reader {
+  background: var(--canvas);
+}
+html:not([data-touch]) .app-shell .reading-area > .pdf-stack {
+  padding-bottom: 104px;
+}
+html:not([data-touch]) .app-shell .reader-toolbar {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 6px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--pill-bg);
+  color: var(--pill-text);
+  box-shadow: 0 8px 24px #14182040;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--pill-text);
+}
+@media (hover: hover) {
+  html:not([data-touch]) .app-shell .reader-toolbar .icon-button:hover:not(:disabled) {
+    background: var(--pill-hover);
+    color: var(--pill-text);
+  }
+}
+html:not([data-touch]) .app-shell .reader-toolbar .icon-button.active {
+  background: #ffffff26;
+  color: var(--pill-text);
+}
+html:not([data-touch]) .app-shell .reader-toolbar .icon-button:disabled {
+  opacity: 0.4;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .toolbar-divider {
+  height: 20px;
+  margin: 0 4px;
+  background: #ffffff33;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .page-controls,
+html:not([data-touch]) .app-shell .reader-toolbar .page-controls form > span {
+  color: var(--pill-muted);
+  font-size: 13px;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .page-controls input {
+  width: 40px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: #ffffff24;
+  color: var(--pill-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .zoom-select select {
+  border: 0;
+  background: transparent;
+  color: var(--pill-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .zoom-select select option {
+  color: #1f2430;
+  background: #fff;
+}
+html:not([data-touch]) .app-shell .reader-toolbar .zoom-select > svg {
+  color: var(--pill-muted);
+}
+html:not([data-touch]) .app-shell .desktop-return-location {
+  bottom: 80px;
+}
+
+/* Anotar and Editar: their tools float above the page, centred. */
+html:not([data-touch]) .app-shell .desktop-annotation-toolbar,
+html:not([data-touch]) .app-shell .edit-toolbar {
+  align-self: center;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  min-height: 52px;
+  margin: 12px auto 4px;
+  padding: 6px;
+  gap: 4px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--float-shadow);
+}
+html:not([data-touch]) .app-shell .desktop-annotation-toolbar .tool-group .icon-button,
+html:not([data-touch]) .app-shell .edit-toolbar .tool-group .icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  color: var(--text);
+}
+html:not([data-touch]) .app-shell .desktop-annotation-toolbar .tool-group .active,
+html:not([data-touch]) .app-shell .edit-toolbar .tool-group .active {
+  background: var(--text);
+  color: var(--surface);
+  box-shadow: none;
+}
+html:not([data-touch]) .app-shell .desktop-annotation-toolbar .toolbar-divider {
+  height: 24px;
+  margin: 0 6px;
+}
+html:not([data-touch]) .app-shell .desktop-tool-description,
+html:not([data-touch]) .app-shell .edit-toolbar .edit-status {
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+html:not([data-touch]) .app-shell .desktop-annotation-toolbar :is(.highlight-color-trigger, .drawing-settings-trigger) {
+  height: 40px;
+  min-height: 40px;
+  border-radius: 11px;
+}
+@media (max-width: 1100px) {
+  html:not([data-touch]) .app-shell .desktop-tool-description {
+    display: none;
+  }
+}
+
+/* Editar's inspector: the selection's properties over the canvas, beside the page; the pages keep their size. */
+html:not([data-touch]) .app-shell .edit-inspector {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: 12px;
+  max-height: calc(100% - 24px);
+  width: 280px;
+  border-radius: 16px;
+  box-shadow: var(--float-shadow);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  overflow-y: auto;
+  background: var(--surface);
+}
+html:not([data-touch]) .app-shell .edit-inspector-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+html:not([data-touch]) .app-shell .edit-inspector .edit-properties {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 6px;
+}
+html:not([data-touch]) .app-shell .edit-inspector .edit-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+html:not([data-touch]) .app-shell .edit-inspector .edit-field > :is(select, input) {
+  width: 100%;
+  max-width: none;
+  height: 36px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+html:not([data-touch]) .app-shell .edit-inspector .edit-count {
+  width: 100%;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Anotar's options: the trigger names the current setting; sliders show what they change. */
+html:not([data-touch]) .app-shell .drawing-settings-trigger {
+  width: auto;
+  padding: 0 10px 0 8px;
+  gap: 8px;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+html:not([data-touch]) .drawing-trigger-label {
+  display: inline;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+html:not([data-touch]) .drawing-settings-popup {
+  width: 320px;
+  padding: 16px;
+}
+html:not([data-touch]) .drawing-slider-shape {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+html:not([data-touch]) .drawing-slider-track.wedge .drawing-slider-shape {
+  height: 14px;
+  clip-path: polygon(0 42%, 100% 0, 100% 100%, 0 58%);
+  background: linear-gradient(
+    90deg,
+    var(--text) var(--fill),
+    color-mix(in srgb, var(--text) 14%, transparent) var(--fill)
+  );
+}
+html:not([data-touch]) .drawing-slider-track.opacity .drawing-slider-shape {
+  height: 10px;
+  border-radius: 5px;
+  background:
+    linear-gradient(90deg, transparent, var(--ink)),
+    repeating-conic-gradient(#e3e6eb 0 25%, #fff 0 50%) 0 0 / 8px 8px;
+  box-shadow: inset 0 0 0 1px #1418201a;
+}
+html:not([data-touch]) .drawing-slider-track.size .drawing-slider-shape {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--text) var(--fill),
+    color-mix(in srgb, var(--text) 14%, transparent) var(--fill)
+  );
+}
+html:not([data-touch]) .drawing-slider-track .drawing-slider::-webkit-slider-runnable-track {
+  background: transparent;
+}
+html:not([data-touch]) .drawing-slider-track .drawing-slider::-moz-range-track {
+  background: transparent;
+}
+html:not([data-touch]) .drawing-slider-track .drawing-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 26px;
+  margin-top: -10.5px;
+  border-radius: 6px;
+  background: #fff;
+  border: 2px solid var(--text);
+  box-shadow: 0 2px 6px #14182040;
+}
+html:not([data-touch]) .drawing-slider-track .drawing-slider::-moz-range-thumb {
+  width: 8px;
+  height: 22px;
+  border-radius: 6px;
+  background: #fff;
+  border: 2px solid var(--text);
+  box-shadow: 0 2px 6px #14182040;
+}
+html:not([data-touch]) .drawing-slider-track .drawing-slider:active::-webkit-slider-thumb {
+  transform: none;
+}
+html:not([data-touch]) .drawing-sizes > button {
+  gap: 6px;
+  padding: 8px 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+html:not([data-touch]) .drawing-sizes > button[aria-pressed='true'] {
+  background: var(--surface);
+  border-color: var(--text);
+  box-shadow: 0 0 0 1px var(--text);
+}
+html:not([data-touch]) .drawing-sizes small {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+html:not([data-touch]) .drawing-eraser-range {
+  display: block;
+  margin-top: 12px;
+}
+
+/* A note being written looks like a sticky note: paper in the note's colour. */
+html:not([data-touch]) .note-popover {
+  width: 316px;
+  border: 0;
+  border-radius: 6px 18px 18px 18px;
+  background: color-mix(in srgb, var(--note) 26%, var(--surface));
+  box-shadow:
+    0 1px 2px #5b43001f,
+    0 20px 44px #5b43002e;
+}
+html:not([data-touch]) .note-popover-heading {
+  padding: 12px 8px 2px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--note) 35%, var(--text));
+}
+html:not([data-touch]) .note-popover textarea {
+  padding: 6px 16px 10px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+html:not([data-touch]) .note-popover-footer {
+  margin: 0 10px 10px;
+  padding: 8px 8px 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+html:not([data-touch]) .app-shell .edit-toolbar .edit-status {
+  max-width: 440px;
+}
+html:not([data-touch]) .app-shell .drawing-settings-trigger > .drawing-trigger-label {
+  display: inline;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+}
+html:not([data-touch]) .drawing-eraser-sizes > button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+html:not([data-touch]) .drawing-eraser-sizes > button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--text);
+  box-shadow: 0 0 0 1px var(--text);
+}
+html:not([data-touch]) .drawing-eraser-sizes small {
+  font-weight: 600;
+  color: var(--muted);
+}
+/* The inspector is placed against the reader, not inside the floating bar. */
+html:not([data-touch]) .app-shell .reader > .edit-toolbar {
+  position: static;
+  overflow: visible;
+}
+html:not([data-touch]) .app-shell .edit-toolbar .edit-status:empty {
+  display: none;
+}
+
+/* Tabs that don't fit: a "+N" menu with every open document. */
+html:not([data-touch]) .app-shell .document-tab-overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+html:not([data-touch]) .app-shell .document-tab-overflow > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+html:not([data-touch]) .app-shell .document-tab-overflow > button[aria-expanded='true'] {
+  border-color: var(--text);
+}
+html:not([data-touch]) .app-shell .document-tab-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px #14182014,
+    0 18px 44px #14182033;
+}
+html:not([data-touch]) .app-shell .document-tab-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+}
+html:not([data-touch]) .app-shell .document-tab-menu > button[aria-current='page'] {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+@media (hover: hover) {
+  html:not([data-touch]) .app-shell .document-tab-menu > button:hover:not([aria-current='page']) {
+    background: var(--hover);
+  }
+}
+html:not([data-touch]) .app-shell .document-tab-menu-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html:not([data-touch]) .app-shell .document-tab-menu-unsaved {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a35f00;
+}
+
+/* The floating page bar keeps its own width (not half the reader's). */
+html:not([data-touch]) .app-shell .reader-toolbar {
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
+html:not([data-touch]) .app-shell .reader-toolbar .zoom-select select {
+  width: 132px;
+}
+/* A narrow window keeps the annotations beside the pages, so they never cover Anotar's tools. */
+@media (max-width: 920px) {
+  html:not([data-touch]) .app-shell .notes-panel {
+    position: relative;
+    width: 260px;
+    min-width: 260px;
+    box-shadow: none;
+  }
+}
+
+/* Herramientas: each tool as a card with a picture of what it does, in its section's colour. */
+html:not([data-touch]) .app-shell .workbench:has(> .tool-categories) {
+  width: min(1100px, calc(100vw - 28px));
+}
+html:not([data-touch]) .app-shell .workbench .tool-category {
+  --tool-ink: var(--accent);
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='pages'] {
+  --tool-ink: #2f5bd3;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='content'] {
+  --tool-ink: #6b4bc4;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='forms'] {
+  --tool-ink: #1f7a6a;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='review'] {
+  --tool-ink: #a35f00;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='export'] {
+  --tool-ink: #1f7a4a;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category[data-section='protection'] {
+  --tool-ink: #b0473a;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+html:not([data-touch]) .app-shell .workbench .tool-category-heading::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tool-ink);
+}
+html:not([data-touch]) .app-shell .workbench .tool-category .operation-grid {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
+  padding: 8px 8px 12px;
+  border-radius: 16px;
+}
+html:not([data-touch]) .app-shell .workbench .operation-grid > button > svg.tool-art {
+  display: block;
+  width: 100%;
+  height: 112px;
+  border-radius: 11px;
+  color: var(--tool-ink);
+  background: color-mix(in srgb, var(--tool-ink) 11%, var(--surface));
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button:disabled .tool-art {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .tool-icon {
+  display: none;
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text {
+  padding: 0 6px;
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text > span {
+  font-size: 14px;
+}
+html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text > small {
+  font-size: 12px;
+}
+/* A short window keeps the compact cards, so every tool stays reachable. */
+@media (max-height: 640px) {
+  html:not([data-touch]) .app-shell .workbench .operation-grid > button > svg.tool-art {
+    display: none;
+  }
+  html:not([data-touch]) .app-shell .workbench .tool-categories .tool-icon {
+    display: grid;
+    background: color-mix(in srgb, var(--tool-ink) 12%, var(--surface));
+    color: var(--tool-ink);
+  }
+  html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button {
+    flex-direction: row;
+    align-items: center;
+    padding: 10px;
+  }
+}
+
+/* Dialogs: centred cards, one clear main action. */
+html:not([data-touch]) .app-shell dialog.modal {
+  border: 0;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 24px 64px #1418204d;
+}
+html:not([data-touch]) .app-shell dialog.modal .modal-heading {
+  background: var(--surface);
+  box-shadow: 0 -28px 0 0 var(--surface);
+}
+html:not([data-touch]) .app-shell .modal-heading h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+html:not([data-touch]) .app-shell .modal-heading .icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+html:not([data-touch]) .app-shell .primary-button,
+html:not([data-touch]) .app-shell .secondary-button {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+html:not([data-touch]) .modal::backdrop {
+  background: #14182073;
+  backdrop-filter: none;
+}
+html:not([data-touch]) .app-shell .settings-modal h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+html:not([data-touch]) .command-palette {
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 24px 64px #1418204d;
+}

@@ -63,8 +63,8 @@ function assertFrame(value) {
   assert.equal(value.documentWidth, value.width, 'La ventana completa no debe desbordarse horizontalmente.');
   assert(value.reader.height > 0, 'El PDF debe conservar espacio visible.');
   assert(
-    value.toolbar && Math.abs(value.reader.y - value.toolbar.bottom) <= 1,
-    `El PDF debe comenzar inmediatamente debajo de la barra: ${JSON.stringify(value)}`,
+    value.toolbar && Math.abs(value.reader.y - value.header.bottom) <= 1 && value.toolbar.bottom <= value.reader.bottom,
+    `El PDF debe comenzar inmediatamente debajo de la barra y la barra de página flotar sobre él: ${JSON.stringify(value)}`,
   );
   assert(
     value.reader.height >= value.height * 0.5,

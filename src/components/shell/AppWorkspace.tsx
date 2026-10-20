@@ -38,8 +38,6 @@ export default function AppWorkspace() {
     commitBookmarks,
     commitPageInput,
     doc,
-    docDirty,
-    download,
     drawerSwap,
     editNote,
     editPageInput,
@@ -48,7 +46,6 @@ export default function AppWorkspace() {
     focusRail,
     goToPage,
     goToResult,
-    history,
     indexing,
     inlineEditing,
     library,
@@ -61,7 +58,6 @@ export default function AppWorkspace() {
     notesShown,
     notify,
     occurrences,
-    openEditor,
     openExplorer,
     openSearch,
     openTools,
@@ -79,7 +75,6 @@ export default function AppWorkspace() {
     readingMode,
     readingPreferences,
     redactions,
-    redo,
     rememberLocation,
     removeAnnotation,
     resultIndex,
@@ -88,7 +83,6 @@ export default function AppWorkspace() {
     returnPage,
     returnToLocation,
     rotation,
-    saveLabel,
     scale,
     searchHistory,
     searchInput,
@@ -99,11 +93,8 @@ export default function AppWorkspace() {
     setBookmarkEditingId,
     setConfirmClear,
     setCustomScale,
-    setEditing,
     setHelp,
     setLibrary,
-    setMobileActions,
-    setMobileAnnotating,
     setNotesOpen,
     setPageInput,
     setPageJump,
@@ -151,6 +142,7 @@ export default function AppWorkspace() {
             annotations={annotations.length}
             inert={inlineEditing}
             onLibrary={() => setLibrary(true)}
+            onTools={openTools}
             onPanel={toggleSidePanel}
             onSearch={() => {
               if (searchOpen && sidebar) closeSearch();
@@ -309,21 +301,7 @@ export default function AppWorkspace() {
           {!touchLayout && !inlineEditing && (
             <ReaderToolbar
               doc={doc}
-              busy={!!busy}
-              loading={loading}
-              mode={editing ? 'edit' : mobileAnnotating ? 'annotate' : 'read'}
-              onRead={() => {
-                setEditing(false);
-                setMobileAnnotating(false);
-                setTool('select');
-              }}
-              onAnnotate={startAnnotating}
-              onEdit={openEditor}
-              onTools={openTools}
-              canUndo={!!history.undo.length}
-              canRedo={!!history.redo.length}
-              onUndo={undo}
-              onRedo={redo}
+              idle={!!doc && !busy && !loading}
               page={page}
               pageInput={pageInput}
               onPageInput={editPageInput}
@@ -344,15 +322,9 @@ export default function AppWorkspace() {
               }}
               bookmarked={hasBookmarkPage(bookmarks, page)}
               onBookmark={toggleBookmark}
-              saveLabel={saveLabel}
-              unsaved={docDirty}
-              onSave={() => void download()}
-              onMore={() => setMobileActions(true)}
             />
           )}
-          {!touchLayout && !inlineEditing && doc && editing && (
-            <EditToolbar store={editStore} doc={doc} onDone={() => setEditing(false)} />
-          )}
+          {!touchLayout && !inlineEditing && doc && editing && <EditToolbar store={editStore} doc={doc} />}
           {!touchLayout && !inlineEditing && doc && mobileAnnotating && !editing && (
             <AnnotationToolbar
               doc={doc}
@@ -361,10 +333,6 @@ export default function AppWorkspace() {
               onTool={setTool}
               onHighlight={activateHighlight}
               settings={<AnnotationSettings />}
-              onDone={() => {
-                setMobileAnnotating(false);
-                setTool('select');
-              }}
             />
           )}
 

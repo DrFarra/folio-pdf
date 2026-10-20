@@ -627,7 +627,7 @@ try {
           !document.querySelector('[aria-label="Modo lectura"]:disabled'),
       );
     await page.locator('.pdf-page-wrap[data-page-number="1"]').scrollIntoViewIfNeeded();
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await reopened();
     await settle();
     // The draft once the last change and the reader's reopening have written it.
@@ -647,7 +647,7 @@ try {
     await settle();
     const moved = textAt(await exported('edit-second-visit.pdf'), 'Informe trimestral');
     assert(Math.abs(moved.rect[0] - before.rect[0] - 20) < 1.5, `Moved 20 pt: ${before.rect[0]} → ${moved.rect[0]}`);
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await reopened();
     await settle();
     // The visit's change undoes back to the PDF as it was before it.
@@ -682,7 +682,7 @@ try {
     await page.waitForTimeout(600);
     await settle();
     assert(Math.abs(x(await exported('edit-step-2.pdf')) - start - 20) < 1.5, 'Second step');
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await reopened();
     await settle();
     // Outside Editar each change still undoes on its own.
@@ -833,7 +833,7 @@ try {
         if (document.querySelector('[aria-label="Modo lectura"]:disabled, .loading-overlay')) window.sawBusy();
       }).observe(document.body, { subtree: true, childList: true, attributes: true }),
     );
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
     await page.waitForTimeout(1500);
     assert(!busy, 'Leaving Editar reopens nothing');
@@ -880,7 +880,7 @@ try {
     assert.deepEqual(kinds, ['text', 'graphic', 'graphic', 'text'], `Each click one deeper: ${kinds}`);
     assert.notEqual(rects[1], rects[2], 'The small box, then the large one');
     assert.equal(await page.getByRole('textbox', { name: 'Texto del párrafo' }).count(), 0, 'No typing started');
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
     return { order: kinds };
   });
@@ -962,7 +962,7 @@ try {
       loose = await draftX(dropped.value);
     assert.equal(free + back, 0, 'No guides with Alt held');
     assert(Math.abs(loose.x - 63) < 1, `Not lined up: ${loose.x}`);
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     // The reader opens the written PDF before anything else opens.
     await page.waitForFunction(
       () =>
@@ -1035,7 +1035,7 @@ try {
     }
     assert(value > 0.3 && value < 0.5, `Slid to about 40 %: ${value}`);
     assert(Math.abs(opacity - value) < 0.02, `Written: ${opacity}`);
-    await page.getByRole('button', { name: 'Listo' }).click();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
     await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
     return { shownWhileSliding: live, written: opacity };
   });
