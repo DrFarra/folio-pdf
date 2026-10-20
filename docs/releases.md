@@ -10,6 +10,11 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.21
+
+- En Editar, una página que cambiaste se ve nítida con mucho zoom, como el resto del documento. Antes quedaba algo borrosa hasta salir de Editar.
+- Enderezar páginas escaneadas para el OCR ya no deja la ventana trabada: se hace aparte, y cancelar lo detiene al momento.
+
 ## Cambios en 0.9.20
 
 - Guardar en Windows tarda bastante menos con PDF grandes: un libro de 396 MB editado se guarda en unos 4,5 s en vez de 7,6 s. Folio ya no vuelve a leer el archivo original entero para comprobar que no cambió (le basta su tamaño y fecha, y solo si difieren compara el contenido), calcula la identidad del archivo nuevo mientras lo escribe y no guarda un borrador del PDF que está guardando.
