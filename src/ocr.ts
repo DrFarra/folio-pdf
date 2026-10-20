@@ -3,7 +3,6 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.ts';
 import { OcrEngine } from './ppocr-client';
 import { cleanPaper, rebuildLines, wordChecker } from './rebuild';
-import { flatTilt, flatten, flattenField, inkMask, marginTilt, shrink, skewAngle } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -17,61 +16,32 @@ function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/**
- * A scanned page made straight for reading: turned by its tilt, then flattened when
- * its lines curve. Only a flattened page needs its new pixels; a turn is redone on the
- * PDF's own content, without recompressing the scan.
- */
-// shortcut: runs on the main thread (a few hundred ms per page); move it to a worker if pages feel stuck.
-function straighten(canvas: HTMLCanvasElement) {
-  const read = (source: HTMLCanvasElement) => {
-    const image = source
-      .getContext('2d', { willReadFrequently: true })!
-      .getImageData(0, 0, source.width, source.height);
-    const sample = shrink({ data: image.data, width: image.width, height: image.height, channels: 4 });
-    return { image, sample, mask: inkMask(sample) };
-  };
-  let page = canvas,
-    { image, sample, mask } = read(canvas);
-  const turn = (degrees: number) => {
-    if (page !== canvas) {
-      page.width = 0;
-      page.height = 0;
-    }
-    page = canvas;
-    if (Math.abs(degrees) >= 0.1) {
-      page = document.createElement('canvas');
-      page.width = canvas.width;
-      page.height = canvas.height;
-      const context = page.getContext('2d', { willReadFrequently: true })!;
-      context.fillStyle = '#fff';
-      context.fillRect(0, 0, page.width, page.height);
-      context.translate(page.width / 2, page.height / 2);
-      context.rotate((degrees * Math.PI) / 180);
-      context.translate(-page.width / 2, -page.height / 2);
-      context.drawImage(canvas, 0, 0);
-    }
-    ({ image, sample, mask } = read(page));
-  };
-  let angle = skewAngle(mask, sample.width, sample.height);
-  if (angle) turn(angle);
-  let field = flattenField(mask, sample.width, sample.height);
-  if (field) {
-    // A curve pulls the page's angle: the margin, which stays straight, says the true turn.
-    const extra = marginTilt(mask, sample.width, sample.height) ?? flatTilt(mask, sample.width, sample.height);
-    if (extra) {
-      angle = Math.round((angle + extra) * 100) / 100;
-      turn(angle);
-      field = flattenField(mask, sample.width, sample.height);
-    }
-  }
-  if (field) {
-    image.data.set(
-      flatten({ data: image.data, width: image.width, height: image.height, channels: 4 }, field, 1 / sample.scale),
+/** A scanned page made straight for reading, in a worker (see straighten.worker.ts). */
+async function straighten(canvas: HTMLCanvasElement, signal: AbortSignal) {
+  const worker = new Worker(new URL('./straighten.worker.ts', import.meta.url), { type: 'module' });
+  try {
+    const done = new Promise<{ bitmap?: ImageBitmap; angle: number; flattened: boolean; error?: string }>(
+      (resolve, reject) => {
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = () => reject(new Error('No se pudo enderezar la página.'));
+      },
     );
-    page.getContext('2d')!.putImageData(image, 0, 0);
+    const bitmap = await createImageBitmap(canvas);
+    worker.postMessage(bitmap, [bitmap]);
+    const { bitmap: straight, angle, flattened, error } = await cancellable(done, signal);
+    if (error) throw new Error(error);
+    let page = canvas;
+    if (straight) {
+      page = document.createElement('canvas');
+      page.width = straight.width;
+      page.height = straight.height;
+      page.getContext('2d', { willReadFrequently: true })!.drawImage(straight, 0, 0);
+      straight.close();
+    }
+    return { page, angle, flattened };
+  } finally {
+    worker.terminate();
   }
-  return { page, angle, flattened: !!field };
 }
 
 type Box = [number, number, number, number];
@@ -203,8 +173,7 @@ export async function recognizePdf(
         await page.render({ canvas, viewport, intent: 'print' }).promise;
         if (straightened) {
           progress(`Página ${number} · enderezando`);
-          await new Promise(resolve => setTimeout(resolve));
-          ({ page: read, angle, flattened } = straighten(canvas));
+          ({ page: read, angle, flattened } = await straighten(canvas, signal));
           signal.throwIfAborted();
         }
         progress(`Página ${number} · reconociendo`);

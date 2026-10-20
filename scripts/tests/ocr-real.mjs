@@ -62,7 +62,7 @@ function turned({ data, width: w, height: h, channels: n }, degrees) {
     }
   return { data: result, width: w, height: h, channels: n };
 }
-// src/ocr.ts's straighten(), on plain pixels.
+// src/straighten.worker.ts's straighten(), on plain pixels.
 function straighten(image) {
   const analyse = pixels => {
     const sample = shrink(pixels);
