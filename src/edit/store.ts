@@ -164,10 +164,10 @@ export class EditStore {
     const live = this.live(doc);
     return live ? `live${live.id}:${live.versions[page] ?? 0}` : doc.revision;
   }
-  /** The page as the live document draws it, at this scale and turn. */
-  render(page: number, scale: number, rotation: number) {
+  /** The page as the live document draws it, at this scale and turn; with a clip, only that part of it. */
+  render(page: number, scale: number, rotation: number, clip?: [number, number, number, number]) {
     return this.session
-      ? this.session.render(page, scale, rotation)
+      ? this.session.render(page, scale, rotation, clip)
       : Promise.reject(new Error('No hay sesión de edición.'));
   }
 

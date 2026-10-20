@@ -543,14 +543,15 @@ function PageContent({
     const detail = detailRef.current,
       frame = frameRef.current,
       reader = frame?.closest('.reading-area');
-    // The reader's copy would paint over a change made in Editar.
-    // shortcut: a changed page stays at the capped density until Editar closes; upgrade with stage 2's tiles.
-    if (!detail || !frame || !reader || liveVersion) return;
+    // A page changed in Editar is drawn by its live document, whose requests wait
+    // behind edits: it is asked only when the full page falls short of the screen.
+    if (!detail || !frame || !reader || (liveVersion && outputRatio(viewport) >= density())) return;
     let task: RenderTask | null = null,
+      current: object | null = null,
       timer: ReturnType<typeof setTimeout> | undefined;
     const hide = () => {
       task?.cancel();
-      task = null;
+      task = current = null;
       detail.width = detail.height = 0;
       detail.removeAttribute('style');
     };
@@ -574,15 +575,36 @@ function PageContent({
       surface.width = Math.ceil(width * ratio);
       surface.height = Math.ceil(height * ratio);
       task?.cancel();
-      const current = (task = page.render({
-        canvas: surface,
-        viewport,
-        transform: [ratio, 0, 0, ratio, -left * ratio, -top * ratio],
-      }));
-      current.promise
+      task = null;
+      const token = (current = {});
+      const fromReader = () =>
+        (task = page.render({
+          canvas: surface,
+          viewport,
+          transform: [ratio, 0, 0, ratio, -left * ratio, -top * ratio],
+        })).promise;
+      // As for the full page: if the live document has closed, the reader draws it.
+      const drawing =
+        liveVersion && live
+          ? live
+              .render(number, viewport.scale * ratio, rotation, [
+                left * ratio,
+                top * ratio,
+                surface.width,
+                surface.height,
+              ])
+              .then(
+                image => surface.getContext('2d')?.putImageData(image, 0, 0),
+                error => {
+                  if (current !== token) throw error;
+                  return fromReader();
+                },
+              )
+          : fromReader();
+      drawing
         .then(() => {
-          if (task !== current) return;
-          task = null;
+          if (current !== token) return;
+          task = current = null;
           detail.width = surface.width;
           detail.height = surface.height;
           detail.getContext('2d')?.drawImage(surface, 0, 0);
@@ -606,7 +628,7 @@ function PageContent({
       window.removeEventListener('resize', schedule);
       hide();
     };
-  }, [page, viewport, liveVersion]);
+  }, [page, viewport, liveVersion, live, number, rotation]);
 
   useEffect(() => {
     if (textRef.current)

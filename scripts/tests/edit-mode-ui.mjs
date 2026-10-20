@@ -229,6 +229,55 @@ try {
     return { moved: moved.rect.map(Math.round), scrollKept: true, reselected: true };
   });
 
+  await check('a-changed-page-is-sharp-when-zoomed-in', async () => {
+    // At 600 % the full page is drawn below screen density: its visible part is
+    // drawn again sharply, from the live document (the paragraph has moved away).
+    await page.getByLabel('Nivel de zoom').selectOption('600');
+    await settle();
+    const spot = async () => [await toScreen(1, 62, 712), await toScreen(1, 95, 698)];
+    const [a] = await spot();
+    await page.locator('.reading-area').evaluate((node, a) => {
+      const box = node.getBoundingClientRect();
+      node.scrollBy(a.x - box.left - box.width / 2, a.y - box.top - box.height / 2);
+    }, a);
+    const [from, to] = await spot();
+    const detail = page.locator('.pdf-page-wrap[data-page-number="1"] canvas.page-detail');
+    await page.waitForFunction(
+      ([node, from, to]) => {
+        const box = node.width && node.getBoundingClientRect();
+        return box && box.left <= from.x && box.top <= from.y && box.right >= to.x && box.bottom >= to.y;
+      },
+      [await detail.elementHandle(), from, to],
+    );
+    const { ink, oldSpot } = await detail.evaluate(
+      (node, [from, to]) => {
+        const box = node.getBoundingClientRect(),
+          k = node.width / box.width,
+          dark = (x, y, w, h) => {
+            const data = node.getContext('2d').getImageData(x, y, Math.max(1, w), Math.max(1, h)).data;
+            let n = 0;
+            for (let i = 0; i < data.length; i += 4) if (data[i] + data[i + 1] + data[i + 2] < 300) n++;
+            return n;
+          };
+        return {
+          ink: dark(0, 0, node.width, node.height),
+          oldSpot: dark(
+            Math.round((from.x - box.left) * k),
+            Math.round((from.y - box.top) * k),
+            Math.round((to.x - from.x) * k),
+            Math.round((to.y - from.y) * k),
+          ),
+        };
+      },
+      [from, to],
+    );
+    assert(ink > 0, 'The sharp copy shows the page');
+    assert.equal(oldSpot, 0, 'The sharp copy shows the paragraph moved, not where it was');
+    await page.getByLabel('Nivel de zoom').selectOption('page');
+    await settle();
+    return { ink, oldSpot };
+  });
+
   await check('type-over-a-paragraph-and-escape-cancels', async () => {
     const title = await toScreen(1, 100, 765);
     await page.mouse.dblclick(title.x, title.y);
@@ -999,4 +1048,4 @@ try {
   await browser.close();
   server.kill();
 }
-process.exitCode = results.length === 19 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 20 && results.every(result => result.status === 'passed') ? 0 : 1;

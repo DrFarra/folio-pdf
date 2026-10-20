@@ -27,7 +27,7 @@ export type SessionRequest =
       opaque?: boolean;
     }
   | { type: 'edit'; operation: Operation | Operation[] }
-  | { type: 'render'; page: number; scale: number; rotation: number }
+  | { type: 'render'; page: number; scale: number; rotation: number; clip?: [number, number, number, number] }
   | { type: 'undo' | 'redo' | 'save' };
 
 const engine = Promise.all([import('mupdf'), import('./mupdf-engine.mjs'), import('./operations.ts')]);
@@ -117,7 +117,8 @@ self.onmessage = async (event: MessageEvent<{ id: number; request: SessionReques
       return;
     }
     if (request.type === 'render') {
-      // The page as the reader shows it at this scale and turn, as RGBA pixels.
+      // The page as the reader shows it at this scale and turn, as RGBA pixels;
+      // with a clip ([x, y, width, height] of those pixels), only that part.
       const page = doc.loadPage(request.page - 1);
       let pixmap;
       try {
@@ -126,13 +127,9 @@ self.onmessage = async (event: MessageEvent<{ id: number; request: SessionReques
           mupdf.Matrix.rotate(request.rotation),
         );
         const bounds = mupdf.Rect.transform(page.getBounds(), turn),
-          matrix = mupdf.Matrix.concat(turn, mupdf.Matrix.translate(-bounds[0], -bounds[1]));
-        pixmap = renderPage(
-          page,
-          matrix,
-          [0, 0, Math.ceil(bounds[2] - bounds[0]), Math.ceil(bounds[3] - bounds[1])],
-          true,
-        );
+          [x, y, width, height] = request.clip ?? [0, 0, bounds[2] - bounds[0], bounds[3] - bounds[1]],
+          matrix = mupdf.Matrix.concat(turn, mupdf.Matrix.translate(-bounds[0] - x, -bounds[1] - y));
+        pixmap = renderPage(page, matrix, [0, 0, Math.ceil(width), Math.ceil(height)], true);
         const pixels = new Uint8ClampedArray(pixmap.getPixels());
         self.postMessage(
           { id, result: { pixels, width: pixmap.getWidth(), height: pixmap.getHeight() } },

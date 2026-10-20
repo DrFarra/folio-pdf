@@ -90,12 +90,12 @@ export class EditSession {
   redo() {
     return this.call<number | null>({ type: 'redo' });
   }
-  async render(page: number, scale: number, rotation: number) {
+  async render(page: number, scale: number, rotation: number, clip?: [number, number, number, number]) {
     const { pixels, width, height } = await this.call<{
       pixels: Uint8ClampedArray<ArrayBuffer>;
       width: number;
       height: number;
-    }>({ type: 'render', page, scale, rotation });
+    }>({ type: 'render', page, scale, rotation, clip });
     return new ImageData(pixels, width, height);
   }
   /** The PDF as it is now, and its SHA-256 (a document's revision in Folio). */
