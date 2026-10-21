@@ -68,222 +68,261 @@ export default function ReadingSettings(props: Props) {
   };
   const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) =>
     props.onPreferences({ ...prefs, [key]: value });
+  // Desktop shows one section at a time beside the list of them; touch layouts show them all in a column.
+  const [pane, setPane] = useState('appearance');
+  const panes = [
+    ['appearance', 'Apariencia'],
+    ['reading', phone ? 'Al abrir documentos' : 'Lectura'],
+    ['files', 'Archivos locales'],
+    ['about', 'Acerca de Folio'],
+  ];
+  const shown = (key: string) => !desktop || pane === key;
   return (
     <>
       <Modal title="Ajustes" onClose={props.onClose} className="settings-modal">
-        <h3>Apariencia</h3>
-        <div className="settings-options settings-theme">
-          {[
-            ['light', 'Claro', Sun],
-            ['dark', 'Oscuro', Moon],
-            ['system', 'Sistema', Monitor],
-          ].map(([value, label, Icon]) => {
-            const Component = Icon as typeof Sun;
-            return (
+        {desktop && (
+          <nav className="settings-nav" aria-label="Secciones de Ajustes">
+            {panes.map(([key, label]) => (
               <button
-                key={value as string}
-                aria-pressed={props.theme === value}
-                className={props.theme === value ? 'selected' : ''}
-                onClick={() => props.onTheme(value as string)}
+                type="button"
+                key={key}
+                aria-current={pane === key ? 'page' : undefined}
+                onClick={() => setPane(key)}
               >
-                <Component size={18} />
-                <span>{label as string}</span>
+                {label}
               </button>
-            );
-          })}
-        </div>
-        <h3>{phone ? 'Al abrir documentos' : 'Lectura'}</h3>
-        <p className="modal-description">
-          Se aplican al abrir un PDF. Para el documento abierto, usa{' '}
-          {desktop ? 'la barra de herramientas o Más acciones' : 'Vista del documento'}.
-        </p>
-        <label className="reading-setting">
-          <span>Zoom inicial</span>
-          <select aria-label="Zoom inicial" value={props.zoom} onChange={event => props.onZoom(event.target.value)}>
-            <option value="page">Ajustar página</option>
-            <option value="width">Ajustar ancho</option>
-            {[50, 75, 100, 125, 150, 200, 300].map(value => (
-              <option key={value} value={String(value)}>
-                {value} %
-              </option>
             ))}
-          </select>
-        </label>
-        <label className="reading-setting">
-          <span>Desplazamiento</span>
-          <select
-            aria-label="Modo de desplazamiento"
-            value={prefs.mode}
-            onChange={event => update('mode', event.target.value as ReadingPreferences['mode'])}
-          >
-            <option value="continuous">Continuo</option>
-            <option value="single">Una página</option>
-            {!phone && <option value="spread">Dos páginas</option>}
-          </select>
-        </label>
-        {desktop && (
-          <label className="reading-setting">
-            <span>Zoom con rueda</span>
-            <select
-              aria-label="Velocidad de zoom con rueda"
-              value={prefs.wheelSpeed}
-              onChange={event => update('wheelSpeed', Number(event.target.value))}
-            >
-              <option value="50">Lento</option>
-              <option value="100">Normal</option>
-              <option value="150">Rápido</option>
-            </select>
-          </label>
+          </nav>
         )}
-        <label className="reading-setting">
-          <span>Separación entre páginas</span>
-          <div className="reading-range">
-            <input
-              aria-label="Separación entre páginas"
-              type="range"
-              min="8"
-              max="40"
-              value={prefs.pageGap}
-              onChange={event => update('pageGap', Number(event.target.value))}
-            />
-            <output>{prefs.pageGap} px</output>
-          </div>
-        </label>
-        <label className="settings-toggle">
-          <span>Animar al cambiar de página</span>
-          <input
-            type="checkbox"
-            checked={prefs.smoothScroll}
-            onChange={event => update('smoothScroll', event.target.checked)}
-          />
-        </label>
-        <label className="settings-toggle">
-          <span>Reabrir en la última página</span>
-          <input
-            type="checkbox"
-            checked={prefs.restorePage}
-            onChange={event => update('restorePage', event.target.checked)}
-          />
-        </label>
-        {/* Touch layouts open documents with the panel closed and size it to the screen. */}
-        {desktop && (
-          <details className="settings-advanced" open>
-            <summary>Panel lateral</summary>
+        {shown('appearance') && (
+          <section className="settings-section">
+            <h3>Apariencia</h3>
+            <div className="settings-options settings-theme">
+              {[
+                ['light', 'Claro', Sun],
+                ['dark', 'Oscuro', Moon],
+                ['system', 'Sistema', Monitor],
+              ].map(([value, label, Icon]) => {
+                const Component = Icon as typeof Sun;
+                return (
+                  <button
+                    key={value as string}
+                    aria-pressed={props.theme === value}
+                    className={props.theme === value ? 'selected' : ''}
+                    onClick={() => props.onTheme(value as string)}
+                  >
+                    <Component size={18} />
+                    <span>{label as string}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+        {shown('reading') && (
+          <section className="settings-section">
+            <h3>{phone ? 'Al abrir documentos' : 'Lectura'}</h3>
+            <p className="modal-description">
+              Se aplican al abrir un PDF. Para el documento abierto, usa{' '}
+              {desktop ? 'la barra de herramientas o Más acciones' : 'Vista del documento'}.
+            </p>
             <label className="reading-setting">
-              <span>Al abrir un documento</span>
-              <select
-                aria-label="Al abrir un documento"
-                value={prefs.initialPanel}
-                onChange={event => update('initialPanel', event.target.value as ReadingPreferences['initialPanel'])}
-              >
-                <option value="closed">Cerrado</option>
-                <option value="pages">Páginas</option>
-                <option value="outline">Índice</option>
-                <option value="bookmarks">Marcadores</option>
+              <span>Zoom inicial</span>
+              <select aria-label="Zoom inicial" value={props.zoom} onChange={event => props.onZoom(event.target.value)}>
+                <option value="page">Ajustar página</option>
+                <option value="width">Ajustar ancho</option>
+                {[50, 75, 100, 125, 150, 200, 300].map(value => (
+                  <option key={value} value={String(value)}>
+                    {value} %
+                  </option>
+                ))}
               </select>
             </label>
             <label className="reading-setting">
-              <span>Ancho del panel</span>
+              <span>Desplazamiento</span>
+              <select
+                aria-label="Modo de desplazamiento"
+                value={prefs.mode}
+                onChange={event => update('mode', event.target.value as ReadingPreferences['mode'])}
+              >
+                <option value="continuous">Continuo</option>
+                <option value="single">Una página</option>
+                {!phone && <option value="spread">Dos páginas</option>}
+              </select>
+            </label>
+            {desktop && (
+              <label className="reading-setting">
+                <span>Zoom con rueda</span>
+                <select
+                  aria-label="Velocidad de zoom con rueda"
+                  value={prefs.wheelSpeed}
+                  onChange={event => update('wheelSpeed', Number(event.target.value))}
+                >
+                  <option value="50">Lento</option>
+                  <option value="100">Normal</option>
+                  <option value="150">Rápido</option>
+                </select>
+              </label>
+            )}
+            <label className="reading-setting">
+              <span>Separación entre páginas</span>
               <div className="reading-range">
                 <input
-                  aria-label="Ancho del panel"
+                  aria-label="Separación entre páginas"
                   type="range"
-                  min="180"
-                  max="360"
-                  step="10"
-                  value={prefs.panelWidth}
-                  onChange={event => update('panelWidth', Number(event.target.value))}
+                  min="8"
+                  max="40"
+                  value={prefs.pageGap}
+                  onChange={event => update('pageGap', Number(event.target.value))}
                 />
-                <output>{prefs.panelWidth} px</output>
+                <output>{prefs.pageGap} px</output>
               </div>
             </label>
-          </details>
+            <label className="settings-toggle">
+              <span>Animar al cambiar de página</span>
+              <input
+                type="checkbox"
+                checked={prefs.smoothScroll}
+                onChange={event => update('smoothScroll', event.target.checked)}
+              />
+            </label>
+            <label className="settings-toggle">
+              <span>Reabrir en la última página</span>
+              <input
+                type="checkbox"
+                checked={prefs.restorePage}
+                onChange={event => update('restorePage', event.target.checked)}
+              />
+            </label>
+            {/* Touch layouts open documents with the panel closed and size it to the screen. */}
+            {desktop && (
+              <details className="settings-advanced" open>
+                <summary>Panel lateral</summary>
+                <label className="reading-setting">
+                  <span>Al abrir un documento</span>
+                  <select
+                    aria-label="Al abrir un documento"
+                    value={prefs.initialPanel}
+                    onChange={event => update('initialPanel', event.target.value as ReadingPreferences['initialPanel'])}
+                  >
+                    <option value="closed">Cerrado</option>
+                    <option value="pages">Páginas</option>
+                    <option value="outline">Índice</option>
+                    <option value="bookmarks">Marcadores</option>
+                  </select>
+                </label>
+                <label className="reading-setting">
+                  <span>Ancho del panel</span>
+                  <div className="reading-range">
+                    <input
+                      aria-label="Ancho del panel"
+                      type="range"
+                      min="180"
+                      max="360"
+                      step="10"
+                      value={prefs.panelWidth}
+                      onChange={event => update('panelWidth', Number(event.target.value))}
+                    />
+                    <output>{prefs.panelWidth} px</output>
+                  </div>
+                </label>
+              </details>
+            )}
+          </section>
         )}
-        <h3>Archivos locales</h3>
-        <label className="settings-toggle">
-          <span>Añadir a la biblioteca los PDF que abras</span>
-          <input
-            type="checkbox"
-            checked={props.rememberRecent}
-            onChange={event => props.onRemember(event.target.checked)}
-          />
-        </label>
-        <details className="settings-advanced">
-          <summary>Eliminar datos locales</summary>
-          <p className="modal-description">
-            {isDesktop
-              ? 'Se vaciará la biblioteca y se eliminarán las anotaciones, marcadores y cambios guardados en este equipo.'
-              : 'Se vaciará la biblioteca y se eliminarán sus copias, anotaciones, marcadores y cambios guardados.'}{' '}
-            Los archivos originales no se modifican.
-          </p>
-          {props.confirmClear && props.openDocuments > 0 && (
+        {shown('files') && (
+          <section className="settings-section">
+            <h3>Archivos locales</h3>
+            <label className="settings-toggle">
+              <span>Añadir a la biblioteca los PDF que abras</span>
+              <input
+                type="checkbox"
+                checked={props.rememberRecent}
+                onChange={event => props.onRemember(event.target.checked)}
+              />
+            </label>
+            <details className="settings-advanced">
+              <summary>Eliminar datos locales</summary>
+              <p className="modal-description">
+                {isDesktop
+                  ? 'Se vaciará la biblioteca y se eliminarán las anotaciones, marcadores y cambios guardados en este equipo.'
+                  : 'Se vaciará la biblioteca y se eliminarán sus copias, anotaciones, marcadores y cambios guardados.'}{' '}
+                Los archivos originales no se modifican.
+              </p>
+              {props.confirmClear && props.openDocuments > 0 && (
+                <p className="modal-description">
+                  {props.openDocuments === 1
+                    ? 'También se cerrará el documento abierto'
+                    : `También se cerrarán los ${props.openDocuments} documentos abiertos`}{' '}
+                  y perderás los cambios que no hayas guardado en un PDF.
+                </p>
+              )}
+              <button className={`clear-library ${props.confirmClear ? 'confirm' : ''}`} onClick={props.onClear}>
+                <Trash2 size={16} />
+                <span>
+                  {!props.confirmClear
+                    ? 'Eliminar biblioteca y anotaciones locales'
+                    : props.openDocuments > 0
+                      ? 'Eliminar y cerrar documentos'
+                      : 'Confirmar: eliminar biblioteca y anotaciones locales'}
+                </span>
+              </button>
+              {props.confirmClear && (
+                <button className="text-button" onClick={props.onCancelClear}>
+                  Cancelar eliminación
+                </button>
+              )}
+            </details>
+          </section>
+        )}
+        {shown('about') && (
+          <section className="settings-section">
+            <h3>Acerca de Folio</h3>
             <p className="modal-description">
-              {props.openDocuments === 1
-                ? 'También se cerrará el documento abierto'
-                : `También se cerrarán los ${props.openDocuments} documentos abiertos`}{' '}
-              y perderás los cambios que no hayas guardado en un PDF.
+              Folio es software libre bajo la licencia AGPL-3.0 o posterior y se ofrece sin ninguna garantía.
             </p>
-          )}
-          <button className={`clear-library ${props.confirmClear ? 'confirm' : ''}`} onClick={props.onClear}>
-            <Trash2 size={16} />
-            <span>
-              {!props.confirmClear
-                ? 'Eliminar biblioteca y anotaciones locales'
-                : props.openDocuments > 0
-                  ? 'Eliminar y cerrar documentos'
-                  : 'Confirmar: eliminar biblioteca y anotaciones locales'}
-            </span>
-          </button>
-          {props.confirmClear && (
-            <button className="text-button" onClick={props.onCancelClear}>
-              Cancelar eliminación
-            </button>
-          )}
-        </details>
-        <h3>Acerca de Folio</h3>
-        <p className="modal-description">
-          Folio es software libre bajo la licencia AGPL-3.0 o posterior y se ofrece sin ninguna garantía.
-        </p>
-        <div className="settings-about-links">
-          <button className="secondary-button" onClick={showLicense}>
-            Ver licencia
-          </button>
-          <button
-            className="secondary-button"
-            onClick={() =>
-              visit(`https://raw.githubusercontent.com/DrFarra/folio-pdf/v${version}/THIRD-PARTY-NOTICES.txt`)
-            }
-          >
-            Avisos de terceros
-          </button>
-          <button className="secondary-button" onClick={() => visit(`${REPOSITORY}/releases/tag/v${version}`)}>
-            Código fuente
-          </button>
-          {isDesktop && !release?.found && (
-            <button className="secondary-button" disabled={release?.state === 'checking'} onClick={searchUpdate}>
-              {release?.state === 'checking' ? 'Buscando…' : 'Buscar actualizaciones'}
-            </button>
-          )}
-          {release?.found && (
-            <button
-              className="primary-button"
-              disabled={release.state === 'installing'}
-              onClick={() => install(release.found!)}
-            >
-              {release.state === 'installing' ? 'Descargando…' : `Instalar Folio ${release.found.version}`}
-            </button>
-          )}
-        </div>
-        {release && release.state !== 'checking' && (
-          <p className="modal-description" role={release.state === 'failed' ? 'alert' : 'status'}>
-            {release.state === 'latest'
-              ? `Ya tienes la última versión (${version}).`
-              : release.state === 'failed'
-                ? release.message
-                : release.state === 'installing'
-                  ? 'Folio se cerrará para instalar la actualización y volverá a abrirse.'
-                  : 'Hay una versión nueva. Al instalarla, Folio se cerrará y volverá a abrirse.'}
-          </p>
+            <div className="settings-about-links">
+              <button className="secondary-button" onClick={showLicense}>
+                Ver licencia
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  visit(`https://raw.githubusercontent.com/DrFarra/folio-pdf/v${version}/THIRD-PARTY-NOTICES.txt`)
+                }
+              >
+                Avisos de terceros
+              </button>
+              <button className="secondary-button" onClick={() => visit(`${REPOSITORY}/releases/tag/v${version}`)}>
+                Código fuente
+              </button>
+              {isDesktop && !release?.found && (
+                <button className="secondary-button" disabled={release?.state === 'checking'} onClick={searchUpdate}>
+                  {release?.state === 'checking' ? 'Buscando…' : 'Buscar actualizaciones'}
+                </button>
+              )}
+              {release?.found && (
+                <button
+                  className="primary-button"
+                  disabled={release.state === 'installing'}
+                  onClick={() => install(release.found!)}
+                >
+                  {release.state === 'installing' ? 'Descargando…' : `Instalar Folio ${release.found.version}`}
+                </button>
+              )}
+            </div>
+            {release && release.state !== 'checking' && (
+              <p className="modal-description" role={release.state === 'failed' ? 'alert' : 'status'}>
+                {release.state === 'latest'
+                  ? `Ya tienes la última versión (${version}).`
+                  : release.state === 'failed'
+                    ? release.message
+                    : release.state === 'installing'
+                      ? 'Folio se cerrará para instalar la actualización y volverá a abrirse.'
+                      : 'Hay una versión nueva. Al instalarla, Folio se cerrará y volverá a abrirse.'}
+              </p>
+            )}
+          </section>
         )}
         <div className="modal-actions">
           <span className="folio-version">Folio · {version}</span>

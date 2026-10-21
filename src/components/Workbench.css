@@ -843,3 +843,7 @@ html[data-phone] .tool-categories .tool-text {
 .tool-art {
   display: none;
 }
+/* Only the desktop tool forms show the list of every tool beside them (redesign-desktop.css). */
+.tool-sidebar {
+  display: none;
+}

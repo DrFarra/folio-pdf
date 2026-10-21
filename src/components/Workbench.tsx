@@ -753,6 +753,30 @@ export default function Workbench(props: Props) {
     labels = fieldLabels(formFields);
   const fieldChanges = formFields.filter(f => !f.readOnly && values[f.id] !== initialValue(f)),
     focused = formFields.find(f => f.id === focusedField);
+  // On desktop every tool stays one click away while one is open.
+  const sidebar = section !== 'home' && (
+    <nav className="tool-sidebar" aria-label="Cambiar de herramienta">
+      {categories.map(category => (
+        <div className="tool-sidebar-group" key={category.id} data-section={category.id}>
+          {category.actions.map(key => {
+            const [, label, Icon, enabled] = actions.find(action => action[0] === key)!;
+            return (
+              <button
+                type="button"
+                key={key}
+                aria-current={section === key ? 'page' : undefined}
+                disabled={!enabled || busy || compareBusy}
+                onClick={() => section !== key && chooseAction(key)}
+              >
+                <Icon size={16} aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </nav>
+  );
   const content = (
     <>
       {props.inline && section === 'home' && (
@@ -1809,6 +1833,7 @@ export default function Workbench(props: Props) {
         if (!busy) props.onClose();
       }}
       className={className}
+      aside={sidebar}
     >
       {content}
     </Modal>

@@ -103,11 +103,14 @@ export default function Modal({
   children,
   onClose,
   className = '',
+  aside,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   className?: string;
+  /** Shown before the title, beside the dialog's content (Herramientas' list of tools). */
+  aside?: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // Capture before child autoFocus runs during commit, especially note editors.
@@ -202,6 +205,7 @@ export default function Modal({
       aria-labelledby={titleId}
     >
       <SheetHandle onClose={close} />
+      {aside}
       <div className="modal-heading">
         <h2 id={titleId}>{title}</h2>
         <button className="icon-button" onClick={close} aria-label="Cerrar diálogo">

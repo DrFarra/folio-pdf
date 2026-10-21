@@ -24,13 +24,15 @@ import {
   Type,
 } from 'lucide-react';
 import type { LoadedDocument } from '../types';
-import { useEdit, type EditStore, type EditTool, type TextStyle } from './store';
+import { useEdit, type EditStore, type EditTool, type Rect, type TextStyle } from './store';
 import {
   alignSelection,
   deleteSelection,
   duplicateSelection,
   editText,
   fadeSelection,
+  moveSelection,
+  nudgeSelection,
   recolorSelection,
   replaceImage,
   rotateSelection,
@@ -99,6 +101,60 @@ function Toggle({
     >
       {children}
     </button>
+  );
+}
+
+const tenth = (value: number) => Math.round(value * 10) / 10;
+
+/** Where the selection sits, in points from its page's top left corner (`view`, the page box);
+ * a typed value moves it, or resizes it when `sized`.
+ * shortcut: a turned page still counts from its unturned corner, until someone edits turned pages by number. */
+function Geometry({
+  rect,
+  view,
+  sized,
+  onChange,
+}: {
+  rect: Rect;
+  view: number[];
+  sized: boolean;
+  onChange: (rect: Rect) => void;
+}) {
+  const [x0, y0, x1, y1] = rect,
+    [left, , , top] = view;
+  const fields: [string, string, number, (value: number) => Rect | null][] = [
+    ['X', 'Posición X', x0 - left, value => [left + value, y0, left + value + x1 - x0, y1]],
+    ['Y', 'Posición Y', top - y1, value => [x0, top - value - (y1 - y0), x1, top - value]],
+  ];
+  if (sized)
+    fields.push(
+      ['Ancho', 'Ancho del elemento', x1 - x0, value => (value > 0 ? [x0, y0, x0 + value, y1] : null)],
+      ['Alto', 'Alto del elemento', y1 - y0, value => (value > 0 ? [x0, y1 - value, x1, y1] : null)],
+    );
+  const commit = (input: HTMLInputElement, value: number, next: (value: number) => Rect | null) => {
+    const typed = Number(input.value),
+      to = input.value.trim() && Number.isFinite(typed) && tenth(typed) !== tenth(value) ? next(typed) : null;
+    if (to) onChange(to);
+    else input.value = String(tenth(value));
+  };
+  return (
+    <div className="edit-geometry" role="group" aria-label="Posición y tamaño (pt)">
+      {fields.map(([label, name, value, next]) => (
+        <label className="edit-field" key={`${label}:${rect.join()}`}>
+          <span>{label}</span>
+          <input
+            type="number"
+            step="any"
+            aria-label={name}
+            defaultValue={tenth(value)}
+            onBlur={event => commit(event.currentTarget, value, next)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') commit(event.currentTarget, value, next);
+            }}
+          />
+        </label>
+      ))}
+    </div>
   );
 }
 
@@ -187,6 +243,23 @@ export default function EditToolbar({ store, doc }: { store: EditStore; doc: Loa
     if (shapeSelected) store.actions?.updateShape(shapeSelected.id, patch);
   };
   const lineShape = shapeSelected ? !!shapeSelected.line : tool === 'line' || tool === 'arrow';
+  // The page box the selection's position is measured from.
+  const [view, setView] = useState<{ page: number; box: number[] } | null>(null);
+  const selectedPage = selection?.page;
+  useEffect(() => {
+    if (!selectedPage) return;
+    let alive = true;
+    doc.pdf.getPage(selectedPage).then(
+      page => {
+        if (alive) setView({ page: selectedPage, box: page.view });
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [doc.pdf, selectedPage]);
+  const pageBox = view && view.page === selectedPage && !draft && !count ? view.box : null;
   const modifier = isMac ? '⌘' : 'Ctrl+';
   // The selection's properties sit in a panel beside the page, named after what is selected.
   const inspector =
@@ -236,6 +309,26 @@ export default function EditToolbar({ store, doc }: { store: EditStore; doc: Loa
       {inspector && (
         <div className="edit-inspector" role="group" aria-label="Propiedades">
           <h2 className="edit-inspector-title">{inspector}</h2>
+          {pageBox && selection && selection.kind !== 'shape' && (
+            <Geometry
+              rect={selection.item.rect}
+              view={pageBox}
+              sized={selection.kind !== 'text'}
+              onChange={rect => void moveSelection(store, rect)}
+            />
+          )}
+          {pageBox && shapeSelected && (
+            <Geometry
+              rect={shapeSelected.rect}
+              view={pageBox}
+              sized={!shapeSelected.line}
+              onChange={rect =>
+                shapeSelected.line
+                  ? nudgeSelection(store, rect[0] - shapeSelected.rect[0], rect[1] - shapeSelected.rect[1])
+                  : store.actions?.updateShape(shapeSelected.id, { rect })
+              }
+            />
+          )}
           {count > 0 && (
             <div className="edit-properties" aria-label="Varios elementos">
               <Toggle label="Alinear a la izquierda" onClick={() => alignSelection(store, 'left')}>

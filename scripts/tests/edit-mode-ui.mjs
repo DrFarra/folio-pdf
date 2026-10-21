@@ -699,6 +699,25 @@ try {
     return { reenteredWithoutCopy: true, undoneOneByOne: true };
   });
 
+  await check('a-nudge-right-before-leaving-is-kept', async () => {
+    const x = bytes => textAt(bytes, 'Informe trimestral').rect[0],
+      start = x(new Uint8Array(Buffer.from(lastDraft, 'base64')));
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    await pick(1, 100, 765);
+    await page.locator('.edit-selection.kind-text').waitFor();
+    // Leaving before the keys' pause writes the nudge.
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
+    assert(Math.abs(x(await exported('edit-nudge-on-leave.pdf')) - start - 10) < 1.5, 'The nudge is written');
+    await page.waitForFunction(
+      () =>
+        !document.querySelector('canvas[data-live]') && !document.querySelector('[aria-label="Modo lectura"]:disabled'),
+    );
+    await settle();
+    return { kept: true };
+  });
+
   await check('a-change-not-yet-written-survives-opening-another-document', async () => {
     // The draft of this document, by its id (the SHA-256 of the file).
     const id = crypto.createHash('sha256').update(fs.readFileSync(fixture)).digest('hex');
@@ -1039,6 +1058,77 @@ try {
     await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
     return { shownWhileSliding: live, written: opacity };
   });
+
+  await check('position-and-size-typed-in-the-inspector', async () => {
+    const placed = await PDFDocument.create(),
+      sheet = placed.addPage([595, 842]);
+    sheet.drawImage(await placed.embedPng(swatch.asPNG()), { x: 120, y: 480, width: 200, height: 150 });
+    const bytes = Buffer.from(await placed.save()),
+      id = crypto.createHash('sha256').update(bytes).digest('hex');
+    const written = async previous => {
+      for (let i = 0; i < 80; i++) {
+        const stored = await page.evaluate(
+          id =>
+            new Promise((resolve, reject) => {
+              const request = indexedDB.open('folio-library');
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const get = request.result.transaction('drafts', 'readonly').objectStore('drafts').get(id);
+                get.onsuccess = () =>
+                  resolve(
+                    get.result
+                      ? btoa(Array.from(new Uint8Array(get.result), c => String.fromCharCode(c)).join(''))
+                      : '',
+                  );
+                get.onerror = () => reject(get.error);
+              };
+            }),
+          id,
+        );
+        const rect = stored
+          ? items(new Uint8Array(Buffer.from(stored, 'base64'))).find(item => item.kind === 'image')?.rect
+          : null;
+        if (rect && JSON.stringify(rect) !== JSON.stringify(previous)) return rect;
+        await page.waitForTimeout(100);
+      }
+      throw new Error('Nothing written');
+    };
+    // The last check left Editar: a file chosen while the reader reopens its PDF is not opened.
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Modo lectura"]:disabled'));
+    await page
+      .locator('input[type=file][accept="application/pdf,.pdf"]')
+      .first()
+      .setInputFiles({ name: 'posicion.pdf', mimeType: 'application/pdf', buffer: bytes });
+    await page.waitForFunction(
+      () => document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('aria-label') === 'posicion.pdf',
+    );
+    await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Editar contenido del PDF' }).click();
+    await page.locator('.edit-toolbar').waitFor();
+    await pick(1, 220, 555);
+    await page.locator('.edit-selection.kind-image').waitFor();
+    // Counted from the page's top left corner, in points.
+    const x = page.getByLabel('Posición X', { exact: true }),
+      y = page.getByLabel('Posición Y', { exact: true });
+    assert.equal(await x.inputValue(), '120');
+    assert.equal(await y.inputValue(), String(842 - 630));
+    await x.fill('60');
+    await x.press('Enter');
+    let rect = await written(null);
+    assert(Math.abs(rect[0] - 60) < 0.5 && Math.abs(rect[2] - 260) < 0.5, `Moved to x 60: ${rect}`);
+    await settle();
+    await page.locator('.edit-selection.kind-image').waitFor();
+    const width = page.getByLabel('Ancho del elemento', { exact: true });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Posición X"]')?.value === '60');
+    await width.fill('100');
+    await width.press('Enter');
+    rect = await written(rect);
+    assert(Math.abs(rect[2] - rect[0] - 100) < 0.5 && Math.abs(rect[3] - 630) < 0.5, `100 pt wide, same top: ${rect}`);
+    await settle();
+    await page.getByRole('button', { name: 'Modo lectura' }).click();
+    await page.locator('.edit-toolbar').waitFor({ state: 'detached' });
+    return { moved: true, resized: true };
+  });
 } finally {
   for (const result of results) console.log(JSON.stringify(result));
   fs.writeFileSync(
@@ -1048,4 +1138,4 @@ try {
   await browser.close();
   server.kill();
 }
-process.exitCode = results.length === 20 && results.every(result => result.status === 'passed') ? 0 : 1;
+process.exitCode = results.length === 22 && results.every(result => result.status === 'passed') ? 0 : 1;

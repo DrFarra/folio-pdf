@@ -209,3 +209,52 @@ html[data-tablet] .app-shell .reading-setting {
   font-size: 13px;
   cursor: pointer;
 }
+/* Desktop: the sections listed on the left, the chosen one on the right, at one height. */
+html:not([data-phone]) .app-shell dialog.settings-modal[open]:has(> .settings-nav) {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+  column-gap: 28px;
+  width: min(780px, calc(100vw - 28px));
+  height: min(600px, calc(100dvh - 55px));
+}
+.settings-modal > .modal-heading {
+  grid-column: 1 / -1;
+}
+.settings-modal > .settings-nav {
+  grid-row: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+}
+.settings-nav > button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.settings-nav > button:hover {
+  background: var(--hover);
+}
+.settings-nav > button[aria-current] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-modal:has(> .settings-nav) > .settings-section {
+  grid-column: 2;
+  min-height: 0;
+  overflow-y: auto;
+}
+.settings-modal:has(> .settings-nav) > .modal-actions {
+  grid-column: 2;
+}
+html:not([data-phone]) .app-shell .settings-modal:has(> .settings-nav) .settings-section > h3:first-child {
+  margin-top: 0;
+}

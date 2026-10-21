@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { flushNudge } from '../edit/actions';
 import { usePastedImages } from '../edit/paste';
 import type { EditStore } from '../edit/store';
 import { errorMessage } from '../errors';
@@ -112,6 +113,8 @@ export class LiveEdit {
     const step: History = { annotations, session: true, ...(this.depth++ === 0 ? { base: true as const } : {}) };
     this.host.store.changed(page);
     this.scheduleWrite();
+    // Written on the way out of Editar (a nudge): the reader opens it at once, after any park under way.
+    if (!this.host.editing()) void (this.parking ?? Promise.resolve()).then(() => this.park());
     return step;
   }
 
@@ -297,8 +300,10 @@ export function useLiveEditing(
     live.sync(editing, doc);
   }, [editing, doc, touch, live]);
   useEffect(() => {
-    if (!editing)
+    if (!editing) {
+      flushNudge(store);
       store.set({ selection: null, draft: null, ghost: null, tool: 'select', image: null, notice: '', reselect: null });
+    }
   }, [editing, store]);
   usePastedImages(editing, store, message => notify(message, 'error'));
 }

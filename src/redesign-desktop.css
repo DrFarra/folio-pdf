@@ -363,7 +363,11 @@ html:not([data-touch]) .app-shell .edit-inspector .edit-field > :is(select, inpu
   width: 100%;
   max-width: none;
   height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
   border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
   font-size: 13px;
 }
 html:not([data-touch]) .app-shell .edit-inspector .edit-count {
@@ -719,6 +723,113 @@ html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text > small
   }
 }
 
+/* An open tool keeps every other tool in a column beside its form. */
+html:not([data-touch]) .app-shell dialog.workbench[open]:has(> .tool-sidebar) {
+  --tool-sidebar: 212px;
+  --tool-content: 760px;
+  width: min(calc(var(--tool-content) + var(--tool-sidebar) + 24px), calc(100vw - 28px));
+  padding-left: calc(var(--tool-sidebar) + 52px);
+}
+html:not([data-touch]) .app-shell dialog.pages-workbench:has(> .tool-sidebar) {
+  --tool-content: 940px;
+}
+html:not([data-touch]) .app-shell dialog.split-workbench:has(> .tool-sidebar) {
+  --tool-content: 980px;
+}
+html:not([data-touch]) .app-shell dialog.compare-workbench:has(.compare-controls) {
+  --tool-content: 1120px;
+}
+/* In a dialog that scrolls, the column floats in its padding and stays in view. */
+html:not([data-touch]) .app-shell .workbench > .tool-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  float: left;
+  position: sticky;
+  top: 27px;
+  width: var(--tool-sidebar);
+  max-height: calc(100dvh - 107px);
+  margin: 0 24px 0 calc(-1 * (var(--tool-sidebar) + 24px));
+  padding: 0 14px 0 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+/* Dialogs that hold their own height and scroll inside keep it in place. */
+html:not([data-touch]) .app-shell dialog:is(.pages-workbench, .bounded-workbench)[open] > .tool-sidebar {
+  position: absolute;
+  top: 27px;
+  bottom: 25px;
+  left: 28px;
+  float: none;
+  max-height: none;
+  margin: 0;
+}
+/* A narrow window gives the whole width to the tool's form. */
+@media (max-width: 1023px) {
+  html:not([data-touch]) .app-shell dialog.workbench[open]:has(> .tool-sidebar) {
+    width: min(var(--tool-content), calc(100vw - 28px));
+    padding-left: 28px;
+  }
+  html:not([data-touch]) .app-shell .workbench > .tool-sidebar {
+    display: none;
+  }
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group:last-child {
+  border-bottom: 0;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='pages'] {
+  --tool-ink: #2f5bd3;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='content'] {
+  --tool-ink: #6b4bc4;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='forms'] {
+  --tool-ink: #1f7a6a;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='review'] {
+  --tool-ink: #a35f00;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='export'] {
+  --tool-ink: #1f7a4a;
+}
+html:not([data-touch]) .app-shell .tool-sidebar-group[data-section='protection'] {
+  --tool-ink: #b0473a;
+}
+html:not([data-touch]) .app-shell .tool-sidebar button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+html:not([data-touch]) .app-shell .tool-sidebar button > svg {
+  flex-shrink: 0;
+  color: var(--tool-ink);
+}
+html:not([data-touch]) .app-shell .tool-sidebar button:hover:not(:disabled) {
+  background: var(--hover);
+}
+html:not([data-touch]) .app-shell .tool-sidebar button[aria-current] {
+  background: color-mix(in srgb, var(--tool-ink) 12%, var(--surface));
+  font-weight: 600;
+}
+html:not([data-touch]) .app-shell .tool-sidebar button:disabled {
+  opacity: 0.45;
+}
+
 /* Dialogs: centred cards, one clear main action. */
 html:not([data-touch]) .app-shell dialog.modal {
   border: 0;
@@ -763,4 +874,9 @@ html:not([data-touch]) .command-palette {
   border: 0;
   border-radius: 16px;
   box-shadow: 0 24px 64px #1418204d;
+}
+html:not([data-touch]) .app-shell .edit-geometry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
