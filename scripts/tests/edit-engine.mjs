@@ -152,6 +152,46 @@ await check('replaced-text-uses-the-original-font', () => {
   return { originalFontReused: true, missingGlyphReported: true };
 });
 
+await check('rewritten-accented-text-reads-as-drawn', async () => {
+  const pdf = await PDFDocument.create(),
+    helvetica = await pdf.embedFont(StandardFonts.Helvetica);
+  // The original font has painted every letter, so Editar can reuse it.
+  const original = 'Página ¿Qué? ¡Sí! árbol, él, mí, sólo, menú, niño, pingüino';
+  pdf.addPage([500, 300]).drawText(original, { x: 30, y: 220, size: 12, font: helvetica });
+  const source = await pdf.save();
+  const p = items(source, 1).find(item => item.kind === 'text' && item.level === 'paragraph');
+  const text = `${original} NUEVO`;
+  // pdf.js is what the reader's text layer, search and copy use.
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const extracted = async bytes => {
+    const task = getDocument({ data: new Uint8Array(bytes), verbosity: 0 });
+    try {
+      const content = await (await (await task.promise).getPage(1)).getTextContent();
+      return content.items.map(item => item.str).join('');
+    } finally {
+      await task.destroy();
+    }
+  };
+  for (const fields of [{ originalFont: true }, { fontName: 'Helvetica' }, { fontName: 'Times-Roman' }]) {
+    const bytes = operateDocument(source, {
+      operation: 'replace-text',
+      page: 1,
+      sourceId: p.id,
+      sourceRect: p.rect,
+      rect: [p.rect[0], p.rect[1], 480, p.rect[3] + 40],
+      text,
+      size: p.size,
+      color: p.color,
+      wrap: true,
+      ...fields,
+    });
+    const read = items(bytes, 1).find(item => item.kind === 'text' && item.level === 'paragraph');
+    assert.equal(read.text, text, `page-content with ${JSON.stringify(fields)}`);
+    assert.equal((await extracted(bytes)).replace(/\s+/g, ' ').trim(), text, `pdf.js with ${JSON.stringify(fields)}`);
+  }
+  return { originalFont: true, standardFonts: true };
+});
+
 await check('images-move-turn-fade-and-copy-without-re-encoding', async () => {
   const source = new mupdf.PDFDocument(tracemonkey);
   const jpeg = source.loadPage(0).toPixmap(mupdf.Matrix.scale(0.4, 0.4), mupdf.ColorSpace.DeviceRGB, false).asJPEG(80);
