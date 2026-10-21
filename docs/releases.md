@@ -5,10 +5,14 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.25
+
+- Dividir PDF y Extraer selección ya no se cancelan por tiempo con libros grandes que tienen anotaciones. Antes de dividir, Folio reescribía el libro entero para incluir las anotaciones, y con miles de páginas eso superaba el tiempo máximo. Ahora las agrega al final del archivo sin reescribirlo: en un libro de prueba de 3000 páginas, ese paso bajó de 7,3 s a 0,2 s. Las partes siguen llevando las anotaciones.
 
 ## Cambios en 0.9.24
 
