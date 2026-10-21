@@ -91,26 +91,66 @@
   border-color: #b5503d;
   color: #fff;
 }
+/* The places to look in: one segmented control. */
 .drive-locations {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
+.drive-locations::-webkit-scrollbar {
+  display: none;
+}
+.drive-browser .drive-locations button {
+  flex: 1 0 auto;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.drive-browser .drive-locations button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 4px #14182026;
+}
+/* Where you are: a plain path of folders, the current one in bold. */
 .drive-breadcrumbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 20px;
+  align-items: center;
+  gap: 2px;
+  margin-top: 18px;
+  color: var(--muted);
+}
+.drive-breadcrumbs > svg {
+  flex-shrink: 0;
+  margin-right: 6px;
 }
 .drive-breadcrumbs span {
   display: flex;
   align-items: center;
   min-width: 0;
 }
-.drive-breadcrumbs button {
+.drive-browser .drive-breadcrumbs button {
+  min-height: 36px;
+  padding: 4px 6px;
   border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
   overflow-wrap: anywhere;
   text-align: left;
+}
+.drive-browser .drive-breadcrumbs button[aria-current='location'] {
+  color: var(--text);
+  font-weight: 700;
 }
 .drive-search {
   display: flex;
@@ -217,12 +257,9 @@
   .drive-welcome {
     margin: 45px auto;
   }
-  .drive-locations {
-    gap: 6px;
-  }
-  .drive-locations button {
-    font-size: 12px;
-    padding: 8px;
+  .drive-browser .drive-locations button {
+    font-size: 13px;
+    padding: 8px 12px;
   }
   .drive-search {
     gap: 7px;

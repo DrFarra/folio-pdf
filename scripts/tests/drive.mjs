@@ -119,7 +119,9 @@ try {
             if (command === 'drive_list')
               return args.folder === 'root'
                 ? { items: [{ id: 'folder-a', title: 'Estudios', mimeType: 'application/vnd.google-apps.folder' }] }
-                : { items: args.search && !file.title.includes(args.search) ? [] : [file] };
+                : args.folder === 'computers'
+                  ? { items: [{ id: 'computer-a', title: 'Mi PC', mimeType: 'application/vnd.google-apps.folder' }] }
+                  : { items: args.search && !file.title.includes(args.search) ? [] : [file] };
             if (command === 'drive_cached') return { items: [file] };
             if (command === 'drive_open' || command === 'drive_pending_open')
               return { ...opened, offline: args.offline || false };
@@ -169,6 +171,12 @@ try {
     await page.goto('http://127.0.0.1:4291');
     await page.getByRole('button', { name: 'Google Drive', exact: true }).click();
     await page.getByRole('button', { name: 'Conectar Google Drive' }).click();
+    // Computadoras lists the computers Drive for desktop backs up, each opening as a folder.
+    await page.getByRole('button', { name: 'Computadoras', exact: true }).click();
+    await page.getByRole('button', { name: 'Mi PC Carpeta' }).click();
+    await page.getByRole('navigation', { name: 'Carpeta actual' }).getByRole('button', { name: 'Mi PC' }).waitFor();
+    await page.getByRole('button', { name: /Documento remoto.pdf/ }).waitFor();
+    await page.getByRole('button', { name: 'Mi unidad', exact: true }).first().click();
     await page.getByRole('button', { name: 'Estudios Carpeta' }).click();
     await page.getByRole('navigation', { name: 'Carpeta actual' }).getByRole('button', { name: 'Estudios' }).waitFor();
     await page.getByRole('textbox', { name: 'Buscar en esta carpeta' }).fill('inexistente');

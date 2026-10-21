@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronRight, Cloud, FileText, Folder, RefreshCw, Search, LogOut } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Cloud, FileText, Folder, FolderOpen, RefreshCw, Search, LogOut } from 'lucide-react';
 import {
   driveCached,
   driveCancelConnect,
@@ -286,6 +286,19 @@ export function DriveBrowser({ onClose, onOpen, onSynced, conflicts, onConflicts
             >
               Compartidos conmigo
             </button>
+            {/* The folders Google Drive for desktop backs up from each computer. */}
+            <button
+              aria-pressed={mode === 'drive' && path[0].id === 'computers'}
+              disabled={!!busy}
+              onClick={() => {
+                setMode('drive');
+                setPath([{ id: 'computers', title: 'Computadoras' }]);
+                setQuery('');
+                setSearch('');
+              }}
+            >
+              Computadoras
+            </button>
             <button aria-pressed={mode === 'cached'} disabled={!!busy} onClick={() => setMode('cached')}>
               Sin conexión
             </button>
@@ -344,12 +357,15 @@ export function DriveBrowser({ onClose, onOpen, onSynced, conflicts, onConflicts
           )}
           {mode === 'drive' && (
             <>
+              {/* Where you are, as a path of folders: not another place to choose like the ones above. */}
               <nav className="drive-breadcrumbs" aria-label="Carpeta actual">
+                <FolderOpen size={17} aria-hidden="true" />
                 {path.map((part, i) => (
                   <span key={part.id}>
                     {i > 0 && <ChevronRight size={16} />}
                     <button
                       disabled={!!busy}
+                      aria-current={i === path.length - 1 ? 'location' : undefined}
                       onClick={() => {
                         setPath(path.slice(0, i + 1));
                         setSearch('');
@@ -419,7 +435,9 @@ export function DriveBrowser({ onClose, onOpen, onSynced, conflicts, onConflicts
                 ? 'Los PDF que abras desde Drive aparecerán aquí.'
                 : search
                   ? `Ningún PDF ni carpeta coincide con «${search}».`
-                  : 'Esta carpeta no tiene PDF ni subcarpetas.'}
+                  : folder === 'computers'
+                    ? 'Ninguna computadora hace copia de seguridad en este Drive.'
+                    : 'Esta carpeta no tiene PDF ni subcarpetas.'}
             </p>
           )}
           {next && (

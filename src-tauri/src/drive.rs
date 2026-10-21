@@ -263,11 +263,29 @@ pub async fn drive_disconnect(app:tauri::AppHandle)->Result<(),String> {
 pub async fn drive_list(app:tauri::AppHandle,folder:String,page_token:Option<String>,search:Option<String>)->Result<Value,String> {
     work(app,move|app,d,c,g| {
         let a=account(d)?;safe_id(&folder)?;
+        if folder=="computers" { return with_token(app,c,g,&a,|t| computers(c,t,search.as_deref())); }
         let mut q=if folder=="shared" {"sharedWithMe and trashed = false".to_string()} else {format!("'{folder}' in parents and trashed = false")};
         q.push_str(" and (mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.folder')");
         if let Some(search)=search.filter(|s|!s.trim().is_empty()) { let search=search.replace('\\',"\\\\").replace('\'',"\\'");q.push_str(&format!(" and title contains '{search}'")); }
         with_token(app,c,g,&a,|t| response(c.get(format!("{API}/files")).bearer_auth(t).query(&[("q",q.as_str()),("maxResults","100"),("pageToken",page_token.as_deref().unwrap_or("")),("orderBy","folder,title_natural"),("supportsAllDrives","true"),("includeItemsFromAllDrives","true"),("fields","nextPageToken,items(id,title,mimeType,fileSize,modifiedDate,editable)")]).send().map_err(|_|OFFLINE)?)?.json::<Value>().map_err(|_|"No se pudo leer la carpeta.".into()))
     }).await
+}
+/// Computadoras: the folders Google Drive for desktop backs up are the user's own
+/// folders without a parent. Drive has no query for that, so they are picked out
+/// of the user's folders (up to 20 000).
+fn computers(c:&Client,t:&str,search:Option<&str>)->Result<Value,String> {
+    let needle=search.unwrap_or("").trim().to_lowercase();
+    let (mut roots,mut page)=(vec![],String::new());
+    for _ in 0..20 {
+        let v=response(c.get(format!("{API}/files")).bearer_auth(t).query(&[("q","'me' in owners and mimeType = 'application/vnd.google-apps.folder' and trashed = false"),("maxResults","1000"),("pageToken",page.as_str()),("fields","nextPageToken,items(id,title,mimeType,modifiedDate,editable,parents(id))")]).send().map_err(|_|OFFLINE)?)?.json::<Value>().map_err(|_|"No se pudo leer Computadoras.".to_string())?;
+        for item in v["items"].as_array().into_iter().flatten() {
+            let orphan=item["parents"].as_array().map_or(true,|p|p.is_empty());
+            if orphan && item["title"].as_str().unwrap_or("").to_lowercase().contains(&needle) { roots.push(item.clone()); }
+        }
+        match v["nextPageToken"].as_str() { Some(next)=>page=next.to_string(), None=>break }
+    }
+    roots.sort_by_key(|item|item["title"].as_str().unwrap_or("").to_lowercase());
+    Ok(json!({"items":roots}))
 }
 #[tauri::command]
 pub async fn drive_open(app:tauri::AppHandle,file_id:String,offline:Option<bool>,on_progress:Channel<Value>)->Result<Opened,String> {
