@@ -1,16 +1,18 @@
 # Descargas de Folio
 
-Los instaladores y su código fuente se publican en [GitHub Releases](https://github.com/FarraPY/folio-pdf/releases).
+Los instaladores y su código fuente se publican en [GitHub Releases](https://github.com/DrFarra/folio-pdf/releases).
 Cada fila indica el último paquete publicado de esa plataforma, que puede ser anterior a la versión del código.
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
+| Android, tablet y teléfono (arm64) | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
 
-## Cambios en 0.9.22
+## Cambios en 0.9.23
+
+Primera versión con el nuevo diseño, en Windows, macOS, Android, iPhone e iPad.
 
 - Nuevo diseño en escritorio. Una sola barra arriba tiene las pestañas, el cambio entre Leer, Anotar y Editar en el centro, la búsqueda y Guardar. A la izquierda queda una columna de iconos, y la página y el zoom van en una barra flotante sobre el documento.
 - Leer, Anotar y Editar son vistas del mismo documento. Ya no hay que salir de Editar con «Listo»: lo que editaste aparece al cambiar de modo, sin pantalla de carga. Un cambio hecho con las flechas justo antes de cambiar de modo ya no se pierde.
@@ -19,6 +21,10 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 - Herramientas muestra cada herramienta con un dibujo de lo que hace. Al abrir una, las demás quedan en una lista al lado.
 - Ajustes se divide en secciones: Apariencia, Lectura, Archivos locales y Acerca de Folio.
 - Con muchas pestañas abiertas, las que no caben se listan en un menú «+N» y ya no tapan el cambio de modo.
+- En el teléfono, Herramientas está en la barra de abajo, junto a Páginas, Buscar y Anotar; Compartir PDF pasa a Más acciones. Bajo el nombre del documento se ve la página. Las herramientas de Anotar llevan su nombre bajo el icono, y Herramientas se muestra como una lista. En horizontal, las acciones de lectura pasan a una columna a la derecha y la página conserva su altura.
+- En el teléfono y la tablet, las opciones del lápiz usan los deslizadores nuevos. La tablet muestra Herramientas con los dibujos de cada una y Ajustes en dos paneles.
+- Al reescribir un texto con tildes en Editar, buscar o copiar ese texto ya da las letras correctas («Página» en vez de «PÈgina»).
+- El OCR con enderezado de páginas vuelve a funcionar en Safari anterior a la versión 16.4, en iPhone, iPad y Mac.
 
 ## Cambios en 0.9.21
 
