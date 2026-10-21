@@ -1,4 +1,14 @@
-import { Bookmark, CircleHelp, FolderOpen, Layers, ListTree, MessageSquare, Search, Settings } from 'lucide-react';
+import {
+  Bookmark,
+  CircleHelp,
+  FolderOpen,
+  LayoutGrid,
+  Layers,
+  ListTree,
+  MessageSquare,
+  Search,
+  Settings,
+} from 'lucide-react';
 import IconButton from './IconButton';
 import { shortcutLabel } from '../platform';
 import type { SideTab } from '../types';
@@ -14,6 +24,7 @@ type Props = {
   /** Editar PDF covers the reader: the rail waits. */
   inert: boolean;
   onLibrary: () => void;
+  onTools: () => void;
   onPanel: (tab: SideTab) => void;
   onNotes: () => void;
   onSearch: () => void;
@@ -21,7 +32,7 @@ type Props = {
   onHelp: () => void;
 };
 
-/** The desktop's left rail: the library, the document's panels, settings and help. */
+/** The desktop's left rail, icons only: the library, the document's panels, the tools, settings and help. */
 export default function ToolRail({
   library,
   hasDocument,
@@ -36,6 +47,7 @@ export default function ToolRail({
     <button
       className={`rail-button ${panel === tab ? 'active' : ''}`}
       aria-label={label}
+      title={label}
       aria-expanded={panel === tab}
       disabled={!hasDocument}
       onClick={() => on.onPanel(tab)}
@@ -50,15 +62,19 @@ export default function ToolRail({
         <button
           className={library ? 'rail-button active' : 'rail-button'}
           aria-label="Biblioteca"
+          title="Biblioteca"
           onClick={on.onLibrary}
         >
           <FolderOpen size={21} />
           <span>Biblioteca</span>
         </button>
         {panelButton('pages', 'Páginas', <Layers size={21} />)}
+        {panelButton('outline', 'Índice', <ListTree size={21} />)}
+        {panelButton('bookmarks', 'Marcadores', <Bookmark size={21} />)}
         <button
           className={`rail-button annotations-toggle ${notesOpen ? 'active' : ''}`}
           aria-label="Anotaciones"
+          title="Anotaciones"
           aria-expanded={notesOpen}
           disabled={!hasDocument}
           onClick={on.onNotes}
@@ -78,8 +94,16 @@ export default function ToolRail({
           <Search size={21} />
           <span>Buscar</span>
         </button>
-        {panelButton('bookmarks', 'Marcadores', <Bookmark size={21} />)}
-        {panelButton('outline', 'Índice', <ListTree size={21} />)}
+        <button
+          className="rail-button"
+          aria-label="Herramientas"
+          title="Herramientas"
+          disabled={!hasDocument}
+          onClick={on.onTools}
+        >
+          <LayoutGrid size={21} />
+          <span>Herramientas</span>
+        </button>
       </div>
       <div className="rail-bottom">
         <IconButton label="Ajustes" onClick={on.onSettings}>

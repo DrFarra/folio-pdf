@@ -249,6 +249,8 @@ export function useFolioCommands(f: Layer3) {
     }
     setEditing(false);
     if (touchRef.current) closeMobilePanel();
+    // On a desktop window wide enough, Anotar shows the annotations beside the pages.
+    else if (window.innerWidth >= 1000) setNotesOpen(true);
     setReaderChromeHidden(false);
     setMobileAnnotating(true);
     setTool('select');
@@ -285,6 +287,8 @@ export function useFolioCommands(f: Layer3) {
       setMobileAnnotating(false);
       setTool('select');
       setWorkbench(null);
+      // Editar's inspector takes the right side.
+      setNotesOpen(false);
       setReaderChromeHidden(false);
       setEditing(true);
       return;

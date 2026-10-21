@@ -218,11 +218,13 @@ async function showMenu(page, locator = overlays(page).first(), button = 'left')
   // bypassing it with force clicks or dispatchEvent.
   const box = await locator.boundingBox();
   assert(box, 'The highlight must be visible.');
+  // Anotar shows the annotations panel on desktop; the menu must not depend on it.
+  const panels = await page.locator('.notes-panel').count();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button });
   await menu(page).waitFor();
   assert.equal(
     await page.locator('.notes-panel').count(),
-    0,
+    panels,
     'Direct deletion must not require opening the annotations panel.',
   );
 }

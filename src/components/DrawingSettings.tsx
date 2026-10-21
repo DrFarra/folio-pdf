@@ -59,6 +59,8 @@ const TOOLS: Record<
 };
 export const inkRange = (kind: InkKind) => TOOLS[kind];
 const points = (value: number) => `${value.toLocaleString('es', { maximumFractionDigits: 1 })} pt`;
+const SIZE_NAMES = ['Fina', 'Media', 'Amplia'];
+const eraserName = (size: number) => (size <= 10 ? 'Fina' : size <= 20 ? 'Media' : 'Amplia');
 
 type Props = {
   mode: 'draw' | 'eraser';
@@ -198,6 +200,11 @@ export default function DrawingSettings({
         ) : (
           <Eraser size={16} />
         )}
+        <span className="drawing-trigger-label">
+          {mode === 'draw'
+            ? `${TOOLS[kind].label} · ${points(style.width)}`
+            : `${eraserName(eraserSize)} · ${eraserSize} px`}
+        </span>
         <ChevronDown size={12} />
       </button>
       {open &&
@@ -232,21 +239,31 @@ export default function DrawingSettings({
                   <span>Grosor</span>
                   <output>{points(style.width)}</output>
                 </div>
-                <input
-                  className="drawing-slider"
-                  type="range"
-                  aria-label="Grosor"
-                  min={tool.min}
-                  max={tool.max}
-                  step={tool.step}
-                  value={style.width}
+                <span
+                  className="drawing-slider-track wedge"
                   style={
                     { '--fill': `${((style.width - tool.min) / (tool.max - tool.min)) * 100}%` } as React.CSSProperties
                   }
-                  onChange={event => onStyle({ width: Number(event.target.value) })}
-                />
+                >
+                  <span className="drawing-slider-shape" aria-hidden="true" />
+                  <input
+                    className="drawing-slider"
+                    type="range"
+                    aria-label="Grosor"
+                    min={tool.min}
+                    max={tool.max}
+                    step={tool.step}
+                    value={style.width}
+                    style={
+                      {
+                        '--fill': `${((style.width - tool.min) / (tool.max - tool.min)) * 100}%`,
+                      } as React.CSSProperties
+                    }
+                    onChange={event => onStyle({ width: Number(event.target.value) })}
+                  />
+                </span>
                 <div className="drawing-sizes" role="group" aria-label="Grosores rápidos">
-                  {tool.sizes.map(value => (
+                  {tool.sizes.map((value, index) => (
                     <button
                       key={value}
                       aria-label={points(value)}
@@ -261,6 +278,7 @@ export default function DrawingSettings({
                           opacity: Math.max(0.45, style.opacity),
                         }}
                       />
+                      <small>{SIZE_NAMES[index]}</small>
                     </button>
                   ))}
                 </div>
@@ -268,17 +286,28 @@ export default function DrawingSettings({
                   <span>Opacidad</span>
                   <output>{Math.round(style.opacity * 100)} %</output>
                 </div>
-                <input
-                  className="drawing-slider"
-                  type="range"
-                  aria-label="Opacidad"
-                  min={10}
-                  max={100}
-                  step={5}
-                  value={Math.round(style.opacity * 100)}
-                  style={{ '--fill': `${((style.opacity * 100 - 10) / 90) * 100}%` } as React.CSSProperties}
-                  onChange={event => onStyle({ opacity: Number(event.target.value) / 100 })}
-                />
+                <span
+                  className="drawing-slider-track opacity"
+                  style={
+                    {
+                      '--fill': `${((style.opacity * 100 - 10) / 90) * 100}%`,
+                      '--ink': style.color,
+                    } as React.CSSProperties
+                  }
+                >
+                  <span className="drawing-slider-shape" aria-hidden="true" />
+                  <input
+                    className="drawing-slider"
+                    type="range"
+                    aria-label="Opacidad"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={Math.round(style.opacity * 100)}
+                    style={{ '--fill': `${((style.opacity * 100 - 10) / 90) * 100}%` } as React.CSSProperties}
+                    onChange={event => onStyle({ opacity: Number(event.target.value) / 100 })}
+                  />
+                </span>
                 <div className="drawing-row">
                   <span>Color</span>
                 </div>
@@ -334,6 +363,29 @@ export default function DrawingSettings({
                       <small>{label}</small>
                     </button>
                   ))}
+                </div>
+                <div className="drawing-eraser-range">
+                  <div className="drawing-row">
+                    <span>Tamaño</span>
+                    <output>{eraserSize} px</output>
+                  </div>
+                  <span
+                    className="drawing-slider-track size"
+                    style={{ '--fill': `${((eraserSize - 4) / 36) * 100}%` } as React.CSSProperties}
+                  >
+                    <span className="drawing-slider-shape" aria-hidden="true" />
+                    <input
+                      className="drawing-slider"
+                      type="range"
+                      aria-label="Tamaño de la goma en píxeles"
+                      min={4}
+                      max={40}
+                      step={1}
+                      value={eraserSize}
+                      style={{ '--fill': `${((eraserSize - 4) / 36) * 100}%` } as React.CSSProperties}
+                      onChange={event => onEraserSize(Number(event.target.value))}
+                    />
+                  </span>
                 </div>
                 <p>Pasa la goma sobre un trazo para borrarlo entero.</p>
               </>

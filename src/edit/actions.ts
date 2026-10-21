@@ -397,6 +397,15 @@ export function nudgeSelection(store: EditStore, dx: number, dy: number) {
     }, 400),
   };
 }
+/** Writes a nudge still waiting for the keys to pause, before Editar drops the selection. */
+export function flushNudge(store: EditStore) {
+  if (!nudge) return;
+  clearTimeout(nudge.timer);
+  const { dx, dy } = nudge,
+    selection = store.state.selection;
+  nudge = null;
+  if (selection && selection.kind !== 'shape') void moveSelection(store, shift(selection.item.rect, dx, dy));
+}
 
 // Colour picks arrive while the picker is dragged: each shows at once, drawn by
 // the live document without changing it, and the last is written once they pause.

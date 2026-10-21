@@ -205,6 +205,24 @@ try {
     assert(text[0].includes('PAGE 3') && text[1].includes('PAGE 1'));
     return { duplicateControlsRemoved: true, savedOrder: [3, 1] };
   });
+  await check('an-open-tool-lists-every-tool-beside-it', async page => {
+    await tools(page, 'Comprimir PDF');
+    const dialog = page.getByRole('dialog'),
+      sidebar = dialog.getByRole('navigation', { name: 'Cambiar de herramienta', exact: true });
+    assert.equal(await sidebar.getByRole('button').count(), 15);
+    assert.equal(await sidebar.locator('[aria-current=page]').textContent(), 'Comprimir PDF');
+    const side = await sidebar.boundingBox(),
+      heading = await dialog.locator('.modal-heading').boundingBox();
+    assert(side.x + side.width <= heading.x, 'Beside the form, not over it');
+    await sidebar.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
+    await page.getByRole('heading', { name: 'Organizar páginas', exact: true }).waitFor();
+    const box = await dialog.boundingBox(),
+      list = await sidebar.boundingBox();
+    assert(list.y >= box.y && list.y + list.height <= box.y + box.height, 'Inside the organizer');
+    await sidebar.getByRole('button', { name: 'Proteger PDF', exact: true }).click();
+    await page.getByRole('heading', { name: 'Proteger PDF', exact: true }).waitFor();
+    return { switchedTwice: true };
+  });
   await check('mouse-page-drag-group-cancel-and-content-history', async page => {
     await tools(page, 'Organizar páginas');
     await dragPlannedPage(page, 'Página 3', 'Página 1', 'before');
@@ -854,7 +872,8 @@ try {
     await field('Posición X').fill('50');
     await field('Posición Y').fill('400');
     await page.getByLabel('Nombre del campo', { exact: true }).fill('created_by_user');
-    await page.getByRole('button', { name: 'Crear campo', exact: true }).click();
+    // The form's own button, not the tool of the same name in the list beside it.
+    await page.locator('.workbench .primary-button', { hasText: 'Crear campo' }).click();
     await page.locator('.workbench').waitFor({ state: 'detached' });
     await tools(page, 'Rellenar formulario');
     await page

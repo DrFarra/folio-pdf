@@ -11,7 +11,6 @@ import {
   AlignStartVertical,
   ArrowUpRight,
   Bold,
-  Check,
   Circle,
   Copy,
   ImagePlus,
@@ -25,13 +24,15 @@ import {
   Type,
 } from 'lucide-react';
 import type { LoadedDocument } from '../types';
-import { useEdit, type EditStore, type EditTool, type TextStyle } from './store';
+import { useEdit, type EditStore, type EditTool, type Rect, type TextStyle } from './store';
 import {
   alignSelection,
   deleteSelection,
   duplicateSelection,
   editText,
   fadeSelection,
+  moveSelection,
+  nudgeSelection,
   recolorSelection,
   replaceImage,
   rotateSelection,
@@ -53,16 +54,6 @@ const TOOLS: [EditTool, string, string, typeof Type][] = [
   ['line', 'Línea', 'L', Minus],
   ['arrow', 'Flecha', 'A', ArrowUpRight],
 ];
-const HINTS: Record<EditTool, string> = {
-  select:
-    'Haz clic en un texto, imagen, dibujo o forma para editarlo. Doble clic en un texto para escribir. Mayús+clic o un recuadro selecciona varios.',
-  text: 'Haz clic en un texto para modificarlo, o en un espacio libre para escribir uno nuevo.',
-  image: 'Haz clic o arrastra en la página para colocar la imagen.',
-  rect: 'Arrastra en la página para dibujar un rectángulo.',
-  ellipse: 'Arrastra en la página para dibujar una elipse.',
-  line: 'Arrastra en la página para dibujar una línea.',
-  arrow: 'Arrastra en la página para dibujar una flecha.',
-};
 const keep = (event: React.MouseEvent) => event.preventDefault();
 
 export async function readImage(
@@ -113,15 +104,62 @@ function Toggle({
   );
 }
 
-export default function EditToolbar({
-  store,
-  doc,
-  onDone,
+const tenth = (value: number) => Math.round(value * 10) / 10;
+
+/** Where the selection sits, in points from its page's top left corner (`view`, the page box);
+ * a typed value moves it, or resizes it when `sized`.
+ * shortcut: a turned page still counts from its unturned corner, until someone edits turned pages by number. */
+function Geometry({
+  rect,
+  view,
+  sized,
+  onChange,
 }: {
-  store: EditStore;
-  doc: LoadedDocument;
-  onDone: () => void;
+  rect: Rect;
+  view: number[];
+  sized: boolean;
+  onChange: (rect: Rect) => void;
 }) {
+  const [x0, y0, x1, y1] = rect,
+    [left, , , top] = view;
+  const fields: [string, string, number, (value: number) => Rect | null][] = [
+    ['X', 'Posición X', x0 - left, value => [left + value, y0, left + value + x1 - x0, y1]],
+    ['Y', 'Posición Y', top - y1, value => [x0, top - value - (y1 - y0), x1, top - value]],
+  ];
+  if (sized)
+    fields.push(
+      ['Ancho', 'Ancho del elemento', x1 - x0, value => (value > 0 ? [x0, y0, x0 + value, y1] : null)],
+      ['Alto', 'Alto del elemento', y1 - y0, value => (value > 0 ? [x0, y1 - value, x1, y1] : null)],
+    );
+  const commit = (input: HTMLInputElement, value: number, next: (value: number) => Rect | null) => {
+    const typed = Number(input.value),
+      to = input.value.trim() && Number.isFinite(typed) && tenth(typed) !== tenth(value) ? next(typed) : null;
+    if (to) onChange(to);
+    else input.value = String(tenth(value));
+  };
+  return (
+    <div className="edit-geometry" role="group" aria-label="Posición y tamaño (pt)">
+      {fields.map(([label, name, value, next]) => (
+        <label className="edit-field" key={`${label}:${rect.join()}`}>
+          <span>{label}</span>
+          <input
+            type="number"
+            step="any"
+            aria-label={name}
+            defaultValue={tenth(value)}
+            onBlur={event => commit(event.currentTarget, value, next)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') commit(event.currentTarget, value, next);
+            }}
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Editar's toolbar on desktop: its tools and what they do, and the selection's properties beside the page. Leer and Anotar leave it. */
+export default function EditToolbar({ store, doc }: { store: EditStore; doc: LoadedDocument }) {
   const tool = useEdit(store, state => state.tool);
   const selection = useEdit(store, state => state.selection);
   const draft = useEdit(store, state => state.draft);
@@ -205,7 +243,37 @@ export default function EditToolbar({
     if (shapeSelected) store.actions?.updateShape(shapeSelected.id, patch);
   };
   const lineShape = shapeSelected ? !!shapeSelected.line : tool === 'line' || tool === 'arrow';
+  // The page box the selection's position is measured from.
+  const [view, setView] = useState<{ page: number; box: number[] } | null>(null);
+  const selectedPage = selection?.page;
+  useEffect(() => {
+    if (!selectedPage) return;
+    let alive = true;
+    doc.pdf.getPage(selectedPage).then(
+      page => {
+        if (alive) setView({ page: selectedPage, box: page.view });
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [doc.pdf, selectedPage]);
+  const pageBox = view && view.page === selectedPage && !draft && !count ? view.box : null;
   const modifier = isMac ? '⌘' : 'Ctrl+';
+  // The selection's properties sit in a panel beside the page, named after what is selected.
+  const inspector =
+    count > 0
+      ? `${count} elementos`
+      : style
+        ? 'Texto'
+        : selection?.kind === 'image'
+          ? 'Imagen'
+          : selection?.kind === 'graphic'
+            ? 'Dibujo'
+            : shapeSelected || shapeTool
+              ? 'Forma'
+              : null;
 
   return (
     <div className="edit-toolbar" role="toolbar" aria-label="Herramientas de edición" data-committing={committing}>
@@ -238,280 +306,321 @@ export default function EditToolbar({
           }}
         />
       </div>
-      {(style ||
-        count > 0 ||
-        selection?.kind === 'image' ||
-        selection?.kind === 'graphic' ||
-        shapeSelected ||
-        shapeTool) && <span className="edit-divider" />}
-      {count > 0 && (
-        <div className="edit-properties" aria-label="Varios elementos">
-          <span className="edit-count">{count} elementos</span>
-          <Toggle label="Alinear a la izquierda" onClick={() => alignSelection(store, 'left')}>
-            <AlignStartVertical size={16} />
-          </Toggle>
-          <Toggle label="Centrar en horizontal" onClick={() => alignSelection(store, 'center')}>
-            <AlignCenterVertical size={16} />
-          </Toggle>
-          <Toggle label="Alinear a la derecha" onClick={() => alignSelection(store, 'right')}>
-            <AlignEndVertical size={16} />
-          </Toggle>
-          <Toggle label="Alinear arriba" onClick={() => alignSelection(store, 'top')}>
-            <AlignStartHorizontal size={16} />
-          </Toggle>
-          <Toggle label="Centrar en vertical" onClick={() => alignSelection(store, 'middle')}>
-            <AlignCenterHorizontal size={16} />
-          </Toggle>
-          <Toggle label="Alinear abajo" onClick={() => alignSelection(store, 'bottom')}>
-            <AlignEndHorizontal size={16} />
-          </Toggle>
-          <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
-            <Copy size={16} />
-          </Toggle>
-          <Toggle label="Eliminar (Supr)" onClick={() => void deleteSelection(store)}>
-            <Trash2 size={16} />
-          </Toggle>
-        </div>
-      )}
-      {style && (
-        <div className="edit-properties" aria-label="Formato del texto">
-          <select
-            aria-label="Fuente"
-            value={style.family}
-            onChange={event => void setStyle({ family: event.target.value })}
-          >
-            {sourceName && <option value="original">Original · {parseFontName(sourceName).family}</option>}
-            <option value="helvetica">Helvetica / Arial</option>
-            <option value="times">Times</option>
-            <option value="courier">Courier</option>
-            <option value="dm-sans">DM Sans</option>
-            {!!families.length && (
-              <optgroup label="En este equipo">
-                {families.map(family => (
-                  <option key={family} value={`system:${family}`}>
-                    {family}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-          <input
-            type="number"
-            aria-label="Tamaño de letra"
-            title="Tamaño de letra"
-            min={4}
-            max={200}
-            step={0.5}
-            value={style.size}
-            onChange={event => {
-              const size = Number(event.target.value);
-              if (size >= 4 && size <= 200) void setStyle({ size });
-            }}
-          />
-          <Toggle
-            label={`Negrita (${modifier}B)`}
-            pressed={style.bold}
-            onClick={() => void setStyle({ bold: !style.bold })}
-          >
-            <Bold size={16} />
-          </Toggle>
-          <Toggle
-            label={`Cursiva (${modifier}I)`}
-            pressed={style.italic}
-            onClick={() => void setStyle({ italic: !style.italic })}
-          >
-            <Italic size={16} />
-          </Toggle>
-          <ColorPicker label="Color del texto" value={style.color} onChange={color => void setStyle({ color })} />
-          <Toggle
-            label="Alinear a la izquierda"
-            pressed={style.align === 'left'}
-            onClick={() => void setStyle({ align: 'left' })}
-          >
-            <AlignLeft size={16} />
-          </Toggle>
-          <Toggle label="Centrar" pressed={style.align === 'center'} onClick={() => void setStyle({ align: 'center' })}>
-            <AlignCenter size={16} />
-          </Toggle>
-          <Toggle
-            label="Alinear a la derecha"
-            pressed={style.align === 'right'}
-            onClick={() => void setStyle({ align: 'right' })}
-          >
-            <AlignRight size={16} />
-          </Toggle>
-          <select
-            aria-label="Interlineado"
-            title="Interlineado"
-            value={String(style.lineHeight)}
-            onChange={event => void setStyle({ lineHeight: Number(event.target.value) })}
-          >
-            {[...new Set([1, 1.15, 1.25, 1.5, 2, style.lineHeight])]
-              .sort((a, b) => a - b)
-              .map(value => (
-                <option key={value} value={String(value)}>
-                  {value.toLocaleString('es')}
-                </option>
-              ))}
-          </select>
-          {textItem && (
-            <Toggle label="Eliminar texto (Supr)" onClick={() => void deleteSelection(store)}>
-              <Trash2 size={16} />
-            </Toggle>
+      {inspector && (
+        <div className="edit-inspector" role="group" aria-label="Propiedades">
+          <h2 className="edit-inspector-title">{inspector}</h2>
+          {pageBox && selection && selection.kind !== 'shape' && (
+            <Geometry
+              rect={selection.item.rect}
+              view={pageBox}
+              sized={selection.kind !== 'text'}
+              onChange={rect => void moveSelection(store, rect)}
+            />
           )}
-        </div>
-      )}
-      {selection?.kind === 'image' && !count && (
-        <div className="edit-properties" aria-label="Imagen">
-          <button
-            type="button"
-            className="edit-toggle"
-            onMouseDown={keep}
-            onClick={() => replaceInput.current?.click()}
-          >
-            Reemplazar…
-          </button>
-          <input
-            ref={replaceInput}
-            type="file"
-            accept="image/png,image/jpeg"
-            className="sr-only"
-            tabIndex={-1}
-            onChange={async event => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (!file) return;
-              try {
-                void replaceImage(store, (await readImage(file)).bytes);
-              } catch (error) {
-                store.actions?.notify((error as Error).message, 'error');
+          {pageBox && shapeSelected && (
+            <Geometry
+              rect={shapeSelected.rect}
+              view={pageBox}
+              sized={!shapeSelected.line}
+              onChange={rect =>
+                shapeSelected.line
+                  ? nudgeSelection(store, rect[0] - shapeSelected.rect[0], rect[1] - shapeSelected.rect[1])
+                  : store.actions?.updateShape(shapeSelected.id, { rect })
               }
-            }}
-          />
-          <Toggle label="Girar 90°" onClick={() => rotateSelection(store)}>
-            <RotateCw size={16} />
-          </Toggle>
-          <label>
-            Opacidad
-            <input
-              type="range"
-              aria-label="Opacidad de la imagen"
-              min={0}
-              max={100}
-              value={Math.round((opacity ?? selection.item.opacity ?? 1) * 100)}
-              onChange={event => {
-                const value = Number(event.target.value) / 100;
-                setOpacity(value);
-                // The image shows the opacity while it is being chosen; letting go writes it.
-                if (!store.state.committing)
-                  store.set({
-                    ghost: {
-                      page: selection.page,
-                      kind: 'image',
-                      item: selection.item,
-                      rect: selection.item.rect,
-                      opacity: value,
-                    },
-                  });
-              }}
-              onPointerUp={() => {
-                if (opacity !== null) fadeSelection(store, opacity);
-              }}
-              onKeyUp={() => {
-                if (opacity !== null) fadeSelection(store, opacity);
-              }}
-            />
-          </label>
-          <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
-            <Copy size={16} />
-          </Toggle>
-          <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)}>
-            <Trash2 size={16} />
-          </Toggle>
-        </div>
-      )}
-      {selection?.kind === 'graphic' && !count && (
-        <div className="edit-properties" aria-label="Dibujo">
-          {selection.item.fill !== undefined && (
-            <ColorPicker
-              label="Color de relleno"
-              value={picked.fill ?? selection.item.fill ?? null}
-              onChange={fill => {
-                setPicked(colors => ({ ...colors, fill }));
-                recolorSelection(store, { fill });
-              }}
             />
           )}
-          {selection.item.stroke !== undefined && (
-            <ColorPicker
-              label="Color del borde"
-              value={picked.stroke ?? selection.item.stroke ?? null}
-              onChange={stroke => {
-                setPicked(colors => ({ ...colors, stroke }));
-                recolorSelection(store, { stroke });
-              }}
-            />
-          )}
-          <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
-            <Copy size={16} />
-          </Toggle>
-          <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)}>
-            <Trash2 size={16} />
-          </Toggle>
-        </div>
-      )}
-      {(shapeSelected || shapeTool) && (
-        <div className="edit-properties" aria-label="Forma">
-          <ColorPicker label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
-          {!lineShape && (
-            <>
-              <ColorPicker label="Color de relleno" value={shapeValues.fill} onChange={fill => setShape({ fill })} />
-              <Toggle
-                label="Sin relleno"
-                pressed={!shapeValues.fill}
-                onClick={() => setShape({ fill: shapeValues.fill ? null : '#ffe08a' })}
-              >
-                <span style={{ fontSize: 11 }}>Sin relleno</span>
+          {count > 0 && (
+            <div className="edit-properties" aria-label="Varios elementos">
+              <Toggle label="Alinear a la izquierda" onClick={() => alignSelection(store, 'left')}>
+                <AlignStartVertical size={16} />
               </Toggle>
-            </>
-          )}
-          <select
-            aria-label="Grosor del borde"
-            title="Grosor"
-            value={String(shapeValues.strokeWidth)}
-            onChange={event => setShape({ strokeWidth: Number(event.target.value) })}
-          >
-            {[...new Set([...(lineShape ? [] : [0]), 0.5, 1, 2, 3, 5, 8, shapeValues.strokeWidth])]
-              .sort((a, b) => a - b)
-              .map(value => (
-                <option key={value} value={String(value)}>
-                  {value ? `${value.toLocaleString('es')} pt` : 'Sin borde'}
-                </option>
-              ))}
-          </select>
-          <select
-            aria-label="Opacidad de la forma"
-            title="Opacidad"
-            value={String(shapeValues.opacity)}
-            onChange={event => setShape({ opacity: Number(event.target.value) })}
-          >
-            {[...new Set([0.25, 0.5, 0.75, 1, shapeValues.opacity])]
-              .sort((a, b) => a - b)
-              .map(value => (
-                <option key={value} value={String(value)}>
-                  {Math.round(value * 100)} %
-                </option>
-              ))}
-          </select>
-          {shapeSelected && (
-            <>
+              <Toggle label="Centrar en horizontal" onClick={() => alignSelection(store, 'center')}>
+                <AlignCenterVertical size={16} />
+              </Toggle>
+              <Toggle label="Alinear a la derecha" onClick={() => alignSelection(store, 'right')}>
+                <AlignEndVertical size={16} />
+              </Toggle>
+              <Toggle label="Alinear arriba" onClick={() => alignSelection(store, 'top')}>
+                <AlignStartHorizontal size={16} />
+              </Toggle>
+              <Toggle label="Centrar en vertical" onClick={() => alignSelection(store, 'middle')}>
+                <AlignCenterHorizontal size={16} />
+              </Toggle>
+              <Toggle label="Alinear abajo" onClick={() => alignSelection(store, 'bottom')}>
+                <AlignEndHorizontal size={16} />
+              </Toggle>
               <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
                 <Copy size={16} />
               </Toggle>
-              <Toggle label="Eliminar forma (Supr)" onClick={() => void deleteSelection(store)}>
+              <Toggle label="Eliminar (Supr)" onClick={() => void deleteSelection(store)}>
                 <Trash2 size={16} />
               </Toggle>
-            </>
+            </div>
+          )}
+          {style && (
+            <div className="edit-properties" aria-label="Formato del texto">
+              <label className="edit-field">
+                <span>Fuente</span>
+                <select
+                  aria-label="Fuente"
+                  value={style.family}
+                  onChange={event => void setStyle({ family: event.target.value })}
+                >
+                  {sourceName && <option value="original">Original · {parseFontName(sourceName).family}</option>}
+                  <option value="helvetica">Helvetica / Arial</option>
+                  <option value="times">Times</option>
+                  <option value="courier">Courier</option>
+                  <option value="dm-sans">DM Sans</option>
+                  {!!families.length && (
+                    <optgroup label="En este equipo">
+                      {families.map(family => (
+                        <option key={family} value={`system:${family}`}>
+                          {family}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </label>
+              <label className="edit-field">
+                <span>Tamaño</span>
+                <input
+                  type="number"
+                  aria-label="Tamaño de letra"
+                  title="Tamaño de letra"
+                  min={4}
+                  max={200}
+                  step={0.5}
+                  value={style.size}
+                  onChange={event => {
+                    const size = Number(event.target.value);
+                    if (size >= 4 && size <= 200) void setStyle({ size });
+                  }}
+                />
+              </label>
+              <Toggle
+                label={`Negrita (${modifier}B)`}
+                pressed={style.bold}
+                onClick={() => void setStyle({ bold: !style.bold })}
+              >
+                <Bold size={16} />
+              </Toggle>
+              <Toggle
+                label={`Cursiva (${modifier}I)`}
+                pressed={style.italic}
+                onClick={() => void setStyle({ italic: !style.italic })}
+              >
+                <Italic size={16} />
+              </Toggle>
+              <ColorPicker label="Color del texto" value={style.color} onChange={color => void setStyle({ color })} />
+              <Toggle
+                label="Alinear a la izquierda"
+                pressed={style.align === 'left'}
+                onClick={() => void setStyle({ align: 'left' })}
+              >
+                <AlignLeft size={16} />
+              </Toggle>
+              <Toggle
+                label="Centrar"
+                pressed={style.align === 'center'}
+                onClick={() => void setStyle({ align: 'center' })}
+              >
+                <AlignCenter size={16} />
+              </Toggle>
+              <Toggle
+                label="Alinear a la derecha"
+                pressed={style.align === 'right'}
+                onClick={() => void setStyle({ align: 'right' })}
+              >
+                <AlignRight size={16} />
+              </Toggle>
+              <label className="edit-field">
+                <span>Interlineado</span>
+                <select
+                  aria-label="Interlineado"
+                  title="Interlineado"
+                  value={String(style.lineHeight)}
+                  onChange={event => void setStyle({ lineHeight: Number(event.target.value) })}
+                >
+                  {[...new Set([1, 1.15, 1.25, 1.5, 2, style.lineHeight])]
+                    .sort((a, b) => a - b)
+                    .map(value => (
+                      <option key={value} value={String(value)}>
+                        {value.toLocaleString('es')}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {textItem && (
+                <Toggle label="Eliminar texto (Supr)" onClick={() => void deleteSelection(store)}>
+                  <Trash2 size={16} />
+                </Toggle>
+              )}
+            </div>
+          )}
+          {selection?.kind === 'image' && !count && (
+            <div className="edit-properties" aria-label="Imagen">
+              <button
+                type="button"
+                className="edit-toggle"
+                onMouseDown={keep}
+                onClick={() => replaceInput.current?.click()}
+              >
+                Reemplazar…
+              </button>
+              <input
+                ref={replaceInput}
+                type="file"
+                accept="image/png,image/jpeg"
+                className="sr-only"
+                tabIndex={-1}
+                onChange={async event => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (!file) return;
+                  try {
+                    void replaceImage(store, (await readImage(file)).bytes);
+                  } catch (error) {
+                    store.actions?.notify((error as Error).message, 'error');
+                  }
+                }}
+              />
+              <Toggle label="Girar 90°" onClick={() => rotateSelection(store)}>
+                <RotateCw size={16} />
+              </Toggle>
+              <label>
+                Opacidad
+                <input
+                  type="range"
+                  aria-label="Opacidad de la imagen"
+                  min={0}
+                  max={100}
+                  value={Math.round((opacity ?? selection.item.opacity ?? 1) * 100)}
+                  onChange={event => {
+                    const value = Number(event.target.value) / 100;
+                    setOpacity(value);
+                    // The image shows the opacity while it is being chosen; letting go writes it.
+                    if (!store.state.committing)
+                      store.set({
+                        ghost: {
+                          page: selection.page,
+                          kind: 'image',
+                          item: selection.item,
+                          rect: selection.item.rect,
+                          opacity: value,
+                        },
+                      });
+                  }}
+                  onPointerUp={() => {
+                    if (opacity !== null) fadeSelection(store, opacity);
+                  }}
+                  onKeyUp={() => {
+                    if (opacity !== null) fadeSelection(store, opacity);
+                  }}
+                />
+              </label>
+              <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
+                <Copy size={16} />
+              </Toggle>
+              <Toggle label="Eliminar imagen (Supr)" onClick={() => void deleteSelection(store)}>
+                <Trash2 size={16} />
+              </Toggle>
+            </div>
+          )}
+          {selection?.kind === 'graphic' && !count && (
+            <div className="edit-properties" aria-label="Dibujo">
+              {selection.item.fill !== undefined && (
+                <ColorPicker
+                  label="Color de relleno"
+                  value={picked.fill ?? selection.item.fill ?? null}
+                  onChange={fill => {
+                    setPicked(colors => ({ ...colors, fill }));
+                    recolorSelection(store, { fill });
+                  }}
+                />
+              )}
+              {selection.item.stroke !== undefined && (
+                <ColorPicker
+                  label="Color del borde"
+                  value={picked.stroke ?? selection.item.stroke ?? null}
+                  onChange={stroke => {
+                    setPicked(colors => ({ ...colors, stroke }));
+                    recolorSelection(store, { stroke });
+                  }}
+                />
+              )}
+              <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
+                <Copy size={16} />
+              </Toggle>
+              <Toggle label="Eliminar dibujo (Supr)" onClick={() => void deleteSelection(store)}>
+                <Trash2 size={16} />
+              </Toggle>
+            </div>
+          )}
+          {(shapeSelected || shapeTool) && (
+            <div className="edit-properties" aria-label="Forma">
+              <ColorPicker label="Color del borde" value={shapeValues.color} onChange={color => setShape({ color })} />
+              {!lineShape && (
+                <>
+                  <ColorPicker
+                    label="Color de relleno"
+                    value={shapeValues.fill}
+                    onChange={fill => setShape({ fill })}
+                  />
+                  <Toggle
+                    label="Sin relleno"
+                    pressed={!shapeValues.fill}
+                    onClick={() => setShape({ fill: shapeValues.fill ? null : '#ffe08a' })}
+                  >
+                    <span style={{ fontSize: 11 }}>Sin relleno</span>
+                  </Toggle>
+                </>
+              )}
+              <label className="edit-field">
+                <span>Grosor</span>
+                <select
+                  aria-label="Grosor del borde"
+                  title="Grosor"
+                  value={String(shapeValues.strokeWidth)}
+                  onChange={event => setShape({ strokeWidth: Number(event.target.value) })}
+                >
+                  {[...new Set([...(lineShape ? [] : [0]), 0.5, 1, 2, 3, 5, 8, shapeValues.strokeWidth])]
+                    .sort((a, b) => a - b)
+                    .map(value => (
+                      <option key={value} value={String(value)}>
+                        {value ? `${value.toLocaleString('es')} pt` : 'Sin borde'}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="edit-field">
+                <span>Opacidad</span>
+                <select
+                  aria-label="Opacidad de la forma"
+                  title="Opacidad"
+                  value={String(shapeValues.opacity)}
+                  onChange={event => setShape({ opacity: Number(event.target.value) })}
+                >
+                  {[...new Set([0.25, 0.5, 0.75, 1, shapeValues.opacity])]
+                    .sort((a, b) => a - b)
+                    .map(value => (
+                      <option key={value} value={String(value)}>
+                        {Math.round(value * 100)} %
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {shapeSelected && (
+                <>
+                  <Toggle label={`Duplicar (${modifier}D)`} onClick={() => duplicateSelection(store)}>
+                    <Copy size={16} />
+                  </Toggle>
+                  <Toggle label="Eliminar forma (Supr)" onClick={() => void deleteSelection(store)}>
+                    <Trash2 size={16} />
+                  </Toggle>
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -525,25 +634,9 @@ export default function EditToolbar({
           notice ||
           (tool === 'image' && pendingImage
             ? `Haz clic o arrastra en la página para colocar «${pendingImage.name}».`
-            : draft
-              ? `Haz clic fuera o ${modifier}Intro para terminar · Esc cancela`
-              : count
-                ? 'Arrastra para moverlos · Mayús+clic añade o quita · Supr los elimina'
-                : selection?.kind === 'text'
-                  ? 'Arrastra para moverlo · clic otra vez para escribir · Supr lo elimina'
-                  : selection?.kind === 'image'
-                    ? 'Arrastra para moverla · las esquinas cambian el tamaño (Mayús: libre)'
-                    : selection?.kind === 'graphic'
-                      ? 'Arrastra para moverlo (con Alt, sin guías) · Otro clic elige lo que está debajo · Supr lo elimina'
-                      : selection?.kind === 'shape'
-                        ? 'Arrastra para moverla · los tiradores cambian el tamaño'
-                        : HINTS[tool])
+            : null)
         )}
       </span>
-      <button className="text-button" onMouseDown={keep} onClick={onDone}>
-        <Check size={16} />
-        Listo
-      </button>
     </div>
   );
 }

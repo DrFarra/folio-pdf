@@ -60,12 +60,15 @@ try {
     'true',
     'The theme follows the system until chosen.',
   );
+  // On desktop each section of Ajustes is shown on its own.
+  await page.getByRole('button', { name: 'Lectura', exact: true }).click();
   await page.getByLabel('Zoom inicial', { exact: true }).selectOption('125');
   await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('single');
   await page.getByLabel('Al abrir un documento', { exact: true }).selectOption('bookmarks');
   await page.getByLabel('Ancho del panel', { exact: true }).fill('300');
   await page.getByLabel('Velocidad de zoom con rueda', { exact: true }).selectOption('50');
   await page.getByLabel('Reabrir en la última página', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Apariencia', exact: true }).click();
   await page.getByRole('button', { name: 'Sistema', exact: true }).click();
   await page.getByRole('button', { name: 'Listo', exact: true }).click();
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -102,6 +105,7 @@ try {
   assert.equal(await page.getByLabel('Número de página', { exact: true }).inputValue(), '2');
   results.push({ id: 'single-page-navigation', status: 'passed' });
   await settings();
+  await page.getByRole('button', { name: 'Lectura', exact: true }).click();
   assert.equal(await page.getByLabel('Modo de desplazamiento', { exact: true }).inputValue(), 'single');
   assert.equal(await page.getByLabel('Velocidad de zoom con rueda', { exact: true }).inputValue(), '50');
   await page.getByLabel('Modo de desplazamiento', { exact: true }).selectOption('continuous');

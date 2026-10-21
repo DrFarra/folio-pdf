@@ -52,7 +52,9 @@ export function useDocumentTabDrag(options: Options) {
     let next: Drop | null = null;
     if (container) {
       const bounds = container.getBoundingClientRect();
-      if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+      // Anywhere along the strip's row counts: past its last tab means at the end
+      // (the strip is only as wide as its tabs, and shrinks while one is dragged).
+      if (y >= bounds.top && y <= bounds.bottom && x >= bounds.left - 40) {
         const tabs = [...container.querySelectorAll<HTMLElement>('[data-tab-key]')];
         let nearest: { element: HTMLElement; index: number; distance: number } | null = null;
         for (const [index, element] of tabs.entries()) {
@@ -106,7 +108,9 @@ export function useDocumentTabDrag(options: Options) {
       if (container) {
         const bounds = container.getBoundingClientRect(),
           edge = Math.min(40, bounds.width / 4);
+        // Only a strip with tabs out of view scrolls near its edges.
         if (
+          container.scrollWidth > container.clientWidth &&
           active.y >= bounds.top &&
           active.y <= bounds.bottom &&
           active.x >= bounds.left &&

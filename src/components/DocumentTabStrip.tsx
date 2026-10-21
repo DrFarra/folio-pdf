@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import { Cloud, FileText, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Check, ChevronDown, Cloud, FileText, X } from 'lucide-react';
 import { isDesktop, shortcutLabel } from '../platform';
 import type { LoadedDocument } from '../types';
 import type { useDocumentTabDrag } from '../useDocumentTabDrag';
@@ -36,6 +36,47 @@ export default function DocumentTabStrip<T extends Tab>({
 }: Props<T>) {
   const wheel = useRef(0);
   const dragged = tabs.find(tab => tab.key === drag.draggingKey);
+  // Tabs that don't fit stay reachable from a "+N" menu beside the strip.
+  const [hidden, setHidden] = useState(0);
+  const [menu, setMenu] = useState(false);
+  const overflow = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = drag.strip.current;
+    if (!strip) return;
+    const measure = () => {
+      const box = strip.getBoundingClientRect();
+      setHidden(
+        [...strip.children].filter(tab => {
+          const rect = tab.getBoundingClientRect();
+          return rect.left < box.left - 1 || rect.right > box.right + 1;
+        }).length,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(strip);
+    strip.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      observer.disconnect();
+      strip.removeEventListener('scroll', measure);
+    };
+  }, [drag.strip, tabs.length]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !overflow.current?.contains(event.target as Node))
+        setMenu(false);
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', close);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', close);
+    };
+  }, [menu]);
+  useEffect(() => {
+    if (!hidden) setMenu(false);
+  }, [hidden]);
   // The active tab scrolls into view.
   useEffect(() => {
     const selected = document.querySelector<HTMLElement>('.document-tab.selected'),
@@ -143,6 +184,43 @@ export default function DocumentTabStrip<T extends Tab>({
           );
         })}
       </div>
+      {hidden > 0 && (
+        <div className="document-tab-overflow" ref={overflow}>
+          <button
+            aria-label={`${hidden} ${hidden === 1 ? 'documento más' : 'documentos más'}`}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            disabled={disabled}
+            onClick={() => setMenu(value => !value)}
+          >
+            +{hidden}
+            <ChevronDown size={14} />
+          </button>
+          {menu && (
+            <div className="document-tab-menu" role="menu" aria-label="Todos los documentos abiertos">
+              {tabs.map(tab => {
+                const active = tab.key === activeKey;
+                return (
+                  <button
+                    key={tab.key}
+                    role="menuitem"
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => {
+                      setMenu(false);
+                      if (active) onShow();
+                      else onSwitch(tab.key);
+                    }}
+                  >
+                    <span className="document-tab-menu-name">{tab.doc.name}</span>
+                    {modified(tab) && <span className="document-tab-menu-unsaved">sin guardar</span>}
+                    {active && <Check size={15} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {dragged && (
         <div
           className="document-tab-drag-preview"

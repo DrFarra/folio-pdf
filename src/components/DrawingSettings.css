@@ -355,3 +355,14 @@ html[data-touch] .drawing-settings-trigger {
     opacity: 0;
   }
 }
+/* Desktop draws its own slider tracks (see redesign-desktop.css); touch keeps the native ones. */
+.drawing-slider-track {
+  display: block;
+  position: relative;
+}
+.drawing-slider-shape,
+.drawing-trigger-label,
+.drawing-sizes small,
+.drawing-eraser-range {
+  display: none;
+}

@@ -99,24 +99,6 @@ html:not([data-phone]) .app-shell .reader {
   container-type: inline-size;
   container-name: desktop-reader;
 }
-html:not([data-phone]) .app-shell .reader-toolbar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  min-height: 44px;
-  height: auto;
-  padding: 5px 10px;
-  gap: 8px;
-}
-html:not([data-phone]) .app-shell .toolbar-left,
-html:not([data-phone]) .app-shell .toolbar-right {
-  gap: 5px;
-}
-html:not([data-phone]) .app-shell .toolbar-left {
-  justify-self: start;
-}
-html:not([data-phone]) .app-shell .toolbar-right {
-  justify-self: end;
-}
 html:not([data-phone]) .app-shell .undo-group {
   display: flex;
   gap: 2px;
@@ -159,26 +141,6 @@ html:not([data-phone]) .app-shell .desktop-mode-switch button[aria-pressed='true
   color: var(--text);
   font-weight: 600;
   box-shadow: 0 1px 3px #0000000c;
-}
-html:not([data-phone]) .app-shell .tools-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 6px 9px;
-  border-radius: 6px;
-  font-size: 12px;
-  white-space: nowrap;
-  color: var(--text);
-}
-html:not([data-phone]) .app-shell .tools-button > span {
-  display: inline;
-}
-@media (hover: hover) {
-  html:not([data-phone]) .app-shell .tools-button:hover:not(:disabled) {
-    background: var(--hover);
-  }
 }
 html:not([data-phone]) .app-shell .page-controls {
   justify-self: center;
@@ -508,63 +470,6 @@ html:not([data-phone]) .app-shell .toast {
   font-size: 13px;
 }
 
-@container desktop-reader (max-width: 1060px) {
-  html:not([data-phone]) .app-shell .reader-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    row-gap: 5px;
-  }
-  html:not([data-phone]) .app-shell .toolbar-left {
-    flex: 1 1 auto;
-  }
-  html:not([data-phone]) .app-shell .toolbar-right {
-    margin-left: auto;
-  }
-  html:not([data-phone]) .app-shell .tools-button > span {
-    display: none;
-  }
-  html:not([data-phone]) .app-shell .tools-button {
-    padding: 6px;
-  }
-  html:not([data-phone]) .app-shell .zoom-controls > .icon-button {
-    display: none;
-  }
-  html:not([data-phone]) .app-shell .download-button > span {
-    display: none;
-  }
-  html:not([data-phone]) .app-shell .download-button {
-    width: 32px;
-    padding: 0;
-  }
-}
-@container desktop-reader (max-width: 650px) {
-  html:not([data-phone]) .app-shell .toolbar-left {
-    flex: 1 0 100%;
-    flex-wrap: wrap;
-  }
-  html:not([data-phone]) .app-shell .page-controls {
-    order: 2;
-  }
-  html:not([data-phone]) .app-shell .toolbar-right {
-    order: 3;
-  }
-  html:not([data-phone]) .app-shell .reader-toolbar {
-    padding: 5px 8px;
-  }
-  html:not([data-phone]) .app-shell .desktop-tool-description {
-    display: none;
-  }
-}
-@container desktop-reader (max-width: 340px) {
-  html:not([data-phone]) .app-shell .toolbar-right {
-    width: 100%;
-    justify-content: flex-end;
-  }
-  html:not([data-phone]) .app-shell .page-controls {
-    margin: 0 auto;
-  }
-}
 @media (max-width: 650px) {
   html:not([data-phone]) .app-shell .tool-rail {
     width: 48px;
