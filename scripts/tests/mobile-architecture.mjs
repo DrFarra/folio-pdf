@@ -258,7 +258,7 @@ try {
       position => Math.abs(document.querySelector('.reading-area').scrollTop - position) < 3,
       position,
     );
-    for (const name of ['Páginas', 'Buscar', 'Anotar', 'Compartir']) await visibleButton(page, name).waitFor();
+    for (const name of ['Páginas', 'Buscar', 'Anotar', 'Herramientas']) await visibleButton(page, name).waitFor();
     await visibleButton(page, 'Documentos abiertos y recientes').tap();
     assert.equal(
       await page.locator('.document-switcher-row').count(),
@@ -512,7 +512,6 @@ try {
     'large-file-tools-explain-unavailable-capabilities',
     async page => {
       await page.locator('.reading-area .textLayer span').first().waitFor();
-      await visibleButton(page, 'Más acciones').tap();
       await visibleButton(page, 'Herramientas').tap();
       await page
         .getByText(/^PDF grande: /)

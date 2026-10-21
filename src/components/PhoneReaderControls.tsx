@@ -7,12 +7,12 @@ import {
   Eraser,
   Highlighter,
   Layers,
+  LayoutGrid,
   MoreHorizontal,
   MousePointer2,
   PenLine,
   Search,
   StickyNote,
-  Upload,
   X,
 } from 'lucide-react';
 import IconButton from './IconButton';
@@ -42,7 +42,7 @@ type ReadingBarProps = {
   onPages: () => void;
   onSearch: () => void;
   onAnnotate: () => void;
-  onShare: (button: HTMLElement) => void;
+  onTools: () => void;
 };
 
 /** The phone reader's bottom: the page and its bookmark, then reading actions or search results. */
@@ -130,9 +130,10 @@ export function PhoneReadingBar({
               <Highlighter size={22} />
               <span>Anotar</span>
             </button>
-            <button aria-label="Compartir" disabled={disabled} onClick={event => on.onShare(event.currentTarget)}>
-              <Upload size={22} />
-              <span>Compartir</span>
+            {/* Sharing is in Más acciones; the tools are one tap away, as on desktop. */}
+            <button aria-label="Herramientas" disabled={disabled} onClick={on.onTools}>
+              <LayoutGrid size={22} />
+              <span>Herramientas</span>
             </button>
           </nav>
         ))}
@@ -163,6 +164,7 @@ export function PhoneAnnotationToolbar({
     <div className="mobile-annotation-toolbar" role="toolbar" aria-label="Herramientas de anotación">
       <IconButton label="Seleccionar texto" toggle active={tool === 'select'} onClick={() => onTool('select')}>
         <MousePointer2 size={21} />
+        <span className="tool-label">Seleccionar</span>
       </IconButton>
       <IconButton
         label="Resaltador"
@@ -173,6 +175,7 @@ export function PhoneAnnotationToolbar({
         onClick={onHighlight}
       >
         <Highlighter size={21} />
+        <span className="tool-label">Resaltar</span>
       </IconButton>
       <IconButton
         label="Nota"
@@ -182,16 +185,20 @@ export function PhoneAnnotationToolbar({
         onClick={() => onTool(tool === 'note' ? 'select' : 'note')}
       >
         <StickyNote size={21} />
+        <span className="tool-label">Nota</span>
       </IconButton>
       <IconButton label="Lápiz" toggle active={tool === 'draw'} disabled={locked} onClick={() => onTool('draw')}>
         <PenLine size={21} />
+        <span className="tool-label">Lápiz</span>
       </IconButton>
       <IconButton label="Goma" toggle active={tool === 'eraser'} disabled={locked} onClick={() => onTool('eraser')}>
         <Eraser size={21} />
+        <span className="tool-label">Goma</span>
       </IconButton>
       {settings}
       <IconButton label="Más opciones" onClick={onMore}>
         <MoreHorizontal size={22} />
+        <span className="tool-label">Más</span>
       </IconButton>
     </div>
   );

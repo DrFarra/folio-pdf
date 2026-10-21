@@ -62,11 +62,9 @@ async function fits(page, id) {
   await page.screenshot({ path: `${output}/${id}.png` });
   return dimensions;
 }
+// Phones reach the tools from the reading bar; tablets from Más acciones.
 async function openTools(page, mobile, phone) {
-  if (mobile)
-    await page
-      .getByRole('button', { name: phone ? 'Más acciones' : 'Más acciones del documento', exact: true })
-      .click();
+  if (mobile && !phone) await page.getByRole('button', { name: 'Más acciones del documento', exact: true }).click();
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
 }
 async function storedPdf(page, name) {

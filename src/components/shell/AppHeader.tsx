@@ -141,7 +141,14 @@ export default function AppHeader() {
               disabled={!!busy || loading || !tabs.length}
               onClick={() => setMobileTabs(value => !value)}
             >
-              <span>{doc?.name || 'Folio'}</span>
+              <span className="mobile-document-name">
+                <span>{doc?.name || 'Folio'}</span>
+                {doc && (
+                  <small>
+                    Página {page} de {doc.pdf.numPages}
+                  </small>
+                )}
+              </span>
               <DriveIndicator />
               {tabs.length > 1 && <span className="mobile-tab-count">{tabs.length}</span>}
               <ChevronDown size={16} />

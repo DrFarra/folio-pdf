@@ -68,7 +68,7 @@ export default function ReadingSettings(props: Props) {
   };
   const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) =>
     props.onPreferences({ ...prefs, [key]: value });
-  // Desktop shows one section at a time beside the list of them; touch layouts show them all in a column.
+  // Desktop and tablets show one section at a time beside the list of them; phones show them all in a column.
   const [pane, setPane] = useState('appearance');
   const panes = [
     ['appearance', 'Apariencia'],
@@ -76,11 +76,11 @@ export default function ReadingSettings(props: Props) {
     ['files', 'Archivos locales'],
     ['about', 'Acerca de Folio'],
   ];
-  const shown = (key: string) => !desktop || pane === key;
+  const shown = (key: string) => phone || pane === key;
   return (
     <>
       <Modal title="Ajustes" onClose={props.onClose} className="settings-modal">
-        {desktop && (
+        {!phone && (
           <nav className="settings-nav" aria-label="Secciones de Ajustes">
             {panes.map(([key, label]) => (
               <button

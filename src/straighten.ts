@@ -463,3 +463,59 @@ export function flatten(page: Pixels, field: Field, scale: number): Uint8Clamped
   }
   return out;
 }
+
+type Surface = HTMLCanvasElement | OffscreenCanvas;
+const context = (surface: Surface) =>
+  surface.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D;
+
+/**
+ * A scanned page made straight for reading: turned by its tilt, then flattened when
+ * its lines curve. `page` is new only when the page was turned or flattened; a turn is
+ * redone on the PDF's own content, without recompressing the scan.
+ */
+export function straightenPage<T extends Surface>(canvas: T, create: (width: number, height: number) => T) {
+  const read = (source: T) => {
+    const image = context(source).getImageData(0, 0, source.width, source.height);
+    const sample = shrink({ data: image.data, width: image.width, height: image.height, channels: 4 });
+    return { image, sample, mask: inkMask(sample) };
+  };
+  let page = canvas,
+    { image, sample, mask } = read(canvas);
+  const turn = (degrees: number) => {
+    if (page !== canvas) {
+      page.width = 0;
+      page.height = 0;
+    }
+    page = canvas;
+    if (Math.abs(degrees) >= 0.1) {
+      page = create(canvas.width, canvas.height);
+      const turned = context(page);
+      turned.fillStyle = '#fff';
+      turned.fillRect(0, 0, page.width, page.height);
+      turned.translate(page.width / 2, page.height / 2);
+      turned.rotate((degrees * Math.PI) / 180);
+      turned.translate(-page.width / 2, -page.height / 2);
+      turned.drawImage(canvas, 0, 0);
+    }
+    ({ image, sample, mask } = read(page));
+  };
+  let angle = skewAngle(mask, sample.width, sample.height);
+  if (angle) turn(angle);
+  let field = flattenField(mask, sample.width, sample.height);
+  if (field) {
+    // A curve pulls the page's angle: the margin, which stays straight, says the true turn.
+    const extra = marginTilt(mask, sample.width, sample.height) ?? flatTilt(mask, sample.width, sample.height);
+    if (extra) {
+      angle = Math.round((angle + extra) * 100) / 100;
+      turn(angle);
+      field = flattenField(mask, sample.width, sample.height);
+    }
+  }
+  if (field) {
+    image.data.set(
+      flatten({ data: image.data, width: image.width, height: image.height, channels: 4 }, field, 1 / sample.scale),
+    );
+    context(page).putImageData(image, 0, 0);
+  }
+  return { page, changed: page !== canvas || !!field, angle, flattened: !!field };
+}

@@ -192,7 +192,7 @@ try {
     .waitFor({ state: 'attached' });
   await page.locator('.loading-overlay').waitFor({ state: 'detached' });
   await idle();
-  await page.getByRole('button', { name: 'Compartir', exact: true }).tap();
+  await action('Compartir PDF');
   await page.waitForFunction(() =>
     window.__iphoneNativeContract.writes.some(write => write.command === 'share_pdf_copy'),
   );

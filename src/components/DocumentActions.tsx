@@ -154,32 +154,33 @@ export function TouchDocumentActions({
             <span>Guardar una copia</span>
           </button>
         )}
+        <button
+          onClick={() => {
+            const anchor = sheetAnchor();
+            act(() => on.share(anchor))();
+          }}
+          disabled={!doc || busy}
+        >
+          <Upload size={21} />
+          <span>Compartir PDF</span>
+        </button>
         {tablet && (
-          <>
-            <button
-              onClick={() => {
-                const anchor = sheetAnchor();
-                act(() => on.share(anchor))();
-              }}
-              disabled={!doc || busy}
-            >
-              <Upload size={21} />
-              <span>Compartir PDF</span>
-            </button>
-            <button onClick={act(on.edit)} disabled={!doc?.canEdit || busy}>
-              <FileText size={21} />
-              <span>Editar PDF</span>
-            </button>
-          </>
+          <button onClick={act(on.edit)} disabled={!doc?.canEdit || busy}>
+            <FileText size={21} />
+            <span>Editar PDF</span>
+          </button>
         )}
         <button onClick={act(on.view)} disabled={!doc}>
           <Settings2 size={21} />
           <span>Vista del documento</span>
         </button>
-        <button onClick={act(on.tools)} disabled={!doc || busy}>
-          <Wrench size={21} />
-          <span>Herramientas</span>
-        </button>
+        {/* Phones reach the tools from the reading bar. */}
+        {tablet && (
+          <button onClick={act(on.tools)} disabled={!doc || busy}>
+            <Wrench size={21} />
+            <span>Herramientas</span>
+          </button>
+        )}
         <button
           onClick={() => {
             const anchor = sheetAnchor();

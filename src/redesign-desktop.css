@@ -394,7 +394,8 @@ html:not([data-touch]) .drawing-settings-popup {
   width: 320px;
   padding: 16px;
 }
-html:not([data-touch]) .drawing-slider-shape {
+/* The drawing options' sliders and sizes, on desktop and touch alike. */
+html .drawing-slider-shape {
   display: block;
   position: absolute;
   left: 0;
@@ -403,7 +404,7 @@ html:not([data-touch]) .drawing-slider-shape {
   transform: translateY(-50%);
   pointer-events: none;
 }
-html:not([data-touch]) .drawing-slider-track.wedge .drawing-slider-shape {
+html .drawing-slider-track.wedge .drawing-slider-shape {
   height: 14px;
   clip-path: polygon(0 42%, 100% 0, 100% 100%, 0 58%);
   background: linear-gradient(
@@ -412,7 +413,7 @@ html:not([data-touch]) .drawing-slider-track.wedge .drawing-slider-shape {
     color-mix(in srgb, var(--text) 14%, transparent) var(--fill)
   );
 }
-html:not([data-touch]) .drawing-slider-track.opacity .drawing-slider-shape {
+html .drawing-slider-track.opacity .drawing-slider-shape {
   height: 10px;
   border-radius: 5px;
   background:
@@ -420,7 +421,7 @@ html:not([data-touch]) .drawing-slider-track.opacity .drawing-slider-shape {
     repeating-conic-gradient(#e3e6eb 0 25%, #fff 0 50%) 0 0 / 8px 8px;
   box-shadow: inset 0 0 0 1px #1418201a;
 }
-html:not([data-touch]) .drawing-slider-track.size .drawing-slider-shape {
+html .drawing-slider-track.size .drawing-slider-shape {
   height: 6px;
   border-radius: 3px;
   background: linear-gradient(
@@ -429,13 +430,13 @@ html:not([data-touch]) .drawing-slider-track.size .drawing-slider-shape {
     color-mix(in srgb, var(--text) 14%, transparent) var(--fill)
   );
 }
-html:not([data-touch]) .drawing-slider-track .drawing-slider::-webkit-slider-runnable-track {
+html .drawing-slider-track .drawing-slider::-webkit-slider-runnable-track {
   background: transparent;
 }
-html:not([data-touch]) .drawing-slider-track .drawing-slider::-moz-range-track {
+html .drawing-slider-track .drawing-slider::-moz-range-track {
   background: transparent;
 }
-html:not([data-touch]) .drawing-slider-track .drawing-slider::-webkit-slider-thumb {
+html .drawing-slider-track .drawing-slider::-webkit-slider-thumb {
   width: 12px;
   height: 26px;
   margin-top: -10.5px;
@@ -444,7 +445,7 @@ html:not([data-touch]) .drawing-slider-track .drawing-slider::-webkit-slider-thu
   border: 2px solid var(--text);
   box-shadow: 0 2px 6px #14182040;
 }
-html:not([data-touch]) .drawing-slider-track .drawing-slider::-moz-range-thumb {
+html .drawing-slider-track .drawing-slider::-moz-range-thumb {
   width: 8px;
   height: 22px;
   border-radius: 6px;
@@ -452,27 +453,27 @@ html:not([data-touch]) .drawing-slider-track .drawing-slider::-moz-range-thumb {
   border: 2px solid var(--text);
   box-shadow: 0 2px 6px #14182040;
 }
-html:not([data-touch]) .drawing-slider-track .drawing-slider:active::-webkit-slider-thumb {
+html .drawing-slider-track .drawing-slider:active::-webkit-slider-thumb {
   transform: none;
 }
-html:not([data-touch]) .drawing-sizes > button {
+html .drawing-sizes > button {
   gap: 6px;
   padding: 8px 0;
   border: 1px solid var(--line);
   background: var(--surface);
 }
-html:not([data-touch]) .drawing-sizes > button[aria-pressed='true'] {
+html .drawing-sizes > button[aria-pressed='true'] {
   background: var(--surface);
   border-color: var(--text);
   box-shadow: 0 0 0 1px var(--text);
 }
-html:not([data-touch]) .drawing-sizes small {
+html .drawing-sizes small {
   display: block;
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
-html:not([data-touch]) .drawing-eraser-range {
+html .drawing-eraser-range {
   display: block;
   margin-top: 12px;
 }
@@ -519,18 +520,18 @@ html:not([data-touch]) .app-shell .drawing-settings-trigger > .drawing-trigger-l
   box-shadow: none;
   color: var(--text);
 }
-html:not([data-touch]) .drawing-eraser-sizes > button {
+html .drawing-eraser-sizes > button {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--text);
 }
-html:not([data-touch]) .drawing-eraser-sizes > button[aria-pressed='true'] {
+html .drawing-eraser-sizes > button[aria-pressed='true'] {
   background: var(--surface);
   color: var(--text);
   border-color: var(--text);
   box-shadow: 0 0 0 1px var(--text);
 }
-html:not([data-touch]) .drawing-eraser-sizes small {
+html .drawing-eraser-sizes small {
   font-weight: 600;
   color: var(--muted);
 }
@@ -631,50 +632,50 @@ html:not([data-touch]) .app-shell .reader-toolbar .zoom-select select {
   }
 }
 
-/* Herramientas: each tool as a card with a picture of what it does, in its section's colour. */
-html:not([data-touch]) .app-shell .workbench:has(> .tool-categories) {
+/* Herramientas: each tool as a card with a picture of what it does, in its section's colour (desktop and tablet). */
+html:not([data-phone]) .app-shell .workbench:has(> .tool-categories) {
   width: min(1100px, calc(100vw - 28px));
 }
-html:not([data-touch]) .app-shell .workbench .tool-category {
+html:not([data-phone]) .app-shell .workbench .tool-category {
   --tool-ink: var(--accent);
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='pages'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='pages'] {
   --tool-ink: #2f5bd3;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='content'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='content'] {
   --tool-ink: #6b4bc4;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='forms'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='forms'] {
   --tool-ink: #1f7a6a;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='review'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='review'] {
   --tool-ink: #a35f00;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='export'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='export'] {
   --tool-ink: #1f7a4a;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category[data-section='protection'] {
+html:not([data-phone]) .app-shell .workbench .tool-category[data-section='protection'] {
   --tool-ink: #b0473a;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category-heading {
+html:not([data-phone]) .app-shell .workbench .tool-category-heading {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
   font-weight: 700;
 }
-html:not([data-touch]) .app-shell .workbench .tool-category-heading::before {
+html:not([data-phone]) .app-shell .workbench .tool-category-heading::before {
   content: '';
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--tool-ink);
 }
-html:not([data-touch]) .app-shell .workbench .tool-category .operation-grid {
+html:not([data-phone]) .app-shell .workbench .tool-category .operation-grid {
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 14px;
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button {
+html:not([data-phone]) .app-shell .workbench .tool-categories .operation-grid > button {
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
@@ -682,7 +683,7 @@ html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > 
   padding: 8px 8px 12px;
   border-radius: 16px;
 }
-html:not([data-touch]) .app-shell .workbench .operation-grid > button > svg.tool-art {
+html:not([data-phone]) .app-shell .workbench .operation-grid > button > svg.tool-art {
   display: block;
   width: 100%;
   height: 112px;
@@ -690,33 +691,33 @@ html:not([data-touch]) .app-shell .workbench .operation-grid > button > svg.tool
   color: var(--tool-ink);
   background: color-mix(in srgb, var(--tool-ink) 11%, var(--surface));
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button:disabled .tool-art {
+html:not([data-phone]) .app-shell .workbench .tool-categories .operation-grid > button:disabled .tool-art {
   filter: grayscale(1);
   opacity: 0.55;
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .tool-icon {
+html:not([data-phone]) .app-shell .workbench .tool-categories .tool-icon {
   display: none;
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text {
+html:not([data-phone]) .app-shell .workbench .tool-categories .tool-text {
   padding: 0 6px;
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text > span {
+html:not([data-phone]) .app-shell .workbench .tool-categories .tool-text > span {
   font-size: 14px;
 }
-html:not([data-touch]) .app-shell .workbench .tool-categories .tool-text > small {
+html:not([data-phone]) .app-shell .workbench .tool-categories .tool-text > small {
   font-size: 12px;
 }
 /* A short window keeps the compact cards, so every tool stays reachable. */
 @media (max-height: 640px) {
-  html:not([data-touch]) .app-shell .workbench .operation-grid > button > svg.tool-art {
+  html:not([data-phone]) .app-shell .workbench .operation-grid > button > svg.tool-art {
     display: none;
   }
-  html:not([data-touch]) .app-shell .workbench .tool-categories .tool-icon {
+  html:not([data-phone]) .app-shell .workbench .tool-categories .tool-icon {
     display: grid;
     background: color-mix(in srgb, var(--tool-ink) 12%, var(--surface));
     color: var(--tool-ink);
   }
-  html:not([data-touch]) .app-shell .workbench .tool-categories .operation-grid > button {
+  html:not([data-phone]) .app-shell .workbench .tool-categories .operation-grid > button {
     flex-direction: row;
     align-items: center;
     padding: 10px;

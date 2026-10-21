@@ -1,0 +1,133 @@
+/* The redesign on phones and tablets: the desktop's look, sized for fingers. */
+
+/* Phone reader: icon over name in the bottom bar. */
+.phone-layout .mobile-reading-toolbar > button {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Anotar on a phone: each tool named under its icon; the one in use is a dark tile. */
+.tool-label {
+  display: none;
+}
+.phone-layout .mobile-annotation-toolbar {
+  justify-content: space-between;
+  gap: 2px;
+}
+.phone-layout .mobile-annotation-toolbar > .icon-button {
+  flex: 1 0 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: auto;
+  height: 52px;
+  border-radius: 14px;
+  color: var(--text);
+}
+.phone-layout .mobile-annotation-toolbar > .icon-button.active {
+  background: var(--text);
+  color: var(--bg);
+}
+.phone-layout .mobile-annotation-toolbar .tool-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+/* A finger needs a bigger handle on the drawing sliders. */
+html[data-touch] .drawing-slider-track .drawing-slider::-webkit-slider-thumb {
+  width: 16px;
+  height: 32px;
+  margin-top: -13.5px;
+  border-radius: 8px;
+}
+
+/* Herramientas on a phone: a list, each tool beside its icon tile. */
+html[data-phone] .app-shell .workbench .tool-category-heading {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+html[data-phone] .app-shell .workbench .tool-categories .operation-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+html[data-phone] .app-shell .workbench .tool-categories .operation-grid > button {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+html[data-phone] .app-shell .workbench .tool-categories .operation-grid > button .tool-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+  color: var(--text);
+}
+html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Landscape phones: the reading actions move to a column on the right, so the page keeps its height. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .phone-layout .mobile-reading-toolbar {
+    inset: var(--app-header-height) 0 0 auto;
+    width: calc(72px + env(safe-area-inset-right, 0px));
+    height: auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px env(safe-area-inset-right, 0px) var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)) 0;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+  .phone-layout .mobile-reading-toolbar > button {
+    flex: 0 0 56px;
+    width: 60px;
+  }
+  .phone-layout .mobile-reading-toolbar > button > span {
+    display: block;
+    font-size: 9px;
+  }
+  .phone-layout:has(.mobile-reading-toolbar) .reading-area {
+    margin-right: calc(72px + env(safe-area-inset-right, 0px));
+  }
+  .phone-layout:has(.mobile-reading-toolbar) .mobile-reading-status {
+    right: calc(80px + env(safe-area-inset-right, 0px));
+    bottom: calc(10px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+  .phone-layout .mobile-annotation-toolbar > .icon-button {
+    height: 40px;
+  }
+  .phone-layout .mobile-annotation-toolbar .tool-label {
+    display: none;
+  }
+}
+
+/* The phone header names the document and, under it, the page being read. */
+.mobile-document-selector > .mobile-document-name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.mobile-document-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mobile-document-name > small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}

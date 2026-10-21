@@ -3,6 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Operation } from './engine/operations.ts';
 import { OcrEngine } from './ppocr-client';
 import { cleanPaper, rebuildLines, wordChecker } from './rebuild';
+import { straightenPage } from './straighten';
 
 function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -16,8 +17,16 @@ function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** A scanned page made straight for reading, in a worker (see straighten.worker.ts). */
+/** A scanned page made straight for reading, in a worker (see straighten.worker.ts). A browser
+ * without OffscreenCanvas (Safari before 16.4) straightens it here, between paints. */
 async function straighten(canvas: HTMLCanvasElement, signal: AbortSignal) {
+  if (typeof OffscreenCanvas === 'undefined') {
+    await new Promise(resolve => setTimeout(resolve));
+    const { page, angle, flattened } = straightenPage(canvas, (width, height) =>
+      Object.assign(document.createElement('canvas'), { width, height }),
+    );
+    return { page, angle, flattened };
+  }
   const worker = new Worker(new URL('./straighten.worker.ts', import.meta.url), { type: 'module' });
   try {
     const done = new Promise<{ bitmap?: ImageBitmap; angle: number; flattened: boolean; error?: string }>(

@@ -7,6 +7,7 @@ import './mac-platform.css';
 import './mobile.css';
 import './desktop.css';
 import './redesign-desktop.css';
+import './redesign-touch.css';
 import './tablet.css';
 import './motion.css';
 import { isDesktop, isMac } from './platform';

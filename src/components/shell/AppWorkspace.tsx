@@ -26,7 +26,6 @@ export default function AppWorkspace() {
     activateHighlight,
     activeNote,
     activeTabKey,
-    anchorOf,
     annotations,
     bookmarkEditingId,
     bookmarks,
@@ -108,7 +107,6 @@ export default function AppWorkspace() {
     setTool,
     setWorkbench,
     setZoomMode,
-    shareDocument,
     showBookmarks,
     sideCount,
     sideTab,
@@ -444,7 +442,7 @@ export default function AppWorkspace() {
               onPages={() => openExplorer()}
               onSearch={openSearch}
               onAnnotate={startAnnotating}
-              onShare={button => void shareDocument(anchorOf(button))}
+              onTools={openTools}
             />
           )}
           {!touchLayout && doc && returnPage !== null && (

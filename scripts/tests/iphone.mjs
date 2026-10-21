@@ -974,7 +974,7 @@ try {
         await page.waitForFunction(element => !element.isConnected, previous, { timeout: 60000 });
         await picker();
       };
-      await actions(page);
+      // Phones reach the tools from the reading bar.
       await page.getByRole('button', { name: 'Herramientas', exact: true }).tap();
       await page.getByRole('dialog', { name: 'Herramientas', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Editar PDF', exact: true }).tap();
@@ -2053,7 +2053,7 @@ try {
   await check(
     'mobile-workbench-page-order-and-image-pdf-creation',
     async page => {
-      await actions(page);
+      // Phones reach the tools from the reading bar.
       await page.getByRole('button', { name: 'Herramientas', exact: true }).tap();
       await page.getByRole('dialog', { name: 'Herramientas', exact: true }).waitFor();
       assertScreen(await geometry(page));
@@ -2240,7 +2240,6 @@ try {
         db.close();
       }
     }, identity);
-    await actions(page);
     await page.getByRole('button', { name: 'Herramientas', exact: true }).tap();
     await page.getByRole('button', { name: 'Organizar páginas', exact: true }).tap();
     await page.getByRole('button', { name: 'Mover posición 2 antes', exact: true }).tap();
