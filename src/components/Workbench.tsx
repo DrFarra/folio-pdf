@@ -74,7 +74,8 @@ type Props = {
     signal?: AbortSignal,
     context?: { keepEditing: boolean; page: number },
   ) => Promise<void>;
-  getBytes: () => Promise<Uint8Array>;
+  /** `working`: the bytes are only read to make other PDFs, so annotations may be appended to them. */
+  getBytes: (working?: boolean) => Promise<Uint8Array>;
   onHistory?: (direction: 'undo' | 'redo') => void;
   canUndo?: boolean;
   canRedo?: boolean;
@@ -494,7 +495,7 @@ export default function Workbench(props: Props) {
     if (!selectedPlan.length || busy) return;
     await task(async signal => {
       const bytes = await processPdf(
-        await props.getBytes(),
+        await props.getBytes(true),
         { operation: 'pages', plan: selectedPlan, sources },
         doc.password,
         signal,
@@ -510,7 +511,7 @@ export default function Workbench(props: Props) {
     let bytes: Uint8Array,
       withoutAnnotations = false;
     try {
-      bytes = await props.getBytes();
+      bytes = await props.getBytes(true);
     } catch (err) {
       signal.throwIfAborted();
       if (!/demasiado grande/.test(errorMessage(err))) throw err;

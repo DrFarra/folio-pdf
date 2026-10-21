@@ -74,15 +74,17 @@ export class DocumentOutput {
     return doc.canAnnotate ? exportAnnotated(doc.bytes, items, doc.password, undefined, incremental) : doc.bytes;
   }
 
-  /** The document in front as a file. Drive keeps the original bytes and appends the changes. */
-  async currentBytes() {
+  /** The document in front as a file. Drive keeps the original bytes and appends the changes, and so
+   * does a `working` copy (only read to make other PDFs, as Dividir does): rewriting a whole book to
+   * add its annotations can take minutes. */
+  async currentBytes(working = false) {
     const doc = this.host.current();
     if (!doc) throw new Error('No hay documento abierto.');
     if (isNativePdfDocument(doc.pdf)) throw new Error('Usa Guardar una copia para guardar este PDF.');
     const annotations = this.host.annotations();
     // The bytes already hold these annotations: writing them again would rewrite the whole PDF for nothing.
     if (annotationFingerprint(annotations) === doc.bytesAnnotations) return doc.bytes;
-    return this.annotated(doc, annotations, !!doc.drive);
+    return this.annotated(doc, annotations, working || !!doc.drive);
   }
 
   /** The annotations PDFKit's file-backed document had removed, all its pages read first when an older session left them unknown. */

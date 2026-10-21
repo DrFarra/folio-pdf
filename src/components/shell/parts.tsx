@@ -123,7 +123,7 @@ export function ToolSectionPanel() {
         setPageInput(String(next));
       }}
       onApply={applyOperation}
-      getBytes={() => output.currentBytes()}
+      getBytes={working => output.currentBytes(working)}
       onNotify={message => notify(message, 'success')}
       onSave={() => {
         void download({ keepEditing: true });
