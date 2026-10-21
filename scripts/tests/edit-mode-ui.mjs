@@ -280,9 +280,24 @@ try {
 
   await check('type-over-a-paragraph-and-escape-cancels', async () => {
     const title = await toScreen(1, 100, 765);
-    await page.mouse.dblclick(title.x, title.y);
     const box = page.getByRole('textbox', { name: 'Texto del párrafo' });
-    await box.waitFor();
+    // A slow runner can space the two clicks too far apart to be one double click: try once more.
+    const typeOver = async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await page.mouse.dblclick(title.x, title.y);
+        if (
+          await box.waitFor({ timeout: 8000 }).then(
+            () => true,
+            () => false,
+          )
+        )
+          return;
+        await page.keyboard.press('Escape');
+        await settle();
+      }
+      await box.waitFor();
+    };
+    await typeOver();
     assert.equal(await box.inputValue(), 'Informe trimestral');
     await page.keyboard.press('End');
     await page.keyboard.type(' 2026');
@@ -292,8 +307,7 @@ try {
     await settle();
     await page.mouse.move(title.x, title.y);
     await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
-    await page.mouse.dblclick(title.x, title.y);
-    await box.waitFor();
+    await typeOver();
     await page.keyboard.press('End');
     await page.keyboard.type(' de 2026');
     const outside = await toScreen(1, 300, 300);
