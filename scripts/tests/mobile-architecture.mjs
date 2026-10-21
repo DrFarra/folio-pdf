@@ -447,6 +447,23 @@ try {
       initialFocusOnClose: true,
     };
   });
+  await check('a-tap-away-from-selected-text-unselects-it', async page => {
+    await open(page);
+    // Select the first words of the page, as a long press does.
+    const span = page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').first();
+    await span.evaluate(node => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+    assert.equal(await page.evaluate(() => window.getSelection().isCollapsed), false);
+    // A tap on the empty lower part of the page.
+    const box = await page.locator('.pdf-page-wrap[data-page-number="1"] .page-content').boundingBox();
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.85);
+    await page.waitForFunction(() => window.getSelection().isCollapsed);
+    return { unselected: true };
+  });
   await check('holding-a-started-document-takes-it-off-en-curso', async page => {
     // Three documents read halfway: the last is «Continuar leyendo», the other two are En curso.
     for (const name of ['Uno', 'Dos', 'Tres']) {

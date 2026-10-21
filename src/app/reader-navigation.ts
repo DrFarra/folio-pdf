@@ -8,6 +8,16 @@ type Viewer = RefObject<HTMLDivElement | null>;
 const overlays =
   'dialog[open],.document-switcher,.highlight-annotation-menu,.highlight-color-palette,.text-selection-menu';
 
+/** Whether a point is on the selected text, or close enough to be aimed at it. */
+function selectedAt(x: number, y: number) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return false;
+  const pad = 12;
+  return Array.from(selection.getRangeAt(0).getClientRects()).some(
+    box => x >= box.left - pad && x <= box.right + pad && y >= box.top - pad && y <= box.bottom + pad,
+  );
+}
+
 /** Touch reading: a tap on a page hides or shows the reader's controls, a double tap zooms.
  * `idle` is false while a tool, panel or task takes the taps. Any reader interaction
  * (`folio:reader-interaction`) shows the controls again. */
@@ -22,6 +32,8 @@ export function useReaderTaps(
     const root = viewer.current;
     if (!active || !root) return;
     let origin: { id: number; x: number; y: number; top: number; left: number; at: number } | null = null;
+    // A tap away from selected text unselects it: iOS keeps the selection on taps over the pages.
+    let unselect: { id: number; x: number; y: number; at: number } | null = null;
     const doubleTapWindow = 350;
     let timer = 0,
       lastTap = 0;
@@ -33,6 +45,15 @@ export function useReaderTaps(
     const down = (event: PointerEvent) => {
       if (timer) clearTimeout(timer);
       timer = 0;
+      const selection = window.getSelection();
+      unselect =
+        event.pointerType === 'touch' &&
+        event.isPrimary &&
+        selection &&
+        !selection.isCollapsed &&
+        !(event.target instanceof Element && event.target.closest('button,a,input,textarea,[role="button"]'))
+          ? { id: event.pointerId, x: event.clientX, y: event.clientY, at: Date.now() }
+          : null;
       if (event.pointerType !== 'touch' || !event.isPrimary || !idle) {
         origin = null;
         return;
@@ -62,6 +83,16 @@ export function useReaderTaps(
       };
     };
     const up = (event: PointerEvent) => {
+      const tap = unselect;
+      unselect = null;
+      if (
+        tap &&
+        event.pointerId === tap.id &&
+        Date.now() - tap.at < 400 &&
+        Math.hypot(event.clientX - tap.x, event.clientY - tap.y) <= 8 &&
+        !selectedAt(event.clientX, event.clientY)
+      )
+        window.getSelection()?.removeAllRanges();
       const start = origin;
       origin = null;
       if (

@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.os.Build
 import android.view.ActionMode
 import android.view.Menu
+import android.view.MotionEvent
 import android.view.MenuInflater
 import android.view.View
 import android.view.WindowManager
@@ -74,6 +75,49 @@ class MainActivity : TauriActivity() {
     if (type != ActionMode.TYPE_FLOATING || view == null || view.onCheckIsTextEditor() || !SelectionGate.pdfText) return super.onWindowStartingActionMode(callback, type)
     val mode = SilentActionMode(callback, PopupMenu(this, view).menu, menuInflater)
     return if (callback.onCreateActionMode(mode, mode.menu)) mode else null
+  }
+  // The S Pen side button opens Folio's pen palette where the pen points, as the
+  // Apple Pencil's double tap does on iPad: WebView does not pass the button on.
+  // Touching the screen with it held makes no stroke; the palette takes it.
+  private var penButton = false
+  private var penGesture = false
+  private fun penButtonHeld(event: MotionEvent): Boolean {
+    if (event.pointerCount == 0 || event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) return false
+    val held = event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0
+    if (held && !penButton) openPenPalette(event)
+    penButton = held
+    return held
+  }
+  private fun openPenPalette(event: MotionEvent) {
+    val view = webView ?: return
+    val origin = IntArray(2).also { view.getLocationOnScreen(it) }
+    val density = resources.displayMetrics.density
+    val x = (event.rawX - origin[0]) / density
+    val y = (event.rawY - origin[1]) / density
+    view.evaluateJavascript("window.dispatchEvent(new CustomEvent('folio:pencil-palette',{detail:{x:$x,y:$y}}))", null)
+  }
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    val held = penButtonHeld(event)
+    val ended = event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL
+    if (held && !penGesture) {
+      penGesture = true
+      // A stroke already under way ends here instead of continuing as the palette opens.
+      if (event.actionMasked != MotionEvent.ACTION_DOWN) {
+        val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+        super.dispatchTouchEvent(cancel)
+        cancel.recycle()
+      }
+    }
+    if (penGesture) {
+      if (ended) penGesture = false
+      return true
+    }
+    return super.dispatchTouchEvent(event)
+  }
+  override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+    // Pressed while hovering over the screen.
+    penButtonHeld(event)
+    return super.dispatchGenericMotionEvent(event)
   }
   /** Keeps WebView's selection and handles without showing its toolbar. */
   private class SilentActionMode(private val callback: ActionMode.Callback, private val menu: Menu, private val inflater: MenuInflater) : ActionMode() {
