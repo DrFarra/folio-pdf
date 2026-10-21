@@ -131,3 +131,136 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
   font-weight: 400;
   color: var(--muted);
 }
+
+/* Ajustes on a phone: each section a card of rows with its name above it, as in the system's settings. */
+html[data-phone] .settings-modal .settings-section {
+  display: flex;
+  flex-direction: column;
+}
+html[data-phone] .settings-modal .settings-section > h3 {
+  margin: 22px 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The note on what the settings change reads under them. */
+html[data-phone] .settings-modal .settings-section > .modal-description {
+  order: 1;
+  margin: 8px 4px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+html[data-phone] .settings-modal :is(.settings-card, .settings-about-links) {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 16px;
+  border-radius: 14px;
+  background: var(--surface);
+}
+html[data-phone] .settings-modal :is(.settings-card, .settings-about-links) > * + * {
+  border-top: 1px solid var(--line);
+}
+html[data-phone] .settings-modal .settings-card .reading-setting {
+  flex-wrap: nowrap;
+  min-height: 52px;
+  padding: 0;
+  font-size: 16px;
+}
+html[data-phone] .settings-modal .settings-card .reading-setting select {
+  width: auto;
+  max-width: 55%;
+  min-height: 44px;
+  padding: 0 20px 0 0;
+  border: 0;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888f9b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5M7 9l5-5 5 5'/%3E%3C/svg%3E")
+    right center / 14px no-repeat;
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--muted);
+  font-size: 16px;
+  text-align: right;
+  text-align-last: right;
+}
+html[data-phone] .settings-modal .settings-card .reading-setting:has(> .reading-range) {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 12px 0 4px;
+}
+html[data-phone] .settings-modal .settings-card .reading-range {
+  width: 100%;
+}
+html[data-phone] .settings-modal .settings-card .settings-toggle {
+  min-height: 52px;
+  padding: 4px 0;
+  font-size: 16px;
+}
+html[data-phone] .settings-modal .settings-card .settings-advanced {
+  margin: 0;
+  padding: 0;
+}
+html[data-phone] .settings-modal .settings-card .settings-advanced > summary {
+  min-height: 52px;
+  font-size: 16px;
+  font-weight: 400;
+}
+html[data-phone] .settings-modal .settings-card .clear-library {
+  font-size: 15px;
+}
+/* The theme is one segmented control. */
+html[data-phone] .settings-modal .settings-theme {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+html[data-phone] .settings-modal .settings-theme button {
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 64px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+html[data-phone] .settings-modal .settings-theme button > span {
+  flex: none;
+  text-align: center;
+}
+html[data-phone] .settings-modal .settings-theme button.selected {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 4px #14182026;
+}
+/* Acerca de: its links are rows too. */
+html[data-phone] .settings-modal .settings-about-links > :is(.secondary-button, .primary-button) {
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 400;
+}
+html[data-phone] .settings-modal .settings-about-links > .secondary-button::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border: solid var(--muted);
+  border-width: 0 2px 2px 0;
+  transform: rotate(-45deg);
+}
+html[data-phone] .settings-modal .settings-about-links > .primary-button {
+  color: var(--accent);
+  font-weight: 600;
+}

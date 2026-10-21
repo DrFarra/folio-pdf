@@ -447,6 +447,41 @@ try {
       initialFocusOnClose: true,
     };
   });
+  await check('holding-a-started-document-takes-it-off-en-curso', async page => {
+    // Three documents read halfway: the last is «Continuar leyendo», the other two are En curso.
+    for (const name of ['Uno', 'Dos', 'Tres']) {
+      const started = await PDFDocument.create(),
+        font = await started.embedFont(StandardFonts.Helvetica);
+      for (let i = 1; i <= 6; i++)
+        started.addPage([420, 560]).drawText(`${name} ${i}`, { x: 40, y: 500, size: 24, font });
+      await page
+        .locator('input[type=file][accept="application/pdf,.pdf"]')
+        .first()
+        .setInputFiles({ name: `${name}.pdf`, mimeType: 'application/pdf', buffer: Buffer.from(await started.save()) });
+      await page.locator('.loading-overlay').waitFor({ state: 'detached' });
+      await page.locator('.reading-area').evaluate(element => (element.scrollTop = element.scrollHeight / 2));
+      await waitForSession(page, session => session.lastPage > 2);
+      await visibleButton(page, 'Volver a la biblioteca').tap();
+    }
+    const shelf = page.getByRole('region', { name: 'En curso', exact: true }),
+      held = shelf.getByRole('button', { name: /^Abrir Dos\.pdf/ });
+    await held.waitFor();
+    // A touch held for half a second, without moving.
+    const box = await held.boundingBox(),
+      cdp = await page.context().newCDPSession(page),
+      point = { x: box.x + box.width / 2, y: box.y + box.height / 3 };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+    await page.waitForTimeout(700);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.getByRole('menuitem', { name: 'Quitar de En curso', exact: true }).tap();
+    await held.waitFor({ state: 'detached' });
+    assert(await page.getByRole('heading', { name: 'Biblioteca', exact: true }).isVisible(), 'Holding did not open it');
+    assert.equal(await shelf.getByRole('button', { name: /^Abrir Uno\.pdf/ }).count(), 1, 'The other one stays');
+    await page.reload();
+    await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
+    assert.equal(await shelf.getByRole('button', { name: /^Abrir Dos\.pdf/ }).count(), 0, 'Still off after a reload');
+    return { heldMenu: true, removed: true, persisted: true };
+  });
   await check('library-delete-confirms-and-does-not-resurrect', async page => {
     await open(page);
     await visibleButton(page, 'Guardar marcador de esta página').tap();

@@ -3,6 +3,7 @@ import {
   ArrowDownUp,
   ArrowRight,
   BookOpen,
+  BookmarkMinus,
   Check,
   ChevronRight,
   Cloud,
@@ -26,10 +27,12 @@ import { readSession } from '../storage';
 import {
   driveIds,
   favoriteIds,
+  hideFromShelf,
   libraryPreference,
   readCover,
   saveLibraryPreference,
   setFavorite,
+  shelfHidden,
   type LibrarySort,
   type LibraryView,
 } from '../library-meta';
@@ -120,19 +123,24 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
   );
   const [filter, setFilter] = useState<Filter>('all');
   const [favorites, setFavorites] = useState(favoriteIds);
+  const [hidden, setHidden] = useState(shelfHidden);
   const [drive] = useState(driveIds);
   const [details, setDetails] = useState<Record<string, Details>>({});
   const menuRef = useRef<HTMLDivElement>(null),
     sortRef = useRef<HTMLDivElement>(null);
   // Holding a document on a touch screen opens its options instead of opening it.
   const press = useRef<{ id: string; x: number; y: number; timer: number; fired: boolean } | null>(null);
+  // Where the held item is: the shelf's menu opens under it, outside the scrolling row.
+  const [menuBox, setMenuBox] = useState<DOMRect | null>(null);
   const holdHandlers = (documentId: string) => ({
     onPointerDown: (event: React.PointerEvent) => {
       if (event.pointerType !== 'touch') return;
-      const current = { id: documentId, x: event.clientX, y: event.clientY, fired: false, timer: 0 };
+      const current = { id: documentId, x: event.clientX, y: event.clientY, fired: false, timer: 0 },
+        box = event.currentTarget.getBoundingClientRect();
       current.timer = window.setTimeout(() => {
         current.fired = true;
         haptic('medium');
+        setMenuBox(box);
         setOpenMenu(documentId);
       }, 480);
       press.current = current;
@@ -215,6 +223,7 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
     .filter(
       document =>
         document.id !== resume?.id &&
+        !(hidden[document.id] >= document.openedAt) &&
         progress(pageOf(document), document.pages) > 0 &&
         progress(pageOf(document), document.pages) < 0.98,
     )
@@ -243,7 +252,8 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
   // A card's menu can be wider than the card or open near the bottom: keep it inside the window.
   useLayoutEffect(() => {
     const menu = menuRef.current?.querySelector<HTMLElement>('.document-library-menu');
-    if (!menu) return;
+    // The shelf's menu is placed against the held item instead.
+    if (!menu || openMenu?.startsWith('shelf:')) return;
     // It pops in scaled from its top right corner, so the unscaled size gives its final edges.
     const box = menu.getBoundingClientRect(),
       width = menu.offsetWidth,
@@ -370,14 +380,25 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
             <h2>En curso</h2>
             <div className="library-shelf-row">
               {started.map(document => {
-                const value = progress(pageOf(document), document.pages);
+                const value = progress(pageOf(document), document.pages),
+                  key = `shelf:${document.id}`;
                 return (
                   <button
                     key={document.id}
                     type="button"
                     disabled={props.busy}
                     aria-label={`Abrir ${document.name}, ${Math.round(value * 100)} % leído`}
-                    onClick={() => props.onOpen(document)}
+                    aria-haspopup="menu"
+                    {...holdHandlers(key)}
+                    // Holding it on a touch screen, or its context menu, offers to take it off the shelf.
+                    onContextMenu={event => {
+                      event.preventDefault();
+                      setMenuBox(event.currentTarget.getBoundingClientRect());
+                      setOpenMenu(key);
+                    }}
+                    onClick={() => {
+                      if (!held(key)) props.onOpen(document);
+                    }}
                   >
                     <Cover name={document.name} image={details[document.id]?.cover} size="card" />
                     <span className="library-shelf-title">{title(document.name)}</span>
@@ -389,6 +410,37 @@ export function DocumentLibrary(props: DocumentLibraryProps) {
                 );
               })}
             </div>
+            {openMenu?.startsWith('shelf:') && menuBox && (
+              <div className="library-shelf-menu" ref={menuRef}>
+                <div
+                  className="document-library-menu"
+                  role="menu"
+                  aria-label="En curso"
+                  style={{
+                    position: 'fixed',
+                    // Under the held item, or above it near the bottom of the window.
+                    top: menuBox.bottom + 64 < innerHeight ? menuBox.bottom + 6 : menuBox.top - 58,
+                    left: Math.max(8, Math.min(menuBox.left, innerWidth - 248)),
+                    right: 'auto',
+                    bottom: 'auto',
+                  }}
+                  onKeyDown={event => menuKeys(event, () => setOpenMenu(null))}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const document = started.find(item => `shelf:${item.id}` === openMenu);
+                      if (document) setHidden(hideFromShelf(document.id, document.openedAt));
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <BookmarkMinus size={18} aria-hidden="true" />
+                    <span>Quitar de En curso</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         )}
         <div className="document-library-create-actions">

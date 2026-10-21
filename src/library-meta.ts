@@ -103,10 +103,38 @@ export function markDrive(id: string) {
     writeSet('folio.library.drive', ids);
   }
 }
+/** Documents taken off En curso, each with when it had last been opened: opening it again brings it back. */
+export function shelfHidden(): Record<string, number> {
+  try {
+    const value = JSON.parse(localStorage.getItem('folio.library.shelfHidden') || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (Object.fromEntries(Object.entries(value).filter(([, at]) => typeof at === 'number')) as Record<string, number>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+function writeShelfHidden(value: Record<string, number>) {
+  try {
+    localStorage.setItem('folio.library.shelfHidden', JSON.stringify(value));
+  } catch {
+    /* A preference; the shelf still works. */
+  }
+}
+export function hideFromShelf(id: string, openedAt: number) {
+  const hidden = { ...shelfHidden(), [id]: openedAt };
+  writeShelfHidden(hidden);
+  return hidden;
+}
 export function forgetLibraryMeta(id: string) {
   for (const key of ['folio.library.favorites', 'folio.library.drive']) {
     const ids = readSet(key);
     if (ids.delete(id)) writeSet(key, ids);
+  }
+  const hidden = shelfHidden();
+  if (id in hidden) {
+    delete hidden[id];
+    writeShelfHidden(hidden);
   }
   void forgetCover(id);
 }
@@ -114,6 +142,7 @@ export function clearLibraryMeta() {
   try {
     localStorage.removeItem('folio.library.favorites');
     localStorage.removeItem('folio.library.drive');
+    localStorage.removeItem('folio.library.shelfHidden');
   } catch {
     /* Nothing stored. */
   }
