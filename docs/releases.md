@@ -5,10 +5,19 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.23](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.23) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.24](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.24) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.24
+
+- Ajustes en el teléfono tiene un diseño nuevo, como los ajustes del sistema. Cada sección es una tarjeta con su nombre arriba y cada ajuste es una fila con su valor a la derecha. El tema se elige en un control segmentado.
+- Mantener pulsado un documento de «En curso» en la biblioteca permite quitarlo de esa fila; en el escritorio, con clic derecho. Vuelve a aparecer si lo abres otra vez.
+- En el iPhone, tocar fuera del texto seleccionado quita la selección.
+- En Android, el botón del S Pen abre la paleta rápida del lápiz donde apunta el lápiz. Con el botón presionado sobre la pantalla no se dibuja.
+- Google Drive tiene la sección Computadoras, con las carpetas que Google Drive para escritorio copia desde cada computadora.
+- En Google Drive, las ubicaciones (Mi unidad, Compartidos conmigo, Computadoras, Sin conexión) forman un solo control. La carpeta en la que estás se muestra como una ruta de texto, con la carpeta actual en negrita, para no confundirla con esas ubicaciones.
 
 ## Cambios en 0.9.23
 
