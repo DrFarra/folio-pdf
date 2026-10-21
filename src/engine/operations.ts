@@ -2513,7 +2513,8 @@ function saveDrawnDocument(doc: mupdf.PDFDocument, password?: string) {
 /** A document's own font, with the glyphs it painted (a subset's cmap cannot be trusted for the rest). */
 type GlyphFont = { font: mupdf.Font; glyphs: Map<number, number>; complete?: boolean };
 type TextDrawing = Partial<TextOptions> & { text: string; glyphFont?: GlyphFont };
-function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing) {
+/** Draws the text and returns the glyphs it showed, with the characters they stand for. */
+function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing): MovedGlyph[] {
   if (typeof options.text !== 'string' || options.text.length > 50000) fail('Texto inválido o demasiado largo.');
   const size = Number(options.size ?? 12);
   if (!Number.isFinite(size) || size < 4 || size > 200) fail('Tamaño de letra inválido.');
@@ -2578,7 +2579,8 @@ function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing
     const gid = encode(c);
     return gid ? font.advanceGlyph(gid) : /\s/.test(c) ? space : 0;
   };
-  const text = new mupdf.Text();
+  const text = new mupdf.Text(),
+    shown: MovedGlyph[] = [];
   try {
     for (const c of options.text)
       if (!/\s/.test(c) && !encode(c))
@@ -2623,7 +2625,10 @@ function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing
       let x = box[0] + (align === 'center' ? (limit - width) / 2 : align === 'right' ? limit - width : 0);
       for (const c of line) {
         const gid = encode(c);
-        if (gid) text.showGlyph(font, [size, 0, 0, -size, x, y], gid, c.codePointAt(0)!);
+        if (gid) {
+          text.showGlyph(font, [size, 0, 0, -size, x, y], gid, c.codePointAt(0)!);
+          shown.push({ fontName: font.getName(), gid, unicode: c.codePointAt(0)! });
+        }
         x += advance(c) * size;
       }
       y += size * lineHeight;
@@ -2638,6 +2643,7 @@ function textDrawing(device: mupdf.Device, box: mupdf.Rect, options: TextDrawing
         fail('El texto no cabe en el área. Amplía el área o reduce la letra.');
     }
     device.fillText(text, mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, rgb(options.color || '#202020'), 1);
+    return shown;
   } finally {
     text.destroy();
     if (!glyphFont) font.destroy();
@@ -5002,7 +5008,15 @@ export function editDocument(doc: mupdf.PDFDocument, change: Operation): void {
       }
       if (written) rewrap(doc, page, written, null);
       try {
-        appendDrawing(doc, page, device => textDrawing(device, box, { ...options, glyphFont }), options.text);
+        let shown: MovedGlyph[] = [];
+        const form = appendDrawing(
+          doc,
+          page,
+          device => (shown = textDrawing(device, box, { ...options, glyphFont })),
+          options.text,
+        );
+        // The writer maps the document's own font from its cmap, which can name another glyph (Helvetica's «á»).
+        if (glyphFont) mapCharacters(doc, form, shown);
       } catch (error) {
         throw glyphFont && !/no incluye|no cabe/.test((error as Error)?.message)
           ? new Error('La fuente original no se puede volver a usar en este PDF.')
