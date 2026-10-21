@@ -161,6 +161,86 @@ html[data-phone] dialog.modal.mobile-sheet.closing::backdrop {
   scale: 0.97;
 }
 
+/* Every clickable element answers the same way: colours and shadows ease on hover,
+   and a press sinks it slightly. Specificity zero, so a component's own transition
+   wins. Pages, edit handles and what is dragged (tabs, the organizer's pages) keep still. */
+:where(
+  button,
+  [role='button'],
+  [role='tab'],
+  [role='menuitem'],
+  [role='menuitemradio'],
+  [role='radio'],
+  a[href],
+  summary,
+  select
+) {
+  transition:
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out),
+    border-color 150ms var(--ease-out),
+    box-shadow 180ms var(--ease-out),
+    opacity 150ms var(--ease-out),
+    scale 120ms var(--ease-out),
+    translate 200ms var(--ease-out);
+}
+:where(button, [role='button'], [role='menuitem'], [role='menuitemradio'], [role='radio'], summary):active:not(
+    :disabled,
+    [aria-disabled='true'],
+    [role='tab'],
+    .pdf-page-wrap *,
+    .page-plan *,
+    .edit-layer *,
+    .document-tab-strip *
+  ) {
+  scale: 0.96;
+}
+/* Large cards sink less, and rise a little under the pointer. */
+:is(
+    .operation-grid > button,
+    .document-library-open,
+    .library-shelf-row > button,
+    .document-library-continue,
+    .settings-theme button
+  ):active:not(:disabled) {
+  scale: 0.985;
+}
+@media (hover: hover) {
+  :is(
+      .tool-categories .operation-grid > button,
+      .library-grid .document-library-open,
+      .library-shelf-row > button
+    ):hover:not(:disabled) {
+    translate: 0 -2px;
+    box-shadow: 0 8px 22px #1418201f;
+  }
+  .document-library-continue:hover:not(:disabled) {
+    box-shadow: 0 10px 28px #1418201f;
+  }
+  /* Colour swatches grow under the pointer. */
+  :is(.drawing-colors, .highlight-color-palette) button:hover:not(:disabled) {
+    scale: 1.08;
+  }
+}
+/* The chosen swatch stands out by size too. */
+:is(.drawing-colors, .highlight-color-palette) button[aria-pressed='true'],
+:is(.drawing-colors, .highlight-color-palette) button[aria-checked='true'] {
+  scale: 1.06;
+}
+/* Menus, the inspector and the mode's floating tools grow into place like the dialogs. */
+:is(.document-tab-menu, .annotations-export-menu, .document-library-menu, .edit-inspector) {
+  animation: motion-pop-in 160ms var(--ease-out);
+  transform-origin: top right;
+}
+:is(.desktop-annotation-toolbar, .edit-toolbar > .tool-group) {
+  animation: motion-pop-in var(--motion-enter) var(--ease-out);
+}
+/* The pressed segment of a segmented control settles in, rather than switching. */
+:is(.desktop-mode-switch, .drive-locations, .settings-theme, .settings-nav) button[aria-pressed='true'],
+:is(.desktop-mode-switch, .settings-nav) button[aria-current] {
+  animation: motion-pop-in 180ms var(--ease-out);
+}
+
 /* Reduced motion keeps the information (what appeared, what left) as a short fade. */
 @media (prefers-reduced-motion: reduce) {
   dialog.modal[open],
@@ -178,6 +258,52 @@ html[data-phone] dialog.modal.mobile-sheet.closing::backdrop {
   }
   .phone-layout.reader-chrome-hidden :is(.app-header, .mobile-reading-status, .mobile-reading-toolbar, .page-caption) {
     translate: none;
+  }
+  /* Colours still ease; nothing moves, grows or sinks. */
+  :where(
+    button,
+    [role='button'],
+    [role='tab'],
+    [role='menuitem'],
+    [role='menuitemradio'],
+    [role='radio'],
+    a[href],
+    summary,
+    select
+  ) {
+    transition-property: background-color, color, border-color, box-shadow, opacity;
+  }
+  :where(button, [role='button'], [role='menuitem'], [role='menuitemradio'], [role='radio'], summary):active,
+  :is(
+    .operation-grid > button,
+    .document-library-open,
+    .library-shelf-row > button,
+    .document-library-continue,
+    .settings-theme button,
+    .drawing-colors button,
+    .highlight-color-palette button
+  ),
+  :is(
+    .operation-grid > button,
+    .document-library-open,
+    .library-shelf-row > button,
+    .drawing-colors button,
+    .highlight-color-palette button
+  ):is(:hover, :active) {
+    scale: none !important;
+    translate: none !important;
+  }
+  :is(
+    .document-tab-menu,
+    .annotations-export-menu,
+    .document-library-menu,
+    .edit-inspector,
+    .desktop-annotation-toolbar,
+    .edit-toolbar > .tool-group
+  ),
+  :is(.desktop-mode-switch, .drive-locations, .settings-theme, .settings-nav)
+    button:is([aria-pressed='true'], [aria-current]) {
+    animation: motion-fade-in 150ms linear;
   }
   :is(
       .primary-button,
