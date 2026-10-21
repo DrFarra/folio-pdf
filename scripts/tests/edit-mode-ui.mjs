@@ -288,6 +288,10 @@ try {
     await page.keyboard.type(' 2026');
     await page.keyboard.press('Escape');
     await box.waitFor({ state: 'detached' });
+    // The page settles back after the cancelled draft before it takes the next double click.
+    await settle();
+    await page.mouse.move(title.x, title.y);
+    await page.locator('.edit-layer[data-edit-page="1"][data-edit-state=ready]').waitFor();
     await page.mouse.dblclick(title.x, title.y);
     await box.waitFor();
     await page.keyboard.press('End');
