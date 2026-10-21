@@ -2,5 +2,13 @@
   "printWidth": 120,
   "singleQuote": true,
   "arrowParens": "avoid",
-  "endOfLine": "auto"
+  "endOfLine": "auto",
+  "overrides": [
+    {
+      "files": "scripts/tests/verify-native-export.js",
+      "options": {
+        "trailingComma": "es5"
+      }
+    }
+  ]
 }

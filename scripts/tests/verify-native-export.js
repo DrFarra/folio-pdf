@@ -104,7 +104,7 @@
   var versionCount = doc.countVersions();
   assert(
     previousXrefOffset > 0 && Math.floor(previousXrefOffset) === previousXrefOffset,
-    'Invalid incremental /Prev offset.',
+    'Invalid incremental /Prev offset.'
   );
   assert(versionCount >= 2, 'The source revision was not retained.');
 
@@ -122,7 +122,7 @@
       var nm = object.get('NM');
       return nm !== null && nm.isString() && nm.asString() === 'source-highlight';
     }),
-    'The deleted source highlight was resurrected in live page annotations.',
+    'The deleted source highlight was resurrected in live page annotations.'
   );
 
   var originalNote = namedAnnotation(firstObjects, 'source-note');
@@ -133,13 +133,13 @@
   assert(string(originalNote, 'Contents') === 'Original Folio note', 'Original note text changed.');
   assert(
     string(originalNote, 'FolioCustom') === 'keep unknown annotation dictionary keys',
-    'An unknown original annotation dictionary key was discarded.',
+    'An unknown original annotation dictionary key was discarded.'
   );
   var originalNoteAppearance = appearance(
     originalNote,
     'q 1 0 0 rg 0 0 m 20 0 l 10 20 l h f Q',
     [0, 0, 20, 20],
-    'Original note',
+    'Original note'
   );
 
   var addedHighlight = namedAnnotation(firstObjects, 'native-added-highlight');
@@ -183,7 +183,7 @@
     secondObjects.filter(function (object) {
       return object.compare(widget) === 0;
     }).length === 1,
-    'The original field is not retained exactly once in page 2 Annots.',
+    'The original field is not retained exactly once in page 2 Annots.'
   );
   var widgetAppearance = appearance(widget, 'q .9 .9 .9 rg 0 0 50 20 re f Q', [0, 0, 50, 20], 'Original hidden widget');
 
@@ -206,35 +206,35 @@
     firstTypes.filter(function (type) {
       return type === 'Highlight';
     }).length === 1,
-    'Expected exactly one new page 1 highlight.',
+    'Expected exactly one new page 1 highlight.'
   );
   assert(
     firstTypes.filter(function (type) {
       return type === 'Text';
     }).length === 2,
-    'Expected the original and new page 1 notes.',
+    'Expected the original and new page 1 notes.'
   );
   assert(
     unseenTypes.filter(function (type) {
       return type === 'Highlight';
     }).length === 1,
-    'Unvisited highlight was lost or duplicated.',
+    'Unvisited highlight was lost or duplicated.'
   );
   assert(
     unseenTypes.filter(function (type) {
       return type === 'Square';
     }).length === 1,
-    'Unvisited Square was lost or duplicated.',
+    'Unvisited Square was lost or duplicated.'
   );
   [firstPage, secondPage].forEach(function (page, index) {
     var text = page.toStructuredText().asText();
     assert(
       text.indexOf('Folio native PDFKit selection search') >= 0,
-      'Original text missing from page ' + (index + 1) + '.',
+      'Original text missing from page ' + (index + 1) + '.'
     );
     assert(
       text.indexOf('Words keep their original bounds.') >= 0,
-      'Second text line missing from page ' + (index + 1) + '.',
+      'Second text line missing from page ' + (index + 1) + '.'
     );
   });
 
@@ -260,6 +260,6 @@
       incrementalVersions: versionCount,
       previousXrefOffset: previousXrefOffset,
       xrefBeyond2GiB: previousXrefOffset > 2147483647,
-    }),
+    })
   );
 })();

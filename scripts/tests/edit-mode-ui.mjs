@@ -710,6 +710,8 @@ try {
     await page.keyboard.press('Shift+ArrowRight');
     await page.getByRole('button', { name: 'Modo lectura' }).click();
     assert(Math.abs(x(await exported('edit-nudge-on-leave.pdf')) - start - 10) < 1.5, 'The nudge is written');
+    // The reader reopens the written PDF right after: the next check starts once it has.
+    await page.waitForTimeout(1200);
     await page.waitForFunction(
       () =>
         !document.querySelector('canvas[data-live]') && !document.querySelector('[aria-label="Modo lectura"]:disabled'),
