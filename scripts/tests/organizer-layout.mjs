@@ -131,7 +131,7 @@ async function check(id, { viewport, mobile = false, native = false }) {
     await page.locator('.app-header input[type=file]').setInputFiles(path.join(root, 'public/sample.pdf'));
     await page.getByRole('heading', { name: 'sample.pdf', exact: true }).waitFor();
     await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-    if (mobile) await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
+    // Phones reach the tools from the reading bar.
     await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
     await page.getByRole('button', { name: 'Organizar páginas', exact: true }).click();
     if (native)

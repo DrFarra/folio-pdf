@@ -206,7 +206,7 @@ try {
       await page.locator('.loading-overlay').waitFor({ state: 'detached' });
       // Adding text lives in Editar PDF: draw the area on the selector's page.
       if (phone) {
-        await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
+        // Phones reach the tools from the reading bar.
         await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
         await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
       } else await openTabletEditor(page);

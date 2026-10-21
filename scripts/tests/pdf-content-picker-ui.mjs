@@ -105,7 +105,7 @@ async function open(page, phone) {
   await page.locator('.reading-area .textLayer span').first().waitFor();
   // Touch layouts keep this editor; the desktop edits inside the reader (edit-mode-ui.mjs).
   if (phone) {
-    await page.getByRole('button', { name: 'Más acciones', exact: true }).tap();
+    // Phones reach the tools from the reading bar.
     await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
     await page.getByRole('button', { name: 'Editar PDF', exact: true }).click();
   } else await openTabletEditor(page);

@@ -163,10 +163,8 @@ try {
       await page.locator('.pdf-page-wrap').first().waitFor();
     };
     const tool = async () => {
-      if (layout === 'phone') {
-        await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-        await page.locator('.mobile-actions-modal').getByRole('button', { name: 'Herramientas' }).click();
-      } else await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
+      // Phones reach the tools from the reading bar.
+      await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
       await page.getByRole('button', { name: 'Dividir PDF', exact: true }).click();
       await page.locator('.split-pdf').waitFor();
     };
