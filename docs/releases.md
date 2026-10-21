@@ -10,6 +10,16 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | macOS, Apple Silicon e Intel | [0.8.11](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.11) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.8.3](https://github.com/FarraPY/folio-pdf/releases/tag/v0.8.3) | IPA sin certificado ni perfil de Apple, para firmar con Feather. Compilación 0.9.0 pendiente. |
 
+## Cambios en 0.9.22
+
+- Nuevo diseño en escritorio. Una sola barra arriba tiene las pestañas, el cambio entre Leer, Anotar y Editar en el centro, la búsqueda y Guardar. A la izquierda queda una columna de iconos, y la página y el zoom van en una barra flotante sobre el documento.
+- Leer, Anotar y Editar son vistas del mismo documento. Ya no hay que salir de Editar con «Listo»: lo que editaste aparece al cambiar de modo, sin pantalla de carga. Un cambio hecho con las flechas justo antes de cambiar de modo ya no se pierde.
+- Anotar muestra las herramientas sobre la página y abre el panel de anotaciones al entrar. Las opciones de dibujo tienen deslizadores nuevos de grosor, opacidad y tamaño de la goma.
+- Editar muestra las propiedades de lo seleccionado en una tarjeta a la derecha, con su posición y tamaño en puntos para escribirlos a mano.
+- Herramientas muestra cada herramienta con un dibujo de lo que hace. Al abrir una, las demás quedan en una lista al lado.
+- Ajustes se divide en secciones: Apariencia, Lectura, Archivos locales y Acerca de Folio.
+- Con muchas pestañas abiertas, las que no caben se listan en un menú «+N» y ya no tapan el cambio de modo.
+
 ## Cambios en 0.9.21
 
 - En Editar, una página que cambiaste se ve nítida con mucho zoom, como el resto del documento. Antes quedaba algo borrosa hasta salir de Editar.
