@@ -31,6 +31,9 @@
   --line: #dfe2e8;
   --accent: #b0473a;
   --accent-soft: #f7e9e5;
+  /* Filled buttons, which need white text to read on them. */
+  --accent-fill: #b0473a;
+  --accent-fill-hover: #983b30;
   --hover: #e9ecf1;
 }
 :root[data-theme='dark'] {
@@ -44,7 +47,70 @@
   --line: #373d4c;
   --accent: #f08b71;
   --accent-soft: #45343a;
+  --accent-fill: #b5503d;
+  --accent-fill-hover: #983b30;
   --hover: #343a4a;
+}
+/* Accents chosen in Ajustes; coral is the default above. */
+:root[data-accent='blue'] {
+  --accent: #2f5bd3;
+  --accent-soft: #e6ecfb;
+  --accent-fill: #2f5bd3;
+  --accent-fill-hover: #2549b0;
+}
+:root[data-accent='green'] {
+  --accent: #1f7a4a;
+  --accent-soft: #e3f2ea;
+  --accent-fill: #1f7a4a;
+  --accent-fill-hover: #18633c;
+}
+:root[data-accent='violet'] {
+  --accent: #6b4bc4;
+  --accent-soft: #eee9fa;
+  --accent-fill: #6b4bc4;
+  --accent-fill-hover: #583ba8;
+}
+:root[data-accent='amber'] {
+  --accent: #a35f00;
+  --accent-soft: #fbefdc;
+  --accent-fill: #a35f00;
+  --accent-fill-hover: #8a5000;
+}
+:root[data-accent='graphite'] {
+  --accent: #3b4250;
+  --accent-soft: #e8eaee;
+  --accent-fill: #3b4250;
+  --accent-fill-hover: #2c323d;
+}
+:root[data-theme='dark'][data-accent='blue'] {
+  --accent: #8aa6f5;
+  --accent-soft: #2b3352;
+  --accent-fill: #3a62d6;
+  --accent-fill-hover: #2f52b8;
+}
+:root[data-theme='dark'][data-accent='green'] {
+  --accent: #6cc596;
+  --accent-soft: #263d33;
+  --accent-fill: #258a55;
+  --accent-fill-hover: #1f7546;
+}
+:root[data-theme='dark'][data-accent='violet'] {
+  --accent: #b39cf2;
+  --accent-soft: #352e4c;
+  --accent-fill: #7556cf;
+  --accent-fill-hover: #6447b6;
+}
+:root[data-theme='dark'][data-accent='amber'] {
+  --accent: #f2b45c;
+  --accent-soft: #433826;
+  --accent-fill: #b06a08;
+  --accent-fill-hover: #975a05;
+}
+:root[data-theme='dark'][data-accent='graphite'] {
+  --accent: #c9cfda;
+  --accent-soft: #363b48;
+  --accent-fill: #5b6475;
+  --accent-fill-hover: #4d5565;
 }
 * {
   box-sizing: border-box;
@@ -243,13 +309,13 @@ input[type='color']::-webkit-color-swatch {
   white-space: nowrap;
 }
 .primary-button {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff8f0;
   box-shadow: 0 1px 2px #7c342319;
 }
 @media (hover: hover) {
   .primary-button:hover:not(:disabled) {
-    background: #983b30;
+    background: var(--accent-fill-hover);
     box-shadow: 0 3px 10px #7c342322;
   }
 }
@@ -1919,7 +1985,7 @@ html[data-touch]
   border-radius: 6px;
 }
 [data-theme='dark'] .primary-button {
-  background: #b5503d;
+  background: var(--accent-fill);
   color: #fff;
 }
 @media (max-width: 1190px) {

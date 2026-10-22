@@ -478,3 +478,18 @@ html[data-touch] .toast .toast-action {
   line-height: 1.45;
   color: var(--muted);
 }
+
+/* «Reducir animaciones» in Ajustes: everything settles at once, whatever the system asks. */
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after,
+html[data-motion='reduced'] ::backdrop {
+  animation-duration: 1ms !important;
+  animation-delay: 0ms !important;
+  transition-duration: 1ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion='reduced'] :active {
+  scale: none !important;
+}

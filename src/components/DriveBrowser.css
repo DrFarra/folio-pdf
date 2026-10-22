@@ -47,7 +47,7 @@
     background: var(--hover);
   }
   .drive-browser .drive-welcome > button:hover:not(:disabled) {
-    background: #983b30;
+    background: var(--accent-fill-hover);
   }
 }
 .drive-browser button:disabled {
@@ -87,8 +87,8 @@
   font-weight: 550;
 }
 [data-theme='dark'] .drive-welcome > button {
-  background: #b5503d;
-  border-color: #b5503d;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: #fff;
 }
 /* The places to look in: one segmented control. */

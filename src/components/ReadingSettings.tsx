@@ -4,7 +4,7 @@ import { version } from '../../package.json';
 import { assetUrl } from '../assets';
 import { checkUpdate, installUpdate, isDesktop, isMac, openExternalUrl, type DesktopUpdate } from '../platform';
 import Modal from './Modal';
-import type { ReadingPreferences } from '../reading-preferences';
+import { ACCENTS, type ReadingPreferences } from '../reading-preferences';
 import type { DeviceLayout } from '../mobile';
 import './ReadingSettings.css';
 
@@ -117,6 +117,35 @@ export default function ReadingSettings(props: Props) {
                 );
               })}
             </div>
+            <div className="settings-card">
+              <div className="settings-accent" role="radiogroup" aria-label="Color de acento">
+                <span>Color de acento</span>
+                <div>
+                  {ACCENTS.map(([value, label, swatch]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={prefs.accent === value}
+                      aria-label={label}
+                      title={label}
+                      style={{ '--swatch': swatch } as React.CSSProperties}
+                      onClick={() => update('accent', value)}
+                    >
+                      {prefs.accent === value && <Check size={15} aria-hidden="true" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="settings-toggle">
+                <span>Reducir animaciones</span>
+                <input
+                  type="checkbox"
+                  checked={prefs.reduceMotion}
+                  onChange={event => update('reduceMotion', event.target.checked)}
+                />
+              </label>
+            </div>
           </section>
         )}
         {shown('reading') && (
@@ -192,6 +221,36 @@ export default function ReadingSettings(props: Props) {
                   onChange={event => update('smoothScroll', event.target.checked)}
                 />
               </label>
+              {!phone && (
+                <label className="settings-toggle">
+                  <span>Mostrar el número bajo cada página</span>
+                  <input
+                    type="checkbox"
+                    checked={prefs.pageCaptions}
+                    onChange={event => update('pageCaptions', event.target.checked)}
+                  />
+                </label>
+              )}
+              {desktop && (
+                <label className="settings-toggle">
+                  <span>Abrir el panel de anotaciones al entrar en Anotar</span>
+                  <input
+                    type="checkbox"
+                    checked={prefs.openNotesOnAnnotate}
+                    onChange={event => update('openNotesOnAnnotate', event.target.checked)}
+                  />
+                </label>
+              )}
+              {desktop && (
+                <label className="settings-toggle">
+                  <span>Mantener siempre visible la barra de página</span>
+                  <input
+                    type="checkbox"
+                    checked={prefs.pinPageBar}
+                    onChange={event => update('pinPageBar', event.target.checked)}
+                  />
+                </label>
+              )}
               <label className="settings-toggle">
                 <span>Reabrir en la última página</span>
                 <input

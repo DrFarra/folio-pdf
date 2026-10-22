@@ -266,7 +266,7 @@
   box-shadow: 0 1px 2px #7c342329;
 }
 [data-theme='dark'] .document-library-import {
-  background: #b5503d;
+  background: var(--accent-fill);
 }
 .document-library-create {
   border: 1px solid var(--line);

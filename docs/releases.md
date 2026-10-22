@@ -15,6 +15,12 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 - Botones, pestañas, menús y tarjetas responden con animaciones suaves. El color y la sombra cambian al pasar el puntero, y se hunden levemente al presionarlos. Las tarjetas de Herramientas y de la biblioteca se elevan un poco al pasar el puntero, y los colores del lápiz crecen.
 - Los menús, el inspector de Editar y las herramientas de Anotar y Editar aparecen con un zoom breve, como los diálogos. En los controles segmentados (Leer, Anotar y Editar, las ubicaciones de Drive, el tema, las secciones de Ajustes), la opción elegida aparece suavemente.
 - Las páginas del PDF y lo que se arrastra no se animan. Con «reducir movimiento» activado en el sistema, solo cambian los colores.
+- Ajustes tiene más opciones para adaptar Folio: color de acento (coral, azul, verde, violeta, ámbar o grafito), Reducir animaciones, Mostrar el número bajo cada página, Abrir el panel de anotaciones al entrar en Anotar y Mantener siempre visible la barra de página.
+- En el escritorio, la barra de página de abajo se esconde poco después de alejar el mouse y vuelve a aparecer al acercarlo. En Ajustes se puede dejar fija.
+- Al entrar en Anotar ya no se abre solo el panel de anotaciones (se puede activar en Ajustes).
+- Clic derecho sobre una pestaña: Renombrar (en el escritorio también renombra el archivo en su carpeta), Cerrar pestaña, Cerrar las demás pestañas y Cerrar las pestañas a la derecha. Las pestañas se reordenan arrastrándolas.
+- En el iPhone en horizontal, al ocultar las barras la página ocupa todo el ancho, sin la franja vacía de la derecha.
+- La barra de desplazamiento de Ajustes queda separada de los controles y solo aparece al pasar el puntero.
 
 ## Cambios en 0.9.25
 

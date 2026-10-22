@@ -11,7 +11,26 @@ export type ReadingPreferences = {
   pageTone: 'normal' | 'sepia' | 'dark';
   /** Phones and tablets keep the screen on while a document is open. */
   keepAwake: boolean;
+  /** Desktop: the page bar stays on screen instead of hiding until the pointer nears it. */
+  pinPageBar: boolean;
+  /** «Página N de M» under each page (desktop and tablets). */
+  pageCaptions: boolean;
+  /** Desktop: entering Anotar opens the annotations beside the pages. */
+  openNotesOnAnnotate: boolean;
+  /** The interface's accent colour (redesign-desktop.css), and animations kept to nearly nothing. */
+  accent: Accent;
+  reduceMotion: boolean;
 };
+export type Accent = 'coral' | 'blue' | 'green' | 'violet' | 'amber' | 'graphite';
+/** Ajustes' accent choices: value, name and swatch. */
+export const ACCENTS: [Accent, string, string][] = [
+  ['coral', 'Coral', '#b0473a'],
+  ['blue', 'Azul', '#2f5bd3'],
+  ['green', 'Verde', '#1f7a4a'],
+  ['violet', 'Violeta', '#6b4bc4'],
+  ['amber', 'Ámbar', '#a35f00'],
+  ['graphite', 'Grafito', '#3b4250'],
+];
 
 export const defaultReadingPreferences: ReadingPreferences = {
   mode: 'continuous',
@@ -23,6 +42,11 @@ export const defaultReadingPreferences: ReadingPreferences = {
   wheelSpeed: 100,
   pageTone: 'normal',
   keepAwake: true,
+  pinPageBar: false,
+  pageCaptions: true,
+  openNotesOnAnnotate: false,
+  accent: 'coral',
+  reduceMotion: false,
 };
 export function readReadingPreferences(): ReadingPreferences {
   try {
@@ -41,6 +65,11 @@ export function readReadingPreferences(): ReadingPreferences {
       wheelSpeed: clamp(raw.wheelSpeed, 100, 50, 150),
       pageTone: raw.pageTone === 'sepia' || raw.pageTone === 'dark' ? raw.pageTone : 'normal',
       keepAwake: raw.keepAwake !== false,
+      pinPageBar: raw.pinPageBar === true,
+      pageCaptions: raw.pageCaptions !== false,
+      openNotesOnAnnotate: raw.openNotesOnAnnotate === true,
+      accent: ACCENTS.some(([value]) => value === raw.accent) ? raw.accent : 'coral',
+      reduceMotion: raw.reduceMotion === true,
     };
   } catch {
     return { ...defaultReadingPreferences };

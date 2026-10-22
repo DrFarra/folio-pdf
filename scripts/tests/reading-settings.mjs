@@ -116,7 +116,35 @@ try {
   await page.getByRole('button', { name: 'Ver páginas en continuo', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.pdf-page-wrap').length === 3);
   results.push({ id: 'preferences-survive-reload-and-apply-to-new-files', status: 'passed' });
+  // The page bar steps aside soon after the pointer leaves it and comes back when it nears;
+  // pinned in Ajustes, it stays.
+  const bar = page.locator('.reader-toolbar');
+  await page.mouse.move(680, 200);
+  await page.waitForTimeout(400);
+  await page.mouse.move(690, 210);
+  await page.waitForFunction(() => document.querySelector('.reader-toolbar')?.hasAttribute('data-hidden'));
+  const box = await bar.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y - 40);
+  await page.waitForFunction(() => !document.querySelector('.reader-toolbar')?.hasAttribute('data-hidden'));
   await settings();
+  await page.getByRole('button', { name: 'Lectura', exact: true }).click();
+  await page.getByLabel('Mantener siempre visible la barra de página', { exact: true }).check();
+  await page.getByRole('button', { name: 'Listo', exact: true }).click();
+  await page.mouse.move(680, 200);
+  await page.waitForTimeout(2000);
+  assert.equal(await bar.getAttribute('data-hidden'), null, 'A pinned page bar stays on screen');
+  results.push({ id: 'page-bar-hides-and-pins', status: 'passed' });
+  // The accent chosen in Ajustes colours the interface.
+  await settings();
+  await page.getByRole('radio', { name: 'Verde', exact: true }).click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.accent), 'green');
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()),
+    '#1f7a4a',
+  );
+  await page.getByRole('radio', { name: 'Coral', exact: true }).click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.accent), undefined);
+  results.push({ id: 'accent-colours-the-interface', status: 'passed' });
   await page.screenshot({ path: path.join(output, 'reading-settings.png') });
   assert.deepEqual(errors, []);
   await context.close();

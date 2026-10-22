@@ -502,6 +502,27 @@ try {
     return { firstDocumentPage: 2, secondDocumentPage: 3, zoomPercents: [125, 75], preservedScroll: true };
   });
 
+  await check('right-click-renames-and-closes-tabs', async page => {
+    await open(page, b);
+    await open(page, c);
+    // A tab's right-click menu: rename it, then close the tabs around it.
+    await tab(page, a).click({ button: 'right' });
+    await page.getByRole('menu', { name: `Opciones de ${a.name}`, exact: true }).waitFor();
+    await page.getByRole('menuitem', { name: 'Renombrar…', exact: true }).click();
+    await page.getByLabel('Nombre del PDF', { exact: true }).fill('Apuntes renombrados');
+    await page.getByRole('button', { name: 'Renombrar', exact: true }).click();
+    const renamed = page.getByRole('tab', { name: 'Apuntes renombrados.pdf', exact: true });
+    await renamed.waitFor();
+    // Tabs: the renamed one, b, c.
+    await tab(page, b).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Cerrar las pestañas a la derecha', exact: true }).click();
+    await tab(page, c).waitFor({ state: 'detached' });
+    await tab(page, b).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Cerrar las demás pestañas', exact: true }).click();
+    await renamed.waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('tab').count(), 1, 'Only the chosen tab stays');
+    return { renamed: true, closedToTheRight: true, closedOthers: true };
+  });
   await check('close-inactive-tab-reopen-session-and-keyboard-switch', async page => {
     await annotate(page, a);
     await open(page, b);

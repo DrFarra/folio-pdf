@@ -216,7 +216,7 @@ html:not([data-phone]) .app-shell dialog.settings-modal[open]:has(> .settings-na
   grid-template-rows: auto 1fr auto;
   column-gap: 28px;
   width: min(780px, calc(100vw - 28px));
-  height: min(600px, calc(100dvh - 55px));
+  height: min(680px, calc(100dvh - 55px));
 }
 .settings-modal > .modal-heading {
   grid-column: 1 / -1;
@@ -251,10 +251,57 @@ html:not([data-phone]) .app-shell dialog.settings-modal[open]:has(> .settings-na
   grid-column: 2;
   min-height: 0;
   overflow-y: auto;
+  /* The scrollbar keeps clear of the controls and shows only while the pointer is over the section. */
+  margin-right: -14px;
+  padding-right: 14px;
+  scrollbar-gutter: stable;
+}
+.settings-modal:has(> .settings-nav) > .settings-section::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+.settings-modal:has(> .settings-nav) > .settings-section:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--muted) 45%, transparent);
 }
 .settings-modal:has(> .settings-nav) > .modal-actions {
   grid-column: 2;
 }
 html:not([data-phone]) .app-shell .settings-modal:has(> .settings-nav) .settings-section > h3:first-child {
   margin-top: 0;
+}
+/* Color de acento: a row of swatches; the chosen one ringed and ticked. */
+.settings-modal .settings-section > .settings-options + .settings-card {
+  margin-top: 16px;
+}
+.settings-accent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  min-height: 52px;
+}
+.settings-accent > div {
+  display: flex;
+  gap: 8px;
+}
+.settings-accent button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--swatch);
+  color: #fff;
+  cursor: pointer;
+}
+.settings-accent button[aria-checked='true'] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--swatch);
+}
+.settings-accent button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }

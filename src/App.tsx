@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { errorMessage } from './errors';
 import { savesInPlace } from './app/model';
 import { CloseBlockedDialog } from './components/DocumentDialogs';
@@ -41,10 +42,18 @@ export default function App() {
     tablet,
     windowState,
   } = folio;
+  // Ajustes' accent and reduced motion apply to the whole page, dialogs included (see public/theme.js).
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (readingPreferences.accent === 'coral') delete root.dataset.accent;
+    else root.dataset.accent = readingPreferences.accent;
+    if (readingPreferences.reduceMotion) root.dataset.motion = 'reduced';
+    else delete root.dataset.motion;
+  }, [readingPreferences.accent, readingPreferences.reduceMotion]);
   return (
     <FolioContext.Provider value={folio}>
       <div
-        className={`app-shell page-tone-${readingPreferences.pageTone}${isDesktop && isMac ? ' native-mac' : ''}${isDesktop && isMac && windowState.fullscreen ? ' mac-fullscreen' : ''}${phone ? ' phone-layout' : tablet ? ' tablet-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`}
+        className={`app-shell page-tone-${readingPreferences.pageTone}${readingPreferences.pageCaptions ? '' : ' no-page-captions'}${isDesktop && isMac ? ' native-mac' : ''}${isDesktop && isMac && windowState.fullscreen ? ' mac-fullscreen' : ''}${phone ? ' phone-layout' : tablet ? ' tablet-layout' : ''}${readerChromeHidden ? ' reader-chrome-hidden' : ''}${library ? ' library-visible' : ''}`}
         onDragEnter={e => {
           if (e.dataTransfer.types.includes('Files')) {
             e.preventDefault();

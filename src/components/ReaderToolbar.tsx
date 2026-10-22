@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownToLine,
   BookOpen,
@@ -129,13 +129,56 @@ type Props = {
   onZoomChoice: (value: string) => void;
   bookmarked: boolean;
   onBookmark: () => void;
+  /** Stays on screen; otherwise it hides while reading until the pointer nears it. */
+  pinned: boolean;
 };
 
 /** The desktop reader's floating bar over the pages: page, zoom and this page's bookmark. */
-export function ReaderToolbar({ doc, idle, page, scale, zoomMode, bookmarked, ...on }: Props) {
+export function ReaderToolbar({ doc, idle, page, scale, zoomMode, bookmarked, pinned, ...on }: Props) {
   const percent = Math.round(scale * 100);
+  const bar = useRef<HTMLDivElement>(null);
+  const [hidden, setHidden] = useState(false);
+  // Out of the way while reading: it hides soon after the pointer leaves its area, and comes
+  // back as the pointer nears it or the keyboard reaches it.
+  useEffect(() => {
+    if (pinned) {
+      setHidden(false);
+      return;
+    }
+    let timer = 0;
+    const hideSoon = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setHidden(true), 1500);
+    };
+    const near = (event: PointerEvent) => {
+      const box = bar.current?.getBoundingClientRect();
+      if (!box || event.pointerType === 'touch') return;
+      const close =
+        event.clientX > box.left - 80 &&
+        event.clientX < box.right + 80 &&
+        event.clientY > box.top - 90 &&
+        event.clientY < box.bottom + 40;
+      if (close || bar.current?.contains(document.activeElement)) {
+        clearTimeout(timer);
+        setHidden(false);
+      } else hideSoon();
+    };
+    hideSoon();
+    window.addEventListener('pointermove', near);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', near);
+    };
+  }, [pinned]);
   return (
-    <div className="reader-toolbar" role="toolbar" aria-label="Página y zoom">
+    <div
+      ref={bar}
+      className="reader-toolbar"
+      role="toolbar"
+      aria-label="Página y zoom"
+      data-hidden={hidden || undefined}
+      onFocus={() => setHidden(false)}
+    >
       <div className="page-controls">
         <IconButton label="Página anterior" onClick={() => on.onPage(page - 1)} disabled={!doc || page <= 1}>
           <ChevronLeft size={17} />

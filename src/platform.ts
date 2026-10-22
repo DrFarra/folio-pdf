@@ -141,6 +141,8 @@ export async function saveOriginalPdf(
   return (await invokeBinary<NativeDocument | null>('write_pdf_original', bytes, { headers })) || false;
 }
 // Android and iOS: deletes the private PDF copies that neither the library nor these open documents use.
+/** Desktop: renames an open document's file in its folder; resolves with the new file name. */
+export const renameNativeDocument = (token: string, name: string) => invoke<string>('rename_document', { token, name });
 export async function prunePrivateCopies(keep: string[]): Promise<void> {
   if (isNative && isMobile) await invoke('prune_private_copies', { keep });
 }

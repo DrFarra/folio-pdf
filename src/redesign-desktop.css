@@ -881,3 +881,71 @@ html:not([data-touch]) .app-shell .edit-geometry {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+
+/* The page bar steps aside while reading; it comes back as the pointer nears it (ReaderToolbar). */
+html:not([data-touch]) .app-shell .reader-toolbar {
+  transition:
+    opacity 220ms var(--ease-out, ease-out),
+    translate 220ms var(--ease-out, ease-out);
+}
+html:not([data-touch]) .app-shell .reader-toolbar[data-hidden] {
+  opacity: 0;
+  translate: 0 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-touch]) .app-shell .reader-toolbar[data-hidden] {
+    translate: none;
+  }
+}
+
+/* «Mostrar el número bajo cada página» off in Ajustes. */
+.app-shell.no-page-captions .page-caption {
+  display: none;
+}
+
+/* A tab's right-click menu opens where the pointer is. */
+html:not([data-touch]) .app-shell .document-tab-context {
+  position: fixed;
+  z-index: 90;
+  width: 290px;
+  transform-origin: top left;
+}
+html:not([data-touch]) .app-shell .document-tab-context > button:not(:has(svg)) {
+  padding-left: 37px;
+}
+/* Renombrar PDF: the name, then «.pdf» as a quiet suffix. */
+.rename-document-modal {
+  width: min(440px, calc(100vw - 28px));
+}
+.rename-document-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.rename-document-field > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rename-document-field input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+}
+.rename-document-field small {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+}

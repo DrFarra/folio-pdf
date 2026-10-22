@@ -29,6 +29,7 @@ export default function AppHeader() {
     busy,
     chooseFile,
     closeTab,
+    closeTabs,
     doc,
     download,
     editorDraft,
@@ -49,6 +50,7 @@ export default function AppHeader() {
     phone,
     readingMode,
     redo,
+    renameDocument,
     returnToLibrary,
     sessionStatus,
     setLibrary,
@@ -194,6 +196,8 @@ export default function AppHeader() {
                 onShow={() => setLibrary(false)}
                 onSwitch={key => void switchTab(key)}
                 onClose={key => void closeTab(key)}
+                onRename={renameDocument}
+                onCloseTabs={closeTabs}
               />
               {tabs.length > 0 && (
                 <IconButton

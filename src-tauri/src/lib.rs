@@ -629,6 +629,50 @@ fn remember_draft(id: String, name: String, pages: usize, opened_at: u64, deskto
     let record = Recent { id, name, size, pages, opened_at, path, draft: true, hidden: false, known: None };
     remember_catalog_entry(&desktop, record)
 }
+/// Renames an open document's file in its own folder, and the library entries that point at it.
+/// Folio's private copies (drafts, Drive downloads) only change the name Folio shows.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command(async)]
+fn rename_document(token: String, name: String, desktop: State<'_, Desktop>) -> Result<String, String> {
+    let name = valid_file_name(&name)?;
+    let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
+    let (old, new) = {
+        let mut files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+        let source = files.sources.get_mut(&token).ok_or("El documento ya no está disponible.")?;
+        let old = source.path.clone();
+        if !old.starts_with(&desktop.data) {
+            let new = old.with_file_name(&name);
+            // A change of case alone names the same file on Windows and macOS.
+            let same_file = new.to_string_lossy().to_lowercase() == old.to_string_lossy().to_lowercase();
+            if new != old {
+                if new.exists() && !same_file { return Err(format!("Ya hay un archivo llamado «{name}» en esa carpeta.")); }
+                fs::rename(&old, &new).map_err(|error| format!("No se pudo renombrar el archivo: {error}"))?;
+                source.path = new;
+            }
+        }
+        source.info.name = name.clone();
+        (old, source.path.clone())
+    };
+    let mut entries = read_recents(&desktop);
+    let mut changed = false;
+    for entry in entries.iter_mut().filter(|entry| entry.path == old || entry.path == new) {
+        entry.path = new.clone();
+        entry.name = name.clone();
+        changed = true;
+    }
+    if changed { save_recents(&desktop, &entries)?; }
+    Ok(name)
+}
+/// A file name for a PDF: no folders or characters Windows forbids, ending in .pdf.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn valid_file_name(name: &str) -> Result<String, String> {
+    let name = name.trim().trim_end_matches(['.', ' ']);
+    let stem = name.strip_suffix(".pdf").or_else(|| name.strip_suffix(".PDF")).unwrap_or(name).trim();
+    if stem.is_empty() || stem.len() > 200 || stem.chars().any(|c| c.is_control() || r#"/\:*?"<>|"#.contains(c)) {
+        return Err("Escribe un nombre sin los caracteres / \\ : * ? \" < > |.".into());
+    }
+    Ok(format!("{stem}.pdf"))
+}
 #[tauri::command(async)]
 fn forget_document(id: String, desktop: State<'_, Desktop>) -> Result<(), String> {
     let _guard = desktop.store.lock().map_err(|_| "El almacenamiento está ocupado.")?;
@@ -812,7 +856,7 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, #[cfg(windows)] read_document_shared, #[cfg(windows)] binary_ipc::release_shared, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, #[cfg(windows)] read_document_shared, #[cfg(windows)] binary_ipc::release_shared, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, rename_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
     let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]

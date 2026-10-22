@@ -6,7 +6,7 @@ import type { Area, Operation, PageEntry } from '../engine/operations.ts';
 import { commentFor, patched, toggledBookmark, withAdded, withNote, without } from './marks';
 import { highlightSelection } from '../text-selection';
 import type { AnnotationDraft } from '../text-selection';
-import { isNative, pickNativeDocuments, haptic, type Anchor } from '../platform';
+import { isDesktop, isNative, pickNativeDocuments, haptic, renameNativeDocument, type Anchor } from '../platform';
 import type { Annotation, LoadedDocument, RecentDocument, Tool } from '../types';
 import { documentStatus, isUnsaved, pageCounter as pageCounterOf, pageName as pageNameOf } from './document-status';
 import { centeredArea } from './tool-sections';
@@ -22,6 +22,8 @@ type Layer3 = ReturnType<typeof useFolioState> &
  * and the document's output, and what the interface says about the document. */
 export function useFolioCommands(f: Layer3) {
   const {
+    readingPreferencesRef,
+    setDoc,
     annotationRef,
     annotations,
     bookmarkRef,
@@ -223,6 +225,32 @@ export function useFolioCommands(f: Layer3) {
   }
   // Mobile keeps private copies of opened PDFs; those of forgotten entries are deleted.
   const retireLibraryEntry = (id: string) => libraryStore.retire(id);
+  /** Renames a tab's PDF: on desktop its file too, in the same folder. Rejects with the reason it could not. */
+  async function renameDocument(key: string, name: string) {
+    const tab = tabStore.list.find(item => item.key === key);
+    if (!tab) return;
+    const doc = tab.doc,
+      typed = name.trim().replace(/\.pdf$/i, '');
+    if (!typed) throw new Error('Escribe un nombre.');
+    const next =
+      isDesktop && isNative && doc.nativeSource ? await renameNativeDocument(doc.nativeSource, typed) : `${typed}.pdf`;
+    if (next === doc.name) return;
+    const renamed = { ...doc, name: next };
+    tabStore.list = tabStore.list.map(item => (item.key === key ? { ...item, doc: renamed } : item));
+    if (docRef.current === doc) {
+      docRef.current = renamed;
+      setDoc(renamed);
+    }
+    tabStore.publish();
+    void libraryStore.list();
+  }
+  /** Closes the given tabs one after another, stopping at one that stays open (a draft being applied). */
+  async function closeTabs(keys: string[]) {
+    for (const key of keys) {
+      await closeTab(key);
+      if (tabStore.list.some(item => item.key === key)) return;
+    }
+  }
   // iPad anchors Share and Print to the control that opened them.
   const anchorOf = (element: Element | null): Anchor | undefined => {
     const box = element?.getBoundingClientRect();
@@ -249,8 +277,8 @@ export function useFolioCommands(f: Layer3) {
     }
     setEditing(false);
     if (touchRef.current) closeMobilePanel();
-    // On a desktop window wide enough, Anotar shows the annotations beside the pages.
-    else if (window.innerWidth >= 1000) setNotesOpen(true);
+    // Unless chosen in Ajustes, Anotar leaves the annotations panel as it was.
+    else if (readingPreferencesRef.current.openNotesOnAnnotate && window.innerWidth >= 1000) setNotesOpen(true);
     setReaderChromeHidden(false);
     setMobileAnnotating(true);
     setTool('select');
@@ -407,6 +435,8 @@ export function useFolioCommands(f: Layer3) {
     removeAnnotation,
     reopenRecent,
     replaceDocument,
+    renameDocument,
+    closeTabs,
     retireLibraryEntry,
     returnToLibrary,
     returnToLocation,

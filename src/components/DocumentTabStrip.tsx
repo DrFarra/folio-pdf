@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronDown, Cloud, FileText, X } from 'lucide-react';
+import { Check, ChevronDown, Cloud, FileText, PencilLine, X } from 'lucide-react';
+import { errorMessage } from '../errors';
+import Modal from './Modal';
 import { isDesktop, shortcutLabel } from '../platform';
 import type { LoadedDocument } from '../types';
 import type { useDocumentTabDrag } from '../useDocumentTabDrag';
@@ -19,6 +21,10 @@ type Props<T extends Tab> = {
   onShow: () => void;
   onSwitch: (key: string) => void;
   onClose: (key: string) => void;
+  /** Renames a tab's PDF (its file too on desktop); rejects with why it could not. */
+  onRename: (key: string, name: string) => Promise<void>;
+  /** Closes several tabs, in order. */
+  onCloseTabs: (keys: string[]) => Promise<void>;
 };
 
 /** The desktop header's document tabs: chosen with a click or the arrow keys, closed
@@ -33,7 +39,33 @@ export default function DocumentTabStrip<T extends Tab>({
   onShow,
   onSwitch,
   onClose,
+  onRename,
+  onCloseTabs,
 }: Props<T>) {
+  // A tab's right-click menu, where the pointer is, and the tab being renamed.
+  const [context, setContext] = useState<{ key: string; x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState<T | null>(null);
+  const contextMenu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!context) return;
+    contextMenu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const dismiss = (event: Event) => {
+      if (!(event.target instanceof Node && contextMenu.current?.contains(event.target))) setContext(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContext(null);
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    document.addEventListener('keydown', escape);
+    window.addEventListener('blur', dismiss);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true);
+      document.removeEventListener('keydown', escape);
+      window.removeEventListener('blur', dismiss);
+    };
+  }, [context]);
+  const contextTab = context ? tabs.find(tab => tab.key === context.key) : undefined,
+    contextIndex = contextTab ? tabs.indexOf(contextTab) : -1;
   const wheel = useRef(0);
   const dragged = tabs.find(tab => tab.key === drag.draggingKey);
   // Tabs that don't fit stay reachable from a "+N" menu beside the strip.
@@ -122,6 +154,10 @@ export default function DocumentTabStrip<T extends Tab>({
               key={tab.key}
               data-tab-key={tab.key}
               onPointerDown={event => drag.begin(event, tab.key)}
+              onContextMenu={event => {
+                event.preventDefault();
+                if (!disabled) setContext({ key: tab.key, x: event.clientX, y: event.clientY });
+              }}
             >
               <button
                 role="tab"
@@ -221,6 +257,68 @@ export default function DocumentTabStrip<T extends Tab>({
           )}
         </div>
       )}
+      {contextTab && context && (
+        <div
+          ref={contextMenu}
+          className="document-tab-menu document-tab-context"
+          role="menu"
+          aria-label={`Opciones de ${contextTab.doc.name}`}
+          style={{ left: Math.min(context.x, window.innerWidth - 300), top: context.y + 4 }}
+        >
+          {/* Google Drive's files keep the name they have in Drive. */}
+          {!contextTab.doc.drive && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setContext(null);
+                setRenaming(contextTab);
+              }}
+            >
+              <PencilLine size={15} aria-hidden="true" />
+              <span className="document-tab-menu-name">Renombrar…</span>
+            </button>
+          )}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setContext(null);
+              onClose(contextTab.key);
+            }}
+          >
+            <X size={15} aria-hidden="true" />
+            <span className="document-tab-menu-name">Cerrar pestaña</span>
+          </button>
+          {tabs.length > 1 && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setContext(null);
+                void onCloseTabs(tabs.filter(tab => tab.key !== contextTab.key).map(tab => tab.key));
+              }}
+            >
+              <span className="document-tab-menu-name">Cerrar las demás pestañas</span>
+            </button>
+          )}
+          {contextIndex < tabs.length - 1 && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setContext(null);
+                void onCloseTabs(tabs.slice(contextIndex + 1).map(tab => tab.key));
+              }}
+            >
+              <span className="document-tab-menu-name">Cerrar las pestañas a la derecha</span>
+            </button>
+          )}
+        </div>
+      )}
+      {renaming && (
+        <RenameDialog
+          name={renaming.doc.name}
+          onClose={() => setRenaming(null)}
+          onRename={name => onRename(renaming.key, name)}
+        />
+      )}
       {dragged && (
         <div
           className="document-tab-drag-preview"
@@ -235,5 +333,62 @@ export default function DocumentTabStrip<T extends Tab>({
         </div>
       )}
     </>
+  );
+}
+
+/** Renombrar: the name without «.pdf», which Folio adds back. */
+function RenameDialog({
+  name,
+  onClose,
+  onRename,
+}: {
+  name: string;
+  onClose: () => void;
+  onRename: (name: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState(name.replace(/\.pdf$/i, ''));
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title="Renombrar PDF" onClose={onClose} className="rename-document-modal">
+      <form
+        onSubmit={event => {
+          event.preventDefault();
+          setBusy(true);
+          setError('');
+          onRename(value).then(onClose, failure => {
+            setError(errorMessage(failure));
+            setBusy(false);
+          });
+        }}
+      >
+        <label className="rename-document-field">
+          <span>Nombre</span>
+          <span>
+            <input
+              aria-label="Nombre del PDF"
+              value={value}
+              autoFocus
+              onFocus={event => event.currentTarget.select()}
+              onChange={event => setValue(event.target.value)}
+            />
+            <small>.pdf</small>
+          </span>
+        </label>
+        {error && (
+          <p className="operation-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" className="primary-button" disabled={busy || !value.trim()}>
+            Renombrar
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

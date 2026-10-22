@@ -320,6 +320,7 @@ export default function AppWorkspace() {
               }}
               bookmarked={hasBookmarkPage(bookmarks, page)}
               onBookmark={toggleBookmark}
+              pinned={readingPreferences.pinPageBar}
             />
           )}
           {!touchLayout && !inlineEditing && doc && editing && <EditToolbar store={editStore} doc={doc} />}

@@ -105,6 +105,10 @@ try {
   assert(ready, log || 'El servidor no arrancó.');
   browser = await chromium.launch({ executablePath: chrome, headless: true });
   const page = await browser.newPage({ viewport: { width: 1360, height: 690 } });
+  // The page bar stays put here: these checks measure that nothing moves (its hiding is in reading-settings.mjs).
+  await page.addInitScript(() =>
+    localStorage.setItem('folio.readingPreferences', JSON.stringify({ pinPageBar: true })),
+  );
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin);
   await page.getByRole('heading', { name: 'Biblioteca', exact: true }).waitFor();
