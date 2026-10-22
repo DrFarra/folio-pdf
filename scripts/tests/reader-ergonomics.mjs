@@ -56,6 +56,15 @@ try {
     await context.addInitScript(() =>
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }),
     );
+    const sideways = viewport.width > viewport.height,
+      safe = sideways ? 59 : 0;
+    // A sideways iPhone has 59 pt safe areas on both sides; browsers here report none, so the CSS gets them.
+    if (sideways)
+      await context.route('**/*.css', async route => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(/env\(safe-area-inset-(left|right)[^)]*\)/g, `${safe}px`);
+        await route.fulfill({ response, body });
+      });
     const page = await context.newPage();
     await page.emulateMedia({ reducedMotion: 'reduce' });
     page.setDefaultTimeout(25000);
@@ -89,8 +98,8 @@ try {
       for (const control of controls) {
         assert(control.width >= 44 && control.height >= 44, `44pt control: ${control.label}`);
         assert(
-          control.left >= -0.5 && control.right <= viewport.width + 0.5,
-          `Within horizontal viewport: ${control.label}`,
+          control.left >= safe - 0.5 && control.right <= viewport.width - safe + 0.5,
+          `Within horizontal viewport, clear of the safe areas: ${control.label}`,
         );
       }
       const frame = () =>
@@ -110,12 +119,8 @@ try {
           };
         });
       const before = await frame();
-      const sideways = viewport.width > viewport.height;
       if (sideways) {
-        // A sideways iPhone pads the workspace with its 59 pt safe areas; browsers here report none.
-        await page.addStyleTag({ content: '.phone-layout .workspace { padding-inline: 59px !important; }' });
-        await page.waitForTimeout(300);
-        Object.assign(before, await frame());
+        assert(before.x < safe, `A sideways phone's page reaches into the safe area: it starts at ${before.x}px.`);
         assert(
           before.paperWidth >= before.width * 0.9,
           `A sideways phone fits the page width: ${before.paperWidth}px of ${before.width}px.`,
@@ -138,13 +143,17 @@ try {
       );
       await page.waitForFunction(() => document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'));
       const after = await frame();
-      // Sideways, the column's band is split between both sides, so the page only steps right by half of it.
-      const shift = sideways ? 36 : 0;
-      after.x -= shift;
-      assert.deepEqual(after, before, 'Immersive reading must preserve viewport, paper scale and position.');
+      if (sideways) {
+        // Sideways, the page takes the column's width once the chrome hides.
+        assert(
+          after.width === viewport.width && after.paperWidth >= after.width - 20,
+          `Immersive sideways reading fills the width: ${after.paperWidth}px of ${after.width}px.`,
+        );
+      } else assert.deepEqual(after, before, 'Immersive reading must preserve viewport, paper scale and position.');
+      const shown = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(
-        paper.x + shift + Math.min(15, paper.width / 4),
-        Math.min(viewport.height - 140, paper.y + paper.height / 2),
+        shown.x + Math.min(15, shown.width / 4),
+        Math.min(viewport.height - 140, shown.y + shown.height / 2),
       );
       await page.waitForFunction(
         () => !document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'),

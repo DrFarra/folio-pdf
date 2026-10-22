@@ -80,18 +80,21 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
 }
 
 /* Landscape phones: the reading actions move to a column on the right, so the page keeps its height.
-   The page stays clear of it: its width is set aside on the right while it shows, and split between
-   both sides once the chrome hides, so the reader keeps its width and the page its scale.
-   The reader already stops short of the safe areas (the workspace's padding), so nothing here adds them. */
+   The reader reaches into the side safe areas, so the page uses the whole width (the island may cover
+   a bit of its edge); the controls on its edges keep clear of them. The page stays clear of the
+   column while it shows, and takes the whole width once the chrome hides. */
 @media (orientation: landscape) and (max-height: 500px) {
+  .phone-layout .reader {
+    margin-inline: calc(-1 * env(safe-area-inset-left, 0px)) calc(-1 * env(safe-area-inset-right, 0px));
+  }
   .phone-layout .mobile-reading-toolbar {
     inset: var(--app-header-height) 0 0 auto;
-    width: 72px;
+    width: calc(72px + env(safe-area-inset-right, 0px));
     height: auto;
     flex-direction: column;
     justify-content: center;
     gap: 6px;
-    padding: 8px 0 var(--native-safe-bottom, env(safe-area-inset-bottom, 0px));
+    padding: 8px env(safe-area-inset-right, 0px) var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)) 0;
     border-top: 0;
     border-left: 1px solid var(--line);
   }
@@ -103,15 +106,20 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
     display: block;
     font-size: 9px;
   }
-  /* A border, not a margin: it is the reader's colour and stays out of its width. */
-  .phone-layout:has(.mobile-reading-toolbar) .reading-area {
-    border-right: 72px solid var(--canvas);
+  .phone-layout:not(.reader-chrome-hidden):has(.mobile-reading-toolbar) .reading-area {
+    margin-right: calc(72px + env(safe-area-inset-right, 0px));
   }
-  .phone-layout.reader-chrome-hidden:has(.mobile-reading-toolbar) .reading-area {
-    border-inline: 36px solid var(--canvas);
+  html[data-phone] .page-scrubber {
+    right: env(safe-area-inset-right, 0px);
+  }
+  html[data-phone] .phone-layout:not(.reader-chrome-hidden):has(.mobile-reading-toolbar) .page-scrubber {
+    right: calc(72px + env(safe-area-inset-right, 0px));
+  }
+  html[data-phone] .touch-return-location {
+    left: calc(12px + env(safe-area-inset-left, 0px));
   }
   .phone-layout:has(.mobile-reading-toolbar) .mobile-reading-status {
-    right: 80px;
+    right: calc(80px + env(safe-area-inset-right, 0px));
     bottom: calc(10px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));
   }
   .phone-layout .mobile-annotation-toolbar > .icon-button {
