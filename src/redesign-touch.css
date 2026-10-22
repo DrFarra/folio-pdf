@@ -80,7 +80,8 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
 }
 
 /* Landscape phones: the reading actions move to a column on the right, so the page keeps its height.
-   It floats over the page like the header, so hiding the reader's chrome gives the page the whole width. */
+   The page stays clear of it: its width is set aside on the right while it shows, and split between
+   both sides once the chrome hides, so the reader keeps its width and the page its scale. */
 @media (orientation: landscape) and (max-height: 500px) {
   .phone-layout .mobile-reading-toolbar {
     inset: var(--app-header-height) 0 0 auto;
@@ -100,6 +101,13 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
   .phone-layout .mobile-reading-toolbar > button > span {
     display: block;
     font-size: 9px;
+  }
+  /* A border, not a margin: it is the reader's colour and stays out of its width. */
+  .phone-layout:has(.mobile-reading-toolbar) .reading-area {
+    border-right: 72px solid var(--canvas);
+  }
+  .phone-layout.reader-chrome-hidden:has(.mobile-reading-toolbar) .reading-area {
+    border-inline: 36px solid var(--canvas);
   }
   .phone-layout:has(.mobile-reading-toolbar) .mobile-reading-status {
     right: calc(80px + env(safe-area-inset-right, 0px));

@@ -110,11 +110,18 @@ try {
           };
         });
       const before = await frame();
-      if (viewport.width > viewport.height)
+      const sideways = viewport.width > viewport.height;
+      if (sideways) {
         assert(
           before.paperWidth >= before.width * 0.9,
           `A sideways phone fits the page width: ${before.paperWidth}px of ${before.width}px.`,
         );
+        const column = await page.locator('.mobile-reading-toolbar').boundingBox();
+        assert(
+          before.x + before.paperWidth <= column.x + 0.5,
+          `The action column must not cover the page: page ends at ${before.x + before.paperWidth}, column starts at ${column.x}.`,
+        );
+      }
       const paper = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(
         paper.x + Math.min(15, paper.width / 4),
@@ -122,9 +129,12 @@ try {
       );
       await page.waitForFunction(() => document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'));
       const after = await frame();
+      // Sideways, the column's band is split between both sides, so the page only steps right by half of it.
+      const shift = sideways ? 36 : 0;
+      after.x -= shift;
       assert.deepEqual(after, before, 'Immersive reading must preserve viewport, paper scale and position.');
       await page.touchscreen.tap(
-        paper.x + Math.min(15, paper.width / 4),
+        paper.x + shift + Math.min(15, paper.width / 4),
         Math.min(viewport.height - 140, paper.y + paper.height / 2),
       );
       await page.waitForFunction(
