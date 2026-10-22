@@ -292,7 +292,8 @@ try {
           )
         )
           return;
-        await page.keyboard.press('Escape');
+        // Escape only clears what the stray single click selected: with nothing selected it would leave Editar.
+        if (await page.locator('.edit-selection').count()) await page.keyboard.press('Escape');
         await settle();
       }
       await box.waitFor();
