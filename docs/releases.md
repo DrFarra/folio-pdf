@@ -5,10 +5,16 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.25](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.25) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.26
+
+- Botones, pestañas, menús y tarjetas responden con animaciones suaves. El color y la sombra cambian al pasar el puntero, y se hunden levemente al presionarlos. Las tarjetas de Herramientas y de la biblioteca se elevan un poco al pasar el puntero, y los colores del lápiz crecen.
+- Los menús, el inspector de Editar y las herramientas de Anotar y Editar aparecen con un zoom breve, como los diálogos. En los controles segmentados (Leer, Anotar y Editar, las ubicaciones de Drive, el tema, las secciones de Ajustes), la opción elegida aparece suavemente.
+- Las páginas del PDF y lo que se arrastra no se animan. Con «reducir movimiento» activado en el sistema, solo cambian los colores.
 
 ## Cambios en 0.9.25
 
