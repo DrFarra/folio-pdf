@@ -238,6 +238,14 @@ try {
         await twoFingers(120, 0);
         await page.waitForTimeout(500);
         assert((await paper()).width > start.width * 1.3, 'A clear pinch still zooms.');
+        // Pinching out past the fitted page returns to Ajustar página, which follows the reader's size.
+        await twoFingers(-90, 0);
+        await page.waitForTimeout(500);
+        const refit = await paper();
+        assert(
+          Math.abs(refit.width - start.width) < 0.5,
+          `Pinching out past the fit refits the page: ${start.width} → ${refit.width}px.`,
+        );
       }
       results.push({
         viewport,
