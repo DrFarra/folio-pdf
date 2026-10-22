@@ -596,6 +596,10 @@ try {
       `Zoom obscured an existing bitmap with a loading indicator: ${JSON.stringify(trace)}`,
     );
     await page.screenshot({ path: path.join(output, 'remove-highlights-after-zoom.png'), animations: 'disabled' });
+    // After the zoom the highlight sits under the floating tools; bring it to the middle like a reader would.
+    await overlays(page)
+      .first()
+      .evaluate(element => element.scrollIntoView({ block: 'center' }));
     await showMenu(page);
     await removeAction(page).click();
     await expectOverlays(page, 0);

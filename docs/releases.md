@@ -6,9 +6,16 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
 | Android, tablet y teléfono (arm64) | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | DMG universal con firma ad hoc, sin notarización. |
+| Windows x64 | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | DMG universal con firma ad hoc, sin notarización. |
 | iPhone e iPad | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.27
+
+Solo Windows y macOS.
+
+- En Anotar y Editar, las herramientas flotan sobre la página, centradas, en lugar de ocupar una franja propia. La página empieza a la misma altura que en Leer y ya no se corta la parte de arriba.
+- El inspector de Editar sigue arriba a la derecha, alineado con la página.
 
 ## Cambios en 0.9.26
 

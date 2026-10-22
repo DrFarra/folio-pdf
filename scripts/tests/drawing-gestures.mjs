@@ -169,7 +169,8 @@ try {
       const tapY = [box.y + 24, box.y + box.height - 24].find(
         value => value < options.y - 8 || value > options.y + options.height + 8,
       );
-      await touch('touchStart', box.x + box.width / 2, tapY);
+      // Near the left edge: the desktop tools float over the top centre of the page.
+      await touch('touchStart', box.x + 24, tapY);
       await touch('touchEnd');
       await page.getByRole('dialog', { name: 'Lápiz', exact: true }).waitFor({ state: 'detached' });
       await page.waitForTimeout(100);

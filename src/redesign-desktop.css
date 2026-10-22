@@ -267,14 +267,20 @@ html:not([data-touch]) .app-shell .desktop-return-location {
   bottom: 80px;
 }
 
-/* Anotar and Editar: their tools float above the page, centred. */
+/* Anotar and Editar: their tools float over the page, centred, like the page bar below:
+   they take no band of their own, so the page is not cut and does not move between modes.
+   Centred by margins, not a transform, so the inspector inside still places itself against the reader. */
 html:not([data-touch]) .app-shell .desktop-annotation-toolbar,
 html:not([data-touch]) .app-shell .edit-toolbar {
-  align-self: center;
+  position: absolute;
+  z-index: 7;
+  top: 12px;
+  left: 0;
+  right: 0;
   width: fit-content;
   max-width: calc(100% - 24px);
   min-height: 52px;
-  margin: 12px auto 4px;
+  margin: 0 auto;
   padding: 6px;
   gap: 4px;
   border: 0;
@@ -320,13 +326,14 @@ html:not([data-touch]) .app-shell .desktop-annotation-toolbar :is(.highlight-col
   }
 }
 
-/* Editar's inspector: the selection's properties over the canvas, beside the page; the pages keep their size. */
+/* Editar's inspector: the selection's properties over the canvas, beside the page; the pages keep their size.
+   It lives in the centred floating toolbar, so it is pushed from the toolbar's centre to the reader's right edge (cqw is the reader). */
 html:not([data-touch]) .app-shell .edit-inspector {
   position: absolute;
   z-index: 5;
-  top: 12px;
-  right: 12px;
-  max-height: calc(100% - 24px);
+  top: 0;
+  left: calc(50% + 50cqw - 292px);
+  max-height: calc(100dvh - var(--app-header-height) - 24px);
   width: 280px;
   border-radius: 16px;
   box-shadow: var(--float-shadow);
@@ -537,7 +544,6 @@ html .drawing-eraser-sizes small {
 }
 /* The inspector is placed against the reader, not inside the floating bar. */
 html:not([data-touch]) .app-shell .reader > .edit-toolbar {
-  position: static;
   overflow: visible;
 }
 html:not([data-touch]) .app-shell .edit-toolbar .edit-status:empty {
