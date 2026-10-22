@@ -112,6 +112,10 @@ try {
       const before = await frame();
       const sideways = viewport.width > viewport.height;
       if (sideways) {
+        // A sideways iPhone pads the workspace with its 59 pt safe areas; browsers here report none.
+        await page.addStyleTag({ content: '.phone-layout .workspace { padding-inline: 59px !important; }' });
+        await page.waitForTimeout(300);
+        Object.assign(before, await frame());
         assert(
           before.paperWidth >= before.width * 0.9,
           `A sideways phone fits the page width: ${before.paperWidth}px of ${before.width}px.`,
@@ -120,6 +124,11 @@ try {
         assert(
           before.x + before.paperWidth <= column.x + 0.5,
           `The action column must not cover the page: page ends at ${before.x + before.paperWidth}, column starts at ${column.x}.`,
+        );
+        const status = await page.locator('.mobile-reading-status').boundingBox();
+        assert(
+          status.x + status.width <= column.x && column.x - (status.x + status.width) <= 12,
+          `The page bar sits beside the column: it ends at ${status.x + status.width}, the column starts at ${column.x}.`,
         );
       }
       const paper = await page.locator('.pdf-page').first().boundingBox();
