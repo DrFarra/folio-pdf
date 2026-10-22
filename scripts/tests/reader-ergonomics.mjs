@@ -59,12 +59,18 @@ try {
     const sideways = viewport.width > viewport.height,
       safe = sideways ? 59 : 0;
     // A sideways iPhone has 59 pt safe areas on both sides; browsers here report none, so the CSS gets them.
-    if (sideways)
+    if (sideways) {
+      // Turned right (-90), the island is on the right; the check below turns it left.
+      await context.addInitScript(() => {
+        window.turn = -90;
+        Object.defineProperty(window, 'orientation', { configurable: true, get: () => window.turn });
+      });
       await context.route('**/*.css', async route => {
         const response = await route.fetch();
         const body = (await response.text()).replace(/env\(safe-area-inset-(left|right)[^)]*\)/g, `${safe}px`);
         await route.fulfill({ response, body });
       });
+    }
     const page = await context.newPage();
     await page.emulateMedia({ reducedMotion: 'reduce' });
     page.setDefaultTimeout(25000);
@@ -135,6 +141,24 @@ try {
           status.x + status.width <= column.x && column.x - (status.x + status.width) <= 12,
           `The page bar sits beside the column: it ends at ${status.x + status.width}, the column starts at ${column.x}.`,
         );
+        // With the island on the left, the column needs no right safe area.
+        const turn = value =>
+          page.evaluate(value => {
+            window.turn = value;
+            dispatchEvent(new Event('orientationchange'));
+          }, value);
+        await turn(90);
+        await page.waitForTimeout(300);
+        const narrow = await page.locator('.mobile-reading-toolbar').boundingBox(),
+          paper = (await frame()).x + (await frame()).paperWidth;
+        assert(
+          Math.abs(narrow.width - 72) < 1 &&
+            Math.abs(narrow.x + narrow.width - viewport.width) < 1 &&
+            paper <= narrow.x + 0.5,
+          `With the island on the left, the column is 72 px at the edge and clear of the page: ${JSON.stringify(narrow)}, page ends at ${paper}.`,
+        );
+        await turn(-90);
+        await page.waitForTimeout(300);
       }
       const paper = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(
@@ -238,13 +262,18 @@ try {
         await twoFingers(120, 0);
         await page.waitForTimeout(500);
         assert((await paper()).width > start.width * 1.3, 'A clear pinch still zooms.');
-        // Pinching out past the fitted page returns to Ajustar página, which follows the reader's size.
+        // A pinch can zoom out past the fitted page; turning the phone then refits it.
         await twoFingers(-90, 0);
         await page.waitForTimeout(500);
+        assert((await paper()).width < start.width - 20, 'A pinch zooms out past the fitted page.');
+        for (const size of [{ width: 844, height: 390 }, viewport]) {
+          await page.setViewportSize(size);
+          await page.waitForTimeout(500);
+        }
         const refit = await paper();
         assert(
           Math.abs(refit.width - start.width) < 0.5,
-          `Pinching out past the fit refits the page: ${start.width} → ${refit.width}px.`,
+          `Turning the phone refits a zoomed-out page: ${start.width} → ${refit.width}px.`,
         );
       }
       results.push({

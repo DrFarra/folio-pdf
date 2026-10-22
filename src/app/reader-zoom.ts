@@ -65,8 +65,17 @@ export function useReaderZoom(options: ZoomOptions) {
   const currentScale = useLatest(scale);
   // The fitted-page scale a double tap zooms from and returns to.
   const fitScaleRef = useLatest(fitScale);
-  // What Ajustar página shows: zooming out to it, or past it, returns there, so the page refits when the reader resizes.
+  // What Ajustar página shows: a double tap on a page zoomed out past it returns there.
   const pageScaleRef = useLatest(pageScale);
+  // Turning the phone refits a page zoomed out past the fit: it would keep the other orientation's size.
+  const sideways = viewportSize.width > viewportSize.height;
+  const fitted = useRef({ sideways, page: pageScale });
+  useEffect(() => {
+    const before = fitted.current;
+    fitted.current = { sideways, page: pageScale };
+    if (before.sideways !== sideways && zoomModeRef.current === 'custom' && currentScale.current < before.page)
+      setZoomMode('page');
+  }, [sideways, pageScale, zoomModeRef, currentScale]);
   const pointerAnchor = useRef<ZoomAnchor | null>(null);
   const readingAnchor = useRef<ReadingAnchor | null>(null);
 
@@ -295,10 +304,6 @@ export function useReaderZoom(options: ZoomOptions) {
           root.scrollLeft += bounds.left + bounds.width * active.x - active.pointerX;
           root.scrollTop += bounds.top + bounds.height * active.y - active.pointerY;
         }
-        return;
-      }
-      if (next <= pageScaleRef.current * 1.02) {
-        setZoomMode('page');
         return;
       }
       pointerAnchor.current = {

@@ -84,17 +84,24 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
    a bit of its edge); the controls on its edges keep clear of them. The page stays clear of the
    column while it shows, and takes the whole width once the chrome hides. */
 @media (orientation: landscape) and (max-height: 500px) {
+  /* The right safe area the column and the page's right-hand controls keep: none when the island is on the left. */
+  .phone-layout {
+    --column-safe: env(safe-area-inset-right, 0px);
+  }
+  html[data-island='left'] .phone-layout {
+    --column-safe: 0px;
+  }
   .phone-layout .reader {
     margin-inline: calc(-1 * env(safe-area-inset-left, 0px)) calc(-1 * env(safe-area-inset-right, 0px));
   }
   .phone-layout .mobile-reading-toolbar {
     inset: var(--app-header-height) 0 0 auto;
-    width: calc(72px + env(safe-area-inset-right, 0px));
+    width: calc(72px + var(--column-safe));
     height: auto;
     flex-direction: column;
     justify-content: center;
     gap: 6px;
-    padding: 8px env(safe-area-inset-right, 0px) var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)) 0;
+    padding: 8px var(--column-safe) var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)) 0;
     border-top: 0;
     border-left: 1px solid var(--line);
   }
@@ -107,19 +114,19 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
     font-size: 9px;
   }
   .phone-layout:not(.reader-chrome-hidden):has(.mobile-reading-toolbar) .reading-area {
-    margin-right: calc(72px + env(safe-area-inset-right, 0px));
+    margin-right: calc(72px + var(--column-safe));
   }
   html[data-phone] .page-scrubber {
-    right: env(safe-area-inset-right, 0px);
+    right: var(--column-safe);
   }
   html[data-phone] .phone-layout:not(.reader-chrome-hidden):has(.mobile-reading-toolbar) .page-scrubber {
-    right: calc(72px + env(safe-area-inset-right, 0px));
+    right: calc(72px + var(--column-safe));
   }
   html[data-phone] .touch-return-location {
     left: calc(12px + env(safe-area-inset-left, 0px));
   }
   .phone-layout:has(.mobile-reading-toolbar) .mobile-reading-status {
-    right: calc(80px + env(safe-area-inset-right, 0px));
+    right: calc(80px + var(--column-safe));
     bottom: calc(10px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));
   }
   .phone-layout .mobile-annotation-toolbar > .icon-button {
