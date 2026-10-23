@@ -125,6 +125,13 @@ html[data-phone] .app-shell .workbench .tool-categories .tool-text > span {
   html[data-phone] .touch-return-location {
     left: calc(12px + env(safe-area-inset-left, 0px));
   }
+  /* A tool's hint (an area to drag, a note to place) sits under the header, centred on the page. */
+  .phone-layout:has(.mobile-reading-toolbar) .annotation-tool-hint {
+    top: calc(var(--app-header-height) + 8px);
+    bottom: auto;
+    left: calc(50% - (72px + var(--column-safe)) / 2);
+    max-width: calc(100% - 72px - var(--column-safe) - 16px);
+  }
   .phone-layout:has(.mobile-reading-toolbar) .mobile-reading-status {
     right: calc(80px + var(--column-safe));
     bottom: calc(10px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));

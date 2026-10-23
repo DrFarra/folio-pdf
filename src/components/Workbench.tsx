@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
+  ChevronLeft,
   ArrowUp,
   Copy,
   Crop,
@@ -292,6 +293,10 @@ export default function Workbench(props: Props) {
     props.onDraftChange?.(editDraft);
   }, [editDraft, props.onDraftChange]);
   useEffect(() => () => props.onDraftChange?.(false), [props.onDraftChange]);
+  // A tool opens at its top, not where the list of tools was scrolled to.
+  useEffect(() => {
+    document.querySelector('dialog.workbench[open]')?.scrollTo({ top: 0 });
+  }, [section]);
   const [compareVisited, setCompareVisited] = useState(props.section === 'compare');
   const [error, setError] = useState('');
   const [taskBusy, setBusy] = useState(false);
@@ -1835,6 +1840,21 @@ export default function Workbench(props: Props) {
       }}
       className={className}
       aside={sidebar}
+      back={
+        section !== 'home' &&
+        section !== 'edit-pdf' && (
+          <button
+            type="button"
+            className="icon-button modal-back"
+            aria-label="Volver a Herramientas"
+            title="Volver a Herramientas"
+            disabled={busy || compareBusy}
+            onClick={returnToTools}
+          >
+            <ChevronLeft size={22} aria-hidden="true" />
+          </button>
+        )
+      }
     >
       {content}
     </Modal>

@@ -104,6 +104,7 @@ export default function Modal({
   onClose,
   className = '',
   aside,
+  back,
 }: {
   title: string;
   children: React.ReactNode;
@@ -111,6 +112,8 @@ export default function Modal({
   className?: string;
   /** Shown before the title, beside the dialog's content (Herramientas' list of tools). */
   aside?: React.ReactNode;
+  /** A back button in the heading, before the title; phones show it in place of one in the body. */
+  back?: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // Capture before child autoFocus runs during commit, especially note editors.
@@ -207,6 +210,7 @@ export default function Modal({
       <SheetHandle onClose={close} />
       {aside}
       <div className="modal-heading">
+        {back}
         <h2 id={titleId}>{title}</h2>
         <button className="icon-button" onClick={close} aria-label="Cerrar diálogo">
           <X size={19} />
