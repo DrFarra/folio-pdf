@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isDesktop, isMobile, isNative, isAndroid } from './platform';
+import { isDesktop, isMobile, isNative, isAndroid, isIOS } from './platform';
 import { invoke } from '@tauri-apps/api/core';
 
 // A phone keeps its touch controls when rotated; a narrow mouse-driven desktop
@@ -58,6 +58,41 @@ export function useDeviceLayout() {
       viewport?.removeEventListener('scroll', update);
     };
   }, [layout]);
+  useEffect(() => {
+    // A sideways iPhone reports the island's safe area on both sides; the action column only needs it
+    // on the island's side. Turned left (90), the island is on the left. Upright, the last side is kept,
+    // so turning the same way again starts at the right width; while the phone turns, the side is
+    // followed frame by frame, since iOS may update it after the resize.
+    if (!isIOS) return;
+    const root = document.documentElement,
+      landscape = matchMedia('(orientation: landscape)'),
+      update = () => {
+        const turn = Number(window.orientation);
+        if (turn === 90) root.dataset.island = 'left';
+        else if (turn === -90) root.dataset.island = 'right';
+      };
+    let frames = 0,
+      frame = 0;
+    const follow = () => {
+      update();
+      frame = --frames > 0 ? requestAnimationFrame(follow) : 0;
+    };
+    const watch = () => {
+      update();
+      frames = 60;
+      if (!frame) frame = requestAnimationFrame(follow);
+    };
+    update();
+    landscape.addEventListener('change', watch);
+    window.addEventListener('orientationchange', watch);
+    window.addEventListener('resize', watch);
+    return () => {
+      cancelAnimationFrame(frame);
+      landscape.removeEventListener('change', watch);
+      window.removeEventListener('orientationchange', watch);
+      window.removeEventListener('resize', watch);
+    };
+  }, []);
   useEffect(() => {
     if (!isNative || !isAndroid) return;
     let alive = true,

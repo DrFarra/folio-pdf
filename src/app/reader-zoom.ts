@@ -42,7 +42,7 @@ export function useReaderZoom(options: ZoomOptions) {
   const [zoomMode, setZoomMode] = useState('page');
   const [customScale, setCustomScale] = useState(1);
   const zoomModeRef = useLatest(zoomMode);
-  const { scale, fitScale } = useMemo(() => {
+  const { scale, fitScale, pageScale } = useMemo(() => {
     const rotated = rotation % 180 !== 0;
     const w = (rotated ? dimensions.height : dimensions.width) * (spread ? 2 : 1) + (spread ? pageGap : 0);
     const h = rotated ? dimensions.width : dimensions.height;
@@ -50,20 +50,32 @@ export function useReaderZoom(options: ZoomOptions) {
       0.25,
       Math.min(2, (viewportSize.width - (phone ? 16 : 54)) / w, (viewportSize.height - (phone ? 160 : 76)) / h),
     );
+    const width = Math.max(
+      0.25,
+      Math.min(3, (viewportSize.width - (phone ? 16 : viewportSize.width < 600 ? 30 : 100)) / w),
+    );
     // A phone held sideways fits the width: fitting the page height leaves it unreadable.
-    if (zoomMode === 'width' || (zoomMode === 'page' && phone && viewportSize.width > viewportSize.height))
-      return {
-        scale: Math.max(
-          0.25,
-          Math.min(3, (viewportSize.width - (phone ? 16 : viewportSize.width < 600 ? 30 : 100)) / w),
-        ),
-        fitScale: fit,
-      };
-    return { scale: zoomMode === 'page' ? fit : customScale, fitScale: fit };
+    const page = phone && viewportSize.width > viewportSize.height ? width : fit;
+    return {
+      scale: zoomMode === 'width' ? width : zoomMode === 'page' ? page : customScale,
+      fitScale: fit,
+      pageScale: page,
+    };
   }, [zoomMode, customScale, viewportSize, dimensions, rotation, phone, spread, pageGap]);
   const currentScale = useLatest(scale);
   // The fitted-page scale a double tap zooms from and returns to.
   const fitScaleRef = useLatest(fitScale);
+  // What Ajustar página shows: a double tap on a page zoomed out past it returns there.
+  const pageScaleRef = useLatest(pageScale);
+  // Turning the phone refits a page zoomed out past the fit: it would keep the other orientation's size.
+  const sideways = viewportSize.width > viewportSize.height;
+  const fitted = useRef({ sideways, page: pageScale });
+  useEffect(() => {
+    const before = fitted.current;
+    fitted.current = { sideways, page: pageScale };
+    if (before.sideways !== sideways && zoomModeRef.current === 'custom' && currentScale.current < before.page)
+      setZoomMode('page');
+  }, [sideways, pageScale, zoomModeRef, currentScale]);
   const pointerAnchor = useRef<ZoomAnchor | null>(null);
   const readingAnchor = useRef<ReadingAnchor | null>(null);
 
@@ -104,7 +116,11 @@ export function useReaderZoom(options: ZoomOptions) {
   // A double tap zooms in on that point; another one returns to the fitted page.
   const toggleTapZoom = useCallback(
     (point: Point) => {
-      if (zoomModeRef.current === 'custom' && currentScale.current > fitScaleRef.current * 1.15) setZoomMode('page');
+      if (
+        zoomModeRef.current === 'custom' &&
+        (currentScale.current > fitScaleRef.current * 1.15 || currentScale.current < pageScaleRef.current)
+      )
+        setZoomMode('page');
       else zoomAt(Math.max(currentScale.current * 2, fitScaleRef.current * 2), point);
     },
     [zoomAt],

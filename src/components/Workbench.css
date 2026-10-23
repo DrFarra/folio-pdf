@@ -847,3 +847,35 @@ html[data-phone] .tool-categories .tool-text {
 .tool-sidebar {
   display: none;
 }
+
+/* Phones go back from the dialog's heading, so a navigation row holding only that button goes. */
+html[data-phone] dialog.workbench > .workbench-navigation:has(> .workbench-back:only-child) {
+  display: none;
+}
+/* Sideways phones use the width: two tools per row, and the organizer's pages four across. */
+@media (orientation: landscape) and (max-height: 500px) {
+  html[data-phone] .app-shell .workbench .tool-categories .operation-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+  html[data-phone] dialog.pages-workbench > .page-plan {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Short forms (Convertir, Rellenar formulario) fit their content; long ones still scroll inside. */
+  html[data-phone] dialog.bounded-workbench[open] {
+    height: fit-content;
+    max-height: calc(var(--visible-height, 100dvh) - 16px);
+  }
+  /* A tool's actions stay in view, down to the dialog's edge, while its options scroll
+     (the dialogs that scroll inside their own body keep their actions in place already). */
+  html[data-phone] dialog.workbench:not(.bounded-workbench, .pages-workbench, .content-workbench) .operation-actions {
+    position: sticky;
+    bottom: -16px;
+    z-index: 2;
+    margin-bottom: -16px;
+    padding-bottom: 16px;
+    background: var(--bg);
+  }
+}
