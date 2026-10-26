@@ -87,3 +87,47 @@ html[data-phone] .sheet-dragging {
     transition: none;
   }
 }
+/* Phones go back from the heading, as iOS does; other layouts keep the body's back button. */
+.modal-heading > .modal-back {
+  display: none;
+}
+html[data-phone] .modal-heading > .icon-button.modal-back {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin: 0 -8px 0 -12px;
+  color: var(--accent);
+}
+html[data-phone] .modal-heading > .modal-back + h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Sideways phones: a window centred in the visible height, without the drag handle; a sheet's
+   handle and spacing would take a third of the little height there is. */
+@media (orientation: landscape) and (max-height: 500px) {
+  html[data-phone] .modal.mobile-sheet > .sheet-handle {
+    display: none;
+  }
+  html[data-phone] dialog.modal.mobile-sheet {
+    top: calc(var(--visible-top, 0px) + 8px);
+    bottom: calc(100dvh - var(--visible-height, 100dvh) - var(--visible-top, 0px) + 8px);
+    margin-block: auto;
+    max-height: calc(var(--visible-height, 100dvh) - 16px);
+    padding-top: 0;
+    border-radius: 16px;
+  }
+  /* Without a height of their own (Organizar páginas, Editar PDF set one), dialogs fit their content. */
+  :where(html[data-phone] dialog.modal.mobile-sheet) {
+    height: fit-content;
+  }
+  /* Editar PDF sets its own width and heading, using the whole width. */
+  html[data-phone] dialog.modal.mobile-sheet:not(.content-workbench) {
+    width: min(760px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px));
+  }
+  html[data-phone] dialog.modal.mobile-sheet:not(.content-workbench) > .modal-heading {
+    min-height: 48px;
+    margin-bottom: 8px;
+  }
+}

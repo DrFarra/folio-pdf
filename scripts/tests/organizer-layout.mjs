@@ -39,7 +39,8 @@ const snapshot = page =>
     return {
       dialog: bounds('.pages-workbench'),
       header: bounds('.pages-workbench>.modal-heading'),
-      back: bounds('.workbench-navigation'),
+      // Phones go back from the heading; other layouts from the row under it.
+      back: bounds(document.documentElement.dataset.phone ? '.pages-workbench .modal-back' : '.workbench-navigation'),
       controls: bounds('.page-plan-actions'),
       grid: bounds('.page-plan'),
       footer: bounds('.page-plan-footer'),

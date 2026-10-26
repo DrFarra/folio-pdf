@@ -56,6 +56,21 @@ try {
     await context.addInitScript(() =>
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' }),
     );
+    const sideways = viewport.width > viewport.height,
+      safe = sideways ? 59 : 0;
+    // A sideways iPhone has 59 pt safe areas on both sides; browsers here report none, so the CSS gets them.
+    if (sideways) {
+      // Turned right (-90), the island is on the right; the check below turns it left.
+      await context.addInitScript(() => {
+        window.turn = -90;
+        Object.defineProperty(window, 'orientation', { configurable: true, get: () => window.turn });
+      });
+      await context.route('**/*.css', async route => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(/env\(safe-area-inset-(left|right)[^)]*\)/g, `${safe}px`);
+        await route.fulfill({ response, body });
+      });
+    }
     const page = await context.newPage();
     await page.emulateMedia({ reducedMotion: 'reduce' });
     page.setDefaultTimeout(25000);
@@ -89,8 +104,8 @@ try {
       for (const control of controls) {
         assert(control.width >= 44 && control.height >= 44, `44pt control: ${control.label}`);
         assert(
-          control.left >= -0.5 && control.right <= viewport.width + 0.5,
-          `Within horizontal viewport: ${control.label}`,
+          control.left >= safe - 0.5 && control.right <= viewport.width - safe + 0.5,
+          `Within horizontal viewport, clear of the safe areas: ${control.label}`,
         );
       }
       const frame = () =>
@@ -110,11 +125,41 @@ try {
           };
         });
       const before = await frame();
-      if (viewport.width > viewport.height)
+      if (sideways) {
+        assert(before.x < safe, `A sideways phone's page reaches into the safe area: it starts at ${before.x}px.`);
         assert(
           before.paperWidth >= before.width * 0.9,
           `A sideways phone fits the page width: ${before.paperWidth}px of ${before.width}px.`,
         );
+        const column = await page.locator('.mobile-reading-toolbar').boundingBox();
+        assert(
+          before.x + before.paperWidth <= column.x + 0.5,
+          `The action column must not cover the page: page ends at ${before.x + before.paperWidth}, column starts at ${column.x}.`,
+        );
+        const status = await page.locator('.mobile-reading-status').boundingBox();
+        assert(
+          status.x + status.width <= column.x && column.x - (status.x + status.width) <= 12,
+          `The page bar sits beside the column: it ends at ${status.x + status.width}, the column starts at ${column.x}.`,
+        );
+        // With the island on the left, the column needs no right safe area.
+        const turn = value =>
+          page.evaluate(value => {
+            window.turn = value;
+            dispatchEvent(new Event('orientationchange'));
+          }, value);
+        await turn(90);
+        await page.waitForTimeout(300);
+        const narrow = await page.locator('.mobile-reading-toolbar').boundingBox(),
+          paper = (await frame()).x + (await frame()).paperWidth;
+        assert(
+          Math.abs(narrow.width - 72) < 1 &&
+            Math.abs(narrow.x + narrow.width - viewport.width) < 1 &&
+            paper <= narrow.x + 0.5,
+          `With the island on the left, the column is 72 px at the edge and clear of the page: ${JSON.stringify(narrow)}, page ends at ${paper}.`,
+        );
+        await turn(-90);
+        await page.waitForTimeout(300);
+      }
       const paper = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(
         paper.x + Math.min(15, paper.width / 4),
@@ -122,10 +167,17 @@ try {
       );
       await page.waitForFunction(() => document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'));
       const after = await frame();
-      assert.deepEqual(after, before, 'Immersive reading must preserve viewport, paper scale and position.');
+      if (sideways) {
+        // Sideways, the page takes the column's width once the chrome hides.
+        assert(
+          after.width === viewport.width && after.paperWidth >= after.width - 20,
+          `Immersive sideways reading fills the width: ${after.paperWidth}px of ${after.width}px.`,
+        );
+      } else assert.deepEqual(after, before, 'Immersive reading must preserve viewport, paper scale and position.');
+      const shown = await page.locator('.pdf-page').first().boundingBox();
       await page.touchscreen.tap(
-        paper.x + Math.min(15, paper.width / 4),
-        Math.min(viewport.height - 140, paper.y + paper.height / 2),
+        shown.x + Math.min(15, shown.width / 4),
+        Math.min(viewport.height - 140, shown.y + shown.height / 2),
       );
       await page.waitForFunction(
         () => !document.querySelector('.app-shell').classList.contains('reader-chrome-hidden'),
@@ -210,6 +262,19 @@ try {
         await twoFingers(120, 0);
         await page.waitForTimeout(500);
         assert((await paper()).width > start.width * 1.3, 'A clear pinch still zooms.');
+        // A pinch can zoom out past the fitted page; turning the phone then refits it.
+        await twoFingers(-90, 0);
+        await page.waitForTimeout(500);
+        assert((await paper()).width < start.width - 20, 'A pinch zooms out past the fitted page.');
+        for (const size of [{ width: 844, height: 390 }, viewport]) {
+          await page.setViewportSize(size);
+          await page.waitForTimeout(500);
+        }
+        const refit = await paper();
+        assert(
+          Math.abs(refit.width - start.width) < 0.5,
+          `Turning the phone refits a zoomed-out page: ${start.width} → ${refit.width}px.`,
+        );
       }
       results.push({
         viewport,
