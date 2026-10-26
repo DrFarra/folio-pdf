@@ -1,6 +1,8 @@
 import * as mupdf from 'mupdf';
 import { open, hasSignature, save, folioAnnotation } from './mupdf-engine.mjs';
 import { jpegOrientation, orientationMatrix } from './jpeg-orientation.mjs';
+import { compressDocument, COMPRESSED_SAVE, loadImage, type Progress } from './compress.ts';
+import { COMPRESSION_PRESETS, validCompression, type CompressionSettings } from './compression-settings.ts';
 
 export type Area = { page: number; rect: [number, number, number, number] };
 export type AreaContentInfo = {
@@ -108,7 +110,9 @@ export type Field = Area & {
 };
 export type PageEntry = { page?: number; source?: number; blank?: [number, number]; rotation?: number };
 export type Operation =
-  | { operation: 'fields' | 'text' | 'compress' | 'sanitize' | 'unprotect' }
+  | { operation: 'fields' | 'text' | 'sanitize' | 'unprotect' }
+  /** Without settings, only lossless changes. */
+  | { operation: 'compress'; settings?: CompressionSettings }
   | ({ operation: 'area-info' } & Area)
   | { operation: 'page-content'; page: number; graphics?: boolean }
   | { operation: 'page-image'; page: number; id: string }
@@ -4227,7 +4231,7 @@ function jpegSource(doc: mupdf.PDFDocument, page: mupdf.PDFPage, image: mupdf.Im
   // different pointer means another image was painted, e.g. an inline one.
   let loaded: mupdf.Image | undefined;
   try {
-    loaded = doc.loadImage(object);
+    loaded = loadImage(doc, object);
     if (loaded.pointer !== image.pointer) return null;
   } catch {
     return null;
@@ -5165,6 +5169,7 @@ export function operateDocument(
   options: Operation,
   password = '',
   onPart?: (index: number, part: Uint8Array) => void,
+  onProgress?: Progress,
 ):
   | number
   | Uint8Array
@@ -5670,6 +5675,12 @@ export function operateDocument(
       clearPrivateData(doc);
     } else if (operation === 'compress') {
       allowed(doc, 'edit');
+      const settings = options.settings ?? COMPRESSION_PRESETS.lossless;
+      if (!validCompression(settings)) fail('Ajustes de compresión inválidos.');
+      compressDocument(doc, settings, onProgress);
+      const output = save(doc, COMPRESSED_SAVE);
+      // An already optimized PDF is returned as it was.
+      return output.length >= bytes.length ? new Uint8Array(bytes) : output;
     } else if (operation === 'protect') {
       allowed(doc, 'edit');
       const user = options.userPassword,
@@ -5696,11 +5707,9 @@ export function operateDocument(
       return save(doc, 'garbage=4,compress=yes,encrypt=no');
     } else fail('Operación desconocida.');
     // OCR draws the same font on every page: deduplication merges those copies.
-    const output =
-      operation === 'ocr'
-        ? saveDrawnDocument(doc, password)
-        : save(doc, operation === 'remove-image' ? QUICK : undefined);
-    return operation === 'compress' && output.length >= bytes.length ? new Uint8Array(bytes) : output;
+    return operation === 'ocr'
+      ? saveDrawnDocument(doc, password)
+      : save(doc, operation === 'remove-image' ? QUICK : undefined);
   } finally {
     doc.destroy();
     mupdf.emptyStore();

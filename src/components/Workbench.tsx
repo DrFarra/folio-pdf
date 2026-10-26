@@ -38,7 +38,7 @@ import { Thumbnail } from './PDFPage';
 import { inspectPdf, processPdf, readFields, readTextLayers, splitPdf } from '../engine/client';
 import type { Area, Field, Operation, PageEntry, PageContentItem } from '../engine/operations.ts';
 import type { LoadedDocument, Tool } from '../types';
-import { formatSize, getDocument, plural } from '../pdf';
+import { getDocument, plural } from '../pdf';
 import { errorMessage } from '../errors';
 import { pdfAssetSettings } from '../assets';
 import { recognizePdf, type OcrResult } from '../ocr';
@@ -50,6 +50,7 @@ import CompareDocuments from './CompareDocuments';
 import ContentEditor, { NumberField, type ContentEditorKind } from './ContentEditor';
 import PdfContentPicker from './PdfContentPicker';
 import ConversionOptions from './ConversionOptions';
+import CompressOptions from './CompressOptions';
 import SplitPdf from './SplitPdf';
 import type { Part } from '../split';
 import { usePagePlanDrag } from './usePagePlanDrag';
@@ -73,7 +74,7 @@ type Props = {
   onApply: (
     operation: Operation,
     signal?: AbortSignal,
-    context?: { keepEditing: boolean; page: number },
+    context?: { keepEditing?: boolean; page?: number; progress?: (done: number, total: number) => void },
   ) => Promise<void>;
   /** `working`: the bytes are only read to make other PDFs, so annotations may be appended to them. */
   getBytes: (working?: boolean) => Promise<Uint8Array>;
@@ -1372,16 +1373,18 @@ export default function Workbench(props: Props) {
         </>
       )}
       {section === 'compress' && (
-        <>
-          <p className="modal-description">
-            Reduce el tamaño del archivo sin perder calidad de imagen. Tamaño actual: {formatSize(doc.size)}.
-          </p>
-          <div className="operation-actions">
-            <button className="primary-button" disabled={busy} onClick={() => void apply({ operation: 'compress' })}>
-              Comprimir
-            </button>
-          </div>
-        </>
+        <CompressOptions
+          size={doc.size}
+          busy={busy}
+          onCompress={settings =>
+            void task(signal =>
+              onApply({ operation: 'compress', settings }, signal, {
+                progress: (done, total) =>
+                  setProgress(`Comprimiendo… ${Math.min(99, Math.round((done / Math.max(1, total)) * 100))} %`),
+              }),
+            )
+          }
+        />
       )}
       {section === 'sanitize' && (
         <>

@@ -67,6 +67,22 @@ const edited = operateDocument(fs.readFileSync(source), {
   color: '#000000',
 });
 fs.writeFileSync(path.join(output, 'comparison-after.pdf'), edited);
+{
+  // A 6-inch photo stored at 400 ppp, for Comprimir PDF.
+  const doc = new mupdf.PDFDocument(),
+    width = 2400,
+    height = 1600,
+    pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, width, height], false),
+    pixels = pixmap.getPixels();
+  for (let i = 0; i < pixels.length; i++)
+    pixels[i] = 128 + 100 * Math.sin(i / 997) * Math.cos(i / 3001) + ((i * 7919) % 31);
+  const resources = doc.newDictionary(),
+    xobjects = doc.newDictionary();
+  xobjects.put('Photo', doc.addImage(new mupdf.Image(pixmap)));
+  resources.put('XObject', xobjects);
+  doc.insertPage(-1, doc.addPage([0, 0, 612, 792], 0, resources, 'q 432 0 0 288 90 400 cm /Photo Do Q'));
+  fs.writeFileSync(path.join(output, 'photo.pdf'), doc.saveToBuffer('compress=yes').asUint8Array());
+}
 const chrome = findChrome();
 const preview = spawn(
   process.execPath,
@@ -222,6 +238,29 @@ try {
     await sidebar.getByRole('button', { name: 'Proteger PDF', exact: true }).click();
     await page.getByRole('heading', { name: 'Proteger PDF', exact: true }).waitFor();
     return { switchedTwice: true };
+  });
+  await check('compress-with-custom-level-shrinks-photo-and-reports-it', async page => {
+    const photo = path.join(output, 'photo.pdf'),
+      before = fs.statSync(photo).size;
+    await open(page, photo);
+    await tools(page, 'Comprimir PDF');
+    const level = page.getByLabel('Nivel de compresión', { exact: true });
+    assert.equal(await level.inputValue(), 'balanced');
+    await level.selectOption('custom');
+    await page.getByLabel('Resolución máxima de las imágenes', { exact: true }).fill('150');
+    await page.getByLabel('Calidad de las fotos', { exact: true }).fill('70');
+    assert.equal(await page.locator('.compress-range output').first().textContent(), '150 ppp');
+    await page.getByRole('button', { name: 'Comprimir', exact: true }).click();
+    await page.getByText(/^PDF reducido de /).waitFor();
+    await page.locator('.workbench').waitFor({ state: 'detached' });
+    const bytes = await save(page, 'ui-compressed.pdf');
+    assert(bytes.length < before / 5, `${bytes.length} of ${before}`);
+    const doc = new mupdf.PDFDocument(bytes),
+      image = doc.findPage(0).get('Resources', 'XObject', 'Photo');
+    // 6 in at 150 ppp.
+    assert.equal(image.get('Width').asNumber(), 900);
+    assert.equal(image.get('Filter').asName(), 'DCTDecode');
+    return { from: before, to: bytes.length };
   });
   await check('mouse-page-drag-group-cancel-and-content-history', async page => {
     await tools(page, 'Organizar páginas');

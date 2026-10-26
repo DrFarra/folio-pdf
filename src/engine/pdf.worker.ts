@@ -23,6 +23,7 @@ self.onmessage = async (
             request.options!,
             request.password,
             (part, output) => self.postMessage({ part, output }, { transfer: [output.buffer] }),
+            (done, total) => self.postMessage({ progress: [done, total] }),
           )
         : request.operation === 'inspect'
           ? inspectDocument(request.bytes, request.password)
