@@ -12,7 +12,7 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 ## Cambios en 0.9.29
 
-Para Windows, macOS, Android, iPhone e iPad. En Windows y macOS también llegan los cambios de 0.9.28 que no son solo del teléfono.
+Para Windows, macOS, Android, iPhone e iPad.
 
 - Comprimir PDF tiene niveles: Sin pérdida (cada página queda idéntica), Alta calidad, Equilibrada (la recomendada), Fuerte, Máxima y Personalizada, donde se eligen la resolución de las imágenes y la calidad de las fotos.
 - Las imágenes se reducen solo hasta el tamaño al que se ven en la página, y una foto solo se recomprime si la diferencia no se nota; si se notaría, se deja como estaba. Los dibujos, gráficos y capturas mantienen sus bordes nítidos.
