@@ -32,12 +32,20 @@ jobs:
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Versión inválida: $VERSION"; exit 1; }
           ! gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || { echo "::error::La release v$VERSION ya existe."; exit 1; }
-          # The commit that set this version: the first one whose package.json names it.
-          target=""
-          for sha in $(git rev-list --reverse HEAD -- package.json); do
-            [ "$(git show "$sha:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0)).version')" = "$VERSION" ] && { target=$sha; break; }
+          # Among the commits at this version (newest first), the one with builds for the most platforms.
+          target="" best=0 seen=0
+          for sha in $(git rev-list HEAD); do
+            if [ "$(git show "$sha:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0)).version')" != "$VERSION" ]; then
+              [ "$seen" = 1 ] && break || continue
+            fi
+            seen=1 built=0
+            for workflow in android.yml ios.yml windows.yml macos.yml; do
+              [ -n "$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$sha" --status success --limit 1 --json databaseId --jq '.[].databaseId')" ] && built=$((built + 1))
+            done
+            [ "$built" -gt "$best" ] && { best=$built; target=$sha; }
           done
-          [ -n "$target" ] || { echo "::error::Ningún commit tiene la versión $VERSION."; exit 1; }
+          [ "$seen" = 1 ] || { echo "::error::Ningún commit tiene la versión $VERSION."; exit 1; }
+          [ -n "$target" ] || { echo "::error::Ningún commit de la versión $VERSION tiene paquetes compilados."; exit 1; }
           echo "TARGET=$target" >> "$GITHUB_ENV"
           mkdir -p staging release-assets
           found=0
