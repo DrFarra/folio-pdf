@@ -257,13 +257,12 @@ export class Library {
     const { ids = [], active, library: showLibrary } = saved || {};
     if (!ids.length) return;
     const items = await listLibrary().catch(() => [] as RecentDocument[]);
-    for (const id of ids) {
-      const recent = items.find(item => item.id === id);
-      if (recent && alive()) await this.reopen(recent);
-    }
+    // Only the document in front comes back: reopening every tab flashes each one in turn.
+    // The others stay in the library.
+    const id = active && ids.includes(active) ? active : ids[0];
+    const recent = items.find(item => item.id === id);
+    if (recent && alive()) await this.reopen(recent);
     if (!alive() || !host.tabs().length) return;
-    const tab = host.tabs().find(item => item.doc.id === active);
-    if (tab && tab.key !== host.activeKey()) await host.switchTab(tab.key);
     if (showLibrary) host.showLibrary(true);
   }
 
