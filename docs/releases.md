@@ -5,10 +5,20 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Android, tablet y teléfono (arm64) | [0.9.28](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.28) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
 | Windows x64 | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | Instalador NSIS sin firma Authenticode. |
 | macOS, Apple Silicon e Intel | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.26](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.26) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| iPhone e iPad | [0.9.28](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.28) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.28
+
+Solo Android, iPhone e iPad.
+
+- Al volver a abrir Folio después de que el sistema lo cerrara, se reabre solo el documento que tenías delante, en vez de abrir todos uno tras otro. Los demás siguen en la biblioteca.
+- Con el teléfono en horizontal, la columna de acciones (Páginas, Buscar, Anotar, Herramientas) ya no tapa el borde derecho de la página, y la página usa todo el ancho, también los márgenes de los lados. Al ocultar las barras, la página ocupa la pantalla entera.
+- Al girar el teléfono, una página alejada con los dedos más allá de Ajustar página vuelve a ajustarse. Un doble toque sobre un zoom menor que el ajuste también la ajusta.
+- En el teléfono, las herramientas tienen la flecha «Volver a Herramientas» en el título. En horizontal se abren como una ventana centrada, y Herramientas muestra dos por fila.
+- Una herramienta se abre desde arriba: Firmas digitales y Proteger PDF ya no aparecen a media altura.
 
 ## Cambios en 0.9.27
 
