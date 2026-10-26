@@ -5,10 +5,20 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.28](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.28) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.27](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.27) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.28](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.28) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.29
+
+Para Windows, macOS, Android, iPhone e iPad. En Windows y macOS también llegan los cambios de 0.9.28 que no son solo del teléfono.
+
+- Comprimir PDF tiene niveles: Sin pérdida (cada página queda idéntica), Alta calidad, Equilibrada (la recomendada), Fuerte, Máxima y Personalizada, donde se eligen la resolución de las imágenes y la calidad de las fotos.
+- Las imágenes se reducen solo hasta el tamaño al que se ven en la página, y una foto solo se recomprime si la diferencia no se nota; si se notaría, se deja como estaba. Los dibujos, gráficos y capturas mantienen sus bordes nítidos.
+- Sin tocar las imágenes, el archivo ya se reduce: se guarda más compacto, una imagen o fuente repetida se guarda una sola vez y las fuentes guardan solo las letras que se usan (salvo en formularios). Apuntes de 3,7 MB bajaron a 2,2 MB sin cambiar un píxel.
+- Comprimir muestra cuánto lleva y ya no se cancela por tiempo con PDF grandes: uno de 198 MB con fotos quedó en 8,5 MB en unos 25 segundos.
+- Editar libera la memoria de cada imagen que lee, así que mover imágenes durante mucho rato ya no la va llenando.
 
 ## Cambios en 0.9.28
 
