@@ -1,7 +1,7 @@
 import * as mupdf from 'mupdf';
 import { open, hasSignature, save, folioAnnotation } from './mupdf-engine.mjs';
 import { jpegOrientation, orientationMatrix } from './jpeg-orientation.mjs';
-import { compressDocument, COMPRESSED_SAVE, type Progress } from './compress.ts';
+import { compressDocument, COMPRESSED_SAVE, loadImage, type Progress } from './compress.ts';
 import { COMPRESSION_PRESETS, validCompression, type CompressionSettings } from './compression-settings.ts';
 
 export type Area = { page: number; rect: [number, number, number, number] };
@@ -4231,7 +4231,7 @@ function jpegSource(doc: mupdf.PDFDocument, page: mupdf.PDFPage, image: mupdf.Im
   // different pointer means another image was painted, e.g. an inline one.
   let loaded: mupdf.Image | undefined;
   try {
-    loaded = doc.loadImage(object);
+    loaded = loadImage(doc, object);
     if (loaded.pointer !== image.pointer) return null;
   } catch {
     return null;
