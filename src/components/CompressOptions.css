@@ -1,0 +1,16 @@
+.compress-range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.compress-range input {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.compress-range output {
+  min-width: 56px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

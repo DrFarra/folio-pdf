@@ -129,11 +129,17 @@ export class DocumentChanges {
   }
 
   /** Runs a tool's operation on the PDF (its annotations written in first) and opens the result.
-   * `keepEditing` returns to Editar PDF at `page`; `quiet` keeps the reader as it is. */
+   * `keepEditing` returns to Editar PDF at `page`; `quiet` keeps the reader as it is;
+   * `progress` hears how far a long operation (Comprimir) has got. */
   async apply(
     operation: Operation,
     signal?: AbortSignal,
-    context?: { keepEditing?: boolean; page?: number; quiet?: boolean },
+    context?: {
+      keepEditing?: boolean;
+      page?: number;
+      quiet?: boolean;
+      progress?: (done: number, total: number) => void;
+    },
   ) {
     const { host } = this,
       doc = host.current();
@@ -146,7 +152,7 @@ export class DocumentChanges {
       const unchanged = annotationFingerprint(host.annotations()) === doc.bytesAnnotations;
       const source = unchanged ? doc.bytes : await host.annotated(doc);
       signal?.throwIfAborted();
-      const output = await processPdf(source, operation, doc.password, signal);
+      const output = await processPdf(source, operation, doc.password, signal, context?.progress);
       signal?.throwIfAborted();
       // An optimized PDF is left as it is: no reload, no undo step.
       if (operation.operation === 'compress' && output.length >= source.length) {

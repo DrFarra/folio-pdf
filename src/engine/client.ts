@@ -47,6 +47,7 @@ function run<T>(
   incremental?: boolean,
   lend = false,
   onPart?: (index: number, part: Uint8Array) => void,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -67,7 +68,7 @@ function run<T>(
       reject(new DOMException('Operación cancelada', 'AbortError'));
     };
     // The limit catches a stuck engine; a large book on a slow disk gets time in proportion.
-    // Each finished part shows the engine is alive, so the next one gets the full limit again.
+    // Each finished part or progress step shows the engine is alive, so the limit starts again.
     const limit = 90_000 + (bytes.length / 1024 / 1024) * 500,
       expire = () => {
         stop(false);
@@ -81,6 +82,12 @@ function run<T>(
         clearTimeout(timeout);
         timeout = setTimeout(expire, limit);
         onPart?.(event.data.part, event.data.output);
+        return;
+      }
+      if ('progress' in event.data) {
+        clearTimeout(timeout);
+        timeout = setTimeout(expire, limit);
+        onProgress?.(...(event.data.progress as [number, number]));
         return;
       }
       stop(!event.data.error && bytes.length < 32 * 1024 * 1024);
@@ -110,8 +117,13 @@ export const exportAnnotated = (
   signal?: AbortSignal,
   incremental?: boolean,
 ) => run<Uint8Array>('annotate', bytes, password, annotations, signal, undefined, incremental);
-export const processPdf = (bytes: Uint8Array, options: Operation, password?: string, signal?: AbortSignal) =>
-  run<Uint8Array>('operate', bytes, password, undefined, signal, options);
+export const processPdf = (
+  bytes: Uint8Array,
+  options: Operation,
+  password?: string,
+  signal?: AbortSignal,
+  onProgress?: (done: number, total: number) => void,
+) => run<Uint8Array>('operate', bytes, password, undefined, signal, options, undefined, false, undefined, onProgress);
 /** One PDF per page plan, handed to `onPart` in order as each is ready. */
 export const splitPdf = (
   bytes: Uint8Array,

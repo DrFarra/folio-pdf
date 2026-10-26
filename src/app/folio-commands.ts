@@ -187,11 +187,8 @@ export function useFolioCommands(f: Layer3) {
     [commitAnnotations],
   );
   const snapshot = () => changes.snapshot();
-  const applyOperation = (
-    operation: Operation,
-    signal?: AbortSignal,
-    context?: { keepEditing?: boolean; page?: number; quiet?: boolean },
-  ) => changes.apply(operation, signal, context);
+  const applyOperation = (operation: Operation, signal?: AbortSignal, context?: Parameters<typeof changes.apply>[2]) =>
+    changes.apply(operation, signal, context);
   const annotatedBytes = (current: LoadedDocument, items?: Annotation[], incremental?: boolean) =>
     output.annotated(current, items, incremental);
   const download = (options?: { keepEditing?: boolean; copy?: boolean }) => output.save(options);
