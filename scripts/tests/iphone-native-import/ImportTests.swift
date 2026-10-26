@@ -79,15 +79,22 @@ final class ImportTests: XCTestCase {
                 file.exists && file.isSelected
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed, "Files did not select the exact requested PDF")
-            for attempt in 1...2 {
+            for attempt in 1...4 {
                 XCTAssertTrue(confirm.isEnabled); XCTAssertTrue(confirm.isHittable)
                 print("Files Open confirmation attempt \(attempt), frame \(confirm.frame)")
-                if attempt == 1 {
-                    // Touch the observed button's center rather than relying
-                    // on the remote file provider's accessibility hit point.
-                    confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                } else { confirm.tap() }
-                if confirm.waitForNonExistence(timeout: 5) { return }
+                switch attempt {
+                // Touch the observed button's center rather than relying
+                // on the remote file provider's accessibility hit point.
+                case 1: confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                case 2: confirm.tap()
+                // The remote picker may ignore a synthesized tap's short touch.
+                case 3: confirm.press(forDuration: 0.3)
+                // A touch addressed to the window, outside the remote view's hit test.
+                default:
+                    let frame = confirm.frame
+                    folio.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+                }
+                if confirm.waitForNonExistence(timeout: 5) { print("Files dismissed after attempt \(attempt)"); return }
                 attach("picker-open-still-visible-\(basename)-\(attempt)", app: folio)
                 // Retry only the unchanged system picker and exact selection.
                 // A persistent failure or a different UI must fail the test.
