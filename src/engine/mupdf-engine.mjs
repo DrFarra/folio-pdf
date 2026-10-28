@@ -150,7 +150,14 @@ function read(annotation, page, transform) {
   };
 }
 
+// garbage=3 and 4 compare every object with every other: a 293 MB textbook (826 000 objects)
+// did not finish saving in 10 minutes. A larger document only drops what nothing uses and packs
+// the rest into object streams (12 s for that book, the same size).
+const DEDUPLICATE_UP_TO = 10000;
+
 export function save(doc, options = 'garbage=4,compress=yes,encrypt=keep') {
+  if (/garbage=[34]/.test(options) && doc.countObjects() > DEDUPLICATE_UP_TO)
+    options = options.replace(/garbage=[34]/, 'garbage=1') + (options.includes('objstms') ? '' : ',objstms=yes');
   let buffer;
   // The whole output must fit in the engine's memory (about 1.8 GB), which a book near 1 GB exceeds.
   try {
