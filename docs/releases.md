@@ -5,10 +5,16 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.29](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.29) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.30
+
+Para Windows, macOS, Android, iPhone e iPad.
+
+- Guardar los cambios de un PDF muy grande ya no se cancela por tiempo. Con un libro de 293 MB y casi 3000 páginas, Folio no terminaba de guardar ni en 10 minutos; ahora lo guarda en unos 20 segundos y el archivo conserva su tamaño. Vale también para Proteger PDF y las demás herramientas que reescriben el documento.
 
 ## Cambios en 0.9.29
 
