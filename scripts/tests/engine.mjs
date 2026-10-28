@@ -206,6 +206,25 @@ check('large-pdf-is-read-on-demand-and-keeps-annotations', () => {
   assert.equal(inspectDocument(writeAnnotations(large, [recolored[0]])).annotations.length, 1);
   return { bytes: large.length, annotationsRead: 2, hiddenByReference: true, incrementalSave: true, fullSave: true };
 });
+check('annotations-save-quickly-in-a-document-with-many-objects', () => {
+  // garbage=4 compares every object with every other: a 293 MB textbook (826 000 objects) never
+  // finished saving. Past 10 000 objects save() skips deduplication and packs objects instead.
+  const doc = new mupdf.PDFDocument(),
+    many = doc.newArray();
+  // Streams are what garbage=4 compares pairwise, as a book's pages and images are.
+  for (let i = 0; i < 12000; i++) many.push(doc.addStream(`stream ${i} `.repeat(20), doc.newDictionary()));
+  doc.getTrailer().get('Root').put('Many', many);
+  doc.insertPage(-1, doc.addPage([0, 0, 612, 792], 0, doc.newDictionary(), ''));
+  const source = new Uint8Array(doc.saveToBuffer('compress=yes,objstms=yes').asUint8Array());
+  const start = performance.now(),
+    result = writeAnnotations(source, [{ ...annotations[0], page: 1 }]),
+    seconds = (performance.now() - start) / 1000;
+  assert(seconds < 5, `${seconds.toFixed(1)} s`);
+  const saved = new mupdf.PDFDocument(result);
+  assert.equal(saved.getTrailer().get('Root').get('Many').length, 12000);
+  assert.equal(saved.loadPage(0).getAnnotations().length, 1);
+  return { seconds: Number(seconds.toFixed(2)) };
+});
 fs.writeFileSync(
   path.join(output, 'engine-results.json'),
   JSON.stringify({ platform: 'Node + actual MuPDF WASM engine', results }, null, 2),
