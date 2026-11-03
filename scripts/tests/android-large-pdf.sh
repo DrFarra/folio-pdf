@@ -36,5 +36,14 @@ done
 echo '{}],"alive":'"$alive"',"peakPssKB":'"$peak"'}' >> "$out/samples.json"
 adb logcat -d > "$out/logcat.txt" || true
 grep -iE "folio|AndroidRuntime|FATAL|lowmemorykiller|chromium" "$out/logcat.txt" | tail -200 > "$out/logcat-folio.txt" || true
+# Kill Folio while it opens the PDF again: the next launch must say so and not reopen it.
+adb shell am force-stop org.folio.pdf
+adb shell am start -W -a android.intent.action.VIEW -t application/pdf -d "content://media/external/file/$id" \
+  --grant-read-uri-permission -n org.folio.pdf/.MainActivity > /dev/null
+sleep 1
+adb shell am force-stop org.folio.pdf
+adb shell am start -W -n org.folio.pdf/.MainActivity > /dev/null
+sleep 12
+adb exec-out screencap -p > "$out/after-interrupted-open.png"
 echo "alive=$alive peakPss=${peak}KB bytes=$bytes"
 [ "$alive" = true ]
