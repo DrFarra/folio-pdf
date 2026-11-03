@@ -13,6 +13,7 @@ on:
       - scripts/build-android.mjs
       - scripts/build-mupdf-android.mjs
       - scripts/mupdf-patches/**
+      - scripts/tests/native-reader-stress.*
       - src-tauri/src/native_reader.rs
       - src-tauri/src/android_commands.rs
       - src-tauri/plugins/folio-android/**
@@ -28,6 +29,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-reader:
+    # Android's large-PDF reader over real and damaged PDFs, under AddressSanitizer.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Read real and damaged PDFs with the native reader
+        run: |
+          npm ci
+          node scripts/fetch-test-corpus.mjs
+          bash scripts/tests/native-reader-stress.sh
   apk:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
