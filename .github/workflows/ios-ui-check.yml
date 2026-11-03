@@ -105,6 +105,12 @@ jobs:
           report['alive'] = report['samples'][-1]['alive']
           report['peakApp'] = max(s['app'] for s in report['samples'])
           report['peakWebKit'] = max(s['webkit'] for s in report['samples'])
+          # iOS ends a WebView's process under memory pressure; Tauri reloads the page. Folio must
+          # then say so and not reopen the PDF in front, which could end the process again.
+          subprocess.run(['pkill', '-9', '-f', 'com.apple.WebKit.WebContent'])
+          time.sleep(15)
+          run('xcrun', 'simctl', 'io', device, 'screenshot', str(out / 'after-webcontent-kill.png'))
+          report['aliveAfterWebContentKill'] = subprocess.run(['ps', '-p', str(pid)], capture_output=True).returncode == 0
           (out / 'large-pdf.json').write_text(json.dumps(report, indent=2))
           logs = subprocess.run(['xcrun', 'simctl', 'spawn', device, 'log', 'show', '--last', '4m', '--style', 'compact',
               '--predicate', 'process == "Folio" OR process CONTAINS "WebContent" OR eventMessage CONTAINS[c] "folio" OR eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memory"'],

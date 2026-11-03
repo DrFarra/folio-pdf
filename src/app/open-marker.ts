@@ -5,7 +5,8 @@ import type { OpenSource } from './document-reader';
 type Marker = { name: string; size?: number; step: string };
 const mark = (marker: Marker | null) => openMarker(marker && JSON.stringify(marker));
 let latest = 0;
-// Rust read the last run's marker at launch, before anything new opened.
+// Rust read the last run's marker at launch, before anything new opened; after iOS reloads a
+// WebView whose process died, it gives this run's own marker instead.
 const previous = isIOS || isAndroid ? interruptedOpenMarker() : Promise.resolve(null);
 
 /** While a native PDF opens on a phone or tablet, and for 15 s after it is shown, Folio keeps on
@@ -37,7 +38,7 @@ export async function interruptedOpen(): Promise<string | null> {
     if (!value) return null;
     const { name, size, step } = JSON.parse(value) as Marker;
     const file = name ? `«${name}»${size ? ` (${formatSize(size)})` : ''}` : 'un PDF';
-    return `Folio se cerró la última vez mientras ${step} ${file}, así que no lo ha vuelto a abrir. Puedes abrirlo desde la biblioteca.`;
+    return `Folio se interrumpió mientras ${step} ${file}, así que no lo ha vuelto a abrir. Puedes abrirlo desde la biblioteca.`;
   } catch {
     return null;
   }
