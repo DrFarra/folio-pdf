@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { reloadedAfterInterruption } from './open-marker';
 import { invoke } from '@tauri-apps/api/core';
 import { readImage } from '../edit/EditToolbar';
 import { errorMessage } from '../errors';
@@ -105,7 +106,8 @@ export function useSystemOpens(handlers: SystemOpens) {
       .then(async () => {
         if (!alive) return;
         // Rust can now drain queued Finder/argv opens without losing an event.
-        const files = await startupDocuments();
+        const startup = await startupDocuments();
+        const files = (await reloadedAfterInterruption()) ? [] : startup;
         if (!alive) return;
         await openFiles(files);
         if (alive) await live.current.ready(!files.length, () => alive);

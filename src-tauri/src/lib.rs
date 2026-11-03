@@ -708,9 +708,11 @@ fn interrupted_open(previous: State<'_, PreviousOpen>, desktop: State<'_, Deskto
     if !std::mem::replace(&mut previous.1, true) { return previous.0.take(); }
     // A reloaded page: its WebView process died (iOS reloads it), so the PDF in front is not
     // reopened by itself. This run's marker says which one, if it was still opening.
-    let current = fs::read_to_string(desktop.data.join(OPEN_MARKER)).ok();
+    let current = fs::read_to_string(desktop.data.join(OPEN_MARKER)).ok().and_then(|v| serde_json::from_str::<Value>(&v).ok());
     write_open_marker(&desktop, None);
-    Some(current.unwrap_or_else(|| serde_json::json!({"name": "", "step": "mostraba"}).to_string()))
+    let mut marker = current.filter(Value::is_object).unwrap_or_else(|| serde_json::json!({"name": "", "step": "mostraba"}));
+    marker["reloaded"] = Value::Bool(true);
+    Some(marker.to_string())
 }
 #[tauri::command(async)]
 fn clear_saved_state(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<(), String> {
