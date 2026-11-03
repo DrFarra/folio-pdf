@@ -61,14 +61,16 @@ jobs:
           pdf = documents / 'Large.pdf'
           subprocess.run(['curl', '-sSL', '--retry', '4', '-o', str(pdf), os.environ['LARGE_PDF_URL']], check=True)
           report = {'runtime': runtime['name'], 'device': phone['name'], 'bytes': pdf.stat().st_size, 'samples': []}
-          started = time.monotonic()
+          launching = time.monotonic()
           launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(pdf))
           pid = int(re.search(r':\s*(\d+)\s*$', launch).group(1))
+          started = time.monotonic()
+          report['launchSeconds'] = round(started - launching, 1)
           def rss(match):
               rows = subprocess.run(['ps', '-axo', 'pid=,rss=,command='], capture_output=True, text=True).stdout.splitlines()
               return sum(int(r.split(None, 2)[1]) * 1024 for r in rows if match(r))
           shot = 0
-          while time.monotonic() - started < 150:
+          while not report['samples'] or time.monotonic() - started < 150:
               alive = subprocess.run(['ps', '-p', str(pid)], capture_output=True).returncode == 0
               report['samples'].append({'s': round(time.monotonic() - started, 1), 'alive': alive,
                   'app': rss(lambda r: r.split(None, 1)[0] == str(pid)),
