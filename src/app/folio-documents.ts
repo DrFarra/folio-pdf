@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
+import { interruptedOpen } from './open-marker';
 import { errorMessage } from '../errors';
 import { searchTerm, type DocumentTab, type TabView } from './model';
 import { useDesktopWindow } from './desktop-window';
@@ -326,7 +327,10 @@ export function useFolioDocuments(f: Layer2) {
       dragCounter.current = 0;
     },
     ready: async (nothingOpened, alive) => {
-      if (nothingOpened && isMobile) await libraryStore.restoreOpenTabs(alive);
+      // A PDF that ended Folio while opening is not reopened by itself, or it would end it again.
+      const interrupted = await interruptedOpen();
+      if (interrupted) notify(interrupted, 'error');
+      else if (nothingOpened && isMobile) await libraryStore.restoreOpenTabs(alive);
       if (alive() && opener.requests === 0) setLoading(false);
     },
     failed: () => {

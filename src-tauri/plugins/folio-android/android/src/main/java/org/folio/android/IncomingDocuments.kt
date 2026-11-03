@@ -45,7 +45,9 @@ internal fun importDocuments(context: Context, uris: List<Uri>, flags: Int = 0):
                 val buffer = ByteArray(65536); var total = 0L
                 while (true) {
                     val count = input.read(buffer); if (count < 0) break
-                    total += count; ensure(total <= 100L * 1024 * 1024) { "El PDF supera 100 MiB." }
+                    // Large PDFs are read from this copy page by page (native_reader.rs), never whole.
+                    total += count
+                    if (total % (64L * 1024 * 1024) < count) ensure(context.filesDir.usableSpace > 64L * 1024 * 1024) { "No hay espacio suficiente en el dispositivo para importar este PDF." }
                     output.write(buffer, 0, count)
                 }
             } } ?: throw FolioError("No se pudo leer el PDF. Vuelve a abrirlo desde la aplicación de origen.")

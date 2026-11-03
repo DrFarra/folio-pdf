@@ -15,6 +15,8 @@ mod ios_commands;
 #[cfg(target_os = "ios")]
 use ios_commands::{pick_documents, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url};
 #[cfg(target_os = "android")]
+mod native_reader;
+#[cfg(target_os = "android")]
 mod android_commands;
 #[cfg(target_os = "android")]
 use android_commands::*;
@@ -684,6 +686,25 @@ fn forget_document(id: String, desktop: State<'_, Desktop>) -> Result<(), String
     if draft.exists() { fs::remove_file(draft).map_err(|_| "No se pudo borrar el borrador.")?; }
     Ok(())
 }
+/// The native PDF being opened, kept on disk until it has been on screen a while: when the
+/// system ends Folio meanwhile (memory, a crash), the next launch learns which file and step.
+const OPEN_MARKER: &str = "opening.json";
+/// The marker the previous run left, read at setup before anything new opens.
+struct PreviousOpen(Mutex<Option<String>>);
+fn write_open_marker(desktop: &Desktop, value: Option<&str>) {
+    let path = desktop.data.join(OPEN_MARKER);
+    match value { Some(value) => { let _ = fs::write(&path, value); } None => { let _ = fs::remove_file(&path); } }
+}
+#[tauri::command(async)]
+fn open_marker(value: Option<String>, desktop: State<'_, Desktop>) -> Result<(), String> {
+    if value.as_ref().is_some_and(|v| v.len() > 4096) { return Err("Anotación demasiado larga.".into()); }
+    write_open_marker(&desktop, value.as_deref());
+    Ok(())
+}
+#[tauri::command]
+fn interrupted_open(previous: State<'_, PreviousOpen>) -> Option<String> {
+    previous.0.lock().ok().and_then(|mut value| value.take())
+}
 #[tauri::command(async)]
 fn clear_saved_state(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<(), String> {
     {
@@ -712,6 +733,11 @@ fn open_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>, dropped: bool) {
     tauri::async_runtime::spawn_blocking(move || {
         let desktop = app.state::<Desktop>();
         let mut opened = SystemOpen::default();
+        // On a phone, hashing a big PDF another app sent is the first step that can end Folio.
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        if let Some(name) = paths.first().and_then(|p| p.file_name()) {
+            write_open_marker(&desktop, Some(&serde_json::json!({"name": name.to_string_lossy(), "step": "importaba"}).to_string()));
+        }
         for path in paths {
             let pdf = path.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("pdf"));
             // Arguments that are not files are launch flags. A PDF without its extension still opens.
@@ -722,6 +748,8 @@ fn open_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>, dropped: bool) {
                 Err(error) => opened.errors.push(error),
             }
         }
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        if opened.documents.is_empty() { write_open_marker(&desktop, None); }
         deliver(&app, opened);
     });
 }
@@ -856,19 +884,22 @@ pub fn run() {
         .js_init_script(include_str!("native_qa.js"))
         .build());
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, #[cfg(windows)] read_document_shared, #[cfg(windows)] binary_ipc::release_shared, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, rename_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, #[cfg(windows)] read_document_shared, #[cfg(windows)] binary_ipc::release_shared, choose_output, write_pdf_copy, write_pdf_original, choose_export, choose_folder, write_export, system_font_families, system_font_match, system_font_data, dropped_image, print_document, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, open_marker, interrupted_open, forget_document, rename_document, clear_saved_state, #[cfg(windows)] binary_ipc::upload_shared, #[cfg(windows)] binary_ipc::upload_shared_end, updater::check_update, updater::install_update]);
     #[cfg(all(target_os = "ios", not(feature = "native-qa")))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, open_marker, interrupted_open, forget_document, clear_saved_state]);
     #[cfg(all(target_os = "ios", feature = "native-qa"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, prune_private_copies, copy_text, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present, open_external_url, ios_commands::ios_native_status, ios_commands::ios_native_file_probe, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, open_marker, interrupted_open, forget_document, clear_saved_state]);
     #[cfg(target_os = "android")]
-    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, write_pdf_original, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, android_safe_area, open_external_url, binary_ipc::upload_begin, binary_ipc::upload_chunk, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, forget_document, clear_saved_state, prune_private_copies]);
+    let builder = builder.invoke_handler(tauri::generate_handler![drive_status, drive_connect, drive_cancel_connect, drive_disconnect, drive_list, drive_open, drive_cached, drive_lookup, drive_stage, drive_stage_native, drive_sync, drive_discard, drive_pending_open, pick_documents, startup_documents, read_document, read_document_range, choose_output, write_pdf_copy, choose_export, write_export, write_pdf_original, share_pdf_copy, print_pdf_copy, set_mobile_theme, set_mobile_chrome, set_keep_awake, haptic, android_safe_area, open_external_url, binary_ipc::upload_begin, binary_ipc::upload_chunk, load_session, store_session, load_draft, native_draft_document, store_draft, discard_draft, list_library, open_library_document, hide_recent, remember_document, remember_draft, open_marker, interrupted_open, forget_document, clear_saved_state, prune_private_copies, native_pdf_open, native_pdf_page_info, native_pdf_render, native_pdf_text, native_pdf_outline, native_pdf_close, native_pdf_present]);
     builder
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             #[cfg(feature = "native-qa")]
             let data = data.join("native-qa");
             fs::create_dir_all(&data)?;
+            let previous = fs::read_to_string(data.join(OPEN_MARKER)).ok();
+            let _ = fs::remove_file(data.join(OPEN_MARKER));
+            app.manage(PreviousOpen(Mutex::new(previous)));
             let desktop = Desktop { files: Mutex::new(Files::default()), store: Mutex::new(()), data };
             #[cfg(target_os = "ios")]
             ios_commands::cleanup_unreferenced_exports(&desktop);

@@ -1,0 +1,15 @@
+--- a/source/pdf/pdf-xref.c
++++ b/source/pdf/pdf-xref.c
+@@ -2200,6 +2200,12 @@
+ 			else
+ 				length = UINT64_MAX;
+ 
++			/* Folio: a neighbour of the requested object is parsed and cached only if it is
++			 * small. Books keep structure trees of hundreds of MB in the same streams as
++			 * fonts; such an object is parsed when it is itself requested. */
++			if (numbuf[i] != target && length > 256 * 1024)
++				continue;
++
+ 			sub = fz_open_null_filter(ctx, stm, length, offset);
+ 
+ 			obj = pdf_parse_stm_obj(ctx, doc, sub, buf);

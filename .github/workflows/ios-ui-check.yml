@@ -7,6 +7,19 @@ on:
         description: Full iOS workflow run containing Folio-iOS-candidate
         required: true
         type: string
+      large_pdf_url:
+        description: Optional. Open this PDF in the simulator instead of the UIKit picker test, and record memory, screenshots and logs.
+        required: false
+        type: string
+      pdfkit_probe:
+        description: Optional. With large_pdf_url, only measure PDFKit (macOS) page by page; no app.
+        required: false
+        type: boolean
+        default: false
+      ios_version:
+        description: Optional. Simulator iOS version for the large PDF check (18.5 by default; 26.x selects Xcode 26).
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,7 +28,7 @@ permissions:
 jobs:
   uikit:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       IPHONEOS_DEPLOYMENT_TARGET: '17.0'
     steps:
@@ -28,13 +41,80 @@ jobs:
           xcodebuild -version
           command -v xcodegen || brew install xcodegen
           xcrun simctl list runtimes
+      - name: Measure PDFKit memory page by page
+        if: inputs.pdfkit_probe
+        env:
+          LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
+        run: |
+          mkdir -p test-results/ios
+          curl -sSL --retry 4 -o "$RUNNER_TEMP/large.pdf" "$LARGE_PDF_URL"
+          swiftc -O scripts/tests/pdfkit-probe.swift -o "$RUNNER_TEMP/pdfkit-probe"
+          "$RUNNER_TEMP/pdfkit-probe" "$RUNNER_TEMP/large.pdf" | tee test-results/ios/pdfkit-probe.txt
+          "$RUNNER_TEMP/pdfkit-probe" "$RUNNER_TEMP/large.pdf" "$(seq -s, 100 1 140)" | tee -a test-results/ios/pdfkit-probe.txt
       - name: Restore and verify the exact production simulator candidate
+        if: ${{ !inputs.pdfkit_probe }}
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN: ${{ inputs.candidate_run }}
         run: python3 scripts/tests/ios-ui-restore.py
       - name: Exercise actual UIKit PDF picker and cold and warm Open In
+        if: inputs.large_pdf_url == '' && !inputs.pdfkit_probe
         run: python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-ui-restored/Folio.app
+      - name: Open a large PDF and record memory, screenshots and logs
+        if: inputs.large_pdf_url != '' && !inputs.pdfkit_probe
+        env:
+          LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
+          IOS_VERSION: ${{ inputs.ios_version || '18.5' }}
+        run: |
+          # iOS 26 runtimes boot only with Xcode 26's simctl.
+          if [[ "$IOS_VERSION" == 26* ]]; then sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"; xcodebuild -version; fi
+          python3 - <<'PY'
+          import json, os, re, subprocess, time
+          from pathlib import Path
+          out = Path('test-results/ios'); out.mkdir(parents=True, exist_ok=True)
+          run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+          runtimes = [r for r in json.loads(run('xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes'] if r.get('isAvailable') and 'iOS' in r['name']]
+          runtime = next((r for r in runtimes if r['version'] == os.environ['IOS_VERSION']), sorted(runtimes, key=lambda r: [int(n) for n in r['version'].split('.')])[-1])
+          phone = next(d for d in json.loads(run('xcrun', 'simctl', 'list', 'devicetypes', '--json'))['devicetypes'] if d['name'] in ('iPhone 16 Pro', 'iPhone 15 Pro'))
+          device = run('xcrun', 'simctl', 'create', 'Folio-large-pdf', phone['identifier'], runtime['identifier'])
+          run('xcrun', 'simctl', 'boot', device); run('xcrun', 'simctl', 'bootstatus', device, '-b')
+          run('xcrun', 'simctl', 'install', device, 'test-results/ios-ui-restored/Folio.app')
+          documents = Path(run('xcrun', 'simctl', 'get_app_container', device, 'org.folio.pdf', 'data')) / 'Documents'
+          documents.mkdir(exist_ok=True)
+          pdf = documents / 'Large.pdf'
+          subprocess.run(['curl', '-sSL', '--retry', '4', '-o', str(pdf), os.environ['LARGE_PDF_URL']], check=True)
+          report = {'runtime': runtime['name'], 'device': phone['name'], 'bytes': pdf.stat().st_size, 'samples': []}
+          launching = time.monotonic()
+          launch = run('xcrun', 'simctl', 'launch', device, 'org.folio.pdf', str(pdf))
+          pid = int(re.search(r':\s*(\d+)\s*$', launch).group(1))
+          started = time.monotonic()
+          report['launchSeconds'] = round(started - launching, 1)
+          def rss(match):
+              rows = subprocess.run(['ps', '-axo', 'pid=,rss=,command='], capture_output=True, text=True).stdout.splitlines()
+              return sum(int(r.split(None, 2)[1]) * 1024 for r in rows if match(r))
+          shot = 0
+          while not report['samples'] or time.monotonic() - started < 150:
+              alive = subprocess.run(['ps', '-p', str(pid)], capture_output=True).returncode == 0
+              report['samples'].append({'s': round(time.monotonic() - started, 1), 'alive': alive,
+                  'app': rss(lambda r: r.split(None, 1)[0] == str(pid)),
+                  'webkit': rss(lambda r: 'com.apple.WebKit.WebContent' in r)})
+              if not alive: break
+              if time.monotonic() - started > shot * 15:
+                  run('xcrun', 'simctl', 'io', device, 'screenshot', str(out / f'large-{shot:02d}.png')); shot += 1
+              time.sleep(1)
+          report['alive'] = report['samples'][-1]['alive']
+          report['peakApp'] = max(s['app'] for s in report['samples'])
+          report['peakWebKit'] = max(s['webkit'] for s in report['samples'])
+          (out / 'large-pdf.json').write_text(json.dumps(report, indent=2))
+          logs = subprocess.run(['xcrun', 'simctl', 'spawn', device, 'log', 'show', '--last', '4m', '--style', 'compact',
+              '--predicate', 'process == "Folio" OR process CONTAINS "WebContent" OR eventMessage CONTAINS[c] "folio" OR eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memory"'],
+              capture_output=True, text=True).stdout
+          (out / 'large-pdf-system.log').write_text(logs[-3_000_000:])
+          reports = Path.home() / 'Library/Logs/DiagnosticReports'
+          crashes = [p for p in reports.glob('*') if 'Folio' in p.name or 'WebContent' in p.name] if reports.exists() else []
+          (out / 'large-pdf-crashes.log').write_text('\n\n'.join(p.name + '\n' + p.read_text(errors='replace')[:200_000] for p in crashes))
+          print(json.dumps({k: v for k, v in report.items() if k != 'samples'}))
+          PY
       - name: Upload focused UIKit evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

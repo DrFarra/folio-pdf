@@ -5,10 +5,20 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.30](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.30) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.31
+
+Para Android, iPhone e iPad.
+
+- Android abre PDF de cualquier tamaño. Antes rechazaba los de más de 100 MiB; ahora un PDF así se queda en el almacenamiento y Folio lee del disco solo las páginas que se ven, como ya hacía iPhone. El Harrison de medicina interna (650 MB, 4273 páginas) se abre en menos de un segundo, y recorrer el libro entero no pasa de unos 240 MB de memoria.
+- En esos PDF grandes se puede leer, buscar, copiar texto, usar marcadores, dibujar y añadir o quitar resaltados y notas. «Guardar una copia» añade los cambios al final de una copia del original, sin reescribirlo: con el Harrison tarda unos 3 segundos.
+- Los PDF de hasta 100 MiB siguen abriéndose como antes, con todas las herramientas (editar páginas, formularios, OCR).
+- Al importar ya no hay límite de tamaño. Si no queda espacio en el teléfono, Folio lo dice con claridad.
+- En iPhone, iPad y Android, si el sistema cierra Folio mientras abre un PDF, al volver a abrirlo Folio no lo reabre solo (para no cerrarse otra vez) y dice qué PDF era y en qué paso iba.
 
 ## Cambios en 0.9.30
 

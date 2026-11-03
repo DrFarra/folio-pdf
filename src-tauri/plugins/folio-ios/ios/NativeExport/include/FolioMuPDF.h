@@ -59,6 +59,31 @@ int folio_pdf_export(const char *source, const char *output, const char *passwor
     char *error, size_t error_capacity);
 const char *folio_pdf_engine_version(void);
 
+/* File-backed reader (Android's large-PDF mode). MuPDF reads the file on
+ * demand; only page-sized JSON and PNG cross this ABI. A reader must not be
+ * used from two threads at once. JSON coordinates are unrotated PDF user space. */
+typedef struct folio_reader folio_reader;
+/* *json: {"numPages","locked","signed","permissions":{canCopy,canPrint,canAnnotate}}.
+ * A locked PDF still returns a reader, with locked true and numPages 0. */
+int folio_reader_open(const char *path, const char *password, folio_reader **reader, char **json,
+    char *error, size_t error_capacity);
+void folio_reader_close(folio_reader *reader);
+/* {"view","rotation","label","links":[{rect,url}|{rect,page,left?,top?}]} */
+int folio_reader_page_info(folio_reader *reader, int32_t page, char **json, char *error, size_t error_capacity);
+/* {"lines":[{text,bounds,hasEOL,direction}]}, one entry per word as PDFKit's reader does. */
+int folio_reader_text(folio_reader *reader, int32_t page, char **json, char *error, size_t error_capacity);
+/* [{title,page|null,depth}] */
+int folio_reader_outline(folio_reader *reader, char **json, char *error, size_t error_capacity);
+/* A PNG of the page turned by `rotation`, scaled to full_width x full_height and cut
+ * to the width x height window at (x, y). With skip_editable, highlight, note and ink
+ * annotations are left to Folio's overlay. */
+int folio_reader_render(folio_reader *reader, int32_t page, int32_t width, int32_t height, int32_t rotation,
+    int32_t full_width, int32_t full_height, int32_t x, int32_t y, int32_t skip_editable,
+    unsigned char **png, size_t *png_length, char *error, size_t error_capacity);
+int folio_reader_annotations(folio_reader *reader, int32_t page, FolioSourceAnnotation **items, size_t *count,
+    char *error, size_t error_capacity);
+void folio_reader_free(void *pointer);
+
 #ifdef __cplusplus
 }
 #endif

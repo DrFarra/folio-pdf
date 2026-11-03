@@ -1,4 +1,5 @@
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist';
+import { watchOpen } from './open-marker';
 import { driveLookup } from '../drive';
 import { errorMessage } from '../errors';
 import { isNative } from '../platform';
@@ -65,7 +66,9 @@ export class DocumentOpener {
   private cancelled = false;
 
   open(source: OpenSource, name = SAMPLE_NAME, sample = false, nativeSource?: string, context?: OpenContext) {
-    const operation = this.queue.catch(() => {}).then(() => this.load(source, name, sample, nativeSource, context));
+    const operation = this.queue
+      .catch(() => {})
+      .then(() => watchOpen(source, name, () => this.load(source, name, sample, nativeSource, context)));
     this.queue = operation;
     return operation;
   }

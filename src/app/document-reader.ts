@@ -5,7 +5,7 @@ import type { Inspection } from '../engine/mupdf-engine.mjs';
 import { inspectOwnedPdf, inspectPdf } from '../engine/client';
 import type { DriveBinding } from '../drive';
 import { assetUrl, pdfAssetSettings } from '../assets';
-import { isNative, isIOS, readNativeDocument, nativeDraftDocument, type NativeDocument } from '../platform';
+import { isNative, isIOS, isAndroid, readNativeDocument, nativeDraftDocument, type NativeDocument } from '../platform';
 import { readDraft } from '../storage';
 
 /** What Folio opens: a file the user chose, bytes it made, its sample, or a native file by token. */
@@ -13,8 +13,10 @@ export type OpenSource = Blob | Uint8Array | 'sample' | NativeDocument;
 /** A password the PDF needs; `submit` retries with the one typed. */
 export type PasswordRequest = { retry: boolean; submit: (value: string) => void };
 
-/** iOS keeps PDFs over this size in PDFKit, read from the file, instead of in memory. */
-const nativeReadingThreshold = 32 * 1024 * 1024;
+/** PDFs over this size stay in their file, read page by page by the platform (iOS: PDFKit,
+ * Android: native MuPDF), instead of in the WebView's memory. Android keeps every tool up
+ * to the 100 MiB it always loaded in memory. */
+const nativeReadingThreshold = isAndroid ? 100 * 1024 * 1024 : 32 * 1024 * 1024;
 
 export type ReadRequest = {
   source: OpenSource;
@@ -60,7 +62,7 @@ export async function readDocument(request: ReadRequest): Promise<ReadDocument |
   const nativeInput = typeof source === 'object' && 'token' in source ? source : null;
   let nativeFile = nativeInput,
     nativeSource = nativeInput?.token || request.nativeSource;
-  const fileBacked = isNative && isIOS && !!nativeFile && nativeFile.size > nativeReadingThreshold;
+  const fileBacked = isNative && (isIOS || isAndroid) && !!nativeFile && nativeFile.size > nativeReadingThreshold;
   // Identical PDFs in different Drive files/accounts must never share drafts
   // or annotations. Distinct remote bases also retain separate recovery data.
   const driveId = drive
