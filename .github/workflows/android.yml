@@ -42,6 +42,7 @@ jobs:
           node-version: '24'
       - name: Read real and damaged PDFs with the native reader
         run: |
+          npm ci
           node scripts/fetch-test-corpus.mjs
           bash scripts/tests/native-reader-stress.sh
   apk:
