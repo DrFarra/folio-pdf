@@ -97,8 +97,18 @@ datos ni preferencias. La versión instalada aparece al pie de Ajustes.
 Guardar una copia usa Crear documento; si la escritura falla, se borra el archivo
 vacío que se creó. Compartir concede acceso temporal a una copia mediante el
 FileProvider de Folio, limitado a la caché de copias compartidas. No se pide acceso
-general al almacenamiento. Se mantiene el límite de 100 MiB por PDF. El lector y OCR
-usan recursos incluidos.
+general al almacenamiento. El lector y OCR usan recursos incluidos.
+
+Los PDFs de más de 100 MiB no se cargan en la memoria del WebView: quedan en su
+copia privada y MuPDF nativo (`src-tauri/src/native_reader.rs`, con el mismo
+`FolioMuPDF.c` que iOS) lee, dibuja y extrae el texto de las páginas visibles, con
+imágenes de hasta cuatro megapíxeles. Ese modo permite leer, buscar, copiar, usar
+marcadores, dibujar y añadir o eliminar resaltados y notas; «Guardar una copia»
+añade los cambios al final de una copia del original (guardado incremental). La
+edición de páginas, los formularios y el OCR siguen disponibles hasta 100 MiB. No
+hay límite de tamaño para importar; solo se comprueba que quede espacio libre.
+`scripts/build-mupdf-android.mjs` compila MuPDF 1.28.1 para arm64 con el NDK (Linux
+o macOS) y aplica los parches de `scripts/mupdf-patches/`.
 
 ## Google Drive
 

@@ -23,6 +23,9 @@ if (!fs.existsSync(android)) {
   const init = spawnSync(process.execPath, [cli, 'android', 'init', '--ci'], { stdio: 'inherit' });
   if (init.status !== 0) process.exit(init.status || 1);
 }
+// Large PDFs are read by native MuPDF (src-tauri/src/native_reader.rs), linked into the Rust library.
+const mupdf = spawnSync(process.execPath, [path.join(root, 'scripts/build-mupdf-android.mjs')], { stdio: 'inherit' });
+if (mupdf.status !== 0) process.exit(mupdf.status || 1);
 const result = spawnSync(
   process.execPath,
   [cli, 'android', 'build', release ? '--aab' : '--debug', '--apk', '--target', ...targets, '--ci'],

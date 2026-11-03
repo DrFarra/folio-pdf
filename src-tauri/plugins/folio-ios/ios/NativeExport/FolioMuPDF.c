@@ -43,20 +43,14 @@ void folio_pdf_free_annotations(FolioSourceAnnotation *items, size_t count)
     free(items);
 }
 
-int folio_pdf_read_annotations(const char *path, const char *password, int32_t page,
-    FolioSourceAnnotation **out_items, size_t *out_count, char *error, size_t error_capacity)
+/* Reads one page's editable annotations from an open document; throws on error. */
+static void read_annotations(fz_context *ctx, pdf_document *document, int32_t page,
+    FolioSourceAnnotation **out_items, size_t *out_count)
 {
-    fz_context *ctx = fz_new_context(NULL, NULL, 32 * 1024 * 1024);
-    pdf_document *document = NULL;
     FolioSourceAnnotation *items = NULL;
     size_t count = 0;
-    int status = -1;
-    if (!ctx) { fail_message(error, error_capacity, "Out of memory opening PDF metadata."); return -1; }
-    if (!out_items || !out_count) { fz_drop_context(ctx); return -1; }
-    *out_items = NULL; *out_count = 0;
-    fz_var(document); fz_var(items); fz_var(count); fz_var(status);
+    fz_var(items); fz_var(count);
     fz_try(ctx) {
-        document = open_pdf(ctx, path, password);
         if (page <= 0 || page > pdf_count_pages(ctx, document)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "PDF page does not exist.");
         pdf_obj *array = pdf_dict_get(ctx, pdf_lookup_page_obj(ctx, document, page - 1), PDF_NAME(Annots));
         int length = pdf_array_len(ctx, array);
@@ -129,9 +123,27 @@ int folio_pdf_read_annotations(const char *path, const char *password, int32_t p
                 if (!isfinite(item->stroke_width) || item->stroke_width <= 0) item->stroke_width = 1;
             }
         }
-        *out_items = items; *out_count = count; items = NULL; status = 0;
+        *out_items = items; *out_count = count; items = NULL;
     }
-    fz_always(ctx) { folio_pdf_free_annotations(items, count); pdf_drop_document(ctx, document); }
+    fz_always(ctx) { folio_pdf_free_annotations(items, count); }
+    fz_catch(ctx) { fz_rethrow(ctx); }
+}
+
+int folio_pdf_read_annotations(const char *path, const char *password, int32_t page,
+    FolioSourceAnnotation **out_items, size_t *out_count, char *error, size_t error_capacity)
+{
+    fz_context *ctx = fz_new_context(NULL, NULL, 32 * 1024 * 1024);
+    pdf_document *document = NULL;
+    int status = -1;
+    if (!ctx) { fail_message(error, error_capacity, "Out of memory opening PDF metadata."); return -1; }
+    if (!out_items || !out_count) { fz_drop_context(ctx); return -1; }
+    *out_items = NULL; *out_count = 0;
+    fz_var(document); fz_var(status);
+    fz_try(ctx) {
+        document = open_pdf(ctx, path, password);
+        read_annotations(ctx, document, page, out_items, out_count); status = 0;
+    }
+    fz_always(ctx) { pdf_drop_document(ctx, document); }
     fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
     fz_drop_context(ctx); return status;
 }
@@ -266,3 +278,362 @@ int folio_pdf_export(const char *source, const char *output, const char *passwor
 }
 
 const char *folio_pdf_engine_version(void) { return FZ_VERSION; }
+
+/* ---- File-backed reader ------------------------------------------------ */
+
+struct folio_reader { fz_context *ctx; pdf_document *document; int locked; };
+
+void folio_reader_free(void *pointer) { free(pointer); }
+
+static void json_string(fz_context *ctx, fz_buffer *out, const char *text)
+{
+    fz_append_byte(ctx, out, '"');
+    for (const unsigned char *c = (const unsigned char *)(text ? text : ""); *c; ++c) {
+        if (*c == '"' || *c == '\\') { fz_append_byte(ctx, out, '\\'); fz_append_byte(ctx, out, *c); }
+        else if (*c < 0x20) fz_append_printf(ctx, out, "\\u%04x", *c);
+        else fz_append_byte(ctx, out, *c);
+    }
+    fz_append_byte(ctx, out, '"');
+}
+static void json_number(fz_context *ctx, fz_buffer *out, float value)
+{
+    fz_append_printf(ctx, out, "%g", isfinite(value) ? value : 0);
+}
+static void json_rect(fz_context *ctx, fz_buffer *out, fz_rect r)
+{
+    fz_append_byte(ctx, out, '[');
+    json_number(ctx, out, r.x0); fz_append_byte(ctx, out, ',');
+    json_number(ctx, out, r.y0); fz_append_byte(ctx, out, ',');
+    json_number(ctx, out, r.x1); fz_append_byte(ctx, out, ',');
+    json_number(ctx, out, r.y1); fz_append_byte(ctx, out, ']');
+}
+/* Hands the buffer's text to the caller as a malloc'd C string. */
+static char *json_result(fz_context *ctx, fz_buffer *out)
+{
+    unsigned char *data;
+    size_t length = fz_buffer_storage(ctx, out, &data);
+    char *copy = malloc(length + 1);
+    if (!copy) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory returning PDF metadata.");
+    memcpy(copy, data, length); copy[length] = 0;
+    return copy;
+}
+
+static int document_signed(fz_context *ctx, pdf_document *document)
+{
+    pdf_obj *root = pdf_dict_get(ctx, pdf_trailer(ctx, document), PDF_NAME(Root));
+    if (pdf_dict_get_int(ctx, pdf_dict_get(ctx, root, PDF_NAME(AcroForm)), PDF_NAME(SigFlags)) & 1) return 1;
+    return pdf_dict_get(ctx, pdf_dict_get(ctx, root, PDF_NAME(Perms)), PDF_NAME(DocMDP)) != NULL;
+}
+
+/* The page's crop box (within its media box) in PDF user space, and its /Rotate. */
+static fz_rect page_view(fz_context *ctx, pdf_obj *page, int *rotation)
+{
+    fz_rect media = pdf_to_rect(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(MediaBox)));
+    if (fz_is_empty_rect(media)) media = fz_make_rect(0, 0, 612, 792);
+    fz_rect crop = pdf_to_rect(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(CropBox)));
+    if (!fz_is_empty_rect(crop)) crop = fz_intersect_rect(crop, media);
+    if (fz_is_empty_rect(crop)) crop = media;
+    if (rotation) {
+        int value = pdf_to_int(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(Rotate)));
+        value = ((value % 360) + 360) % 360;
+        *rotation = value - value % 90;
+    }
+    return crop;
+}
+
+/* MuPDF's page space -> PDF user space. */
+static fz_matrix to_user(fz_context *ctx, pdf_page *page)
+{
+    fz_rect media; fz_matrix ctm;
+    pdf_page_transform(ctx, page, &media, &ctm);
+    return fz_invert_matrix(ctm);
+}
+
+static pdf_page *reader_page(fz_context *ctx, folio_reader *reader, int32_t number)
+{
+    if (reader->locked) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The PDF password is missing or incorrect.");
+    if (number <= 0 || number > pdf_count_pages(ctx, reader->document)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "PDF page does not exist.");
+    return pdf_load_page(ctx, reader->document, number - 1);
+}
+
+int folio_reader_open(const char *path, const char *password, folio_reader **out, char **json,
+    char *error, size_t error_capacity)
+{
+    /* MuPDF's resource store (fonts, images) stays bounded however big the book is. */
+    fz_context *ctx = fz_new_context(NULL, NULL, 96 * 1024 * 1024);
+    folio_reader *reader = NULL;
+    fz_buffer *buffer = NULL;
+    int status = -1;
+    if (!ctx) { fail_message(error, error_capacity, "Out of memory opening the PDF."); return -1; }
+    if (!out || !json) { fz_drop_context(ctx); return -1; }
+    *out = NULL; *json = NULL;
+    fz_var(reader); fz_var(buffer); fz_var(status);
+    fz_try(ctx) {
+        fz_register_document_handlers(ctx);
+        reader = calloc(1, sizeof(*reader));
+        if (!reader) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory opening the PDF.");
+        reader->ctx = ctx;
+        reader->document = pdf_open_document(ctx, path);
+        pdf_document *document = reader->document;
+        reader->locked = pdf_needs_password(ctx, document) && !pdf_authenticate_password(ctx, document, password ? password : "");
+        /* MuPDF looks up the structure tree's ParentTree each time it runs a page, and a book
+         * can store that tree as one object of hundreds of MB (Harrison 22e: +500 MB, 2.5 s).
+         * This handle never saves, so its in-memory catalog drops the tree. */
+        if (!reader->locked) pdf_dict_del(ctx, pdf_dict_get(ctx, pdf_trailer(ctx, document), PDF_NAME(Root)), PDF_NAME(StructTreeRoot));
+        int locked = reader->locked, sign = locked ? 0 : document_signed(ctx, document);
+        int annotate = !locked && !sign && pdf_has_permission(ctx, document, FZ_PERMISSION_ANNOTATE);
+        buffer = fz_new_buffer(ctx, 256);
+        fz_append_printf(ctx, buffer, "{\"numPages\":%d,\"locked\":%s,\"signed\":%s,\"permissions\":{\"canCopy\":%s,\"canPrint\":%s,\"canAnnotate\":%s,\"canEdit\":false,\"canAssemble\":false,\"canFill\":false}}",
+            locked ? 0 : pdf_count_pages(ctx, document), locked ? "true" : "false", sign ? "true" : "false",
+            !locked && pdf_has_permission(ctx, document, FZ_PERMISSION_COPY) ? "true" : "false",
+            !locked && pdf_has_permission(ctx, document, FZ_PERMISSION_PRINT) ? "true" : "false",
+            annotate ? "true" : "false");
+        *json = json_result(ctx, buffer);
+        *out = reader; reader = NULL; status = 0;
+    }
+    fz_always(ctx) { fz_drop_buffer(ctx, buffer); }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    if (reader) { pdf_drop_document(ctx, reader->document); free(reader); }
+    if (status) fz_drop_context(ctx);
+    return status;
+}
+
+void folio_reader_close(folio_reader *reader)
+{
+    if (!reader) return;
+    fz_context *ctx = reader->ctx;
+    pdf_drop_document(ctx, reader->document);
+    free(reader);
+    fz_drop_context(ctx);
+}
+
+int folio_reader_page_info(folio_reader *reader, int32_t number, char **json, char *error, size_t error_capacity)
+{
+    if (!reader || !json) return -1;
+    fz_context *ctx = reader->ctx;
+    pdf_page *page = NULL;
+    fz_link *links = NULL;
+    fz_buffer *buffer = NULL;
+    int status = -1;
+    *json = NULL;
+    fz_var(page); fz_var(links); fz_var(buffer); fz_var(status);
+    fz_try(ctx) {
+        page = reader_page(ctx, reader, number);
+        int rotation = 0;
+        fz_rect view = page_view(ctx, page->obj, &rotation);
+        fz_matrix user = to_user(ctx, page);
+        char label[256] = "";
+        fz_page_label(ctx, (fz_page *)page, label, sizeof label);
+        buffer = fz_new_buffer(ctx, 1024);
+        fz_append_string(ctx, buffer, "{\"view\":"); json_rect(ctx, buffer, view);
+        fz_append_printf(ctx, buffer, ",\"rotation\":%d,\"label\":", rotation);
+        if (*label) json_string(ctx, buffer, label); else fz_append_printf(ctx, buffer, "\"%d\"", number);
+        fz_append_string(ctx, buffer, ",\"links\":[");
+        links = fz_load_links(ctx, (fz_page *)page);
+        int first = 1, count = 0;
+        for (fz_link *link = links; link && count < 5000; link = link->next) {
+            if (!link->uri) continue;
+            fz_rect rect = fz_transform_rect(link->rect, user);
+            if (fz_is_external_link(ctx, link->uri)) {
+                if (fz_strncasecmp(link->uri, "http:", 5) && fz_strncasecmp(link->uri, "https:", 6) &&
+                    fz_strncasecmp(link->uri, "mailto:", 7) && fz_strncasecmp(link->uri, "tel:", 4)) continue;
+                fz_append_string(ctx, buffer, first ? "{\"rect\":" : ",{\"rect\":"); json_rect(ctx, buffer, rect);
+                fz_append_string(ctx, buffer, ",\"url\":"); json_string(ctx, buffer, link->uri);
+                fz_append_byte(ctx, buffer, '}');
+            } else {
+                float x = NAN, y = NAN;
+                fz_location location = fz_resolve_link(ctx, (fz_document *)reader->document, link->uri, &x, &y);
+                int target = fz_page_number_from_location(ctx, (fz_document *)reader->document, location);
+                if (target < 0 || target >= pdf_count_pages(ctx, reader->document)) continue;
+                fz_append_string(ctx, buffer, first ? "{\"rect\":" : ",{\"rect\":"); json_rect(ctx, buffer, rect);
+                fz_append_printf(ctx, buffer, ",\"page\":%d", target + 1);
+                if (isfinite(x) && isfinite(y)) {
+                    /* The destination point, from the target page's MuPDF space to its user space. */
+                    pdf_obj *target_page = pdf_lookup_page_obj(ctx, reader->document, target);
+                    fz_rect media; fz_matrix ctm;
+                    pdf_page_obj_transform(ctx, target_page, &media, &ctm);
+                    fz_point point = fz_transform_point(fz_make_point(x, y), fz_invert_matrix(ctm));
+                    fz_append_string(ctx, buffer, ",\"left\":"); json_number(ctx, buffer, point.x);
+                    fz_append_string(ctx, buffer, ",\"top\":"); json_number(ctx, buffer, point.y);
+                }
+                fz_append_byte(ctx, buffer, '}');
+            }
+            first = 0; ++count;
+        }
+        fz_append_string(ctx, buffer, "]}");
+        *json = json_result(ctx, buffer); status = 0;
+    }
+    fz_always(ctx) { fz_drop_link(ctx, links); fz_drop_page(ctx, (fz_page *)page); fz_drop_buffer(ctx, buffer); }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    return status;
+}
+
+int folio_reader_text(folio_reader *reader, int32_t number, char **json, char *error, size_t error_capacity)
+{
+    if (!reader || !json) return -1;
+    fz_context *ctx = reader->ctx;
+    pdf_page *page = NULL;
+    fz_stext_page *text = NULL;
+    fz_buffer *buffer = NULL, *word = NULL;
+    int status = -1;
+    *json = NULL;
+    fz_var(page); fz_var(text); fz_var(buffer); fz_var(word); fz_var(status);
+    fz_try(ctx) {
+        page = reader_page(ctx, reader, number);
+        buffer = fz_new_buffer(ctx, 4096);
+        word = fz_new_buffer(ctx, 64);
+        fz_append_string(ctx, buffer, "{\"lines\":[");
+        if (pdf_has_permission(ctx, reader->document, FZ_PERMISSION_COPY)) {
+            fz_matrix user = to_user(ctx, page);
+            text = fz_new_stext_page_from_page(ctx, (fz_page *)page, NULL);
+            int first = 1, words = 0;
+            for (fz_stext_block *block = text->first_block; block; block = block->next) {
+                if (block->type != FZ_STEXT_BLOCK_TEXT) continue;
+                for (fz_stext_line *line = block->u.t.first_line; line; line = line->next) {
+                    fz_rect box = fz_empty_rect;
+                    int pending = 0;
+                    for (fz_stext_char *ch = line->first_char; ; ch = ch->next) {
+                        int space = ch && (ch->c == ' ' || ch->c == '\t' || ch->c == 0xa0);
+                        /* A word ends at the space after it, or at the end of the line. */
+                        if (pending && (!ch || (space && ch->next && ch->next->c != ' '))) {
+                            if (space) fz_append_rune(ctx, word, ' ');
+                            fz_terminate_buffer(ctx, word);
+                            fz_append_string(ctx, buffer, first ? "{\"text\":" : ",{\"text\":");
+                            json_string(ctx, buffer, fz_string_from_buffer(ctx, word));
+                            fz_append_string(ctx, buffer, ",\"bounds\":"); json_rect(ctx, buffer, fz_transform_rect(box, user));
+                            fz_append_printf(ctx, buffer, ",\"hasEOL\":%s,\"direction\":\"ltr\"}", ch ? "false" : "true");
+                            first = 0; pending = 0; box = fz_empty_rect; fz_clear_buffer(ctx, word);
+                            if (++words > 200000) fz_throw(ctx, FZ_ERROR_LIMIT, "This page has too much text to read.");
+                            if (ch) continue;
+                        }
+                        if (!ch) break;
+                        if (space) continue;
+                        fz_append_rune(ctx, word, ch->c);
+                        box = fz_union_rect(box, fz_rect_from_quad(ch->quad));
+                        pending = 1;
+                    }
+                }
+            }
+        }
+        fz_append_string(ctx, buffer, "]}");
+        *json = json_result(ctx, buffer); status = 0;
+    }
+    fz_always(ctx) { fz_drop_stext_page(ctx, text); fz_drop_page(ctx, (fz_page *)page); fz_drop_buffer(ctx, buffer); fz_drop_buffer(ctx, word); }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    return status;
+}
+
+static void outline_items(fz_context *ctx, fz_document *document, fz_outline *item, int depth, fz_buffer *buffer, int *count)
+{
+    for (; item && *count < 20000 && depth <= 64; item = item->next) {
+        int page = item->uri ? fz_page_number_from_location(ctx, document, item->page) : -1;
+        fz_append_string(ctx, buffer, *count ? ",{\"title\":" : "{\"title\":");
+        json_string(ctx, buffer, item->title);
+        if (page >= 0) fz_append_printf(ctx, buffer, ",\"page\":%d", page + 1);
+        else fz_append_string(ctx, buffer, ",\"page\":null");
+        fz_append_printf(ctx, buffer, ",\"depth\":%d}", depth);
+        ++*count;
+        outline_items(ctx, document, item->down, depth + 1, buffer, count);
+    }
+}
+
+int folio_reader_outline(folio_reader *reader, char **json, char *error, size_t error_capacity)
+{
+    if (!reader || !json) return -1;
+    fz_context *ctx = reader->ctx;
+    fz_outline *outline = NULL;
+    fz_buffer *buffer = NULL;
+    int status = -1, count = 0;
+    *json = NULL;
+    fz_var(outline); fz_var(buffer); fz_var(status);
+    fz_try(ctx) {
+        if (reader->locked) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The PDF password is missing or incorrect.");
+        buffer = fz_new_buffer(ctx, 4096);
+        fz_append_byte(ctx, buffer, '[');
+        outline = fz_load_outline(ctx, (fz_document *)reader->document);
+        outline_items(ctx, (fz_document *)reader->document, outline, 0, buffer, &count);
+        fz_append_byte(ctx, buffer, ']');
+        *json = json_result(ctx, buffer); status = 0;
+    }
+    fz_always(ctx) { fz_drop_outline(ctx, outline); fz_drop_buffer(ctx, buffer); }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    return status;
+}
+
+static int editable_annotation(fz_context *ctx, pdf_annot *annotation)
+{
+    enum pdf_annot_type type = pdf_annot_type(ctx, annotation);
+    return (type == PDF_ANNOT_HIGHLIGHT || type == PDF_ANNOT_TEXT || type == PDF_ANNOT_INK) &&
+        !(pdf_annot_flags(ctx, annotation) & (PDF_ANNOT_IS_INVISIBLE | PDF_ANNOT_IS_HIDDEN | PDF_ANNOT_IS_NO_VIEW));
+}
+
+int folio_reader_render(folio_reader *reader, int32_t number, int32_t width, int32_t height, int32_t rotation,
+    int32_t full_width, int32_t full_height, int32_t x, int32_t y, int32_t skip_editable,
+    unsigned char **png, size_t *png_length, char *error, size_t error_capacity)
+{
+    if (!reader || !png || !png_length) return -1;
+    fz_context *ctx = reader->ctx;
+    pdf_page *page = NULL;
+    fz_pixmap *pixmap = NULL;
+    fz_device *device = NULL;
+    fz_buffer *buffer = NULL;
+    int status = -1;
+    *png = NULL; *png_length = 0;
+    fz_var(page); fz_var(pixmap); fz_var(device); fz_var(buffer); fz_var(status);
+    fz_try(ctx) {
+        if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || (int64_t)width * height > 4000000 ||
+            rotation % 90 || full_width <= 0 || full_height <= 0 || full_width > 65536 || full_height > 65536 ||
+            x < 0 || y < 0 || x >= full_width || y >= full_height)
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid page render request.");
+        page = reader_page(ctx, reader, number);
+        fz_rect view = page_view(ctx, page->obj, NULL);
+        /* User space -> the viewer's rotated page (PDF.js PageViewport), then to the window. */
+        int turn = ((rotation % 360) + 360) % 360;
+        fz_matrix base = turn == 0 ? fz_make_matrix(1, 0, 0, -1, 0, 0) : turn == 90 ? fz_make_matrix(0, 1, 1, 0, 0, 0) :
+            turn == 180 ? fz_make_matrix(-1, 0, 0, 1, 0, 0) : fz_make_matrix(0, -1, -1, 0, 0, 0);
+        fz_rect turned = fz_transform_rect(view, base);
+        base = fz_concat(base, fz_translate(-turned.x0, -turned.y0));
+        float page_width = turned.x1 - turned.x0, page_height = turned.y1 - turned.y0;
+        if (page_width <= 0 || page_height <= 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The page has no size.");
+        fz_matrix ctm = fz_concat(base, fz_scale(full_width / page_width, full_height / page_height));
+        ctm = fz_concat(ctm, fz_translate(-x, -y));
+        /* pdf_run_* start from MuPDF's page space; undo its transform first. */
+        ctm = fz_concat(to_user(ctx, page), ctm);
+        pixmap = fz_new_pixmap(ctx, fz_device_rgb(ctx), width, height, NULL, 0);
+        fz_clear_pixmap_with_value(ctx, pixmap, 255);
+        device = fz_new_draw_device(ctx, fz_identity, pixmap);
+        pdf_run_page_contents(ctx, page, device, ctm, NULL);
+        for (pdf_annot *annotation = pdf_first_annot(ctx, page); annotation; annotation = pdf_next_annot(ctx, annotation))
+            if (!skip_editable || !editable_annotation(ctx, annotation)) pdf_run_annot(ctx, annotation, device, ctm, NULL);
+        pdf_run_page_widgets(ctx, page, device, ctm, NULL);
+        fz_close_device(ctx, device);
+        buffer = fz_new_buffer_from_pixmap_as_png(ctx, pixmap, fz_default_color_params);
+        unsigned char *data;
+        size_t length = fz_buffer_storage(ctx, buffer, &data);
+        *png = malloc(length);
+        if (!*png) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory drawing the page.");
+        memcpy(*png, data, length); *png_length = length; status = 0;
+    }
+    fz_always(ctx) {
+        fz_drop_device(ctx, device); fz_drop_pixmap(ctx, pixmap); fz_drop_buffer(ctx, buffer);
+        fz_drop_page(ctx, (fz_page *)page);
+    }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    return status;
+}
+
+int folio_reader_annotations(folio_reader *reader, int32_t page, FolioSourceAnnotation **items, size_t *count,
+    char *error, size_t error_capacity)
+{
+    if (!reader || !items || !count) return -1;
+    fz_context *ctx = reader->ctx;
+    int status = -1;
+    *items = NULL; *count = 0;
+    fz_var(status);
+    fz_try(ctx) {
+        if (reader->locked) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The PDF password is missing or incorrect.");
+        read_annotations(ctx, reader->document, page, items, count); status = 0;
+    }
+    fz_catch(ctx) { fail_message(error, error_capacity, fz_caught_message(ctx)); }
+    return status;
+}

@@ -6,6 +6,12 @@ on:
     paths:
       - .github/workflows/android.yml
       - scripts/build-android.mjs
+      - scripts/build-mupdf-android.mjs
+      - scripts/mupdf-patches/**
+      - src-tauri/src/native_reader.rs
+      - src-tauri/src/android_commands.rs
+      - src-tauri/plugins/folio-android/**
+      - src-tauri/plugins/folio-ios/ios/NativeExport/**
       - scripts/compact-apk.py
       - src-tauri/gen/android/**
 

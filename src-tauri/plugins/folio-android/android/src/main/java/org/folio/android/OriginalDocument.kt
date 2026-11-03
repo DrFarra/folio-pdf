@@ -35,10 +35,9 @@ internal class OriginalRecovered(val file: File, message: String, cause: Throwab
 
 internal fun pdfDigest(input: InputStream): String = input.use {
     val hash = MessageDigest.getInstance("SHA-256")
-    val buffer = ByteArray(65536); var total = 0L
+    val buffer = ByteArray(65536)
     while (true) {
         val count = it.read(buffer); if (count < 0) break
-        total += count; ensure(total <= 128L * 1024 * 1024) { "El PDF supera 128 MiB." }
         hash.update(buffer, 0, count)
     }
     hash.digest().joinToString("") { byte -> "%02x".format(byte) }

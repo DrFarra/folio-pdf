@@ -217,3 +217,83 @@ pub async fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(),
     if !["http", "https", "mailto", "tel"].contains(&parsed.scheme()) { return Err("Enlace no compatible.".into()); }
     mobile_call(app, "openUrl", serde_json::json!({"url":url})).await.map(|_| ())
 }
+
+// Large PDFs stay in their file, read page by page by MuPDF (native_reader.rs):
+// the same commands and payloads as iOS's PDFKit reader.
+fn pdf_source(desktop: &Desktop, token: &str) -> Result<(PathBuf, DocumentInfo), String> {
+    let files = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?;
+    let source = files.sources.get(token).ok_or("El documento no está disponible.")?;
+    if folio_core::file_snapshot(&source.path)? != source.snapshot { return Err("El archivo cambió en disco. Vuelve a abrirlo.".into()); }
+    Ok((source.path.clone(), source.info.clone()))
+}
+async fn reading<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|_| "No se pudo leer el PDF.".to_string())?
+}
+
+#[tauri::command]
+pub async fn native_pdf_open(token: String, password: Option<String>, desktop: State<'_, Desktop>) -> Result<Value, String> {
+    let (path, info) = pdf_source(&desktop, &token)?;
+    reading(move || crate::native_reader::open(&token, &path, password.as_deref().unwrap_or(""), &info.id, &info.revision, info.size)).await
+}
+
+#[tauri::command]
+pub async fn native_pdf_page_info(token: String, page: u32, desktop: State<'_, Desktop>) -> Result<Value, String> {
+    pdf_source(&desktop, &token)?;
+    reading(move || crate::native_reader::with(&token, |reader| reader.page_info(page))).await
+}
+
+#[tauri::command]
+pub async fn native_pdf_text(token: String, page: u32, desktop: State<'_, Desktop>) -> Result<Value, String> {
+    pdf_source(&desktop, &token)?;
+    reading(move || crate::native_reader::with(&token, |reader| reader.text(page))).await
+}
+
+#[tauri::command]
+pub async fn native_pdf_outline(token: String, desktop: State<'_, Desktop>) -> Result<Value, String> {
+    pdf_source(&desktop, &token)?;
+    reading(move || crate::native_reader::with(&token, |reader| reader.outline())).await
+}
+
+#[tauri::command]
+pub async fn native_pdf_close(token: String) -> Result<(), String> {
+    reading(move || { crate::native_reader::close(&token); Ok(()) }).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn native_pdf_render(token: String, page: u32, width: u32, height: u32, rotation: u16, full_width: Option<u32>, full_height: Option<u32>, x: Option<u32>, y: Option<u32>, desktop: State<'_, Desktop>) -> Result<tauri::ipc::Response, String> {
+    pdf_source(&desktop, &token)?;
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 4_000_000 { return Err("La página debe renderizarse en un máximo de 4 megapíxeles.".into()); }
+    if rotation % 90 != 0 || rotation >= 360 { return Err("La rotación de la página no es válida.".into()); }
+    // Optional window of a larger page raster (the visible part when zoomed in).
+    let (full_width, full_height, x, y) = (full_width.unwrap_or(width), full_height.unwrap_or(height), x.unwrap_or(0), y.unwrap_or(0));
+    if full_width > 65_536 || full_height > 65_536 || x >= full_width || y >= full_height { return Err("La zona de la página no es válida.".into()); }
+    let png = reading(move || crate::native_reader::with(&token, |reader| reader.render(page, width, height, rotation, full_width, full_height, x, y))).await?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn native_pdf_present(token: String, name: String, action: String, annotations: Value, removed_source_refs: Vec<String>, anchor: Option<Vec<f64>>, app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<Value, String> {
+    let _ = anchor; // Android's sheets are not anchored.
+    if !["save", "share", "print"].contains(&action.as_str()) { return Err("Acción de PDF no admitida.".into()); }
+    if !annotations.is_array() || annotations.to_string().len() > 4 * 1024 * 1024 { return Err("Las anotaciones de la copia son inválidas o demasiado numerosas.".into()); }
+    let (source, _) = pdf_source(&desktop, &token)?;
+    if action == "print" {
+        let reader = token.clone();
+        let printable = reading(move || crate::native_reader::with(&reader, |r| Ok(r.metadata["permissions"]["canPrint"] == true))).await?;
+        if !printable { return Err("Este PDF no permite imprimir.".into()); }
+    }
+    let output_token = reserve_output(&desktop, Some(token.clone()), name, "pdf".into())?;
+    let output = desktop.files.lock().map_err(|_| "El acceso a archivos está ocupado.")?.outputs.remove(&output_token).ok_or("Destino vencido.")?;
+    protect_original(&source, &output.path)?;
+    let path = output.path.clone();
+    let exported = reading(move || crate::native_reader::with(&token, |reader| reader.export(&path, &annotations, &removed_source_refs))).await;
+    if let Err(error) = exported { remove_export(&desktop, &output.path); return Err(error); }
+    let command = match action.as_str() { "save" => "exportFile", "share" => "shareFile", _ => "printFile" };
+    let response = mobile_call(app, command, serde_json::json!({"path":output.path})).await;
+    let completed = response.as_ref().ok().and_then(|r| r["completed"].as_bool()) == Some(true);
+    if action == "save" && completed { return register(&desktop, output.path).and_then(|d| serde_json::to_value(d).map_err(|_| "No se pudo registrar la copia.".into())); }
+    remove_export(&desktop, &output.path);
+    response.map(|_| if action == "save" { Value::Null } else { Value::Bool(completed) })
+}

@@ -9,5 +9,13 @@ fn main() {
     let mobile = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "android" || os == "ios");
     if !mobile && std::env::var("PROFILE").is_ok_and(|p| p == "release") && !config.contains("\"client_id\"") { println!("cargo:warning=Falta la configuración OAuth de escritorio (FOLIO_GOOGLE_DESKTOP_CREDENTIALS): esta compilación no incluye Google Drive."); }
     std::fs::write(std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("google-installed.json"), config).unwrap();
+    // Android's large-PDF reader (src/native_reader.rs): scripts/build-mupdf-android.mjs builds these.
+    if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "android") {
+        let out = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../test-results/mupdf-android/out");
+        assert!(out.join("libfoliomupdf.a").is_file(), "Compila MuPDF para Android con node scripts/build-mupdf-android.mjs");
+        println!("cargo:rerun-if-changed={}", out.join("build.json").display());
+        println!("cargo:rustc-link-search=native={}", out.display());
+        for library in ["foliomupdf", "mupdf", "mupdf-third"] { println!("cargo:rustc-link-lib=static={library}"); }
+    }
     tauri_build::build();
 }
