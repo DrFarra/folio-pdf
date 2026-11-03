@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { watchImport } from './open-marker';
 import { errorMessage } from '../errors';
 import { isNativePdfDocument } from '../nativePdf';
 import { type History } from './model';
@@ -147,9 +148,12 @@ export function useFolioCommands(f: Layer3) {
     // The system picker is modal; «Abriendo PDF…» waits until a file loads.
     picking.current = true;
     try {
+      await watchImport(true);
       const files = await pickNativeDocuments();
+      if (!files.length) await watchImport(false);
       for (const file of files) await openDocument(file, file.name, false, file.token);
     } catch (error) {
+      void watchImport(false);
       notify(errorMessage(error), 'error');
     } finally {
       picking.current = false;

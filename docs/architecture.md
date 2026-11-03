@@ -65,6 +65,7 @@ rules that break things when ignored. Read the files named before changing them.
 ## Rules that bite
 
 - Native MuPDF (Android reader): books store structure trees of hundreds of MB, sometimes in the same object streams as fonts. The reader drops `/StructTreeRoot` from its read-only copy, and `scripts/mupdf-patches/objstm-large-neighbours.patch` stops MuPDF caching a big neighbour of the object it loads (Harrison 22e, 650 MB: 1.6 GB → 236 MB over all 4273 pages).
+- Interrupted opens (iOS, Android): `open-marker.ts` keeps `opening.json` (Rust `open_marker`) while a native PDF opens and for 15 s after it shows; the next launch reports it and skips reopening the last tab.
 - Engine memory: MuPDF WASM caps near 1.8 GB and saves to an in-heap buffer; PDFs over ~0.75 GB cannot be saved modified (`save()` gives a Spanish error). Open PDFs ≥ 32 MB are streamed, not copied.
 - Workers: one request each; a worker that errored or handled > 32 MB is discarded (`client.ts`). Long jobs keep alive by posting progress (`split` parts).
 - Content edits are redaction + redraw (`redactPage`, `appendDrawing`), always followed by `verifyRetainedGlyphs`; failures never return a partial PDF. `appendDrawing` must not re-wrap q/Q per edit.

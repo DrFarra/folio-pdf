@@ -108,6 +108,10 @@ export async function readNativeDocument(document: NativeDocument): Promise<Uint
   }
   return new Uint8Array(await invoke<ArrayBuffer>('read_document', { token: document.token }));
 }
+/** Stores `value` as the PDF being opened (null clears it) and returns the previous one. */
+export async function openMarker(value: string | null): Promise<string | null> {
+  return isNative ? invoke<string | null>('open_marker', { value }).catch(() => null) : null;
+}
 export async function startupDocuments(): Promise<NativeDocument[]> {
   return isNative ? invoke<NativeDocument[]>('startup_documents') : [];
 }
