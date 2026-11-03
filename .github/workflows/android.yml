@@ -2,6 +2,11 @@ name: Folio Android
 
 on:
   workflow_dispatch:
+    inputs:
+      large_pdf_url:
+        description: Optional. Also open this PDF on an Android emulator and record memory, screenshots and log.
+        required: false
+        type: string
   pull_request:
     paths:
       - .github/workflows/android.yml
@@ -71,3 +76,40 @@ jobs:
           name: Folio-Android
           path: release/android/
           if-no-files-found: error
+  large-pdf:
+    needs: apk
+    if: inputs.large_pdf_url != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Folio-Android
+          path: release/android
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Open the large PDF in Folio on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
+        with:
+          # x86_64 images from Android 11 run arm64 apps through Android's own translation.
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          disk-size: 6000M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/tests/android-large-pdf.sh "$(ls release/android/*.apk | head -1)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: Folio-Android-large-pdf
+          path: test-results/android-large/
+          if-no-files-found: ignore
+          retention-days: 3
