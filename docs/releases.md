@@ -5,10 +5,16 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.31](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.31) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.32
+
+Para iPhone e iPad (y Android).
+
+- Si iOS cierra la parte de Folio que dibuja la pantalla (lo que deja la pantalla en negro, por ejemplo cuando falta memoria), Folio se recupera solo, vuelve a la biblioteca y no reabre el PDF que estaba abierto, para no repetir el cierre. Avisa de qué pasó; el PDF sigue en la biblioteca.
 
 ## Cambios en 0.9.31
 

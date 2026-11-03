@@ -689,8 +689,9 @@ fn forget_document(id: String, desktop: State<'_, Desktop>) -> Result<(), String
 /// The native PDF being opened, kept on disk until it has been on screen a while: when the
 /// system ends Folio meanwhile (memory, a crash), the next launch learns which file and step.
 const OPEN_MARKER: &str = "opening.json";
-/// The marker the previous run left, read at setup before anything new opens.
-struct PreviousOpen(Mutex<Option<String>>);
+/// The marker the previous run left, read at setup before anything new opens, and whether
+/// the page has asked for it (a second ask means iOS reloaded a WebView whose process died).
+struct PreviousOpen(Mutex<(Option<String>, bool)>);
 fn write_open_marker(desktop: &Desktop, value: Option<&str>) {
     let path = desktop.data.join(OPEN_MARKER);
     match value { Some(value) => { let _ = fs::write(&path, value); } None => { let _ = fs::remove_file(&path); } }
@@ -702,8 +703,16 @@ fn open_marker(value: Option<String>, desktop: State<'_, Desktop>) -> Result<(),
     Ok(())
 }
 #[tauri::command]
-fn interrupted_open(previous: State<'_, PreviousOpen>) -> Option<String> {
-    previous.0.lock().ok().and_then(|mut value| value.take())
+fn interrupted_open(previous: State<'_, PreviousOpen>, desktop: State<'_, Desktop>) -> Option<String> {
+    let mut previous = previous.0.lock().ok()?;
+    if !std::mem::replace(&mut previous.1, true) { return previous.0.take(); }
+    // A reloaded page: its WebView process died (iOS reloads it), so the PDF in front is not
+    // reopened by itself. This run's marker says which one, if it was still opening.
+    let current = fs::read_to_string(desktop.data.join(OPEN_MARKER)).ok().and_then(|v| serde_json::from_str::<Value>(&v).ok());
+    write_open_marker(&desktop, None);
+    let mut marker = current.filter(Value::is_object).unwrap_or_else(|| serde_json::json!({"name": "", "step": "mostraba"}));
+    marker["reloaded"] = Value::Bool(true);
+    Some(marker.to_string())
 }
 #[tauri::command(async)]
 fn clear_saved_state(app: tauri::AppHandle, desktop: State<'_, Desktop>) -> Result<(), String> {
@@ -899,7 +908,7 @@ pub fn run() {
             fs::create_dir_all(&data)?;
             let previous = fs::read_to_string(data.join(OPEN_MARKER)).ok();
             let _ = fs::remove_file(data.join(OPEN_MARKER));
-            app.manage(PreviousOpen(Mutex::new(previous)));
+            app.manage(PreviousOpen(Mutex::new((previous, false))));
             let desktop = Desktop { files: Mutex::new(Files::default()), store: Mutex::new(()), data };
             #[cfg(target_os = "ios")]
             ios_commands::cleanup_unreferenced_exports(&desktop);
