@@ -11,6 +11,11 @@ on:
         description: Optional. Open this PDF in the simulator instead of the UIKit picker test, and record memory, screenshots and logs.
         required: false
         type: string
+      pdfkit_probe:
+        description: Optional. With large_pdf_url, only measure PDFKit (macOS) page by page; no app.
+        required: false
+        type: boolean
+        default: false
       ios_version:
         description: Optional. Simulator iOS version for the large PDF check (18.5 by default; 26.x selects Xcode 26).
         required: false
@@ -36,16 +41,27 @@ jobs:
           xcodebuild -version
           command -v xcodegen || brew install xcodegen
           xcrun simctl list runtimes
+      - name: Measure PDFKit memory page by page
+        if: inputs.pdfkit_probe
+        env:
+          LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
+        run: |
+          mkdir -p test-results/ios
+          curl -sSL --retry 4 -o "$RUNNER_TEMP/large.pdf" "$LARGE_PDF_URL"
+          swiftc -O scripts/tests/pdfkit-probe.swift -o "$RUNNER_TEMP/pdfkit-probe"
+          "$RUNNER_TEMP/pdfkit-probe" "$RUNNER_TEMP/large.pdf" | tee test-results/ios/pdfkit-probe.txt
+          "$RUNNER_TEMP/pdfkit-probe" "$RUNNER_TEMP/large.pdf" "$(seq -s, 100 1 140)" | tee -a test-results/ios/pdfkit-probe.txt
       - name: Restore and verify the exact production simulator candidate
+        if: ${{ !inputs.pdfkit_probe }}
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN: ${{ inputs.candidate_run }}
         run: python3 scripts/tests/ios-ui-restore.py
       - name: Exercise actual UIKit PDF picker and cold and warm Open In
-        if: inputs.large_pdf_url == ''
+        if: inputs.large_pdf_url == '' && !inputs.pdfkit_probe
         run: python3 scripts/tests/iphone-native-import-ui.py --app test-results/ios-ui-restored/Folio.app
       - name: Open a large PDF and record memory, screenshots and logs
-        if: inputs.large_pdf_url != ''
+        if: inputs.large_pdf_url != '' && !inputs.pdfkit_probe
         env:
           LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
           IOS_VERSION: ${{ inputs.ios_version || '18.5' }}
