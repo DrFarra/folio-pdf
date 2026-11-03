@@ -11,6 +11,10 @@ on:
         description: Optional. Open this PDF in the simulator instead of the UIKit picker test, and record memory, screenshots and logs.
         required: false
         type: string
+      ios_version:
+        description: Optional. Simulator iOS version for the large PDF check (18.5 by default; 26.x selects Xcode 26).
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,14 +48,17 @@ jobs:
         if: inputs.large_pdf_url != ''
         env:
           LARGE_PDF_URL: ${{ inputs.large_pdf_url }}
+          IOS_VERSION: ${{ inputs.ios_version || '18.5' }}
         run: |
+          # iOS 26 runtimes boot only with Xcode 26's simctl.
+          if [[ "$IOS_VERSION" == 26* ]]; then sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"; xcodebuild -version; fi
           python3 - <<'PY'
           import json, os, re, subprocess, time
           from pathlib import Path
           out = Path('test-results/ios'); out.mkdir(parents=True, exist_ok=True)
           run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
           runtimes = [r for r in json.loads(run('xcrun', 'simctl', 'list', 'runtimes', '--json'))['runtimes'] if r.get('isAvailable') and 'iOS' in r['name']]
-          runtime = next((r for r in runtimes if r['version'] == '18.5'), sorted(runtimes, key=lambda r: [int(n) for n in r['version'].split('.')])[-1])
+          runtime = next((r for r in runtimes if r['version'] == os.environ['IOS_VERSION']), sorted(runtimes, key=lambda r: [int(n) for n in r['version'].split('.')])[-1])
           phone = next(d for d in json.loads(run('xcrun', 'simctl', 'list', 'devicetypes', '--json'))['devicetypes'] if d['name'] in ('iPhone 16 Pro', 'iPhone 15 Pro'))
           device = run('xcrun', 'simctl', 'create', 'Folio-large-pdf', phone['identifier'], runtime['identifier'])
           run('xcrun', 'simctl', 'boot', device); run('xcrun', 'simctl', 'bootstatus', device, '-b')
