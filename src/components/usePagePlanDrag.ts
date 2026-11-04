@@ -208,6 +208,10 @@ export function usePagePlanDrag<T extends Page>(
       if (active.active && touchEvent.cancelable) touchEvent.preventDefault();
     };
     const contextMenu = (menu: Event) => menu.preventDefault();
+    // A second finger before the hold completes is a pinch or a scroll, not a pick-up.
+    const otherFinger = (down: PointerEvent) => {
+      if (down.pointerId !== active.pointerId && !active.active) cancel();
+    };
     if (touch)
       holdTimer = window.setTimeout(() => {
         if (gesture.current !== active) return;
@@ -218,6 +222,7 @@ export function usePagePlanDrag<T extends Page>(
       window.clearTimeout(holdTimer);
       cancelAnimationFrame(scrollFrame);
       document.removeEventListener('touchmove', touchMove);
+      document.removeEventListener('pointerdown', otherFinger, true);
       source.removeEventListener('contextmenu', contextMenu);
       document.removeEventListener('pointermove', move, true);
       document.removeEventListener('pointerup', finish, true);
@@ -228,6 +233,7 @@ export function usePagePlanDrag<T extends Page>(
     };
     if (touch) {
       document.addEventListener('touchmove', touchMove, { passive: false });
+      document.addEventListener('pointerdown', otherFinger, true);
       source.addEventListener('contextmenu', contextMenu);
     }
     document.addEventListener('pointermove', move, { capture: true, passive: false });

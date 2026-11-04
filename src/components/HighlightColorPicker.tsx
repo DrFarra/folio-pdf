@@ -59,7 +59,9 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
     }
   }
   function pickCustom(hex: string) {
-    const next = withRecent(recent, hex.toLowerCase(), RECENT_LIMIT);
+    const next = HIGHLIGHT_PRESETS.some(([, preset]) => preset === hex.toLowerCase())
+      ? recent
+      : withRecent(recent, hex.toLowerCase(), RECENT_LIMIT);
     setRecent(next);
     try {
       localStorage.setItem(RECENT_KEY, JSON.stringify(next));
@@ -78,7 +80,10 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
     if (disabled) return;
     rememberSelection();
     restoreFocus.current = keyboard;
-    setRecent(recentColors(RECENT_KEY, RECENT_LIMIT));
+    // A preset chosen through the custom chooser is already in the rows above.
+    setRecent(
+      recentColors(RECENT_KEY, RECENT_LIMIT).filter(hex => !HIGHLIGHT_PRESETS.some(([, preset]) => preset === hex)),
+    );
     setOpen(true);
   }
 

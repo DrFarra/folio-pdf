@@ -35,6 +35,8 @@
   white-space: nowrap;
 }
 .split-view-pages {
+  /* Its pages' offsetTop, which the page counter reads, is measured from here. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
