@@ -803,7 +803,13 @@ function PageContent({
       const pointerId = event.pointerId;
       // Pen input does not reliably synthesize mouseup on Android. Own its
       // selection gesture and finish on the matching pointerup instead.
-      if (event.pointerType === 'pen') event.preventDefault();
+      const pen = event.pointerType === 'pen';
+      if (pen) event.preventDefault();
+      // A pen stroke that starts on text selects it in any direction. Under the page's
+      // pan-y, a stroke drifting down a line became a scroll and cut the selection short.
+      const holdPen = (touch: TouchEvent) => {
+        if (touch.cancelable) touch.preventDefault();
+      };
       const origin = { x: event.clientX, y: event.clientY };
       let point = origin,
         moved = false,
@@ -858,6 +864,7 @@ function PageContent({
         document.removeEventListener('pointermove', move);
         document.removeEventListener('pointerup', finish, true);
         document.removeEventListener('pointercancel', cancelled);
+        document.removeEventListener('touchmove', holdPen);
         window.removeEventListener('blur', cleanup);
         if (timer) clearTimeout(timer);
         if (frame) cancelAnimationFrame(frame);
@@ -867,6 +874,7 @@ function PageContent({
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', finish, true);
       document.addEventListener('pointercancel', cancelled);
+      if (pen) document.addEventListener('touchmove', holdPen, { passive: false });
       window.addEventListener('blur', cleanup);
       return;
     }

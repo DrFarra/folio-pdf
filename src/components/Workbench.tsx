@@ -43,7 +43,16 @@ import { errorMessage } from '../errors';
 import { pdfAssetSettings } from '../assets';
 import { recognizePdf, type OcrResult } from '../ocr';
 import { convertPdf } from '../conversion';
-import { saveExport, choosePartsFolder, savePartsZip, isNative, isAndroid, isDesktop, isMac } from '../platform';
+import {
+  saveExport,
+  choosePartsFolder,
+  savePartsZip,
+  isNative,
+  isAndroid,
+  isDesktop,
+  isMac,
+  isMobile,
+} from '../platform';
 import { signPdf, checkSignatures } from '../engine/crypto-client';
 import type { SignatureResult } from '../engine/signatures.mjs';
 import CompareDocuments from './CompareDocuments';
@@ -439,10 +448,6 @@ export default function Workbench(props: Props) {
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
     setPlan(next);
-  }
-  function moveSelection(index: number) {
-    const rest = plan.filter(page => !selected.includes(page.key));
-    setPlan([...rest.slice(0, index), ...plan.filter(page => selected.includes(page.key)), ...rest.slice(index)]);
   }
   // New pages follow the last selected page, or go at the end.
   function insertPages(pages: PlannedPage[]) {
@@ -971,24 +976,6 @@ export default function Workbench(props: Props) {
             >
               <Trash2 size={18} />
             </button>
-            {/* Without dragging, this moves any number of selected pages in one step. */}
-            {!pageDrag.enabled && (
-              <select
-                aria-label="Mover páginas seleccionadas a la posición"
-                value=""
-                disabled={!selected.length || busy}
-                onChange={e => moveSelection(Number(e.target.value))}
-              >
-                <option value="" disabled>
-                  Mover a…
-                </option>
-                {Array.from({ length: plan.length - selected.length + 1 }, (_, i) => (
-                  <option key={i} value={i}>
-                    Posición {i + 1}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
           {pendingSource && (
             <form
@@ -1026,20 +1013,18 @@ export default function Workbench(props: Props) {
               </div>
             </form>
           )}
-          {pageDrag.enabled && (
-            <p className="page-plan-drag-help" role="status" aria-live="polite">
-              {pageDrag.draggingKeys.length
-                ? `${pageDrag.label}${pageDrag.destinationPosition ? ` → posición ${pageDrag.destinationPosition}` : ''}. Suelta para colocar; Esc cancela.`
+          <p className="page-plan-drag-help" role="status" aria-live="polite">
+            {pageDrag.draggingKeys.length
+              ? `${pageDrag.label}${pageDrag.destinationPosition ? ` → posición ${pageDrag.destinationPosition}` : ''}. Suelta para colocar${isMobile ? '' : '; Esc cancela'}.`
+              : isMobile
+                ? 'Toca para seleccionar páginas. Mantén pulsada una y arrástrala para moverla (con las seleccionadas).'
                 : `Haz clic para seleccionar páginas y ${isMac ? '⇧' : 'Mayús'}+clic para un rango. Arrastra para reordenarlas.`}
-            </p>
-          )}
+          </p>
           <div
-            className={`page-plan${pageDrag.enabled ? ' drag-enabled' : ''}${pageDrag.draggingKeys.length ? ' is-dragging' : ''}`}
+            className={`page-plan drag-enabled${pageDrag.draggingKeys.length ? ' is-dragging' : ''}`}
             ref={pageDrag.grid}
             onClickCapture={pageDrag.clickCapture}
-            onDragStart={event => {
-              if (pageDrag.enabled) event.preventDefault();
-            }}
+            onDragStart={event => event.preventDefault()}
           >
             {plan.map((p, i) => {
               const pdf = p.source == null ? doc.pdf : sourcePreviews[p.source];
@@ -1060,7 +1045,7 @@ export default function Workbench(props: Props) {
                     />
                     <span>{i + 1}</span>
                   </label>
-                  {pageDrag.enabled && (
+                  {!isMobile && (
                     <button
                       className="plan-drag-handle"
                       title="Arrastrar para mover"

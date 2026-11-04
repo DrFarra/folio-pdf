@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Eraser, Highlighter, PenLine, Plus } from 'lucide-react';
+import { Check, ChevronDown, Eraser, Highlighter, PenLine } from 'lucide-react';
+import CustomColor from './CustomColor';
 import { visibleBounds } from '../mobile';
 import './DrawingSettings.css';
 
@@ -37,6 +38,10 @@ const TOOLS: Record<
       ['Violeta', '#8759af'],
       ['Gris', '#6b7280'],
       ['Blanco', '#ffffff'],
+      ['Marrón', '#8b5a2b'],
+      ['Rosa', '#d0508a'],
+      ['Turquesa', '#1f8f99'],
+      ['Azul marino', '#1d2f6f'],
     ],
   },
   marker: {
@@ -54,6 +59,10 @@ const TOOLS: Record<
       ['Violeta', '#bb8ff7'],
       ['Rojo', '#eb5757'],
       ['Gris', '#bdbdbd'],
+      ['Lima', '#c6e05a'],
+      ['Menta', '#6ee0c0'],
+      ['Lavanda', '#c9b6f2'],
+      ['Melocotón', '#f7b98b'],
     ],
   },
 };
@@ -94,6 +103,7 @@ export default function DrawingSettings({
   disabled,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(false);
   const [position, setPosition] = useState({ left: -1000, top: -1000, origin: 'top left' });
   const trigger = useRef<HTMLButtonElement>(null),
     panel = useRef<HTMLDivElement>(null),
@@ -107,6 +117,9 @@ export default function DrawingSettings({
   useEffect(() => {
     setOpen(false);
   }, [mode, disabled]);
+  useEffect(() => {
+    if (!open) setCustom(false);
+  }, [open]);
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
@@ -154,7 +167,7 @@ export default function DrawingSettings({
     document.addEventListener('keydown', escape, true);
     panel.current?.addEventListener('focusout', leave);
     // Opened from the keyboard, focus starts on the current choice.
-    if (keyboard.current)
+    if (keyboard.current && !custom)
       (
         panel.current?.querySelector<HTMLElement>('[aria-pressed=true]') ??
         panel.current?.querySelector<HTMLElement>('button')
@@ -169,7 +182,7 @@ export default function DrawingSettings({
       window.removeEventListener('resize', place);
       window.visualViewport?.removeEventListener('resize', place);
     };
-  }, [open]);
+  }, [open, custom]);
   // Shown at about its size on the page at 100 %.
   // Size dots grow with the width across the tool's range, readable at a glance.
   const dot = (value: number) => Math.round(5 + 19 * Math.sqrt((value - tool.min) / (tool.max - tool.min)));
@@ -217,7 +230,21 @@ export default function DrawingSettings({
             className={`drawing-settings-popup ${mode}`}
             style={{ left: position.left, top: position.top, transformOrigin: position.origin }}
           >
-            {mode === 'draw' ? (
+            {mode === 'draw' && custom ? (
+              <>
+                <strong>Color personalizado</strong>
+                <CustomColor
+                  value={color}
+                  label="Color personalizado del lápiz"
+                  onPick={hex => {
+                    onStyle({ color: hex });
+                    onCustomColor(hex);
+                    setCustom(false);
+                  }}
+                  onCancel={() => setCustom(false)}
+                />
+              </>
+            ) : mode === 'draw' ? (
               <>
                 <div className="drawing-kinds" role="group" aria-label="Tipo de lápiz">
                   {(['pen', 'marker'] as const).map(value => (
@@ -322,6 +349,15 @@ export default function DrawingSettings({
                       <span style={{ background: value }}>{color === value && <Check size={14} />}</span>
                     </button>
                   ))}
+                </div>
+                {/* Third row: a new custom colour, then the last ones chosen. */}
+                <div className="drawing-colors recent" role="group" aria-label="Colores personalizados">
+                  <button
+                    className="drawing-custom-color"
+                    aria-label="Elegir un color personalizado"
+                    title="Elegir un color personalizado"
+                    onClick={() => setCustom(true)}
+                  />
                   {recent.map(value => (
                     <button
                       key={value}
@@ -332,16 +368,7 @@ export default function DrawingSettings({
                       <span style={{ background: value }}>{color === value && <Check size={14} />}</span>
                     </button>
                   ))}
-                  <label className="drawing-custom-color" title="Color personalizado">
-                    <Plus size={16} />
-                    <input
-                      aria-label="Color personalizado del lápiz"
-                      type="color"
-                      value={style.color}
-                      onChange={event => onStyle({ color: event.target.value.toLowerCase() })}
-                      onBlur={event => onCustomColor(event.target.value.toLowerCase())}
-                    />
-                  </label>
+                  {!recent.length && <small>Tus colores personalizados aparecerán aquí</small>}
                 </div>
               </>
             ) : (

@@ -95,6 +95,11 @@ html[data-tablet] .app-shell .reading-area {
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
   scrollbar-gutter: auto;
+  /* PageScrubber is the reader's scrollbar; the system's thin one beside it reads as a second, dead one. */
+  scrollbar-width: none;
+}
+html[data-tablet] .app-shell .reading-area::-webkit-scrollbar {
+  display: none;
 }
 html[data-tablet] .app-shell .pdf-stack {
   padding: 12px 12px 84px;

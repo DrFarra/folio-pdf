@@ -13,6 +13,9 @@ fun prepareAppWebView(webView: WebView, versionCode: Int) {
     webView.settings.setSupportZoom(false)
     webView.settings.builtInZoomControls = false
     webView.settings.displayZoomControls = false
+    // Folio draws its own page scrubber; WebView's fading bar beside it looks like a second one.
+    webView.isVerticalScrollBarEnabled = false
+    webView.isHorizontalScrollBarEnabled = false
     val preferences = webView.context.getSharedPreferences("folio.interface-cache", Context.MODE_PRIVATE)
     if (preferences.getInt("version", -1) == versionCode) return
     // clearCache only clears web resources: never clear WebStorage, databases,

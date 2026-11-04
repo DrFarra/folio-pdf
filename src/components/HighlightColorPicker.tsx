@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
+import CustomColor, { recentColors, withRecent } from './CustomColor';
 import { visibleBounds } from '../mobile';
 import { setHighlightLabel, useHighlightLabels } from '../highlight-labels';
 import './HighlightColorPicker.css';
@@ -21,9 +22,13 @@ export const HIGHLIGHT_PRESETS = [
   ['Gris', '#c5c9d1'],
 ] as const;
 const validColor = (hex: string) => /^#[0-9a-f]{6}$/i.test(hex);
+const RECENT_KEY = 'folio.highlight.recentColors',
+  RECENT_LIMIT = 5;
 
 export default function HighlightColorPicker({ color, onChange, disabled = false }: Props) {
   const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
   const [position, setPosition] = useState({ left: -1000, top: -1000 });
   const trigger = useRef<HTMLButtonElement>(null),
     palette = useRef<HTMLDivElement>(null);
@@ -47,10 +52,21 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
   }
   function dismiss(returnFocus = false) {
     setOpen(false);
+    setCustom(false);
     if (returnFocus) {
       trigger.current?.focus({ preventScroll: true });
       preserveSelection();
     }
+  }
+  function pickCustom(hex: string) {
+    const next = withRecent(recent, hex.toLowerCase(), RECENT_LIMIT);
+    setRecent(next);
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    } catch {
+      /* A preference. */
+    }
+    choose(hex);
   }
   function choose(hex: string, close = true) {
     if (!validColor(hex) || disabled) return;
@@ -62,6 +78,7 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
     if (disabled) return;
     rememberSelection();
     restoreFocus.current = keyboard;
+    setRecent(recentColors(RECENT_KEY, RECENT_LIMIT));
     setOpen(true);
   }
 
@@ -94,7 +111,7 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
       window.removeEventListener('resize', update);
       window.visualViewport?.removeEventListener('resize', update);
     };
-  }, [open]);
+  }, [open, custom]);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -173,7 +190,9 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
               event.preventDefault();
               event.stopPropagation();
               const buttons = [
-                ...event.currentTarget.querySelectorAll<HTMLButtonElement>('.highlight-color-presets button'),
+                ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  ':is(.highlight-color-presets, .highlight-color-recent) button',
+                ),
               ];
               const current = buttons.indexOf(document.activeElement as HTMLButtonElement),
                 index = Math.max(0, current);
@@ -195,46 +214,71 @@ export default function HighlightColorPicker({ color, onChange, disabled = false
               buttons[target]?.focus({ preventScroll: true });
             }}
           >
-            <strong>Resaltador</strong>
-            <div className="highlight-color-presets">
-              {HIGHLIGHT_PRESETS.map(([name, hex]) => (
-                <button
-                  key={name}
-                  aria-label={`Color ${name}`}
-                  title={labels[hex] ? `${name} · ${labels[hex]}` : name}
-                  aria-pressed={chosen === hex}
-                  onClick={() => choose(hex)}
-                >
-                  <span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span>
-                </button>
-              ))}
-            </div>
-            {/* What the chosen color means; shown in the annotations list and the exported summary. */}
-            <label className="highlight-meaning" style={{ '--swatch': chosen } as React.CSSProperties}>
-              <span aria-hidden="true" />
-              <input
-                aria-label={`Significado del color ${presetName}`}
-                placeholder={`Significado del ${presetName.toLowerCase()}`}
-                maxLength={40}
-                value={labels[chosen] || ''}
-                onChange={event => setHighlightLabel(chosen, event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    dismiss(restoreFocus.current);
-                  }
-                }}
-              />
-            </label>
-            <label className="highlight-color-custom">
-              <span>Personalizado</span>
-              <input
-                type="color"
-                aria-label="Color personalizado del resaltador"
+            <strong>{custom ? 'Color personalizado' : 'Resaltador'}</strong>
+            {custom ? (
+              <CustomColor
                 value={chosen}
-                onChange={event => choose(event.target.value, false)}
+                label="Color personalizado del resaltador"
+                onPick={pickCustom}
+                onCancel={() => setCustom(false)}
               />
-            </label>
+            ) : (
+              <>
+                <div className="highlight-color-presets">
+                  {HIGHLIGHT_PRESETS.map(([name, hex]) => (
+                    <button
+                      key={name}
+                      aria-label={`Color ${name}`}
+                      title={labels[hex] ? `${name} · ${labels[hex]}` : name}
+                      aria-pressed={chosen === hex}
+                      onClick={() => choose(hex)}
+                    >
+                      <span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span>
+                    </button>
+                  ))}
+                </div>
+                {/* Third row: a new custom colour, then the last ones chosen. */}
+                <div className="highlight-color-recent" role="group" aria-label="Colores personalizados">
+                  <button
+                    className="highlight-color-add"
+                    aria-label="Elegir un color personalizado"
+                    title="Elegir un color personalizado"
+                    onClick={() => setCustom(true)}
+                  >
+                    <span />
+                  </button>
+                  {recent.map(hex => (
+                    <button
+                      key={hex}
+                      aria-label={`Color personalizado ${hex}`}
+                      title={labels[hex] ? `${hex} · ${labels[hex]}` : hex}
+                      aria-pressed={chosen === hex}
+                      onClick={() => choose(hex)}
+                    >
+                      <span style={{ backgroundColor: hex }}>{chosen === hex && <Check size={14} />}</span>
+                    </button>
+                  ))}
+                  {!recent.length && <small>Tus colores personalizados aparecerán aquí</small>}
+                </div>
+                {/* What the chosen color means; shown in the annotations list and the exported summary. */}
+                <label className="highlight-meaning" style={{ '--swatch': chosen } as React.CSSProperties}>
+                  <span aria-hidden="true" />
+                  <input
+                    aria-label={`Significado del color ${presetName}`}
+                    placeholder={`Significado del ${presetName.toLowerCase()}`}
+                    maxLength={40}
+                    value={labels[chosen] || ''}
+                    onChange={event => setHighlightLabel(chosen, event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        dismiss(restoreFocus.current);
+                      }
+                    }}
+                  />
+                </label>
+              </>
+            )}
           </div>,
           document.body,
         )}

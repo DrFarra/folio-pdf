@@ -2,6 +2,7 @@ import {
   ArrowDownToLine,
   Check,
   Cloud,
+  Columns2,
   FilePlus2,
   FileText,
   Info,
@@ -13,7 +14,6 @@ import {
   Settings2,
   Undo2,
   Upload,
-  Wrench,
   X,
 } from 'lucide-react';
 import Modal from './Modal';
@@ -32,6 +32,8 @@ const sheetAnchor = (): Anchor | undefined => {
 
 type Common = {
   doc: LoadedDocument | null;
+  /** The split view is open beside the reader. */
+  split: boolean;
   busy: boolean;
   loading: boolean;
   /** Where the document's changes are kept, and whether keeping them failed. */
@@ -64,7 +66,7 @@ type TouchProps = Common & {
     share: (anchor?: Anchor) => void;
     edit: () => void;
     view: () => void;
-    tools: () => void;
+    split: () => void;
     print: (anchor?: Anchor) => void;
     info: () => void;
     close: () => void;
@@ -74,6 +76,7 @@ type TouchProps = Common & {
 /** Más acciones on phones and tablets: saving first, then the document's other actions. */
 export function TouchDocumentActions({
   doc,
+  split,
   busy,
   loading,
   status,
@@ -174,13 +177,11 @@ export function TouchDocumentActions({
           <Settings2 size={21} />
           <span>Vista del documento</span>
         </button>
-        {/* Phones reach the tools from the reading bar. */}
-        {tablet && (
-          <button onClick={act(on.tools)} disabled={!doc || busy}>
-            <Wrench size={21} />
-            <span>Herramientas</span>
-          </button>
-        )}
+        <button onClick={act(on.split)} disabled={!doc}>
+          <Columns2 size={21} />
+          <span>{split ? 'Cerrar vista dividida' : 'Ver dos PDF a la vez'}</span>
+        </button>
+        {/* Phones and tablets reach the tools from the reading bar. */}
         <button
           onClick={() => {
             const anchor = sheetAnchor();
@@ -210,6 +211,7 @@ type DesktopProps = Common & {
     drive: () => void;
     saveCopy: () => void;
     toggleSinglePage: () => void;
+    split: () => void;
     rotate: () => void;
     print: () => void;
     fullscreen: () => void;
@@ -221,6 +223,7 @@ type DesktopProps = Common & {
 /** Más acciones on desktop: what the toolbar and the rail do not hold. */
 export function DesktopDocumentActions({
   doc,
+  split,
   busy,
   loading,
   status,
@@ -255,6 +258,10 @@ export function DesktopDocumentActions({
         <button onClick={act(on.toggleSinglePage)}>
           <Layers size={19} />
           <span>{singlePage ? 'Ver páginas en continuo' : 'Ver una página a la vez'}</span>
+        </button>
+        <button onClick={act(on.split)} disabled={!doc}>
+          <Columns2 size={19} />
+          <span>{split ? 'Cerrar vista dividida' : 'Ver dos PDF a la vez'}</span>
         </button>
         <button onClick={act(on.rotate)}>
           <RotateCw size={19} />

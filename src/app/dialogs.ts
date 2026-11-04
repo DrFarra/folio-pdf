@@ -27,6 +27,8 @@ export function useDialogs() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // The tab key, or 'window', whose closing waits because its session could not be saved.
   const [closeBlocked, setCloseBlocked] = useState<string | null>(null);
+  // The tab shown beside the reader in the split view (it may be the same document), or none.
+  const [splitKey, setSplitKey] = useState<string | null>(null);
   return {
     mobileActions,
     setMobileActions,
@@ -60,6 +62,8 @@ export function useDialogs() {
     setShortcutsOpen,
     closeBlocked,
     setCloseBlocked,
+    splitKey,
+    setSplitKey,
   };
 }
 

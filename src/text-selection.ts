@@ -12,12 +12,18 @@ export function textCaretAtPoint(x: number, y: number, start?: Element): Range |
   const eligible = (element: Element | null) =>
     element?.closest('.textLayer[data-copy-allowed=true]') &&
     element.closest('.page-content:is(.tool-select,.tool-highlight)');
-  let span = (start || document.elementFromPoint(x, y))?.closest('span') as HTMLElement | null;
+  const hit = start || document.elementFromPoint(x, y);
+  let span = hit?.closest('span') as HTMLElement | null;
   if (!span || !eligible(span) || span.querySelector('span')) {
     span = null;
     let nearest = Infinity;
-    for (const candidate of document.querySelectorAll<HTMLElement>(
-      '.page-content:is(.tool-select,.tool-highlight) .textLayer[data-copy-allowed=true] span',
+    // Between words or lines, search the page under the point: measuring every
+    // rendered page's spans on each move made long drags lag behind the pen.
+    const page = hit?.closest('.page-content:is(.tool-select,.tool-highlight)');
+    for (const candidate of (page || document).querySelectorAll<HTMLElement>(
+      page
+        ? '.textLayer[data-copy-allowed=true] span'
+        : '.page-content:is(.tool-select,.tool-highlight) .textLayer[data-copy-allowed=true] span',
     )) {
       if (candidate.querySelector('span') || !candidate.textContent?.trim()) continue;
       const box = candidate.getBoundingClientRect();

@@ -1299,8 +1299,10 @@ try {
     await palette.waitFor();
     assert.equal(await palette.locator('.highlight-color-presets button').count(), 12);
     assertScreen(await geometry(page));
-    await page.getByLabel('Color personalizado del resaltador', { exact: true }).fill('#1177dd');
-    await page.getByRole('button', { name: 'Color del resaltador', exact: true }).tap();
+    await page.getByRole('button', { name: 'Elegir un color personalizado', exact: true }).tap();
+    await page.getByLabel('Código hexadecimal', { exact: true }).fill('1177dd');
+    await page.getByRole('button', { name: 'Usar color', exact: true }).tap();
+    await palette.waitFor({ state: 'detached' });
     assert.equal(
       await page.getByRole('button', { name: 'Resaltador', exact: true }).getAttribute('aria-pressed'),
       'true',

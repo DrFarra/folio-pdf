@@ -189,7 +189,18 @@ try {
     await page.mouse.click(box.x + 12, box.y + 12);
     await mode(page).click();
     await picker(page).click();
-    await page.getByLabel('Color personalizado del resaltador', { exact: true }).fill('#123abc');
+    await page.getByRole('button', { name: 'Elegir un color personalizado', exact: true }).click();
+    await page.getByLabel('Código hexadecimal', { exact: true }).fill('123abc');
+    await page.getByRole('button', { name: 'Usar color', exact: true }).click();
+    await palette(page).waitFor({ state: 'detached' });
+    await picker(page).click();
+    assert.equal(
+      await palette(page)
+        .getByRole('button', { name: 'Color personalizado #123abc', exact: true })
+        .getAttribute('aria-pressed'),
+      'true',
+      'The custom colour joins the recent row, chosen.',
+    );
     await page.waitForFunction(() => localStorage.getItem('folio.highlightColor') === '#123abc');
     assert.equal(
       (await annotations(page)).length,

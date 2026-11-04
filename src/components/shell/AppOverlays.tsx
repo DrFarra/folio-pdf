@@ -88,6 +88,8 @@ export default function AppOverlays() {
     openDocument,
     openEditor,
     openTools,
+    splitKey,
+    toggleSplit,
     page,
     pageInput,
     pageJump,
@@ -213,6 +215,7 @@ export default function AppOverlays() {
       {touchLayout && mobileActions && (
         <TouchDocumentActions
           doc={doc}
+          split={!!splitKey}
           busy={!!busy}
           loading={loading}
           status={sessionStatus}
@@ -233,7 +236,7 @@ export default function AppOverlays() {
             share: anchor => void shareDocument(anchor),
             edit: openEditor,
             view: () => setViewSettings(true),
-            tools: openTools,
+            split: toggleSplit,
             print: anchor => void printDocument(anchor),
             info: () => setInfo(true),
             close: closeActiveTab,
@@ -243,6 +246,7 @@ export default function AppOverlays() {
       {!touchLayout && mobileActions && (
         <DesktopDocumentActions
           doc={doc}
+          split={!!splitKey}
           busy={!!busy}
           loading={loading}
           status={sessionStatus}
@@ -253,6 +257,7 @@ export default function AppOverlays() {
             drive: showDrive,
             saveCopy: () => void download({ copy: true }),
             toggleSinglePage: () => setReadingMode(readingMode === 'single' ? 'continuous' : 'single'),
+            split: toggleSplit,
             rotate: () => setRotation(value => (value + 90) % 360),
             print: () => void printDocument(),
             fullscreen: () => void fullscreen(),

@@ -209,6 +209,23 @@ try {
     return { simultaneousDocuments: 2, duplicateFileFocusesExistingTab: true, openControls: 1 };
   });
 
+  await check('split-view-shows-another-open-document', async page => {
+    await page.locator('.app-header input[type=file]').setInputFiles([a.file, b.file]);
+    await active(page, b);
+    await page.getByRole('button', { name: 'Más acciones del documento', exact: true }).click();
+    await page.getByRole('button', { name: 'Ver dos PDF a la vez', exact: true }).click();
+    const split = page.getByRole('region', { name: 'Vista dividida', exact: true });
+    await split.locator('canvas').first().waitFor();
+    const choice = split.getByLabel('Documento de la vista dividida', { exact: true });
+    assert.equal(await choice.locator('option:checked').innerText(), a.name, 'The other tab shows beside.');
+    // The document in front can show beside itself, at another page.
+    await choice.selectOption({ index: 1 });
+    await split.locator('canvas').first().waitFor();
+    await split.getByRole('button', { name: 'Cerrar vista dividida', exact: true }).click();
+    await split.waitFor({ state: 'detached' });
+    return { splitShowsOtherTab: true, splitShowsSameDocument: true };
+  });
+
   await check('annotations-history-and-export-stay-with-their-document', async page => {
     await annotate(page, a);
     await open(page, b);

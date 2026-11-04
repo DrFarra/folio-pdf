@@ -50,12 +50,8 @@
   font-weight: 600;
   margin: 0 4px 6px;
 }
-.highlight-color-presets {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0;
-}
-.highlight-color-presets button {
+.highlight-color-presets button,
+.highlight-color-recent button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,15 +61,18 @@
   border: 1px solid transparent;
   border-radius: 10px;
 }
-.highlight-color-presets button[aria-pressed='true'] {
+.highlight-color-presets button[aria-pressed='true'],
+.highlight-color-recent button[aria-pressed='true'] {
   background: var(--hover);
 }
 @media (hover: hover) {
-  .highlight-color-presets button:hover {
+  .highlight-color-presets button:hover,
+  .highlight-color-recent button:hover {
     background: var(--hover);
   }
 }
-.highlight-color-presets button > span {
+.highlight-color-presets button > span,
+.highlight-color-recent button > span {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,31 +82,48 @@
   color: #374151;
   border: 1px solid #0001;
 }
-.highlight-color-presets button:focus-visible {
+.highlight-color-presets button:focus-visible,
+.highlight-color-recent button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.highlight-color-custom {
-  display: flex;
+.highlight-color-presets,
+.highlight-color-recent {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+}
+.highlight-color-recent {
   align-items: center;
-  gap: 7px;
+  margin-top: 2px;
+  padding-top: 2px;
   border-top: 1px solid var(--line);
-  padding: 4px;
-  margin-top: 8px;
-  font-size: 12px;
-  min-height: 48px;
 }
-.highlight-color-custom > span {
-  flex: 1;
+.highlight-color-recent > small {
+  grid-column: 2 / -1;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
 }
-.highlight-color-custom input[type='color'] {
-  width: 44px;
-  height: 36px;
-  padding: 4px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
+.highlight-color-add > span {
+  background: conic-gradient(#eb5757, #f2c94c, #6fcf97, #56ccf2, #2455b5, #bb8ff7, #eb5757);
+  -webkit-mask: radial-gradient(circle, transparent 9px, #000 9.5px);
+  mask: radial-gradient(circle, transparent 9px, #000 9.5px);
+}
+.highlight-color-add {
+  position: relative;
+}
+.highlight-color-add::after {
+  content: '+';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--muted);
+  pointer-events: none;
 }
 html[data-touch] .highlight-color-trigger {
   height: 44px;

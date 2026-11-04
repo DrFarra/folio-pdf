@@ -140,21 +140,36 @@ async function check(id, { viewport, mobile = false, native = false }) {
         () => document.querySelector('.pages-workbench').style.getPropertyValue('--modal-visible-height') === '640px',
       );
     await page.getByRole('checkbox', { name: 'Seleccionar posición 1', exact: true }).check();
-    const moveTo = page.getByLabel('Mover páginas seleccionadas a la posición', { exact: true });
-    // Touch layouts cannot drag pages; the selection moves to a chosen position instead.
+    assert.equal(await page.getByLabel('Mover páginas seleccionadas a la posición', { exact: true }).count(), 0);
+    // Touch layouts drag a page held still for a moment, as a mouse drags it on desktop.
     if (mobile) {
-      await moveTo.selectOption('2');
+      const cards = page.locator('.page-plan>article');
+      const from = await cards.nth(0).boundingBox(),
+        to = await cards.nth(1).boundingBox();
+      const touch = await context.newCDPSession(page),
+        point = (x, y) => [{ x, y, id: 1 }];
+      const start = { x: from.x + from.width / 2, y: from.y + from.height / 2 },
+        end = { x: to.x + to.width * 0.8, y: to.y + to.height / 2 };
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(start.x, start.y) });
+      await page.waitForTimeout(600);
+      for (let step = 1; step <= 8; step++)
+        await touch.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: point(start.x + ((end.x - start.x) * step) / 8, start.y + ((end.y - start.y) * step) / 8),
+        });
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(300);
       assert.deepEqual((await page.locator('.page-plan .plan-label').allTextContents()).slice(0, 3), [
         'Página 2',
-        'Página 3',
         'Página 1',
+        'Página 3',
       ]);
       assert.equal(
-        await page.getByRole('checkbox', { name: 'Seleccionar posición 3', exact: true }).isChecked(),
+        await page.getByRole('checkbox', { name: 'Seleccionar posición 2', exact: true }).isChecked(),
         true,
         'The moved page stays selected.',
       );
-    } else assert.equal(await moveTo.count(), 0);
+    }
     await page.getByRole('button', { name: 'Girar páginas seleccionadas', exact: true }).click();
     const before = await snapshot(page),
       visible = { ...viewport, height: native ? 640 : viewport.height };

@@ -8,6 +8,8 @@
 .page-plan.drag-enabled > article {
   position: relative;
   cursor: grab;
+  /* A held page is picked up for dragging, not offered to save as an image. */
+  -webkit-touch-callout: none;
 }
 .page-plan.drag-enabled > article .thumbnail-item {
   cursor: grab;

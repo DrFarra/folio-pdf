@@ -2622,7 +2622,7 @@ html:not([data-phone]) .workbench .modal-heading {
 :where(html[data-layout='desktop']) * {
   touch-action: pan-x pan-y;
 }
-/* A horizontal pen stroke selects the text to highlight; vertical drags scroll. */
+/* A pen stroke starting on text selects it (PDFPage holds the scroll); elsewhere vertical drags scroll. */
 .page-content.tool-highlight {
   cursor: var(--cursor-highlight);
   touch-action: pan-y;
