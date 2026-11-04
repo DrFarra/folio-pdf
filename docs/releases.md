@@ -5,10 +5,22 @@ Cada fila indica el último paquete publicado de esa plataforma, que puede ser a
 
 | Plataforma | Último paquete | Estado |
 | --- | --- | --- |
-| Android, tablet y teléfono (arm64) | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
-| Windows x64 | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | Instalador NSIS sin firma Authenticode. |
-| macOS, Apple Silicon e Intel | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | DMG universal con firma ad hoc, sin notarización. |
-| iPhone e iPad | [0.9.32](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.32) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+| Android, tablet y teléfono (arm64) | [0.9.33](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.33) | APK firmado con la misma clave de desarrollo; instalar encima de la versión anterior. |
+| Windows x64 | [0.9.33](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.33) | Instalador NSIS sin firma Authenticode. |
+| macOS, Apple Silicon e Intel | [0.9.33](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.33) | DMG universal con firma ad hoc, sin notarización. |
+| iPhone e iPad | [0.9.33](https://github.com/DrFarra/folio-pdf/releases/tag/v0.9.33) | IPA sin certificado ni perfil de Apple, para firmar con Feather. |
+
+## Cambios en 0.9.33
+
+Para Android, iPhone, iPad, Windows y macOS.
+
+- En la tablet ya no aparece una segunda barra de desplazamiento, fina, junto a la de Folio; queda solo la de Folio, la que muestra la página.
+- Organizar páginas en el teléfono y la tablet: mantén pulsada una página y arrástrala a su sitio, como en el ordenador; se mueven también las seleccionadas. Desaparece la lista «Mover a…».
+- En la tablet, Herramientas está en la barra de arriba, a un toque, en vez de dentro de «Más acciones».
+- Elegir un color personalizado usa el selector de Folio (un recuadro de saturación y brillo, el tono y el código), en lugar del del sistema, en el resaltador, el lápiz, el editor y los marcadores. El resaltador y el lápiz tienen una tercera fila con los últimos colores personalizados.
+- Resaltar con el lápiz (S Pen, Apple Pencil) ya no se corta a mitad de frase al bajar de línea: un trazo que empieza sobre el texto lo selecciona en cualquier dirección en vez de desplazar la página.
+- Ver dos PDF a la vez: en «Más acciones», «Ver dos PDF a la vez» abre otro documento abierto (o el mismo, en otra página) junto al lector, o debajo en el teléfono, con sus anotaciones. «Pasar este PDF al lector» los intercambia para anotar o editar cualquiera de los dos.
+- Reconocer texto (OCR) vuelve a usar el motor de Folio: a veces fallaba al cargar sus modelos y pasaba a Tesseract, más lento y menos preciso.
 
 ## Cambios en 0.9.32
 
