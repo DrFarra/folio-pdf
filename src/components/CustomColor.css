@@ -111,3 +111,38 @@ html[data-touch] .custom-color-actions > button {
   min-height: 44px;
   flex: 1;
 }
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.color-field-swatch {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  box-shadow: inset 0 0 0 2px var(--surface);
+  cursor: pointer;
+}
+.color-field.compact .color-field-swatch {
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  box-shadow: none;
+  background-image: conic-gradient(#eb5757, #f2c94c, #6fcf97, #56ccf2, #2455b5, #bb8ff7, #eb5757) !important;
+}
+.color-field input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+html[data-touch] .color-field-swatch:not(.compact *) {
+  width: 44px;
+  height: 44px;
+}
+dialog.color-field-sheet {
+  width: min(340px, calc(100vw - 16px));
+}

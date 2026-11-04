@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import Modal from './Modal';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import './CustomColor.css';
 
@@ -144,3 +145,65 @@ export function recentColors(key: string, limit: number): string[] {
 }
 export const withRecent = (colors: string[], hex: string, limit: number) =>
   [hex, ...colors.filter(item => item !== hex)].slice(0, limit);
+
+/** A colour field for forms: a swatch that opens Folio's chooser in a sheet and,
+ * unless `compact`, the hex code to type. Replaces the system's colour input. */
+export function ColorField({
+  label,
+  value,
+  onChange,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState(value);
+  useEffect(() => setTyped(value), [value]);
+  return (
+    <span className={`color-field${compact ? ' compact' : ''}`}>
+      <button
+        type="button"
+        className="color-field-swatch"
+        aria-label={compact ? label : `Elegir ${label.toLowerCase()}`}
+        title={label}
+        style={{ background: validColor(value) ? value : '#ffffff' }}
+        onClick={event => {
+          // Inside a <label>, the click would otherwise also reach the label's own control.
+          event.preventDefault();
+          setOpen(true);
+        }}
+      />
+      {!compact && (
+        <input
+          aria-label={label}
+          value={typed}
+          maxLength={7}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          onChange={event => {
+            const next = event.target.value.trim().toLowerCase();
+            setTyped(next);
+            if (validColor(next)) onChange(next);
+          }}
+        />
+      )}
+      {open && (
+        <Modal title={label} onClose={() => setOpen(false)} className="color-field-sheet">
+          <CustomColor
+            value={value}
+            label={label}
+            onPick={hex => {
+              onChange(hex);
+              setOpen(false);
+            }}
+            onCancel={() => setOpen(false)}
+          />
+        </Modal>
+      )}
+    </span>
+  );
+}

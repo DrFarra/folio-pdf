@@ -250,6 +250,47 @@ try {
     };
   });
 
+  await check('pen-stroke-down-lines-holds-scroll-and-highlights-them-all', async page => {
+    await mode(page).click();
+    assert.equal(await mode(page).getAttribute('aria-pressed'), 'true');
+    const span = text =>
+      page.locator('.pdf-page-wrap[data-page-number="1"] .textLayer span').filter({ hasText: text }).first();
+    const from = await span(lines[0]).boundingBox(),
+      to = await span(lines[2]).boundingBox();
+    const start = { x: from.x + 1, y: from.y + from.height / 2 },
+      end = { x: to.x + to.width * 0.6, y: to.y + to.height / 2 };
+    const cdp = await page.context().newCDPSession(page);
+    const pen = (type, x, y, buttons) =>
+      cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: 1, pointerType: 'pen' });
+    await pen('mousePressed', start.x, start.y, 1);
+    let held = false;
+    // Mostly downwards: under the page's pan-y this stroke used to turn into a scroll.
+    for (let step = 1; step <= 20; step++) {
+      await pen('mouseMoved', start.x + ((end.x - start.x) * step) / 20, start.y + ((end.y - start.y) * step) / 20, 1);
+      if (step === 10)
+        held = await page.evaluate(() => {
+          const move = new Event('touchmove', { bubbles: true, cancelable: true });
+          document.dispatchEvent(move);
+          return move.defaultPrevented;
+        });
+    }
+    await pen('mouseReleased', end.x, end.y, 0);
+    assert.equal(held, true, "The pen's stroke holds the page's scroll while it selects.");
+    await waitCount(page, sourceHash, 1);
+    const [highlight] = await annotations(page);
+    for (const word of ['FIRST', 'SECOND', 'THIRD']) assert(highlight.text.includes(word), highlight.text);
+    assert.equal(
+      await page.evaluate(() => {
+        const move = new Event('touchmove', { bubbles: true, cancelable: true });
+        document.dispatchEvent(move);
+        return move.defaultPrevented;
+      }),
+      false,
+      'After the stroke, the page scrolls again.',
+    );
+    return { penHoldsScroll: true, penSelectsAcrossLines: true, scrollReleased: true };
+  });
+
   await check('palette-presets-keyboard-outside-and-contextual-visibility', async page => {
     assert.equal(await picker(page).count(), 0);
     await mode(page).click();

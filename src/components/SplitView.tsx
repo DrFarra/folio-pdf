@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
-import { FolderOpen, Minus, Plus, X } from 'lucide-react';
+import { ArrowLeftRight, FolderOpen, Minus, Plus, X } from 'lucide-react';
 import IconButton from './IconButton';
 import './SplitView.css';
 
@@ -15,6 +15,7 @@ export default function SplitView({
   options,
   onChoose,
   onOpen,
+  onSwap,
   onClose,
 }: {
   pdf: PDFDocumentProxy;
@@ -22,6 +23,8 @@ export default function SplitView({
   options: Option[];
   onChoose: (key: string) => void;
   onOpen: () => void;
+  /** Swaps this document with the reader's; absent when both show the same one. */
+  onSwap?: () => void;
   onClose: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -96,6 +99,11 @@ export default function SplitView({
             </option>
           ))}
         </select>
+        {onSwap && (
+          <IconButton label="Pasar este PDF al lector" onClick={onSwap}>
+            <ArrowLeftRight size={17} />
+          </IconButton>
+        )}
         <IconButton label="Abrir otro PDF en el lector" onClick={onOpen}>
           <FolderOpen size={17} />
         </IconButton>

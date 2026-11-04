@@ -218,9 +218,19 @@ try {
     await split.locator('canvas').first().waitFor();
     const choice = split.getByLabel('Documento de la vista dividida', { exact: true });
     assert.equal(await choice.locator('option:checked').innerText(), a.name, 'The other tab shows beside.');
+    // Swapping puts the pane's document in the reader, to annotate it, and the reader's beside it.
+    await split.getByRole('button', { name: 'Pasar este PDF al lector', exact: true }).click();
+    await active(page, a);
+    assert.equal(await choice.locator('option:checked').innerText(), b.name);
     // The document in front can show beside itself, at another page.
-    await choice.selectOption({ index: 1 });
+    await choice.selectOption({ index: 0 });
+    assert.equal(await choice.locator('option:checked').innerText(), `${a.name} · el del lector`);
     await split.locator('canvas').first().waitFor();
+    assert.equal(
+      await split.getByRole('button', { name: 'Pasar este PDF al lector', exact: true }).count(),
+      0,
+      'Nothing to swap when both show the same document.',
+    );
     await split.getByRole('button', { name: 'Cerrar vista dividida', exact: true }).click();
     await split.waitFor({ state: 'detached' });
     return { splitShowsOtherTab: true, splitShowsSameDocument: true };

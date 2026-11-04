@@ -29,6 +29,7 @@ export default function AppWorkspace() {
     activeNote,
     activeTabKey,
     chooseFile,
+    switchTab,
     setSplitKey,
     splitKey,
     tabs,
@@ -540,6 +541,15 @@ export default function AppWorkspace() {
             }))}
             onChoose={setSplitKey}
             onOpen={() => void chooseFile()}
+            onSwap={
+              splitKey !== activeTabKey && activeTabKey
+                ? () => {
+                    // To annotate or edit it: the reader takes this document, the pane the other.
+                    setSplitKey(activeTabKey);
+                    void switchTab(splitKey!);
+                  }
+                : undefined
+            }
             onClose={() => setSplitKey(null)}
           />
         )}
