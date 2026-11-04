@@ -30,7 +30,7 @@ import {
 import type { BookmarkDropTarget } from '../bookmarks';
 import Modal from './Modal';
 import { visibleBounds } from '../mobile';
-import { haptic, isMobile } from '../platform';
+import { haptic } from '../platform';
 import { ColorField } from './CustomColor';
 import './BookmarkTree.css';
 
@@ -796,30 +796,15 @@ export default function BookmarkTree({
                   {menuNode.color.toLowerCase() === color && <Check size={13} />}
                 </button>
               ))}
-              {/* Touch: Folio's chooser; the system's (Android's dialog) is tiny there. */}
-              {isMobile ? (
-                <ColorField
-                  compact
-                  label="Color personalizado del marcador"
-                  value={menuNode.color}
-                  onChange={color =>
-                    onChange(bookmarks.map(node => (node.id === menuNode.id ? { ...node, color } : node)))
-                  }
-                />
-              ) : (
-                <input
-                  type="color"
-                  aria-label="Color personalizado del marcador"
-                  title="Color personalizado"
-                  value={menuNode.color}
-                  onChange={event =>
-                    onChange(
-                      bookmarks.map(node => (node.id === menuNode.id ? { ...node, color: event.target.value } : node)),
-                      `color:${menu.id}:${menu.opened}`,
-                    )
-                  }
-                />
-              )}
+              {/* Folio's chooser: one choice is one undo step, however long it was adjusted. */}
+              <ColorField
+                compact
+                label="Color personalizado del marcador"
+                value={menuNode.color}
+                onChange={color =>
+                  onChange(bookmarks.map(node => (node.id === menuNode.id ? { ...node, color } : node)))
+                }
+              />
             </div>
             <div className="bookmark-menu-divider" />
             <button role="menuitem" className="bookmark-delete" onClick={() => remove(menuNode)}>

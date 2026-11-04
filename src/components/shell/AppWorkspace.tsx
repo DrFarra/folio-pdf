@@ -534,6 +534,9 @@ export default function AppWorkspace() {
         {split && splitDoc && (
           <SplitView
             pdf={splitDoc.pdf}
+            annotations={
+              splitKey === activeTabKey ? annotations : (tabs.find(tab => tab.key === splitKey)?.annotations ?? [])
+            }
             current={splitKey!}
             options={tabs.map(tab => ({
               key: tab.key,

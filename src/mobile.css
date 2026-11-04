@@ -708,10 +708,6 @@ html[data-phone] .bookmark-color-options > .color-field > button {
   height: 44px;
   border-radius: 8px;
 }
-html[data-phone] .bookmark-color-options > input {
-  width: 44px;
-  height: 44px;
-}
 .phone-layout .toast {
   width: calc(100vw - 24px);
   bottom: calc(120px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));

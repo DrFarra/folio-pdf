@@ -327,8 +327,7 @@ html[data-tablet] .bookmark-menu > button {
   font-size: 14px;
 }
 html[data-tablet] .bookmark-color-options > button,
-html[data-tablet] .bookmark-color-options > .color-field > button,
-html[data-tablet] .bookmark-color-options > input {
+html[data-tablet] .bookmark-color-options > .color-field > button {
   width: 44px;
   height: 44px;
   border-radius: 8px;

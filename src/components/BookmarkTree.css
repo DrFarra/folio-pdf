@@ -324,15 +324,6 @@ body.bookmark-drag-active .bookmark-entry.drop-blocked {
       0 0 0 3px var(--muted);
   }
 }
-.bookmark-color-options > input[type='color'] {
-  width: 25px;
-  height: 25px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  cursor: pointer;
-  background: none;
-}
 .bookmark-menu > .bookmark-delete {
   color: #b72c32;
 }
