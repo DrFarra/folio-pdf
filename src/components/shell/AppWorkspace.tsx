@@ -13,6 +13,8 @@ import BookmarkTree from '../BookmarkTree';
 import { hasBookmarkPage } from '../../bookmarks';
 import EditToolbar from '../../edit/EditToolbar';
 import { PageScrubber } from '../PageScrubber';
+import SplitView from '../SplitView';
+import { useEffect } from 'react';
 import { AnnotationsPanel } from '../AnnotationsPanel';
 import { clearRecentSearches } from '../../search-snippet';
 import { TabletAnnotationDock, TabletSearchBar } from '../TabletReaderControls';
@@ -26,6 +28,11 @@ export default function AppWorkspace() {
     activateHighlight,
     activeNote,
     activeTabKey,
+    chooseFile,
+    switchTab,
+    setSplitKey,
+    splitKey,
+    tabs,
     annotations,
     bookmarkEditingId,
     bookmarks,
@@ -127,9 +134,15 @@ export default function AppWorkspace() {
     viewer,
     zoomMode,
   } = useFolioContext();
+  // The split view shows the document in front from the reader, any other tab from its stored state.
+  const splitDoc = !splitKey ? null : splitKey === activeTabKey ? doc : tabs.find(tab => tab.key === splitKey)?.doc;
+  useEffect(() => {
+    if (splitKey && !splitDoc) setSplitKey(null);
+  }, [splitKey, splitDoc, setSplitKey]);
+  const split = !!splitDoc && !library && !inlineEditing;
   return (
     <>
-      <div className="workspace" inert={library}>
+      <div className={`workspace${split ? ' split-open' : ''}`} inert={library}>
         {!touchLayout && (
           <ToolRail
             library={library}
@@ -518,6 +531,31 @@ export default function AppWorkspace() {
               </div>
             )}
         </main>
+        {split && splitDoc && (
+          <SplitView
+            pdf={splitDoc.pdf}
+            annotations={
+              splitKey === activeTabKey ? annotations : (tabs.find(tab => tab.key === splitKey)?.annotations ?? [])
+            }
+            current={splitKey!}
+            options={tabs.map(tab => ({
+              key: tab.key,
+              name: tab.key === activeTabKey ? `${(doc ?? tab.doc).name} · el del lector` : tab.doc.name,
+            }))}
+            onChoose={setSplitKey}
+            onOpen={() => void chooseFile()}
+            onSwap={
+              splitKey !== activeTabKey && activeTabKey
+                ? () => {
+                    // To annotate or edit it: the reader takes this document, the pane the other.
+                    setSplitKey(activeTabKey);
+                    void switchTab(splitKey!);
+                  }
+                : undefined
+            }
+            onClose={() => setSplitKey(null)}
+          />
+        )}
 
         {notesShown && (
           <aside

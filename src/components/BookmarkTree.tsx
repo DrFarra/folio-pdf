@@ -31,6 +31,7 @@ import type { BookmarkDropTarget } from '../bookmarks';
 import Modal from './Modal';
 import { visibleBounds } from '../mobile';
 import { haptic } from '../platform';
+import { ColorField } from './CustomColor';
 import './BookmarkTree.css';
 
 type Props = {
@@ -795,16 +796,13 @@ export default function BookmarkTree({
                   {menuNode.color.toLowerCase() === color && <Check size={13} />}
                 </button>
               ))}
-              <input
-                type="color"
-                aria-label="Color personalizado del marcador"
-                title="Color personalizado"
+              {/* Folio's chooser: one choice is one undo step, however long it was adjusted. */}
+              <ColorField
+                compact
+                label="Color personalizado del marcador"
                 value={menuNode.color}
-                onChange={event =>
-                  onChange(
-                    bookmarks.map(node => (node.id === menuNode.id ? { ...node, color: event.target.value } : node)),
-                    `color:${menu.id}:${menu.opened}`,
-                  )
+                onChange={color =>
+                  onChange(bookmarks.map(node => (node.id === menuNode.id ? { ...node, color } : node)))
                 }
               />
             </div>

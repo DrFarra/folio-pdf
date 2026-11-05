@@ -23,6 +23,10 @@ type Layer3 = ReturnType<typeof useFolioState> &
  * and the document's output, and what the interface says about the document. */
 export function useFolioCommands(f: Layer3) {
   const {
+    activeTabKey,
+    setSplitKey,
+    splitKey,
+    tabs,
     readingPreferencesRef,
     setDoc,
     annotationRef,
@@ -301,6 +305,10 @@ export function useFolioCommands(f: Layer3) {
       '',
     );
   }
+  // Beside the reader: another open document, or this one at another page when it is the only one.
+  function toggleSplit() {
+    setSplitKey(splitKey ? null : (tabs.find(tab => tab.key !== activeTabKey)?.key ?? activeTabKey));
+  }
   function openTools() {
     if (!doc || isNativePdfDocument(doc.pdf)) {
       setCapabilityNotice(true);
@@ -427,6 +435,7 @@ export function useFolioCommands(f: Layer3) {
     openEditor,
     openFiles,
     openTools,
+    toggleSplit,
     openWorkbenchSection,
     pageCounter,
     pageName,

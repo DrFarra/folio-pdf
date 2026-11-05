@@ -19,12 +19,16 @@ let finder: Promise<PaddleOcr> | null = null,
   reader: Promise<PaddleOcr> | null = null;
 // The page this worker found lines in, kept to fit the words to its ink once they are read.
 let page: Pixels | null = null;
-const model = async (base: string, name: string) => {
-  const response = await fetch(new URL(name, base));
-  if (!response.ok) throw new Error(`No se pudo cargar el modelo de OCR ${name}.`);
-  return new Uint8Array(await response.arrayBuffer());
+// Several workers load the same model at once. Chromium can cut all but one of those
+// downloads while they share the HTTP cache entry ("Failed to fetch"); past the cache they load.
+const download = async (url: URL, init?: RequestInit) => {
+  const response = await fetch(url, init);
+  if (!response.ok) throw new Error(`No se pudo cargar el modelo de OCR ${url.pathname.split('/').pop()}.`);
+  return response.arrayBuffer();
 };
-const dictionary = async (base: string) => (await fetch(new URL('dict-latin.txt', base))).text();
+const load = (url: URL) => download(url).catch(() => download(url, { cache: 'no-store' }));
+const model = async (base: string, name: string) => new Uint8Array(await load(new URL(name, base)));
+const dictionary = async (base: string) => new TextDecoder().decode(await load(new URL('dict-latin.txt', base)));
 // On the graphics card when there is one; a model it cannot run there stays on the processor.
 const engine = async (models: Parameters<typeof PaddleOcr.create>[1], gpu: boolean) => {
   const cpu: Options = { providers: ['wasm'], batch: 1 };

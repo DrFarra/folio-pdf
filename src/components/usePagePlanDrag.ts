@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { isMobile } from '../platform';
+import { haptic } from '../platform';
 
 type Page = { key: string; label: string };
 type Drop = { key: string; side: 'before' | 'after'; index: number };
@@ -86,15 +86,16 @@ export function usePagePlanDrag<T extends Page>(
 
   function begin(event: ReactPointerEvent<HTMLElement>, key: string) {
     if (
-      isMobile ||
       current.current.disabled ||
       event.button !== 0 ||
-      event.pointerType !== 'mouse' ||
+      !event.isPrimary ||
       (event.target as Element).closest('input, label, .plan-move')
     )
       return;
     cancel();
     const source = event.currentTarget;
+    // Touch and pen pick a page up by holding it still, so a swipe still scrolls the grid.
+    const touch = event.pointerType !== 'mouse';
     const keys = selected.includes(key)
       ? plan.filter(page => selected.includes(page.key)).map(page => page.key)
       : [key];
@@ -109,7 +110,18 @@ export function usePagePlanDrag<T extends Page>(
       cleanup: () => {},
     };
     gesture.current = active;
-    let scrollFrame = 0;
+    let scrollFrame = 0,
+      holdTimer = 0;
+    const activate = () => {
+      active.active = true;
+      suppressClick.current = true;
+      source.setPointerCapture?.(active.pointerId);
+      document.getSelection()?.removeAllRanges();
+      setDraggingKeys(keys);
+      setLocation({ x: active.x, y: active.y });
+      updateDrop(active.x, active.y);
+      scrollFrame = requestAnimationFrame(autoScroll);
+    };
     const autoScroll = () => {
       if (gesture.current !== active || !active.active) return;
       const container = grid.current;
@@ -141,13 +153,14 @@ export function usePagePlanDrag<T extends Page>(
       active.x = pointer.clientX;
       active.y = pointer.clientY;
       if (!active.active) {
-        if (Math.hypot(active.x - active.startX, active.y - active.startY) < 5) return;
-        active.active = true;
-        suppressClick.current = true;
-        source.setPointerCapture?.(active.pointerId);
-        document.getSelection()?.removeAllRanges();
-        setDraggingKeys(keys);
-        scrollFrame = requestAnimationFrame(autoScroll);
+        const moved = Math.hypot(active.x - active.startX, active.y - active.startY);
+        // A finger that moves before the hold completes is scrolling: let it go.
+        if (touch) {
+          if (moved > 10) cancel();
+          return;
+        }
+        if (moved < 5) return;
+        activate();
       }
       pointer.preventDefault();
       setLocation({ x: active.x, y: active.y });
@@ -157,7 +170,8 @@ export function usePagePlanDrag<T extends Page>(
       if (pointer.pointerId !== active.pointerId) return;
       if (active.active) {
         pointer.preventDefault();
-        updateDrop(pointer.clientX, pointer.clientY);
+        // A lifted finger can report no position; the last move is where the page is.
+        updateDrop(active.x, active.y);
         const { plan: pages, disabled, onChange } = current.current;
         const destination = dropRef.current;
         if (!disabled && destination) {
@@ -189,8 +203,27 @@ export function usePagePlanDrag<T extends Page>(
         abort();
       }
     };
+    // Once a page is held, the finger drags it instead of panning the grid.
+    const touchMove = (touchEvent: TouchEvent) => {
+      if (active.active && touchEvent.cancelable) touchEvent.preventDefault();
+    };
+    const contextMenu = (menu: Event) => menu.preventDefault();
+    // A second finger before the hold completes is a pinch or a scroll, not a pick-up.
+    const otherFinger = (down: PointerEvent) => {
+      if (down.pointerId !== active.pointerId && !active.active) cancel();
+    };
+    if (touch)
+      holdTimer = window.setTimeout(() => {
+        if (gesture.current !== active) return;
+        haptic('medium');
+        activate();
+      }, 380);
     active.cleanup = () => {
+      window.clearTimeout(holdTimer);
       cancelAnimationFrame(scrollFrame);
+      document.removeEventListener('touchmove', touchMove);
+      document.removeEventListener('pointerdown', otherFinger, true);
+      source.removeEventListener('contextmenu', contextMenu);
       document.removeEventListener('pointermove', move, true);
       document.removeEventListener('pointerup', finish, true);
       document.removeEventListener('pointercancel', abort, true);
@@ -198,6 +231,11 @@ export function usePagePlanDrag<T extends Page>(
       window.removeEventListener('blur', abort);
       if (source.hasPointerCapture?.(active.pointerId)) source.releasePointerCapture(active.pointerId);
     };
+    if (touch) {
+      document.addEventListener('touchmove', touchMove, { passive: false });
+      document.addEventListener('pointerdown', otherFinger, true);
+      source.addEventListener('contextmenu', contextMenu);
+    }
     document.addEventListener('pointermove', move, { capture: true, passive: false });
     document.addEventListener('pointerup', finish, true);
     document.addEventListener('pointercancel', abort, true);
@@ -224,6 +262,5 @@ export function usePagePlanDrag<T extends Page>(
     location,
     label: draggingKeys.length > 1 ? `${draggingKeys.length} páginas` : first?.label,
     destinationPosition,
-    enabled: !isMobile,
   };
 }

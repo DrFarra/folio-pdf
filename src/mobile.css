@@ -702,14 +702,11 @@ html[data-phone] .bookmark-color-options {
   gap: 4px;
   padding: 4px;
 }
-html[data-phone] .bookmark-color-options button {
+html[data-phone] .bookmark-color-options > button,
+html[data-phone] .bookmark-color-options > .color-field > button {
   width: 44px;
   height: 44px;
   border-radius: 8px;
-}
-html[data-phone] .bookmark-color-options input {
-  width: 44px;
-  height: 44px;
 }
 .phone-layout .toast {
   width: calc(100vw - 24px);

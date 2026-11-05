@@ -34,6 +34,7 @@ rules that break things when ignored. Read the files named before changing them.
 | `autosave.ts` | Storing the document in front while it is read: its draft and, shortly after each change, its session. |
 | `document-data.ts` | What is read from the document: outline, page labels, the library cover, iOS's own annotations page by page. |
 | `app-preferences.ts` | The settings chosen in Ajustes, kept across sessions. |
+| Split view | `SplitView.tsx` beside `main.reader` (below it on phones and portrait tablets): `splitKey` (`dialogs.ts`) names the tab shown, the active one from `doc`, any other from its stored `DocumentTab`; read-only canvases, one shared IntersectionObserver. |
 | `tab-view.ts` | The per-tab view state (`useTabView`): page, rotation, mode, tool and colour, panels, active note, area tools. |
 | `history.ts` | Undo and redo (`UndoHistory`): annotation steps, PDF snapshots and Editar's live steps. |
 | `document-changes.ts` | Changes to the PDF (`DocumentChanges`): a tool's operation, a result put in its place, an undo snapshot or Editar's copy reopened. |

@@ -45,6 +45,7 @@ export default function AppHeader() {
     openExplorer,
     openFiles,
     openSearch,
+    openTools,
     page,
     pageCounter,
     phone,
@@ -122,6 +123,7 @@ export default function AppHeader() {
             }}
             onUndo={undo}
             onRedo={redo}
+            onTools={openTools}
             onMore={() => setMobileActions(true)}
           />
         ) : phone ? (

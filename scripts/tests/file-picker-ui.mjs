@@ -62,9 +62,8 @@ async function fits(page, id) {
   await page.screenshot({ path: `${output}/${id}.png` });
   return dimensions;
 }
-// Phones reach the tools from the reading bar; tablets from Más acciones.
-async function openTools(page, mobile, phone) {
-  if (mobile && !phone) await page.getByRole('button', { name: 'Más acciones del documento', exact: true }).click();
+// Phones reach the tools from the reading bar, tablets from the header: one tap either way.
+async function openTools(page) {
   await page.getByRole('button', { name: 'Herramientas', exact: true }).click();
 }
 async function storedPdf(page, name) {
@@ -166,7 +165,7 @@ try {
       const created = await PDFDocument.load(new Uint8Array(await storedPdf(page, 'Imágenes.pdf')));
       assert.equal(created.getPageCount(), 2);
       await page.locator('.loading-overlay').waitFor({ state: 'detached' });
-      await openTools(page, mobile, phone);
+      await openTools(page);
       await page.getByRole('button', { name: 'Comparar documentos', exact: true }).click();
       await page.getByLabel('Segundo PDF', { exact: true }).setInputFiles('public/sample.pdf');
       assert.equal(await page.locator('.file-picker-status.has-file').textContent(), 'sample.pdf');

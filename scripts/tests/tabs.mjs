@@ -209,6 +209,36 @@ try {
     return { simultaneousDocuments: 2, duplicateFileFocusesExistingTab: true, openControls: 1 };
   });
 
+  await check('split-view-shows-another-open-document', async page => {
+    await open(page, a);
+    await annotate(page, a);
+    await open(page, b);
+    await page.getByRole('button', { name: 'Más acciones del documento', exact: true }).click();
+    await page.getByRole('button', { name: 'Ver dos PDF a la vez', exact: true }).click();
+    const split = page.getByRole('region', { name: 'Vista dividida', exact: true });
+    await split.locator('canvas').first().waitFor();
+    const choice = split.getByLabel('Documento de la vista dividida', { exact: true });
+    assert.equal(await choice.locator('option:checked').innerText(), a.name, 'The other tab shows beside.');
+    // Folio's own highlight, which the PDF.js copy leaves out, is drawn over the pane's page.
+    await split.locator('.split-view-marks .split-view-highlight').first().waitFor();
+    // Swapping puts the pane's document in the reader, to annotate it, and the reader's beside it.
+    await split.getByRole('button', { name: 'Pasar este PDF al lector', exact: true }).click();
+    await active(page, a);
+    assert.equal(await choice.locator('option:checked').innerText(), b.name);
+    // The document in front can show beside itself, at another page.
+    await choice.selectOption({ index: 0 });
+    assert.equal(await choice.locator('option:checked').innerText(), `${a.name} · el del lector`);
+    await split.locator('canvas').first().waitFor();
+    assert.equal(
+      await split.getByRole('button', { name: 'Pasar este PDF al lector', exact: true }).count(),
+      0,
+      'Nothing to swap when both show the same document.',
+    );
+    await split.getByRole('button', { name: 'Cerrar vista dividida', exact: true }).click();
+    await split.waitFor({ state: 'detached' });
+    return { splitShowsOtherTab: true, splitDrawsAnnotations: true, splitSwaps: true, splitShowsSameDocument: true };
+  });
+
   await check('annotations-history-and-export-stay-with-their-document', async page => {
     await annotate(page, a);
     await open(page, b);
@@ -577,11 +607,13 @@ try {
     );
     assert.equal(await row(page, 'Second page').isVisible(), true);
     await page.getByRole('button', { name: 'Rehacer (Ctrl+Y)', exact: true }).click();
-    // Dragging through the custom color picker is a single undo step.
+    // Adjusting the custom color however long is a single undo step.
     await page.getByRole('button', { name: 'Opciones de Kidney', exact: true }).click();
-    const custom = page.getByLabel('Color personalizado del marcador', { exact: true });
-    await custom.fill('#112233');
-    await custom.fill('#445566');
+    await page.getByRole('button', { name: 'Color personalizado del marcador', exact: true }).click();
+    const hex = page.getByLabel('Código hexadecimal', { exact: true });
+    await hex.fill('112233');
+    await hex.fill('445566');
+    await page.getByRole('button', { name: 'Usar color', exact: true }).click();
     await page.keyboard.press('Escape');
     await page.locator('.bookmark-menu').waitFor({ state: 'detached' });
     await waitForSession(

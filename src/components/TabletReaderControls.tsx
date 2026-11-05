@@ -13,6 +13,7 @@ import {
   Eraser,
   StickyNote,
   MousePointer2,
+  Wrench,
   X,
 } from 'lucide-react';
 import IconButton from './IconButton';
@@ -73,6 +74,7 @@ export function TabletReaderHeader({
   onDone,
   onUndo,
   onRedo,
+  onTools,
   onMore,
 }: {
   name: string;
@@ -97,6 +99,7 @@ export function TabletReaderHeader({
   onDone: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onTools: () => void;
   onMore: () => void;
 }) {
   return (
@@ -179,6 +182,10 @@ export function TabletReaderHeader({
           </Button>
           <Button label="Anotar documento" disabled={disabled || draft || !page} onClick={onAnnotate}>
             <Highlighter size={21} />
+          </Button>
+          {/* One tap, as on the phone's reading bar; Más acciones no longer holds it. */}
+          <Button label="Herramientas" disabled={disabled || draft || !page} onClick={onTools}>
+            <Wrench size={21} />
           </Button>
         </>
       )}

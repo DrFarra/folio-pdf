@@ -95,6 +95,11 @@ html[data-tablet] .app-shell .reading-area {
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
   scrollbar-gutter: auto;
+  /* PageScrubber is the reader's scrollbar; the system's thin one beside it reads as a second, dead one. */
+  scrollbar-width: none;
+}
+html[data-tablet] .app-shell .reading-area::-webkit-scrollbar {
+  display: none;
 }
 html[data-tablet] .app-shell .pdf-stack {
   padding: 12px 12px 84px;
@@ -321,8 +326,8 @@ html[data-tablet] .bookmark-menu > button {
   min-height: 44px;
   font-size: 14px;
 }
-html[data-tablet] .bookmark-color-options button,
-html[data-tablet] .bookmark-color-options input {
+html[data-tablet] .bookmark-color-options > button,
+html[data-tablet] .bookmark-color-options > .color-field > button {
   width: 44px;
   height: 44px;
   border-radius: 8px;

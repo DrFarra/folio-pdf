@@ -9,6 +9,7 @@ import { errorMessage } from '../errors';
 import { processPdf, readAreaContent, readPageImage } from '../engine/client';
 import type { Area, AreaContentInfo, Operation, PageContentItem } from '../engine/operations.ts';
 import type { LoadedDocument } from '../types';
+import { ColorField } from './CustomColor';
 import './ContentEditor.css';
 
 export type ContentEditorKind = 'add-text' | 'replace-text' | 'add-image' | 'replace-image';
@@ -1052,12 +1053,7 @@ export default function ContentEditor({
                           </label>
                           <label>
                             Color
-                            <input
-                              aria-label="Color"
-                              type="color"
-                              value={color}
-                              onChange={event => setColor(event.target.value)}
-                            />
+                            <ColorField label="Color" value={color} onChange={setColor} />
                           </label>
                         </div>
                         {initialItem && (
