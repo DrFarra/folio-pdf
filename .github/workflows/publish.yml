@@ -31,7 +31,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Versión inválida: $VERSION"; exit 1; }
-          ! gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || { echo "::error::La release v$VERSION ya existe."; exit 1; }
+          # A release published without some platform (an artifact had expired) is completed in place.
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then echo "EXISTS=1" >> "$GITHUB_ENV"; fi
           # Among the commits at this version (newest first), the one with builds for the most platforms.
           target="" best=0 seen=0
           for sha in $(git rev-list HEAD); do
@@ -80,4 +81,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-        run: gh release create "v$VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$TARGET" --title "Folio $VERSION" --notes-file notes.md
+        run: |
+          if [ -n "${EXISTS:-}" ]; then
+            # Same commit only: an existing release is never filled from another build.
+            test "$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)" = "$TARGET"
+            gh release upload "v$VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "v$VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$TARGET" --title "Folio $VERSION" --notes-file notes.md
+          fi
