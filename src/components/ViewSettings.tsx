@@ -1,5 +1,7 @@
 import { Check, RotateCw } from 'lucide-react';
+import { useState } from 'react';
 import Modal from './Modal';
+import { isIOS, isNative, orientationLocked, setOrientationLock } from '../platform';
 import type { ReadingPreferences } from '../reading-preferences';
 import './ReadingSettings.css';
 
@@ -25,6 +27,7 @@ const TONES: [ReadingPreferences['pageTone'], string][] = [
   ['dark', 'Oscuro'],
 ];
 export default function ViewSettings(props: Props) {
+  const [locked, setLocked] = useState(orientationLocked);
   const zoom = props.zoom === 'custom' ? String(Math.round(props.scale * 100)) : props.zoom;
   // A fitted zoom is not a fixed value: only a custom zoom joins the list.
   const values = [
@@ -85,6 +88,22 @@ export default function ViewSettings(props: Props) {
             type="checkbox"
             checked={!!props.keepAwake}
             onChange={event => props.onKeepAwake!(event.target.checked)}
+          />
+        </label>
+      )}
+      {isNative && isIOS && (
+        <label className="settings-toggle">
+          <span>Bloquear giro</span>
+          <input
+            type="checkbox"
+            checked={locked}
+            onChange={event => {
+              const on = event.target.checked;
+              void setOrientationLock(on).then(
+                () => setLocked(on),
+                () => {},
+              );
+            }}
           />
         </label>
       )}
