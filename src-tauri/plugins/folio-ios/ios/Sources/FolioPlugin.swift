@@ -126,6 +126,44 @@ final class FolioPlugin: Plugin {
         let args = try invoke.parseArgs(KeepAwakeArgs.self)
         DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = args.on; invoke.resolve() }
     }
+    /// Holds the current orientation. The iPhone's system lock only knows portrait: an app that
+    /// still allows portrait is turned upright, so Folio narrows its own orientations instead.
+    fileprivate static var lockedOrientations: UIInterfaceOrientationMask?
+    private static var orientationHookInstalled = false
+    private static func installOrientationHook() {
+        guard !orientationHookInstalled, let delegate = UIApplication.shared.delegate, let cls = object_getClass(delegate) else { return }
+        orientationHookInstalled = true
+        let selector = #selector(UIApplicationDelegate.application(_:supportedInterfaceOrientationsFor:))
+        typealias Original = @convention(c) (AnyObject, Selector, UIApplication, UIWindow?) -> UInt
+        let original = class_getInstanceMethod(cls, selector).map { unsafeBitCast(method_getImplementation($0), to: Original.self) }
+        let block: @convention(block) (AnyObject, UIApplication, UIWindow?) -> UInt = { owner, app, window in
+            if let locked = FolioPlugin.lockedOrientations { return locked.rawValue }
+            // Without a delegate method of its own, the app keeps what Info.ios.plist lists.
+            return original?(owner, selector, app, window)
+                ?? (UIDevice.current.userInterfaceIdiom == .pad ? UIInterfaceOrientationMask.all : .allButUpsideDown).rawValue
+        }
+        let replacement = imp_implementationWithBlock(block)
+        if let method = class_getInstanceMethod(cls, selector) { method_setImplementation(method, replacement) }
+        else { class_addMethod(cls, selector, replacement, "Q@:@@") }
+    }
+    @objc public func setOrientationLock(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(KeepAwakeArgs.self)
+        DispatchQueue.main.async {
+            Self.installOrientationHook()
+            guard let scene = self.webview?.window?.windowScene else { return invoke.reject("No se pudo bloquear el giro.") }
+            let current: UIInterfaceOrientationMask
+            switch scene.interfaceOrientation {
+            case .landscapeLeft: current = .landscapeLeft
+            case .landscapeRight: current = .landscapeRight
+            case .portraitUpsideDown: current = .portraitUpsideDown
+            default: current = .portrait
+            }
+            Self.lockedOrientations = args.on ? current : nil
+            self.webview?.window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            if args.on { scene.requestGeometryUpdate(.iOS(interfaceOrientations: current)) }
+            invoke.resolve()
+        }
+    }
     /// System haptics, as native controls give them.
     @objc public func haptic(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(HapticArgs.self)

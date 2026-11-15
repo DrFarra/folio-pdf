@@ -25,6 +25,12 @@ export async function setKeepAwake(on: boolean): Promise<void> {
   if (!isTauri() || !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
   await invoke('set_keep_awake', { on }).catch(() => {});
 }
+/** iOS: Folio keeps the current orientation; the iPhone's own lock only keeps portrait. Not kept after closing. */
+export let orientationLocked = false;
+export async function setOrientationLock(on: boolean): Promise<void> {
+  await invoke('set_orientation_lock', { on });
+  orientationLocked = on;
+}
 export const isIOS =
   /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isAndroid = /Android/i.test(navigator.userAgent);
